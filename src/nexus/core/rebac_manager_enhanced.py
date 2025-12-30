@@ -1051,6 +1051,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if tenant_id:
                 self.invalidate_tenant_graph_cache(tenant_id)
 
+            # Tiger Cache: Invalidate cache for the affected subject
+            if hasattr(self, "tiger_invalidate_cache"):
+                import contextlib
+
+                subject_type = tuple_info["subject_type"]
+                subject_id = tuple_info["subject_id"]
+                if subject_type and subject_id:
+                    with contextlib.suppress(Exception):
+                        self.tiger_invalidate_cache(
+                            subject=(subject_type, subject_id),
+                            resource_type=tuple_info["object_type"],
+                            tenant_id=tenant_id,
+                        )
+
             # Leopard: Update transitive closure for membership relations
             if self._leopard and tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
                 import logging
@@ -1245,7 +1259,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     resource_int_id=resource_int_id,
                 )
                 if logger:
-                    logger.info(
+                    logger.debug(
                         f"[TIGER] Write-through: {subject[0]}:{subject[1]} "
                         f"{permission} {object[0]}:{object[1]} (int_id={resource_int_id})"
                     )
@@ -1528,13 +1542,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if namespace.has_permission(permission):
             usersets = namespace.get_permission_usersets(permission)
             if usersets:
-                logger.info(
+                logger.debug(
                     f"{indent}├─[PERM-MAPPING] Permission '{permission}' maps to relations: {usersets}"
                 )
                 # Permission is defined as a mapping to relations (e.g., write -> [editor, owner])
                 # Check if subject has ANY of the relations that grant this permission
                 for i, relation in enumerate(usersets):
-                    logger.info(
+                    logger.debug(
                         f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
                     )
                     try:
@@ -1585,7 +1599,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
-            logger.info(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
+            logger.debug(f"{indent}├─[UNION] Relation '{permission}' expands to: {union_relations}")
 
             # P0-5: Check fan-out limit
             if self.enable_graph_limits and len(union_relations) > GraphLimits.MAX_FAN_OUT:
@@ -1635,7 +1649,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if ttu:
                 tupleset_relation = ttu["tupleset"]
                 computed_userset = ttu["computedUserset"]
-                logger.info(
+                logger.debug(
                     f"{indent}├─[TTU] '{permission}' = tupleToUserset(tupleset='{tupleset_relation}', computed='{computed_userset}')"
                 )
 
@@ -1650,7 +1664,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 related_objects = self._find_related_objects_tenant_aware(
                     obj, tupleset_relation, tenant_id
                 )
-                logger.info(
+                logger.debug(
                     f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
                 )
 
@@ -1906,7 +1920,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         logger = logging.getLogger(__name__)
 
         # EXTENSIVE DEBUG LOGGING
-        logger.info(
+        logger.debug(
             f"[DIRECT-CHECK] Checking: ({subject.entity_type}:{subject.entity_id}) "
             f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? tenant={tenant_id}"
         )
@@ -1933,12 +1947,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 tenant_id,
                 datetime.now(UTC).isoformat(),
             )
-            logger.info(f"[DIRECT-CHECK] SQL Query params: {params}")
+            logger.debug(f"[DIRECT-CHECK] SQL Query params: {params}")
 
             cursor.execute(self._fix_sql_placeholders(query), params)
 
             row = cursor.fetchone()
-            logger.info(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
+            logger.debug(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
             if row:
                 # Tuple exists - check conditions if context provided
                 conditions_json = row["conditions"]

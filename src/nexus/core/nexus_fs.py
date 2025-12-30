@@ -3965,6 +3965,10 @@ class NexusFS(  # type: ignore[misc]
             self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
 
         # Get agent info before deletion to extract user_id and tenant_id
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         try:
             # Agent ID format: user_id,agent_name
             if "," in agent_id:
@@ -3981,9 +3985,6 @@ class NexusFS(  # type: ignore[misc]
                         # Use admin override for cleanup during agent deletion
                         self.rmdir(agent_dir, recursive=True, context=ctx, is_admin=True)
                 except Exception as e:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to delete agent directory {agent_dir}: {e}")
 
                 # Delete ALL API keys associated with this agent
@@ -4009,14 +4010,8 @@ class NexusFS(  # type: ignore[misc]
                     # Get rowcount from result (SQLAlchemy 2.0+)
                     rowcount = result.rowcount if hasattr(result, "rowcount") else 0
                     if rowcount > 0:
-                        import logging
-
-                        logger = logging.getLogger(__name__)
                         logger.info(f"Revoked {rowcount} API key(s) for agent {agent_id}")
                 except Exception as e:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.warning(f"Failed to revoke API keys for agent {agent_id}: {e}")
                     session.rollback()
                 finally:
@@ -4024,10 +4019,6 @@ class NexusFS(  # type: ignore[misc]
 
                 # Delete ALL ReBAC permissions for this agent
                 if self._rebac_manager:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
-
                     # List all ReBAC tuples for this agent using nexus_fs method
                     try:
                         tuples = self.rebac_list_tuples(
@@ -4071,9 +4062,6 @@ class NexusFS(  # type: ignore[misc]
                             f"Failed to revoke user permissions for agent directory: {e}"
                         )
         except Exception as e:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(f"Failed to cleanup agent resources: {e}")
 
         return self._entity_registry.delete_entity("agent", agent_id)

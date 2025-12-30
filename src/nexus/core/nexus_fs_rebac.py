@@ -839,36 +839,9 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        # OPTIMIZATION: Get tuple info before deletion for Tiger Cache invalidation
-        tuple_info = None
-        if hasattr(self._rebac_manager, "tiger_invalidate_cache"):
-            # Try to get tuple info for cache invalidation
-            try:
-                tuples = self.rebac_list_tuples()
-                for t in tuples:
-                    if t.get("tuple_id") == tuple_id:
-                        tuple_info = t
-                        break
-            except Exception:
-                pass
-
-        # Delete tuple
-        result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
-
-        # OPTIMIZATION: Invalidate Tiger Cache for affected subject
-        # Wrap in suppress to prevent SQLite deadlocks - cache will be stale briefly
-        if result and tuple_info and hasattr(self._rebac_manager, "tiger_invalidate_cache"):
-            subject_type = tuple_info.get("subject_type")
-            subject_id = tuple_info.get("subject_id")
-            if subject_type and subject_id:
-                with contextlib.suppress(Exception):
-                    self._rebac_manager.tiger_invalidate_cache(
-                        subject=(subject_type, subject_id),
-                        resource_type=tuple_info.get("object_type"),
-                        tenant_id=tuple_info.get("tenant_id"),
-                    )
-
-        return result
+        # Delete tuple - the enhanced rebac_delete already handles Tiger Cache invalidation
+        # No need to fetch tuple info here; the manager does it efficiently by tuple_id
+        return self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
     @rpc_expose(description="List ReBAC relationship tuples")
     def rebac_list_tuples(

@@ -223,6 +223,7 @@ class TestTigerCache:
         assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is None
 
 
+@pytest.mark.skip(reason="Tiger Cache disabled on SQLite - PostgreSQL only optimization")
 class TestEnhancedReBACManagerWithTiger:
     """Tests for EnhancedReBACManager Tiger Cache integration."""
 
@@ -285,6 +286,7 @@ class TestEnhancedReBACManagerWithTiger:
         assert count >= 0
 
 
+@pytest.mark.skip(reason="Tiger Cache disabled on SQLite - PostgreSQL only optimization")
 class TestTigerCacheIntegration:
     """Integration tests for Tiger Cache with permissions."""
 

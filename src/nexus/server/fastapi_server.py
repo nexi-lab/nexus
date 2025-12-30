@@ -31,7 +31,7 @@ import os
 import secrets
 import time
 from collections.abc import Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -453,10 +453,35 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
+    # Tiger Cache queue processor (Issue #935)
+    # NOTE: Disabled by default - write-through handles grants/revokes immediately
+    # Enable with NEXUS_ENABLE_TIGER_WORKER=true for cache warming scenarios
+    tiger_task: asyncio.Task | None = None
+    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in ("true", "1", "yes"):
+        try:
+            from nexus.server.background_tasks import tiger_cache_queue_task
+
+            tiger_task = asyncio.create_task(
+                tiger_cache_queue_task(_app_state.nexus_fs, interval_seconds=60, batch_size=1)
+            )
+            logger.info("Tiger Cache queue processor started (explicit enable)")
+        except Exception as e:
+            logger.warning(f"Failed to start Tiger Cache queue processor: {e}")
+    else:
+        logger.debug("Tiger Cache queue processor disabled (write-through handles grants)")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Cancel Tiger Cache task
+    if tiger_task:
+        tiger_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await tiger_task
+        logger.info("Tiger Cache queue processor stopped")
+
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):

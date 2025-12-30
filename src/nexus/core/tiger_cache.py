@@ -785,7 +785,8 @@ class TigerCache:
 
         logger.info(
             f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
-            f"(tenant={tenant_id}, {len(resource_int_ids)} resources, rev={revision})"
+            f"(tenant={tenant_id}, {len(resource_int_ids)} resources, rev={revision}, "
+            f"db={self._engine.url.database}, dialect={self._engine.dialect.name})"
         )
 
         # Create bitmap
@@ -844,14 +845,21 @@ class TigerCache:
             else:
                 connection.execute(query, params)
 
-        if conn:
-            execute(conn)
-        else:
-            with self._engine.begin() as new_conn:
-                # Set short timeout for Tiger Cache ops - fail fast instead of blocking
-                if not self._is_postgresql:
-                    new_conn.execute(text("PRAGMA busy_timeout=100"))
-                execute(new_conn)
+        try:
+            if conn:
+                execute(conn)
+                logger.info(f"[TIGER] Database write (via conn) for {key}")
+            else:
+                with self._engine.begin() as new_conn:
+                    # Set short timeout for Tiger Cache ops - fail fast instead of blocking
+                    if not self._is_postgresql:
+                        new_conn.execute(text("PRAGMA busy_timeout=100"))
+                    execute(new_conn)
+                # Transaction committed after exiting 'with' block
+                logger.info(f"[TIGER] Database write COMMITTED for {key}")
+        except Exception as e:
+            logger.error(f"[TIGER] Database write FAILED for {key}: {e}")
+            raise
 
         # Update in-memory cache
         with self._lock:
@@ -978,11 +986,10 @@ class TigerCache:
         tenant_id: str,
         resource_int_id: int,
     ) -> bool:
-        """Add a single resource to subject's permission bitmap (write-through).
+        """Add a single resource to subject's permission bitmap (in-memory only).
 
-        This method enables incremental Tiger Cache population after permission
-        checks. Instead of recomputing entire bitmaps, we add individual resources
-        as they are confirmed accessible.
+        This method updates the in-memory cache only. For full write-through
+        that persists to database, use persist_single_grant() instead.
 
         Args:
             subject_type: Type of subject (e.g., "user", "agent")
@@ -994,10 +1001,6 @@ class TigerCache:
 
         Returns:
             True if added successfully, False otherwise
-
-        Note:
-            This is a write-through operation that updates both in-memory
-            cache and database. Thread-safe via RLock.
         """
         key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
 
@@ -1024,6 +1027,268 @@ class TigerCache:
                     f"[TIGER] Created new bitmap for {key} with resource {resource_int_id}"
                 )
                 return True
+
+    def persist_single_grant(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> bool:
+        """Write-through: Add a single resource grant and persist to database.
+
+        This is the recommended method for permission grants. It:
+        1. Gets/creates the resource's integer ID
+        2. Loads existing bitmap from DB (or creates new)
+        3. Adds the resource to the bitmap
+        4. Persists the updated bitmap to database
+        5. Updates in-memory cache
+
+        Performance: ~1-5ms (single DB upsert)
+        vs Queue processing: ~20-40 seconds (recomputes ALL resources)
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of the resource being granted
+            tenant_id: Tenant ID
+
+        Returns:
+            True if persisted successfully, False on error
+        """
+        from sqlalchemy import text
+
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        try:
+            # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
+            resource_int_id = self._resource_map.get_or_create_int_id(
+                resource_type, resource_id, tenant_id
+            )
+
+            with self._engine.begin() as conn:
+                # Step 2: Load existing bitmap from DB (if exists)
+                existing_bitmap = self._load_from_db(key, conn)
+
+                if existing_bitmap is not None:
+                    # Check if already in bitmap
+                    if resource_int_id in existing_bitmap:
+                        logger.debug(
+                            f"[TIGER] Resource {resource_id} already in bitmap for {subject_id}"
+                        )
+                        return True
+                    # Add to existing bitmap
+                    existing_bitmap.add(resource_int_id)
+                    bitmap = existing_bitmap
+                    revision = 0  # Will be updated from cache if available
+                    with self._lock:
+                        if key in self._cache:
+                            _, revision, _ = self._cache[key]
+                else:
+                    # Create new bitmap with this single resource
+                    bitmap = RoaringBitmap([resource_int_id])
+                    revision = 0
+
+                # Step 3: Persist to database
+                bitmap_data = bitmap.serialize()
+
+                if self._is_postgresql:
+                    upsert_query = text("""
+                        INSERT INTO tiger_cache
+                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                             bitmap_data, revision, created_at, updated_at)
+                        VALUES
+                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                             :bitmap_data, :revision, NOW(), NOW())
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
+                                      revision = EXCLUDED.revision,
+                                      updated_at = NOW()
+                    """)
+                else:
+                    # SQLite: Use INSERT OR REPLACE
+                    upsert_query = text("""
+                        INSERT OR REPLACE INTO tiger_cache
+                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                             bitmap_data, revision, created_at, updated_at)
+                        VALUES
+                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                             :bitmap_data, :revision, datetime('now'), datetime('now'))
+                    """)
+
+                conn.execute(
+                    upsert_query,
+                    {
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "permission": permission,
+                        "resource_type": resource_type,
+                        "tenant_id": tenant_id,
+                        "bitmap_data": bitmap_data,
+                        "revision": revision,
+                    },
+                )
+                # Commit happens automatically when exiting 'with' block
+
+            # Step 4: Update in-memory cache
+            with self._lock:
+                self._evict_if_needed()
+                self._cache[key] = (bitmap, revision, time.time())
+
+            logger.info(
+                f"[TIGER] Write-through: {subject_type}:{subject_id} granted {permission} "
+                f"on {resource_type}:{resource_id} (int_id={resource_int_id}, "
+                f"bitmap now has {len(bitmap)} resources)"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[TIGER] Write-through failed for {key}: {e}")
+            return False
+
+    def persist_single_revoke(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        resource_id: str,
+        tenant_id: str,
+    ) -> bool:
+        """Write-through: Remove a single resource grant and persist to database.
+
+        Critical for security - permission revocations must propagate immediately.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission type (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            resource_id: String ID of the resource being revoked
+            tenant_id: Tenant ID
+
+        Returns:
+            True if persisted successfully, False on error
+        """
+        from sqlalchemy import text
+
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        try:
+            with self._engine.begin() as conn:
+                # Step 1: Get resource int ID (don't create if doesn't exist)
+                resource_key = (resource_type, resource_id, tenant_id)
+                with self._lock:
+                    resource_int_id = self._resource_map._uuid_to_int.get(resource_key)
+
+                if resource_int_id is None:
+                    # Try to get from DB
+                    query = text("""
+                        SELECT resource_int_id FROM tiger_resource_map
+                        WHERE resource_type = :resource_type
+                          AND resource_id = :resource_id
+                          AND tenant_id = :tenant_id
+                    """)
+                    result = conn.execute(
+                        query,
+                        {
+                            "resource_type": resource_type,
+                            "resource_id": resource_id,
+                            "tenant_id": tenant_id,
+                        },
+                    )
+                    row = result.fetchone()
+                    if row:
+                        resource_int_id = int(row.resource_int_id)
+                    else:
+                        # Resource not in map - nothing to revoke
+                        logger.debug(
+                            f"[TIGER] Revoke: Resource {resource_id} not in map, nothing to do"
+                        )
+                        return True
+
+                # Step 2: Load existing bitmap from DB
+                existing_bitmap = self._load_from_db(key, conn)
+
+                if existing_bitmap is None:
+                    # No bitmap exists - nothing to revoke
+                    logger.debug(
+                        f"[TIGER] Revoke: No bitmap for {subject_id}, nothing to do"
+                    )
+                    return True
+
+                if resource_int_id not in existing_bitmap:
+                    # Resource not in bitmap - nothing to revoke
+                    logger.debug(
+                        f"[TIGER] Revoke: Resource {resource_id} not in bitmap for {subject_id}"
+                    )
+                    return True
+
+                # Step 3: Remove from bitmap
+                existing_bitmap.discard(resource_int_id)
+                bitmap = existing_bitmap
+                revision = 0
+                with self._lock:
+                    if key in self._cache:
+                        _, revision, _ = self._cache[key]
+
+                # Step 4: Persist to database
+                bitmap_data = bitmap.serialize()
+
+                if self._is_postgresql:
+                    upsert_query = text("""
+                        INSERT INTO tiger_cache
+                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                             bitmap_data, revision, created_at, updated_at)
+                        VALUES
+                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                             :bitmap_data, :revision, NOW(), NOW())
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
+                                      revision = EXCLUDED.revision,
+                                      updated_at = NOW()
+                    """)
+                else:
+                    upsert_query = text("""
+                        INSERT OR REPLACE INTO tiger_cache
+                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                             bitmap_data, revision, created_at, updated_at)
+                        VALUES
+                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                             :bitmap_data, :revision, datetime('now'), datetime('now'))
+                    """)
+
+                conn.execute(
+                    upsert_query,
+                    {
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "permission": permission,
+                        "resource_type": resource_type,
+                        "tenant_id": tenant_id,
+                        "bitmap_data": bitmap_data,
+                        "revision": revision,
+                    },
+                )
+
+            # Step 5: Update in-memory cache
+            with self._lock:
+                self._evict_if_needed()
+                self._cache[key] = (bitmap, revision, time.time())
+
+            logger.info(
+                f"[TIGER] Write-through revoke: {subject_type}:{subject_id} revoked {permission} "
+                f"on {resource_type}:{resource_id} (bitmap now has {len(bitmap)} resources)"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[TIGER] Write-through revoke failed for {key}: {e}")
+            return False
 
     def remove_from_bitmap(
         self,
@@ -1322,8 +1587,10 @@ class TigerCacheUpdater:
             processed = 0
             result = connection.execute(select_query)
             entries = list(result)
+            logger.info(f"[TIGER] do_process: fetched {len(entries)} entries from queue")
 
-            for entry in entries:
+            for i, entry in enumerate(entries):
+                logger.info(f"[TIGER] Processing entry {i+1}/{len(entries)}: {entry.subject_id}")
                 try:
                     # Mark as processing
                     connection.execute(
@@ -1393,13 +1660,18 @@ class TigerCacheUpdater:
 
         try:
             if conn:
-                return do_process(conn)
+                result = do_process(conn)
+                logger.info(f"[TIGER] Queue processing complete (external conn): {result} entries")
+                return result
             else:
                 with self._engine.begin() as new_conn:
                     # Set short timeout for Tiger Cache ops - fail fast instead of blocking
                     if not self._is_postgresql:
                         new_conn.execute(text("PRAGMA busy_timeout=100"))
-                    return do_process(new_conn)
+                    result = do_process(new_conn)
+                # Commit happens here when 'with' block exits
+                logger.info(f"[TIGER] Queue processing COMMITTED: {result} entries processed")
+                return result
         except Exception as e:
             # Handle lock errors at the top level (e.g., during SELECT)
             if is_lock_error(e):
@@ -1407,6 +1679,7 @@ class TigerCacheUpdater:
                     f"[TIGER] Database lock during queue processing, will retry later: {e}"
                 )
                 return 0
+            logger.error(f"[TIGER] Queue processing FAILED: {e}")
             raise
 
     def _compute_accessible_resources(

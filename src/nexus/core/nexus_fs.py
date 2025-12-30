@@ -582,8 +582,16 @@ class NexusFS(  # type: ignore[misc]
     def _start_tiger_cache_worker(self) -> None:
         """Start background thread for Tiger Cache queue processing.
 
-        The worker processes permission changes queued by rebac_create/rebac_delete
-        to keep Tiger Cache up-to-date for O(1) permission lookups.
+        NOTE: With write-through implemented, automatic queue processing is
+        DISABLED by default. Write-through handles grants/revokes immediately.
+
+        Queue processing is only needed for:
+        - Cold start cache warming (use warm_tiger_cache() explicitly)
+        - Bulk migrations
+        - Group permission inheritance changes
+
+        To enable automatic queue processing, set:
+            NEXUS_ENABLE_TIGER_WORKER=true
         """
         import logging
         import os
@@ -591,9 +599,10 @@ class NexusFS(  # type: ignore[misc]
 
         logger = logging.getLogger(__name__)
 
-        # Check if Tiger Cache worker is enabled (default: True)
-        if os.getenv("NEXUS_DISABLE_TIGER_WORKER", "false").lower() in ("true", "1", "yes"):
-            logger.debug("Tiger Cache worker disabled via environment variable")
+        # Queue processor is DISABLED by default (write-through handles normal ops)
+        # Enable explicitly with NEXUS_ENABLE_TIGER_WORKER=true
+        if os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() not in ("true", "1", "yes"):
+            logger.debug("Tiger Cache queue worker disabled (write-through handles grants)")
             return
 
         # Don't start if already running
@@ -608,18 +617,26 @@ class NexusFS(  # type: ignore[misc]
         self._tiger_worker_stop = threading.Event()
 
         def worker_loop() -> None:
-            """Background worker loop for Tiger Cache queue processing."""
+            """Background worker loop for Tiger Cache queue processing.
+
+            NOTE: With write-through implemented, this worker is mainly for legacy
+            queue entries. New permission grants are handled immediately by
+            persist_single_grant() in rebac_write.
+            """
             while not self._tiger_worker_stop.is_set():
                 try:
                     if hasattr(self, "process_tiger_cache_queue"):
-                        processed = self.process_tiger_cache_queue(batch_size=100)
+                        # Process only 1 entry at a time to avoid blocking
+                        # Each entry can take 10-40 seconds due to _compute_accessible_resources
+                        processed = self.process_tiger_cache_queue(batch_size=1)
                         if processed > 0:
                             logger.debug(f"Tiger Cache worker processed {processed} updates")
                 except Exception as e:
                     logger.warning(f"Tiger Cache worker error: {e}")
 
-                # Sleep until next iteration or stop signal
-                self._tiger_worker_stop.wait(timeout=interval)
+                # Sleep longer since write-through handles new grants
+                # This worker is just for legacy queue cleanup
+                self._tiger_worker_stop.wait(timeout=interval * 10)
 
             logger.debug("Tiger Cache worker stopped")
 

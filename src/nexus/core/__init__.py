@@ -20,6 +20,14 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.path_interner import (
+    CompactFileMetadata,
+    PathInterner,
+    SegmentedPathInterner,
+    get_path_interner,
+    get_segmented_interner,
+    reset_global_interners,
+)
 
 
 def setup_uvloop() -> bool:
@@ -140,6 +148,13 @@ __all__ = [
     "InvalidPathError",
     "MetadataError",
     "ValidationError",
+    # Path interning (Issue #912)
+    "PathInterner",
+    "SegmentedPathInterner",
+    "CompactFileMetadata",
+    "get_path_interner",
+    "get_segmented_interner",
+    "reset_global_interners",
     # Async ReBAC (lazy imports via functions)
     "get_async_rebac_manager",
     "get_async_rebac_bridge",

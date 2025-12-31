@@ -3,6 +3,7 @@
 Provides multiple search capabilities:
 - Semantic search using vector embeddings (sqlite-vec, pgvector)
 - Code search using Zoekt trigram indexing (optional)
+- BM25S ranked text search (Issue #796)
 - Hybrid search combining keyword and semantic search
 
 Embedding providers:
@@ -16,6 +17,13 @@ Async support:
 """
 
 from nexus.search.async_search import AsyncSearchResult, AsyncSemanticSearch
+from nexus.search.bm25s_search import (
+    BM25SIndex,
+    BM25SSearchResult,
+    CodeTokenizer,
+    get_bm25s_index,
+    is_bm25s_available,
+)
 from nexus.search.chunking import (
     ChunkStrategy,
     DocumentChunk,
@@ -61,6 +69,12 @@ __all__ = [
     # Async Semantic Search (high-throughput)
     "AsyncSemanticSearch",
     "AsyncSearchResult",
+    # BM25S Fast Text Search (Issue #796)
+    "BM25SIndex",
+    "BM25SSearchResult",
+    "CodeTokenizer",
+    "get_bm25s_index",
+    "is_bm25s_available",
     # Zoekt Code Search
     "ZoektClient",
     "ZoektMatch",

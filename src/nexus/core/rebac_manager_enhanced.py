@@ -3434,6 +3434,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
 
                 # Convert results and cache in L1 (in-memory cache is fast)
+                # Calculate per-check delta for XFetch (Issue #718)
+                avg_delta = rust_elapsed / len(cache_misses) if cache_misses else 0.0
+
                 l1_cache_writes = 0
                 for check in cache_misses:
                     subject, permission, obj = check
@@ -3441,10 +3444,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     result = rust_results_dict.get(key, False)
                     results[check] = result
 
-                    # Write to L1 in-memory cache (fast, ~0.01ms per write)
+                    # Write to L1 in-memory cache with XFetch delta (fast, ~0.01ms per write)
                     if self._l1_cache is not None:
                         self._l1_cache.set(
-                            subject[0], subject[1], permission, obj[0], obj[1], result, tenant_id
+                            subject[0],
+                            subject[1],
+                            permission,
+                            obj[0],
+                            obj[1],
+                            result,
+                            tenant_id,
+                            delta=avg_delta,
                         )
                         l1_cache_writes += 1
 

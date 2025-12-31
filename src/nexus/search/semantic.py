@@ -291,6 +291,8 @@ class SemanticSearch:
         limit: int = 10,
         filters: dict[str, Any] | None = None,  # noqa: ARG002
         search_mode: str = "semantic",
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
     ) -> list[SemanticSearchResult]:
         """Search documents.
 
@@ -300,9 +302,20 @@ class SemanticSearch:
             limit: Maximum number of results
             filters: Optional filters (currently unused)
             search_mode: Search mode - "semantic", "keyword", or "hybrid" (default: "semantic")
+            alpha: Weight for vector search in hybrid mode (0.0 = all BM25, 1.0 = all vector)
+            fusion_method: Fusion method for hybrid: "rrf" (default), "weighted", "rrf_weighted"
 
         Returns:
             List of search results ranked by relevance
+
+        Example:
+            >>> # Hybrid search favoring keyword matches
+            >>> results = await search.search(
+            ...     "authentication handler",
+            ...     search_mode="hybrid",
+            ...     alpha=0.3,  # Favor BM25
+            ...     fusion_method="rrf",
+            ... )
         """
         # Build path filter
         path_filter = path if path != "/" else None
@@ -333,8 +346,8 @@ class SemanticSearch:
                     query,
                     query_embedding,
                     limit=limit,
-                    keyword_weight=0.3,
-                    semantic_weight=0.7,
+                    alpha=alpha,
+                    fusion_method=fusion_method,
                     path_filter=path_filter,
                 )
             else:
@@ -456,10 +469,33 @@ class SemanticSearch:
         return await self.search(query, path=path, limit=limit, search_mode="semantic")
 
     async def hybrid_search(
-        self, query: str, path: str = "/", limit: int = 10
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
     ) -> list[SemanticSearchResult]:
-        """Hybrid search (wrapper for search with mode='hybrid')."""
-        return await self.search(query, path=path, limit=limit, search_mode="hybrid")
+        """Hybrid search combining keyword (BM25) and semantic (vector) search.
+
+        Args:
+            query: Search query
+            path: Root path to search (default: all files)
+            limit: Maximum results
+            alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
+            fusion_method: "rrf" (default), "weighted", "rrf_weighted"
+
+        Returns:
+            List of search results ranked by fusion score
+        """
+        return await self.search(
+            query,
+            path=path,
+            limit=limit,
+            search_mode="hybrid",
+            alpha=alpha,
+            fusion_method=fusion_method,
+        )
 
     async def get_stats(self) -> dict[str, Any]:
         """Get stats (wrapper for get_index_stats)."""

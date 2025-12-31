@@ -520,3 +520,154 @@ class TestGlobPatternBenchmarks:
 
         result = benchmark(match)
         assert len(result) == 1000
+
+
+# =============================================================================
+# HYBRID SEARCH FUSION BENCHMARKS (Issue #798)
+# =============================================================================
+
+
+@pytest.mark.benchmark_fusion
+class TestHybridSearchFusionBenchmarks:
+    """Benchmarks for hybrid search fusion algorithms (Issue #798)."""
+
+    @pytest.fixture
+    def small_result_sets(self):
+        """Generate small result sets (100 each) for baseline benchmarks."""
+        keyword_results = [
+            {
+                "chunk_id": f"kw_{i}",
+                "path": f"/file_{i % 10}.py",
+                "chunk_index": i % 5,
+                "score": 100.0 - (i * 0.5),
+            }
+            for i in range(100)
+        ]
+
+        # 50% overlap with keyword results
+        vector_results = [
+            {
+                "chunk_id": f"kw_{i}" if i < 50 else f"vec_{i}",
+                "path": f"/file_{i % 10}.py",
+                "chunk_index": i % 5,
+                "score": 1.0 - (i * 0.005),
+            }
+            for i in range(100)
+        ]
+
+        return keyword_results, vector_results
+
+    @pytest.fixture
+    def large_result_sets(self):
+        """Generate large result sets (1000 each) for stress testing."""
+        keyword_results = [
+            {
+                "chunk_id": f"kw_{i}",
+                "path": f"/file_{i % 100}.py",
+                "chunk_index": i % 10,
+                "score": 100.0 - (i * 0.1),
+            }
+            for i in range(1000)
+        ]
+
+        # 50% overlap with keyword results
+        vector_results = [
+            {
+                "chunk_id": f"kw_{i}" if i < 500 else f"vec_{i}",
+                "path": f"/file_{i % 100}.py",
+                "chunk_index": i % 10,
+                "score": 1.0 - (i * 0.001),
+            }
+            for i in range(1000)
+        ]
+
+        return keyword_results, vector_results
+
+    def test_rrf_fusion_100_results(self, benchmark, small_result_sets):
+        """Benchmark RRF fusion with 100 results from each source."""
+        from nexus.search.fusion import rrf_fusion
+
+        keyword_results, vector_results = small_result_sets
+
+        def fuse():
+            return rrf_fusion(keyword_results, vector_results, k=60, limit=10)
+
+        result = benchmark(fuse)
+        assert len(result) == 10
+
+    def test_rrf_fusion_1k_results(self, benchmark, large_result_sets):
+        """Benchmark RRF fusion with 1K results from each source."""
+        from nexus.search.fusion import rrf_fusion
+
+        keyword_results, vector_results = large_result_sets
+
+        def fuse():
+            return rrf_fusion(keyword_results, vector_results, k=60, limit=100)
+
+        result = benchmark(fuse)
+        assert len(result) == 100
+
+    def test_weighted_fusion_100_results(self, benchmark, small_result_sets):
+        """Benchmark weighted fusion with 100 results from each source."""
+        from nexus.search.fusion import weighted_fusion
+
+        keyword_results, vector_results = small_result_sets
+
+        def fuse():
+            return weighted_fusion(
+                keyword_results, vector_results, alpha=0.5, normalize=True, limit=10
+            )
+
+        result = benchmark(fuse)
+        assert len(result) == 10
+
+    def test_weighted_fusion_1k_results(self, benchmark, large_result_sets):
+        """Benchmark weighted fusion with 1K results from each source."""
+        from nexus.search.fusion import weighted_fusion
+
+        keyword_results, vector_results = large_result_sets
+
+        def fuse():
+            return weighted_fusion(
+                keyword_results, vector_results, alpha=0.5, normalize=True, limit=100
+            )
+
+        result = benchmark(fuse)
+        assert len(result) == 100
+
+    def test_rrf_weighted_fusion_1k_results(self, benchmark, large_result_sets):
+        """Benchmark RRF weighted fusion with 1K results from each source."""
+        from nexus.search.fusion import rrf_weighted_fusion
+
+        keyword_results, vector_results = large_result_sets
+
+        def fuse():
+            return rrf_weighted_fusion(keyword_results, vector_results, alpha=0.5, k=60, limit=100)
+
+        result = benchmark(fuse)
+        assert len(result) == 100
+
+    def test_normalization_overhead(self, benchmark, large_result_sets):
+        """Benchmark min-max normalization overhead."""
+        from nexus.search.fusion import normalize_scores_minmax
+
+        scores = [r["score"] for r in large_result_sets[0]]
+
+        def normalize():
+            return normalize_scores_minmax(scores)
+
+        result = benchmark(normalize)
+        assert len(result) == 1000
+
+    def test_fuse_results_dispatcher(self, benchmark, large_result_sets):
+        """Benchmark fuse_results dispatcher overhead."""
+        from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
+
+        keyword_results, vector_results = large_result_sets
+        config = FusionConfig(method=FusionMethod.RRF, rrf_k=60)
+
+        def fuse():
+            return fuse_results(keyword_results, vector_results, config=config, limit=100)
+
+        result = benchmark(fuse)
+        assert len(result) == 100

@@ -94,6 +94,8 @@ dependencies = [
     "bsdiff4>=1.2.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
+    # LZ4 compression for ContentCache 3-4x capacity (Issue #908)
+    "lz4>=4.3.0",
 ]
 
 [project.optional-dependencies]
@@ -330,6 +332,22 @@ module = "nexus.llm.provider"
 # litellm's completion_cost has complex overloads that mypy can't resolve with **kwargs
 # Different mypy versions handle this differently, so we disable the check
 warn_unused_ignores = false
+
+[[tool.mypy.overrides]]
+module = "nexus.core.cache.dragonfly"
+# redis library has complex async types that mypy struggles with
+warn_unused_ignores = false
+disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.storage.cache"
+# cachetools library has complex generic types
+disable_error_code = ["no-any-return", "misc", "call-overload"]
+
+[[tool.mypy.overrides]]
+module = "nexus.search.embeddings"
+# Provider wrapper class has complex inheritance
+disable_error_code = ["override"]
 
 [tool.ruff]
 target-version = "py311"

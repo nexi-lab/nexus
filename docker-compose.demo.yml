@@ -404,6 +404,49 @@ services:
     networks:
       - nexus-network
 
+  # ============================================
+  # DragonflyDB - High-Performance Cache (Issue #950)
+  # Redis-compatible in-memory cache for:
+  # - Embedding cache (reduces API calls by 90%)
+  # - Permission cache
+  # - Tiger cache
+  #
+  # Usage:
+  #   docker compose --profile cache up        # Start with caching
+  #   Set NEXUS_DRAGONFLY_URL=redis://dragonfly:6379 in nexus service
+  # ============================================
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: nexus-dragonfly
+    restart: unless-stopped
+    profiles:
+      - cache  # Only starts with: docker compose --profile cache up
+    # Dragonfly optimizations:
+    # --cache_mode=true: Smart eviction for cache workloads
+    # --maxmemory=512mb: Memory limit for cache
+    # --proactor_threads=2: Match small VM cores
+    command: >
+      --cache_mode=true
+      --maxmemory=512mb
+      --proactor_threads=2
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 # ============================================
 # Volumes
 # ============================================
@@ -411,6 +454,8 @@ volumes:
   zoekt-index:
     driver: local
   postgres-data:
+    driver: local
+  dragonfly-data:
     driver: local
   # nexus-data: Using local directory ./nexus-data instead of Docker volume
   # This allows sharing data between Docker and local development

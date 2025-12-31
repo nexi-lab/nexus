@@ -103,8 +103,45 @@ services:
     profiles:
       - mcp  # Only run when explicitly requested
 
+  # ============================================================================
+  # DragonflyDB - High-Performance Cache (Issue #950)
+  # Redis-compatible in-memory cache for:
+  # - Embedding cache (reduces API calls by 90%)
+  # - Permission cache
+  # - Tiger cache
+  # ============================================================================
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: nexus-dragonfly
+    restart: unless-stopped
+    profiles:
+      - cache  # Only starts with: docker compose --profile cache up
+    command: >
+      --cache_mode=true
+      --maxmemory=512mb
+      --proactor_threads=2
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   nexus-data:
+    driver: local
+  dragonfly-data:
     driver: local
 
 networks:

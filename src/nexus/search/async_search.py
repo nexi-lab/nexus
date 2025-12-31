@@ -418,6 +418,9 @@ class AsyncSemanticSearch:
         limit: int = 10,
         path_filter: str | None = None,
         search_mode: str = "hybrid",
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
     ) -> list[AsyncSearchResult]:
         """Search documents asynchronously.
 
@@ -426,6 +429,9 @@ class AsyncSemanticSearch:
             limit: Maximum results
             path_filter: Optional path prefix filter
             search_mode: "keyword", "semantic", or "hybrid"
+            alpha: Weight for vector search in hybrid mode (0.0 = all BM25, 1.0 = all vector)
+            fusion_method: Fusion method for hybrid: "rrf" (default), "weighted", "rrf_weighted"
+            rrf_k: RRF constant (default: 60)
 
         Returns:
             List of search results
@@ -439,7 +445,15 @@ class AsyncSemanticSearch:
                 query_embedding = await self.embedding_provider.embed_text(query)
                 results = await self._vector_search(session, query_embedding, limit, path_filter)
             else:  # hybrid
-                results = await self._hybrid_search(session, query, limit, path_filter)
+                results = await self._hybrid_search(
+                    session,
+                    query,
+                    limit,
+                    path_filter,
+                    alpha=alpha,
+                    fusion_method=fusion_method,
+                    rrf_k=rrf_k,
+                )
 
         return results
 
@@ -729,22 +743,28 @@ class AsyncSemanticSearch:
         query: str,
         limit: int,
         path_filter: str | None,
-        k: int = 60,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
     ) -> list[AsyncSearchResult]:
-        """Async hybrid search using RRF (Reciprocal Rank Fusion).
+        """Async hybrid search using configurable fusion method.
 
-        Combines keyword and vector search results using RRF algorithm.
+        Combines keyword and vector search results using the specified fusion algorithm.
 
         Args:
             session: Database session
             query: Search query
             limit: Maximum results
             path_filter: Path filter
-            k: RRF constant (default: 60)
+            alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
+            fusion_method: "rrf" (default), "weighted", or "rrf_weighted"
+            rrf_k: RRF constant (default: 60)
 
         Returns:
             Combined search results
         """
+        from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
+
         # Run keyword and vector search in parallel
         keyword_task = self._keyword_search(session, query, limit * 3, path_filter)
 
@@ -757,37 +777,67 @@ class AsyncSemanticSearch:
         keyword_results = await keyword_task
         vector_results = await vector_task if vector_task else []
 
-        # RRF fusion
-        rrf_scores: dict[str, dict[str, Any]] = {}
+        # Convert AsyncSearchResult to dict for fusion
+        keyword_dicts = [
+            {
+                "path": r.path,
+                "chunk_index": r.chunk_index,
+                "chunk_text": r.chunk_text,
+                "score": r.score,
+                "start_offset": r.start_offset,
+                "end_offset": r.end_offset,
+                "line_start": r.line_start,
+                "line_end": r.line_end,
+            }
+            for r in keyword_results
+        ]
 
-        # Add keyword results
-        for rank, result in enumerate(keyword_results, start=1):
-            key = f"{result.path}:{result.chunk_index}"
-            if key not in rrf_scores:
-                rrf_scores[key] = {"result": result, "score": 0.0}
-            rrf_scores[key]["score"] += 1.0 / (k + rank)
-            rrf_scores[key]["result"].keyword_score = result.score
+        vector_dicts = [
+            {
+                "path": r.path,
+                "chunk_index": r.chunk_index,
+                "chunk_text": r.chunk_text,
+                "score": r.score,
+                "start_offset": r.start_offset,
+                "end_offset": r.end_offset,
+                "line_start": r.line_start,
+                "line_end": r.line_end,
+            }
+            for r in vector_results
+        ]
 
-        # Add vector results
-        for rank, result in enumerate(vector_results, start=1):
-            key = f"{result.path}:{result.chunk_index}"
-            if key not in rrf_scores:
-                rrf_scores[key] = {"result": result, "score": 0.0}
-            rrf_scores[key]["score"] += 1.0 / (k + rank)
-            rrf_scores[key]["result"].vector_score = result.score
+        # Create fusion config
+        config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+        )
 
-        # Sort by RRF score
-        sorted_results = sorted(
-            rrf_scores.values(),
-            key=lambda x: x["score"],
-            reverse=True,
-        )[:limit]
+        # Use shared fusion logic
+        fused = fuse_results(
+            keyword_dicts,
+            vector_dicts,
+            config=config,
+            limit=limit,
+            id_key=None,  # Use path:chunk_index as key
+        )
 
-        # Update final scores
-        for item in sorted_results:
-            item["result"].score = item["score"]
-
-        return [item["result"] for item in sorted_results]
+        # Convert back to AsyncSearchResult
+        return [
+            AsyncSearchResult(
+                path=r["path"],
+                chunk_index=r["chunk_index"],
+                chunk_text=r["chunk_text"],
+                score=r["score"],
+                start_offset=r.get("start_offset"),
+                end_offset=r.get("end_offset"),
+                line_start=r.get("line_start"),
+                line_end=r.get("line_end"),
+                keyword_score=r.get("keyword_score"),
+                vector_score=r.get("vector_score"),
+            )
+            for r in fused
+        ]
 
     async def delete_document(self, path_id: str) -> None:
         """Delete document index."""

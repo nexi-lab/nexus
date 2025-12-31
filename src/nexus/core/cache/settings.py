@@ -13,6 +13,7 @@ Environment variables:
     NEXUS_CACHE_PERMISSION_TTL: TTL for permission grants (default: 300s)
     NEXUS_CACHE_DENIAL_TTL: TTL for permission denials (default: 60s)
     NEXUS_CACHE_TIGER_TTL: TTL for Tiger cache entries (default: 3600s)
+    NEXUS_CACHE_EMBEDDING_TTL: TTL for embedding cache entries (default: 86400s / 24h)
 
     NEXUS_DRAGONFLY_POOL_SIZE: Connection pool size (default: 10)
     NEXUS_DRAGONFLY_TIMEOUT: Connection timeout in seconds (default: 5.0)
@@ -48,6 +49,11 @@ class CacheSettings:
     # Tiger cache TTL (seconds)
     tiger_ttl: int = field(
         default_factory=lambda: int(os.environ.get("NEXUS_CACHE_TIGER_TTL", "3600"))
+    )
+
+    # Embedding cache TTL (seconds) - Issue #950
+    embedding_ttl: int = field(
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_EMBEDDING_TTL", "86400"))
     )
 
     # Dragonfly connection pool size
@@ -101,6 +107,9 @@ class CacheSettings:
         if self.tiger_ttl <= 0:
             raise ValueError("NEXUS_CACHE_TIGER_TTL must be positive")
 
+        if self.embedding_ttl <= 0:
+            raise ValueError("NEXUS_CACHE_EMBEDDING_TTL must be positive")
+
         if self.dragonfly_pool_size <= 0:
             raise ValueError("NEXUS_DRAGONFLY_POOL_SIZE must be positive")
 
@@ -129,6 +138,7 @@ class CacheSettings:
             f"permission_ttl={self.permission_ttl}s, "
             f"denial_ttl={self.permission_denial_ttl}s, "
             f"tiger_ttl={self.tiger_ttl}s, "
+            f"embedding_ttl={self.embedding_ttl}s, "
             f"pool_size={self.dragonfly_pool_size}, "
             f"l1_enabled={self.enable_l1_cache})"
         )

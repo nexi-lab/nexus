@@ -329,17 +329,25 @@ class AsyncReBACManager:
             if cached is not None:
                 return cached
 
-        # Compute permission
+        # Compute permission with delta tracking for XFetch (Issue #718)
         start_time = time.perf_counter()
         result = await self._compute_permission(
             subject_entity, permission, obj_entity, tenant_id, context
         )
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        delta = time.perf_counter() - start_time
+        elapsed_ms = delta * 1000
 
-        # Cache result
+        # Cache result with XFetch delta
         if self._l1_cache:
             self._l1_cache.set(
-                subject[0], subject[1], permission, object[0], object[1], result, tenant_id
+                subject[0],
+                subject[1],
+                permission,
+                object[0],
+                object[1],
+                result,
+                tenant_id,
+                delta=delta,
             )
 
         logger.debug(
@@ -646,15 +654,25 @@ class AsyncReBACManager:
             subject_entity = Entity(subject[0], subject[1])
             obj_entity = Entity(obj[0], obj[1])
 
+            # Track delta for XFetch (Issue #718)
+            start_time = time.perf_counter()
             result = await self._compute_permission_bulk(
                 subject_entity, permission, obj_entity, tenant_id, tuples_graph, memo_cache
             )
+            delta = time.perf_counter() - start_time
             results[check] = result
 
-            # Cache result
+            # Cache result with XFetch delta
             if self._l1_cache:
                 self._l1_cache.set(
-                    subject[0], subject[1], permission, obj[0], obj[1], result, tenant_id
+                    subject[0],
+                    subject[1],
+                    permission,
+                    obj[0],
+                    obj[1],
+                    result,
+                    tenant_id,
+                    delta=delta,
                 )
 
         return results

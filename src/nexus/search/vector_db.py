@@ -964,62 +964,83 @@ class VectorDatabase:
         query: str,
         query_embedding: list[float],
         limit: int = 10,
-        keyword_weight: float = 0.3,
-        semantic_weight: float = 0.7,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        rrf_k: int = 60,
+        normalize_scores: bool = True,
         path_filter: str | None = None,
+        # Backward compatibility (deprecated)
+        keyword_weight: float | None = None,
+        semantic_weight: float | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid search combining keyword and semantic search.
+
+        Combines BM25/keyword search with vector/semantic search using
+        configurable fusion algorithms. Default is RRF (Reciprocal Rank Fusion).
 
         Args:
             session: Database session
             query: Text query for keyword search
             query_embedding: Embedding vector for semantic search
             limit: Maximum number of results
-            keyword_weight: Weight for keyword search (default: 0.3)
-            semantic_weight: Weight for semantic search (default: 0.7)
+            alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector).
+                   Used by 'weighted' and 'rrf_weighted' fusion methods.
+            fusion_method: Fusion algorithm - "rrf" (default), "weighted", or "rrf_weighted"
+            rrf_k: RRF constant (default: 60, per original paper)
+            normalize_scores: Apply min-max normalization for weighted fusion
             path_filter: Optional path prefix filter
+            keyword_weight: DEPRECATED - use alpha instead
+            semantic_weight: DEPRECATED - use alpha instead
 
         Returns:
             List of search results ranked by combined score
+
+        Example:
+            >>> results = vector_db.hybrid_search(
+            ...     session, "authentication", embedding,
+            ...     alpha=0.7,  # Favor vector search
+            ...     fusion_method="rrf",
+            ... )
         """
-        # Get keyword results
-        keyword_results = self.keyword_search(session, query, limit * 2, path_filter)
+        from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
+
+        # Handle backward compatibility for deprecated parameters
+        if keyword_weight is not None or semantic_weight is not None:
+            import warnings
+
+            warnings.warn(
+                "keyword_weight and semantic_weight are deprecated. "
+                "Use alpha parameter instead (0.0 = all BM25, 1.0 = all vector). "
+                "For equivalent behavior, set fusion_method='weighted' and alpha=semantic_weight.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if semantic_weight is not None:
+                alpha = semantic_weight
+                fusion_method = "weighted"
+
+        # Get keyword results (retrieve more for better fusion)
+        keyword_results = self.keyword_search(session, query, limit * 3, path_filter)
 
         # Get vector results
-        vector_results = self.vector_search(session, query_embedding, limit * 2, path_filter)
+        vector_results = self.vector_search(session, query_embedding, limit * 3, path_filter)
 
-        # Combine and re-rank
-        results_map: dict[str, dict[str, Any]] = {}
+        # Create fusion config
+        config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+            normalize_scores=normalize_scores,
+        )
 
-        # Add keyword results
-        for result in keyword_results:
-            chunk_id = result["chunk_id"]
-            results_map[chunk_id] = result.copy()
-            results_map[chunk_id]["keyword_score"] = result["score"]
-            results_map[chunk_id]["vector_score"] = 0.0
-
-        # Add/merge vector results
-        for result in vector_results:
-            chunk_id = result["chunk_id"]
-            if chunk_id in results_map:
-                results_map[chunk_id]["vector_score"] = result["score"]
-            else:
-                results_map[chunk_id] = result.copy()
-                results_map[chunk_id]["keyword_score"] = 0.0
-                results_map[chunk_id]["vector_score"] = result["score"]
-
-        # Calculate combined scores
-        for result in results_map.values():
-            result["score"] = (
-                result["keyword_score"] * keyword_weight + result["vector_score"] * semantic_weight
-            )
-
-        # Sort by combined score and return top results
-        ranked_results = sorted(results_map.values(), key=lambda x: x["score"], reverse=True)[
-            :limit
-        ]
-
-        return ranked_results
+        # Fuse results using shared algorithm
+        return fuse_results(
+            keyword_results,
+            vector_results,
+            config=config,
+            limit=limit,
+            id_key="chunk_id",
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get vector database statistics.

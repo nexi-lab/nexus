@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    pass
+    from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
 
 logger = logging.getLogger(__name__)
 
@@ -472,6 +472,128 @@ class FastEmbedProvider(EmbeddingProvider):
             return 384
 
 
+class CachedEmbeddingProvider(EmbeddingProvider):
+    """Wrapper that adds caching to any embedding provider.
+
+    Implements Issue #950 - reduces embedding API calls by 90% through:
+    - Content-hash based caching (same text = same embedding)
+    - Batch deduplication (dedupe before API call)
+
+    Usage:
+        from nexus.core.cache import CacheFactory, CacheSettings
+
+        # Initialize cache
+        settings = CacheSettings.from_env()
+        factory = CacheFactory(settings)
+        await factory.initialize()
+
+        # Wrap any embedding provider
+        base_provider = create_embedding_provider("openai")
+        embedding_cache = factory.get_embedding_cache()
+
+        if embedding_cache:
+            provider = CachedEmbeddingProvider(base_provider, embedding_cache)
+        else:
+            provider = base_provider  # Fallback to uncached
+    """
+
+    def __init__(
+        self,
+        provider: EmbeddingProvider,
+        cache: DragonflyEmbeddingCache,
+    ):
+        """Initialize cached embedding provider.
+
+        Args:
+            provider: Base embedding provider to wrap
+            cache: DragonflyEmbeddingCache instance
+        """
+        self._provider = provider
+        self._cache: DragonflyEmbeddingCache = cache
+        self._model_name = self._get_model_name()
+
+    def _get_model_name(self) -> str:
+        """Get model name from wrapped provider."""
+        if hasattr(self._provider, "model"):
+            return str(self._provider.model)
+        if hasattr(self._provider, "model_name"):
+            return str(self._provider.model_name)
+        return self._provider.__class__.__name__
+
+    @property
+    def batch_size(self) -> int:
+        """Delegate batch size to wrapped provider."""
+        return self._provider.batch_size
+
+    def embedding_dimension(self) -> int:
+        """Delegate embedding dimension to wrapped provider."""
+        return self._provider.embedding_dimension()
+
+    async def embed_text(self, text: str) -> list[float]:
+        """Embed single text with caching.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector (cached or freshly generated)
+        """
+        # Check cache first
+        cached = await self._cache.get(text, self._model_name)
+        if cached is not None:
+            return cached
+
+        # Generate embedding
+        embedding = await self._provider.embed_text(text)
+
+        # Cache the result (best-effort)
+        await self._cache.set(text, self._model_name, embedding)
+
+        return embedding
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed batch of texts with caching and deduplication.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embeddings in the same order as input
+        """
+        if not texts:
+            return []
+
+        # Use cache's batch method with deduplication
+        return await self._cache.get_or_embed_batch(
+            texts=texts,
+            model=self._model_name,
+            embed_fn=self._provider.embed_texts,
+        )
+
+    async def embed_texts_batched(
+        self,
+        texts: list[str],
+        _batch_size: int | None = None,
+        _parallel: bool = True,
+    ) -> list[list[float]]:
+        """Embed texts with batching and caching.
+
+        The cache handles deduplication internally, so we just pass through
+        to embed_texts which will use the cache.
+        """
+        # For cached provider, we let the cache handle batching
+        # since it already does deduplication
+        return await self.embed_texts(texts)
+
+    def get_cache_metrics(self) -> dict:
+        """Get cache metrics.
+
+        Returns:
+            Dict with cache statistics
+        """
+        return self._cache.get_metrics()
+
+
 def create_embedding_provider(
     provider: str = "openai", model: str | None = None, api_key: str | None = None
 ) -> EmbeddingProvider:
@@ -530,3 +652,69 @@ def create_embedding_provider(
             f"Unknown embedding provider: {provider}. "
             "Supported: openai, voyage, voyage-lite, voyage-large, fastembed, openrouter"
         )
+
+
+async def create_cached_embedding_provider(
+    provider: str = "openai",
+    model: str | None = None,
+    api_key: str | None = None,
+    cache_url: str | None = None,
+    cache_ttl: int = 86400,
+) -> EmbeddingProvider:
+    """Create an embedding provider with caching enabled.
+
+    This is a convenience function that creates a base embedding provider
+    and wraps it with caching if a cache URL is provided.
+
+    Implements Issue #950 - reduces embedding API calls by 90%.
+
+    Args:
+        provider: Provider name (openai, voyage, voyage-lite, fastembed, etc.)
+        model: Model name (uses default if not provided)
+        api_key: API key for the provider
+        cache_url: Redis/Dragonfly URL for caching (e.g., redis://localhost:6379)
+                   If None, returns uncached provider
+        cache_ttl: Cache TTL in seconds (default: 24 hours)
+
+    Returns:
+        EmbeddingProvider instance (cached if cache_url provided)
+
+    Examples:
+        # Cached OpenAI embeddings
+        provider = await create_cached_embedding_provider(
+            "openai",
+            cache_url="redis://localhost:6379"
+        )
+
+        # Uncached fallback
+        provider = await create_cached_embedding_provider("openai")
+    """
+    # Create base provider
+    base_provider = create_embedding_provider(provider, model, api_key)
+
+    # Return uncached if no cache URL
+    if not cache_url:
+        logger.info("Embedding cache not configured, using uncached provider")
+        return base_provider
+
+    # Try to create cached provider
+    try:
+        from nexus.core.cache.dragonfly import DragonflyClient, DragonflyEmbeddingCache
+
+        # Connect to cache
+        client = DragonflyClient(url=cache_url)
+        await client.connect()
+
+        # Create cache and wrapped provider
+        cache = DragonflyEmbeddingCache(client=client, ttl=cache_ttl)
+        cached_provider = CachedEmbeddingProvider(base_provider, cache)
+
+        logger.info(f"Embedding cache enabled with TTL={cache_ttl}s")
+        return cached_provider
+
+    except ImportError:
+        logger.warning("redis package not installed, using uncached provider")
+        return base_provider
+    except Exception as e:
+        logger.warning(f"Failed to connect to embedding cache ({e}), using uncached provider")
+        return base_provider

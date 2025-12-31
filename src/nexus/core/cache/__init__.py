@@ -16,15 +16,25 @@ Usage:
 
     cache = get_permission_cache()
     result = await cache.get(subject_type, subject_id, permission, ...)
+
+Embedding Cache (Issue #950):
+    from nexus.core.cache import DragonflyEmbeddingCache
+
+    # Get via factory
+    embedding_cache = cache_factory.get_embedding_cache()
+    if embedding_cache:
+        embeddings = await embedding_cache.get_or_embed_batch(texts, model, embed_fn)
 """
 
 from nexus.core.cache.base import PermissionCacheProtocol, TigerCacheProtocol
+from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
 from nexus.core.cache.factory import CacheFactory
 from nexus.core.cache.settings import CacheSettings
 
 __all__ = [
     "CacheSettings",
     "CacheFactory",
+    "DragonflyEmbeddingCache",
     "PermissionCacheProtocol",
     "TigerCacheProtocol",
 ]

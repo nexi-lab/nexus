@@ -361,3 +361,272 @@ class TestRevisionQuantization:
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert "quantization_interval is deprecated" in str(w[0].message)
+
+
+class TestXFetchAlgorithm:
+    """Test XFetch probabilistic early expiration algorithm (Issue #718).
+
+    Based on VLDB 2015 paper: "Optimal Probabilistic Cache Stampede Prevention"
+    https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
+    """
+
+    def test_xfetch_default_beta(self):
+        """Test that default beta is 1.0."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+        stats = cache.get_stats()
+        assert stats["xfetch_beta"] == 1.0
+
+    def test_xfetch_custom_beta(self):
+        """Test custom beta configuration."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, xfetch_beta=2.0)
+        stats = cache.get_stats()
+        assert stats["xfetch_beta"] == 2.0
+
+    def test_set_with_delta(self):
+        """Test that delta is stored in entry metadata."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set with delta
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.05)
+
+        # Verify metadata includes delta
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        metadata = cache._entry_metadata.get(key)
+        assert metadata is not None
+        assert len(metadata) == 3  # (created_at, jittered_ttl, delta)
+        assert metadata[2] == 0.05  # delta
+
+    def test_set_default_delta_zero(self):
+        """Test that default delta is 0.0."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True)
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        metadata = cache._entry_metadata.get(key)
+        assert metadata is not None
+        assert metadata[2] == 0.0  # default delta
+
+    def test_xfetch_expired_returns_true(self):
+        """Test that expired entries always return True for refresh."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=1)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.01)
+
+        # Wait for expiration
+        time.sleep(1.5)
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        assert cache._should_refresh_xfetch(key) is True
+
+    def test_xfetch_fresh_entry_low_probability(self):
+        """Test that fresh entries have low refresh probability."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Set with small delta - fresh entry shouldn't trigger refresh often
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.01)
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+
+        # Run many iterations - fresh entry with small delta should rarely trigger
+        refresh_count = 0
+        iterations = 1000
+        for _ in range(iterations):
+            if cache._should_refresh_xfetch(key):
+                refresh_count += 1
+
+        # With 300s TTL and 0.01s delta, probability should be very low
+        # Expect < 5% refresh rate for fresh entries
+        refresh_rate = refresh_count / iterations
+        assert refresh_rate < 0.05, f"Fresh entry refresh rate too high: {refresh_rate}"
+
+    def test_xfetch_higher_delta_more_aggressive(self):
+        """Test that higher delta leads to earlier refresh."""
+        # Create two caches with same TTL
+        cache1 = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+        cache2 = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set entries with different deltas
+        # For XFetch to trigger, delta * beta * -log(random) must >= time_remaining
+        # With 2 seconds remaining and beta=1.0, we need delta comparable to 2s
+        cache1.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.5)  # 500ms
+        cache2.set("agent", "alice", "read", "file", "/doc.txt", True, delta=5.0)  # 5s
+
+        key1 = cache1._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        key2 = cache2._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+
+        # Simulate entry that is 58 seconds old (2 seconds remaining)
+        now = time.time()
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 0.5)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 5.0)
+
+        # Run many iterations
+        refresh_count1 = 0
+        refresh_count2 = 0
+        iterations = 1000
+        for _ in range(iterations):
+            if cache1._should_refresh_xfetch(key1):
+                refresh_count1 += 1
+            if cache2._should_refresh_xfetch(key2):
+                refresh_count2 += 1
+
+        # Higher delta should have significantly more refreshes
+        assert refresh_count2 > refresh_count1, (
+            f"Higher delta should refresh more: low={refresh_count1}, high={refresh_count2}"
+        )
+
+    def test_xfetch_higher_beta_more_aggressive(self):
+        """Test that higher beta leads to more aggressive refresh."""
+        cache1 = ReBACPermissionCache(max_size=100, ttl_seconds=60, xfetch_beta=0.5)
+        cache2 = ReBACPermissionCache(max_size=100, ttl_seconds=60, xfetch_beta=5.0)
+
+        # Set entries with same delta
+        # With 2 seconds remaining and delta=2.0, higher beta will trigger more
+        cache1.set("agent", "alice", "read", "file", "/doc.txt", True, delta=2.0)
+        cache2.set("agent", "alice", "read", "file", "/doc.txt", True, delta=2.0)
+
+        key1 = cache1._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        key2 = cache2._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+
+        # Simulate entry that is 58 seconds old (2 seconds remaining)
+        now = time.time()
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 2.0)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 2.0)
+
+        # Run many iterations
+        refresh_count1 = 0
+        refresh_count2 = 0
+        iterations = 1000
+        for _ in range(iterations):
+            if cache1._should_refresh_xfetch(key1):
+                refresh_count1 += 1
+            if cache2._should_refresh_xfetch(key2):
+                refresh_count2 += 1
+
+        # Higher beta should have more refreshes
+        assert refresh_count2 > refresh_count1, (
+            f"Higher beta should refresh more: beta=0.5 had {refresh_count1}, beta=5.0 had {refresh_count2}"
+        )
+
+    def test_xfetch_fallback_for_zero_delta(self):
+        """Test that zero delta falls back to refresh-ahead threshold."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, refresh_ahead_factor=0.7)
+
+        # Set entry without delta
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True)  # delta=0.0
+
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+
+        # Before refresh threshold (70% of TTL = 42 seconds)
+        now = time.time()
+        cache._entry_metadata[key] = (now - 30, 60.0, 0.0)  # 30s old
+        assert cache._should_refresh_xfetch(key) is False
+
+        # After refresh threshold
+        cache._entry_metadata[key] = (now - 45, 60.0, 0.0)  # 45s old
+        assert cache._should_refresh_xfetch(key) is True
+
+    def test_get_with_refresh_check_tracks_xfetch(self):
+        """Test that get_with_refresh_check uses XFetch and tracks metrics."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, enable_metrics=True)
+
+        # Set entry with large delta (5 seconds)
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=5.0)
+
+        # Get the key immediately after set (before any time passes)
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+
+        # Simulate passage of time near expiry (only 2 seconds remaining)
+        # With delta=5.0 and beta=1.0, E[refresh_factor] = 5.0
+        # So with 2 seconds remaining, we should trigger frequently
+        now = time.time()
+        cache._entry_metadata[key] = (now - 58, 60.0, 5.0)  # 58s old, 2s remaining
+
+        # Should trigger refresh at least sometimes
+        refresh_triggered = False
+        for _ in range(100):
+            result, needs_refresh, _ = cache.get_with_refresh_check(
+                "agent", "alice", "read", "file", "/doc.txt"
+            )
+            if needs_refresh:
+                refresh_triggered = True
+                break
+
+        # Near expiry with large delta should trigger at least once
+        assert refresh_triggered, "XFetch should trigger near expiry with large delta"
+
+    def test_release_compute_with_delta(self):
+        """Test that release_compute accepts and uses delta."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Acquire compute
+        should_compute, key = cache.try_acquire_compute(
+            "agent", "alice", "read", "file", "/doc.txt"
+        )
+        assert should_compute is True
+
+        # Release with delta
+        cache.release_compute(
+            key, True, "agent", "alice", "read", "file", "/doc.txt", None, delta=0.1
+        )
+
+        # Verify delta was stored
+        metadata = cache._entry_metadata.get(key)
+        assert metadata is not None
+        assert metadata[2] == 0.1
+
+    def test_xfetch_metrics_in_stats(self):
+        """Test that XFetch metrics are included in stats."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, enable_metrics=True)
+
+        stats = cache.get_stats()
+        assert "xfetch_beta" in stats
+        assert "xfetch_early_refreshes" in stats
+        assert stats["xfetch_early_refreshes"] == 0
+
+    def test_xfetch_metrics_reset(self):
+        """Test that reset_stats resets XFetch metrics."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, enable_metrics=True)
+
+        # Force increment (simulate some early refreshes)
+        cache._xfetch_early_refreshes = 5
+
+        cache.reset_stats()
+
+        stats = cache.get_stats()
+        assert stats["xfetch_early_refreshes"] == 0
+
+    def test_public_should_refresh_xfetch(self):
+        """Test public should_refresh_xfetch method."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.05)
+
+        # Should work without errors
+        result = cache.should_refresh_xfetch("agent", "alice", "read", "file", "/doc.txt")
+        assert isinstance(result, bool)
+
+    def test_public_should_refresh_xfetch_with_beta_override(self):
+        """Test public should_refresh_xfetch with beta override."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, xfetch_beta=1.0)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.1)
+
+        # Simulate near expiry
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        now = time.time()
+        cache._entry_metadata[key] = (now - 55, 60.0, 0.1)
+
+        # Run many iterations with different betas
+        refresh_beta_low = 0
+        refresh_beta_high = 0
+        iterations = 500
+
+        for _ in range(iterations):
+            if cache.should_refresh_xfetch("agent", "alice", "read", "file", "/doc.txt", beta=0.1):
+                refresh_beta_low += 1
+            if cache.should_refresh_xfetch("agent", "alice", "read", "file", "/doc.txt", beta=5.0):
+                refresh_beta_high += 1
+
+        # Higher beta should trigger more refreshes
+        assert refresh_beta_high >= refresh_beta_low

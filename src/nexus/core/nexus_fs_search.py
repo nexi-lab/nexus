@@ -1034,8 +1034,52 @@ class NexusFSSearchMixin:
             raw_start = time.time()
             remaining_results = max_results - len(results)
 
-            # Try Rust-accelerated grep if available
-            if grep_fast.is_available():
+            # Try mmap-accelerated grep first (Issue #893)
+            # This is faster for large files as it avoids Python->Rust data copy
+            mmap_used = False
+            if grep_fast.is_mmap_available():
+                try:
+                    from nexus.storage.file_cache import get_file_cache
+
+                    # Get tenant for disk path lookup
+                    tenant_id, _, _ = self._get_routing_params(context)
+                    if tenant_id:
+                        file_cache = get_file_cache()
+                        disk_paths = file_cache.get_disk_paths_bulk(tenant_id, files_needing_raw)
+
+                        if disk_paths:
+                            # Create mapping from disk_path back to virtual_path
+                            disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}
+                            disk_path_list = list(disk_paths.values())
+
+                            # Use mmap-based grep directly on disk files
+                            mmap_results = grep_fast.grep_files_mmap(
+                                pattern,
+                                disk_path_list,
+                                ignore_case=ignore_case,
+                                max_results=remaining_results,
+                            )
+
+                            if mmap_results is not None:
+                                # Map disk paths back to virtual paths in results
+                                for match in mmap_results:
+                                    disk_path = match.get("file", "")
+                                    virtual_path = disk_to_virtual.get(disk_path, disk_path)
+                                    match["file"] = virtual_path
+                                results.extend(mmap_results)
+                                mmap_used = True
+
+                                # Update files_needing_raw to exclude files processed by mmap
+                                files_needing_raw = [
+                                    f for f in files_needing_raw if f not in disk_paths
+                                ]
+                                remaining_results = max_results - len(results)
+
+                except Exception as e:
+                    logger.debug(f"[GREP] Mmap optimization failed, falling back: {e}")
+
+            # Try Rust-accelerated grep if available (for files not handled by mmap)
+            if grep_fast.is_available() and remaining_results > 0 and files_needing_raw:
                 bulk_results = self.read_bulk(files_needing_raw, context=context, skip_errors=True)
                 file_contents: dict[str, bytes] = {
                     fp: content
@@ -1049,7 +1093,7 @@ class NexusFSSearchMixin:
 
                 if rust_results is not None:
                     results.extend(rust_results)
-            else:
+            elif not mmap_used:
                 # Python fallback for raw content
                 for file_path in files_needing_raw:
                     if len(results) >= max_results:

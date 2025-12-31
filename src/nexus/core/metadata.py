@@ -6,7 +6,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core.compact_metadata import CompactFileMetadata
 
 
 @dataclass
@@ -38,7 +41,7 @@ class PaginatedResult:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class FileMetadata:
     """File metadata information.
 
@@ -95,6 +98,36 @@ class FileMetadata:
         # Validate version
         if self.version < 1:
             raise ValidationError(f"version must be >= 1, got {self.version}", path=self.path)
+
+    def to_compact(self) -> CompactFileMetadata:
+        """Convert to memory-efficient CompactFileMetadata.
+
+        Uses string interning to deduplicate path/hash strings across instances.
+        Reduces memory from ~200-300 bytes to ~64-100 bytes per instance.
+
+        Returns:
+            CompactFileMetadata with interned strings and packed fields
+
+        See Also:
+            Issue #911: CompactFileMetadata for 3x memory reduction
+        """
+        from nexus.core.compact_metadata import CompactFileMetadata
+
+        return CompactFileMetadata.from_file_metadata(self)
+
+    @classmethod
+    def from_compact(cls, compact: CompactFileMetadata) -> FileMetadata:
+        """Create FileMetadata from CompactFileMetadata.
+
+        Resolves interned string IDs back to full strings.
+
+        Args:
+            compact: CompactFileMetadata instance
+
+        Returns:
+            Full FileMetadata object
+        """
+        return compact.to_file_metadata()
 
 
 class MetadataStore(ABC):

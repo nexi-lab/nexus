@@ -280,9 +280,11 @@ class TestSearchDaemonWithMocks:
         mock_index.initialize = AsyncMock(return_value=True)
         mock_index._corpus = ["doc1", "doc2", "doc3"]
 
-        with patch("nexus.search.bm25s_search.BM25SIndex", return_value=mock_index):
-            with patch("nexus.search.bm25s_search.is_bm25s_available", return_value=True):
-                await daemon._init_bm25s_index()
+        with (
+            patch("nexus.search.bm25s_search.BM25SIndex", return_value=mock_index),
+            patch("nexus.search.bm25s_search.is_bm25s_available", return_value=True),
+        ):
+            await daemon._init_bm25s_index()
 
         assert daemon._bm25s_index is not None
         assert daemon.stats.bm25_documents == 3
@@ -415,10 +417,7 @@ class TestSearchDaemonIntegration:
         daemon._keyword_search = mock_keyword_search  # type: ignore
 
         # Run multiple searches concurrently
-        tasks = [
-            daemon.search(f"query_{i}", search_type="keyword", limit=10)
-            for i in range(5)
-        ]
+        tasks = [daemon.search(f"query_{i}", search_type="keyword", limit=10) for i in range(5)]
         results = await asyncio.gather(*tasks)
 
         assert len(results) == 5

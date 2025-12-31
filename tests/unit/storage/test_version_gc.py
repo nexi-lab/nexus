@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import tempfile
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -145,7 +146,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(5):
-            nx.write(path, f"Version {i+1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
 
         # Run GC with very aggressive settings (0 retention, 1 max version)
         gc = VersionHistoryGC(nx.metadata.SessionLocal)
@@ -157,7 +158,7 @@ class TestVersionHistoryGC:
 
         # The retention_days=0 won't work (validated), use 1 day with mocked old dates
         # For now, just test that GC runs without error
-        stats = gc.run_gc(config, dry_run=True)
+        gc.run_gc(config, dry_run=True)
 
         # Verify current version still readable
         content = nx.read(path)
@@ -169,7 +170,7 @@ class TestVersionHistoryGC:
 
         # Create multiple versions
         for i in range(3):
-            nx.write(path, f"Version {i+1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
 
         # Get initial version count
         with nx.metadata.SessionLocal() as session:
@@ -197,7 +198,7 @@ class TestVersionHistoryGC:
 
         # Create 10 versions
         for i in range(10):
-            nx.write(path, f"Version {i+1}".encode())
+            nx.write(path, f"Version {i + 1}".encode())
 
         # Get the resource_id (path_id) for this file
         with nx.metadata.SessionLocal() as session:
@@ -205,9 +206,7 @@ class TestVersionHistoryGC:
 
             from nexus.storage.models import FilePathModel
 
-            file_path = session.scalar(
-                select(FilePathModel).where(FilePathModel.full_path == path)
-            )
+            file_path = session.scalar(select(FilePathModel).where(FilePathModel.full_path == path))
             resource_id = file_path.path_id
 
         # Run GC with max 3 versions
@@ -340,8 +339,6 @@ class TestVersionGCTask:
         mock_config = VersionGCSettings(enabled=False)  # Disabled to avoid actual GC
 
         # Create the task but cancel it immediately
-        import asyncio
-
         task = asyncio.create_task(version_gc_task(mock_session_factory, mock_config))
 
         # Let it start
@@ -349,7 +346,5 @@ class TestVersionGCTask:
 
         # Cancel and verify it was created successfully
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass  # Expected

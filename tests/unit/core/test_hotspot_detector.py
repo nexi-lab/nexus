@@ -1,7 +1,7 @@
 """Tests for hotspot detection and proactive cache prefetching (Issue #921)."""
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

@@ -155,6 +155,9 @@ class AppState:
         # Thread pool and timeout settings (Issue #932)
         self.thread_pool_size: int = 200
         self.operation_timeout: float = 30.0
+        # Hot Search Daemon (Issue #951)
+        self.search_daemon: Any = None
+        self.search_daemon_enabled: bool = False
 
 
 # Global state (set during app creation)
@@ -439,6 +442,51 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
+    # Hot Search Daemon (Issue #951)
+    # Pre-warm search indexes for sub-50ms query response
+    # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
+    search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
+        "true",
+        "1",
+        "yes",
+    ) or (
+        # Auto-enable if not explicitly disabled and database URL is set
+        os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
+        and _app_state.database_url
+    )
+
+    if search_daemon_enabled:
+        try:
+            from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
+
+            config = DaemonConfig(
+                database_url=_app_state.database_url,
+                bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
+                db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
+                db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
+                refresh_enabled=os.getenv("NEXUS_SEARCH_REFRESH", "true").lower() in (
+                    "true",
+                    "1",
+                    "yes",
+                ),
+            )
+
+            _app_state.search_daemon = SearchDaemon(config)
+            await _app_state.search_daemon.startup()
+            _app_state.search_daemon_enabled = True
+            set_search_daemon(_app_state.search_daemon)
+
+            stats = _app_state.search_daemon.get_stats()
+            logger.info(
+                f"Search Daemon started: {stats['bm25_documents']} docs indexed, "
+                f"startup={stats['startup_time_ms']:.1f}ms"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start Search Daemon: {e}")
+            _app_state.search_daemon_enabled = False
+    else:
+        logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
+
     # Tiger Cache queue processor (Issue #935)
     # NOTE: Disabled by default - write-through handles grants/revokes immediately
     # Enable with NEXUS_ENABLE_TIGER_WORKER=true for cache warming scenarios
@@ -464,6 +512,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Shutdown Search Daemon (Issue #951)
+    if _app_state.search_daemon:
+        try:
+            await _app_state.search_daemon.shutdown()
+            logger.info("Search Daemon stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down Search Daemon: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -670,6 +726,45 @@ def _register_routes(app: FastAPI) -> None:
     async def health_check() -> HealthResponse:
         return HealthResponse(status="healthy", service="nexus-rpc")
 
+    # Extended health check with component status (Issue #951)
+    @app.get("/health/detailed", tags=["health"])
+    async def health_check_detailed() -> dict[str, Any]:
+        """Detailed health check including all components.
+
+        Returns status of:
+        - Core service
+        - Search daemon (if enabled)
+        - Database connection
+        - Background tasks
+        """
+        health: dict[str, Any] = {
+            "status": "healthy",
+            "service": "nexus-rpc",
+            "components": {},
+        }
+
+        # Check search daemon (Issue #951)
+        if _app_state.search_daemon:
+            daemon_health = _app_state.search_daemon.get_health()
+            health["components"]["search_daemon"] = daemon_health
+        else:
+            health["components"]["search_daemon"] = {
+                "status": "disabled",
+                "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
+            }
+
+        # Check async ReBAC manager
+        health["components"]["rebac"] = {
+            "status": "healthy" if _app_state.async_rebac_manager else "disabled",
+        }
+
+        # Check subscription manager
+        health["components"]["subscriptions"] = {
+            "status": "healthy" if _app_state.subscription_manager else "disabled",
+        }
+
+        return health
+
     # Authentication routes
     try:
         from nexus.server.auth.auth_routes import router as auth_router
@@ -755,6 +850,233 @@ def _register_routes(app: FastAPI) -> None:
             "async": True,
             "methods": list(_app_state.exposed_methods.keys()),
         }
+
+    # =========================================================================
+    # Search Daemon API Endpoints (Issue #951)
+    # =========================================================================
+
+    @app.get("/api/search/health", tags=["search"])
+    async def search_daemon_health() -> dict[str, Any]:
+        """Health check for the search daemon.
+
+        Returns daemon initialization status and component availability.
+        """
+        if not _app_state.search_daemon:
+            return {
+                "status": "disabled",
+                "daemon_enabled": False,
+                "message": "Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
+            }
+
+        health = _app_state.search_daemon.get_health()
+        return health
+
+    @app.get("/api/search/stats", tags=["search"])
+    async def search_daemon_stats() -> dict[str, Any]:
+        """Get search daemon statistics.
+
+        Returns performance metrics including latency, document counts, and component status.
+        """
+        if not _app_state.search_daemon:
+            raise HTTPException(
+                status_code=503,
+                detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
+            )
+
+        return _app_state.search_daemon.get_stats()
+
+    @app.get("/api/search/query", tags=["search"])
+    async def search_query(
+        q: str = Query(..., description="Search query text", min_length=1),
+        type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
+        limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
+        path: str | None = Query(None, description="Optional path prefix filter"),
+        alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
+        fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Execute a fast search query using the search daemon.
+
+        This endpoint uses pre-warmed indexes for sub-50ms response times.
+
+        Args:
+            q: Search query text
+            type: Search type ("keyword", "semantic", or "hybrid")
+            limit: Maximum number of results (1-100)
+            path: Optional path prefix filter (e.g., "/docs/")
+            alpha: Weight for semantic search (0.0 = all keyword, 1.0 = all semantic)
+            fusion: Fusion method for hybrid search
+
+        Returns:
+            Search results with scores and metadata
+        """
+        import time
+
+        start_time = time.perf_counter()
+
+        if not _app_state.search_daemon:
+            raise HTTPException(
+                status_code=503,
+                detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
+            )
+
+        if not _app_state.search_daemon.is_initialized:
+            raise HTTPException(
+                status_code=503,
+                detail="Search daemon is still initializing",
+            )
+
+        # Validate search type
+        if type not in ("keyword", "semantic", "hybrid"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid search type: {type}. Must be 'keyword', 'semantic', or 'hybrid'",
+            )
+
+        # Validate fusion method
+        if fusion not in ("rrf", "weighted", "rrf_weighted"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid fusion method: {fusion}. Must be 'rrf', 'weighted', or 'rrf_weighted'",
+            )
+
+        try:
+            results = await _app_state.search_daemon.search(
+                query=q,
+                search_type=type,  # type: ignore[arg-type]
+                limit=limit,
+                path_filter=path,
+                alpha=alpha,
+                fusion_method=fusion,
+            )
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+
+            return {
+                "query": q,
+                "search_type": type,
+                "results": [
+                    {
+                        "path": r.path,
+                        "chunk_text": r.chunk_text,
+                        "score": round(r.score, 4),
+                        "chunk_index": r.chunk_index,
+                        "line_start": r.line_start,
+                        "line_end": r.line_end,
+                        "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
+                        "vector_score": round(r.vector_score, 4) if r.vector_score else None,
+                    }
+                    for r in results
+                ],
+                "total": len(results),
+                "latency_ms": round(latency_ms, 2),
+            }
+
+        except Exception as e:
+            logger.error(f"Search error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Search error: {e}") from e
+
+    @app.post("/api/search/refresh", tags=["search"])
+    async def search_refresh_notify(
+        path: str = Query(..., description="Path of the changed file"),
+        change_type: str = Query("update", description="Type of change: create, update, delete"),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Notify the search daemon of a file change for index refresh.
+
+        This endpoint allows external systems to trigger index updates
+        when files are modified outside of the normal Nexus write flow.
+
+        Args:
+            path: Virtual path of the changed file
+            change_type: Type of change (create, update, delete)
+
+        Returns:
+            Acknowledgment of the notification
+        """
+        if not _app_state.search_daemon:
+            raise HTTPException(
+                status_code=503,
+                detail="Search daemon not enabled",
+            )
+
+        await _app_state.search_daemon.notify_file_change(path, change_type)
+
+        return {
+            "status": "accepted",
+            "path": path,
+            "change_type": change_type,
+        }
+
+    # =========================================================================
+    # Hotspot Detection API Endpoints (Issue #921)
+    # =========================================================================
+
+    @app.get("/api/v1/admin/hotspot-stats", tags=["admin"])
+    async def get_hotspot_stats(
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get hotspot detection statistics (Issue #921).
+
+        Returns access pattern tracking statistics including:
+        - Number of tracked keys
+        - Total accesses recorded
+        - Hot entries detected (above threshold)
+        - Prefetch triggers
+
+        Requires admin authentication.
+        """
+        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+        if not permission_enforcer:
+            raise HTTPException(status_code=503, detail="Permission enforcer not available")
+
+        hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
+        if not hotspot_detector:
+            return {
+                "enabled": False,
+                "message": "Hotspot tracking not enabled",
+            }
+
+        return hotspot_detector.get_stats()
+
+    @app.get("/api/v1/admin/hot-entries", tags=["admin"])
+    async def get_hot_entries(
+        limit: int = Query(10, description="Maximum number of entries", ge=1, le=100),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> list[dict[str, Any]]:
+        """Get current hot permission entries (Issue #921).
+
+        Returns list of frequently accessed permission paths,
+        sorted by access count (hottest first).
+
+        Args:
+            limit: Maximum number of entries to return
+
+        Requires admin authentication.
+        """
+        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+        if not permission_enforcer:
+            raise HTTPException(status_code=503, detail="Permission enforcer not available")
+
+        hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
+        if not hotspot_detector:
+            return []
+
+        entries = hotspot_detector.get_hot_entries(limit=limit)
+
+        # Convert to dict for JSON serialization
+        return [
+            {
+                "subject_type": e.subject_type,
+                "subject_id": e.subject_id,
+                "resource_type": e.resource_type,
+                "permission": e.permission,
+                "tenant_id": e.tenant_id,
+                "access_count": e.access_count,
+                "last_access": e.last_access,
+            }
+            for e in entries
+        ]
 
     # =========================================================================
     # Subscription API Endpoints

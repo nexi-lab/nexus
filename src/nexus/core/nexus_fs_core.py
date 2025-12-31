@@ -2299,6 +2299,128 @@ class NexusFSCoreMixin:
         except Exception:  # InvalidPathError
             return False
 
+    @rpc_expose(description="Check existence of multiple paths in single call")
+    def exists_batch(
+        self, paths: list[str], context: OperationContext | None = None
+    ) -> dict[str, bool]:
+        """
+        Check existence of multiple paths in a single call (Issue #859).
+
+        This reduces network round trips when checking many paths at once.
+        Processing 10 paths requires 1 round trip instead of 10.
+
+        Args:
+            paths: List of virtual paths to check
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            Dictionary mapping each path to its existence status (True/False)
+
+        Performance:
+            - Single RPC call instead of N calls
+            - 10x fewer round trips for multi-path operations
+            - Each path is checked independently (errors don't affect others)
+
+        Examples:
+            >>> results = nx.exists_batch(["/file1.txt", "/file2.txt", "/missing.txt"])
+            >>> print(results)
+            {"/file1.txt": True, "/file2.txt": True, "/missing.txt": False}
+        """
+        results: dict[str, bool] = {}
+        for path in paths:
+            try:
+                results[path] = self.exists(path, context=context)
+            except Exception:
+                # Any error means file doesn't exist or isn't accessible
+                results[path] = False
+        return results
+
+    @rpc_expose(description="Get metadata for multiple paths in single call")
+    def metadata_batch(
+        self, paths: list[str], context: OperationContext | None = None
+    ) -> dict[str, dict[str, Any] | None]:
+        """
+        Get metadata for multiple paths in a single call (Issue #859).
+
+        This reduces network round trips when fetching metadata for many files.
+        Processing 10 paths requires 1 round trip instead of 10.
+
+        Args:
+            paths: List of virtual paths to get metadata for
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            Dictionary mapping each path to its metadata dict or None if not found.
+            Metadata includes: path, size, etag, mime_type, created_at, modified_at,
+            version, tenant_id, is_directory.
+
+        Performance:
+            - Single RPC call instead of N calls
+            - 10x fewer round trips for multi-path operations
+            - Leverages batch metadata fetch from database
+
+        Examples:
+            >>> results = nx.metadata_batch(["/file1.txt", "/missing.txt"])
+            >>> print(results["/file1.txt"]["size"])
+            1024
+            >>> print(results["/missing.txt"])
+            None
+        """
+        results: dict[str, dict[str, Any] | None] = {}
+
+        # Validate paths and collect valid ones
+        valid_paths: list[str] = []
+        for path in paths:
+            try:
+                validated = self._validate_path(path)
+                valid_paths.append(validated)
+            except Exception:
+                results[path] = None
+
+        # Batch fetch metadata from database
+        if valid_paths and hasattr(self.metadata, "get_batch"):
+            batch_metadata = self.metadata.get_batch(valid_paths)
+        else:
+            # Fallback to individual fetches if get_batch not available
+            batch_metadata = {p: self.metadata.get(p) for p in valid_paths}
+
+        # Process results with permission checks
+        for path in valid_paths:
+            try:
+                meta = batch_metadata.get(path)
+
+                if meta is None:
+                    results[path] = None
+                    continue
+
+                # Check permission if enforcement enabled
+                if self._enforce_permissions:  # type: ignore[attr-defined]
+                    ctx = context if context is not None else self._default_context
+                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
+                        results[path] = None
+                        continue
+
+                # Check if it's a directory
+                is_dir = self.is_directory(path, context=context)
+
+                results[path] = {
+                    "path": meta.path,
+                    "backend_name": meta.backend_name,
+                    "physical_path": meta.physical_path,
+                    "size": meta.size,
+                    "etag": meta.etag,
+                    "mime_type": meta.mime_type,
+                    "created_at": meta.created_at,
+                    "modified_at": meta.modified_at,
+                    "version": meta.version,
+                    "tenant_id": meta.tenant_id,
+                    "is_directory": is_dir,
+                }
+            except Exception:
+                results[path] = None
+
+        return results
+
     def _compute_etag(self, content: bytes) -> str:
         """
         Compute ETag for file content.

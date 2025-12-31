@@ -5,6 +5,10 @@ This module contains file search and listing operations:
 - glob: Find files matching glob patterns
 - grep: Search file contents using regex (with optional Zoekt acceleration)
 - semantic_search: Search files using semantic similarity
+
+Issue #929: Adaptive algorithm selection for search operations.
+Implements runtime strategy selection similar to ClickHouse's approach,
+choosing optimal algorithms based on data characteristics.
 """
 
 from __future__ import annotations
@@ -14,9 +18,53 @@ import builtins
 import fnmatch
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
+
+# =============================================================================
+# Issue #929: Adaptive Algorithm Selection Configuration
+# =============================================================================
+
+# Grep strategy thresholds
+GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential (no overhead)
+GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
+GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
+GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep
+GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached text
+
+# Glob strategy thresholds
+GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count
+
+
+class SearchStrategy(StrEnum):
+    """Strategy for grep operations (Issue #929).
+
+    Selected at runtime based on file count, cached text ratio, and available backends.
+    Inspired by ClickHouse's adaptive algorithm selection.
+    """
+
+    SEQUENTIAL = "sequential"  # < 10 files, any pattern - no parallelization overhead
+    CACHED_TEXT = "cached_text"  # > 80% files have pre-parsed text in cache
+    RUST_BULK = "rust_bulk"  # 10-1000 files with Rust available
+    PARALLEL_POOL = "parallel_pool"  # 100-10000 files, CPU-bound parallel processing
+    ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index available
+
+
+class GlobStrategy(StrEnum):
+    """Strategy for glob operations (Issue #929).
+
+    Selected at runtime based on pattern complexity and file count.
+    """
+
+    FNMATCH_SIMPLE = "fnmatch_simple"  # Simple patterns without **
+    REGEX_COMPILED = "regex_compiled"  # Complex patterns with **
+    RUST_BULK = "rust_bulk"  # > 50 files with Rust available
+    DIRECTORY_PRUNED = "directory_pruned"  # Pattern has static prefix for pruning
+
+
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -808,16 +856,19 @@ class NexusFSSearchMixin:
         if path and path != "/":
             path = self._validate_path(path)
 
-        # Directory-level pruning optimization:
+        import time
+
+        glob_start = time.time()
+
+        # Phase 1: Directory-level pruning optimization (Issue #929: DIRECTORY_PRUNED strategy)
         # Extract static prefix from pattern to limit directory traversal.
         # For "src/components/**/*.tsx", only list files under "src/components/"
         # instead of the entire tree. This can provide 10-100x speedup.
         search_path = path
+        static_prefix = None
         if path == "/" or path == "":
             static_prefix = glob_fast.extract_static_prefix(pattern)
             if static_prefix:
-                # Combine base path with static prefix
-                # Ensure proper path formatting
                 if static_prefix.startswith("/"):
                     search_path = static_prefix.rstrip("/")
                 else:
@@ -826,20 +877,30 @@ class NexusFSSearchMixin:
                     f"[GLOB] Directory pruning: pattern='{pattern}' -> search_path='{search_path}'"
                 )
 
-        # SECURITY: Filter files by ReBAC permissions FIRST
-        # This ensures users only see files they have access to
+        # Phase 2: Get accessible files (with ReBAC permission filtering)
+        list_start = time.time()
         accessible_files: list[str] = cast(
             list[str], self.list(search_path, recursive=True, context=context)
         )
+        list_elapsed = time.time() - list_start
+        logger.debug(f"[GLOB] Phase 1: list() found {len(accessible_files)} files in {list_elapsed:.3f}s")
 
-        # Build full pattern
+        if not accessible_files:
+            return []
+
+        # Phase 3: Select strategy based on pattern and file count (Issue #929)
+        strategy = self._select_glob_strategy(pattern, len(accessible_files))
+        logger.debug(
+            f"[GLOB] Strategy selected: {strategy.value} "
+            f"(pattern='{pattern}', files={len(accessible_files)})"
+        )
+
+        # Build full pattern for matching
         if not path.endswith("/"):
             path = path + "/"
         if path == "/":
             full_pattern = pattern
             # Auto-prepend **/ for patterns that look relative
-            # (don't start with known namespaces and don't already have **)
-            # and have path separators (e.g., "src/*.py" vs "*.py")
             if (
                 "**" not in full_pattern
                 and not full_pattern.startswith(("workspace/", "shared/", "external/"))
@@ -847,61 +908,182 @@ class NexusFSSearchMixin:
             ):
                 full_pattern = "**/" + full_pattern
         else:
-            # Remove leading / from path for pattern matching
             base_path = path[1:] if path.startswith("/") else path
             full_pattern = base_path + pattern
 
-        # Try Rust acceleration first (10-20x faster)
-        # Adjust pattern for Rust: paths have leading /, so pattern should too
-        rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
-        rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
-        if rust_matches is not None:
-            return sorted(rust_matches)
+        # Phase 4: Execute strategy-specific matching
+        match_start = time.time()
+        matches: list[str] = []
 
-        # Fallback to Python implementation
-        # Match accessible files against pattern
-        # Handle ** for recursive matching
-        if "**" in full_pattern:
-            # Convert glob pattern to regex
-            # Split by ** to handle recursive matching
+        # =====================================================================
+        # Strategy: RUST_BULK or DIRECTORY_PRUNED - Use Rust acceleration
+        # =====================================================================
+        if strategy in (GlobStrategy.RUST_BULK, GlobStrategy.DIRECTORY_PRUNED):
+            rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
+            rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
+            if rust_matches is not None:
+                matches = rust_matches
+            else:
+                # Fall through to Python implementation
+                logger.debug("[GLOB] Rust acceleration failed, falling back to Python")
+                strategy = (
+                    GlobStrategy.REGEX_COMPILED if "**" in full_pattern else GlobStrategy.FNMATCH_SIMPLE
+                )
+
+        # =====================================================================
+        # Strategy: REGEX_COMPILED - Use regex for complex patterns with **
+        # =====================================================================
+        if strategy == GlobStrategy.REGEX_COMPILED and not matches:
             parts = full_pattern.split("**")
-
             regex_parts = []
             for i, part in enumerate(parts):
                 if i > 0:
-                    # ** matches zero or more path segments
-                    # This can be empty or ".../", so use (?:.*/)? for optional match
                     regex_parts.append("(?:.*/)?")
-
-                # Escape and convert wildcards in this part
                 escaped = re.escape(part)
                 escaped = escaped.replace(r"\*", "[^/]*")
                 escaped = escaped.replace(r"\?", ".")
                 escaped = escaped.replace(r"\[", "[").replace(r"\]", "]")
-
-                # Remove leading / from all parts since it's handled by ** or the anchor
-                # Note: re.escape() doesn't escape /, so we check for it directly
                 while escaped.startswith("/"):
                     escaped = escaped[1:]
-
                 regex_parts.append(escaped)
 
             regex_pattern = "^/" + "".join(regex_parts) + "$"
+            compiled_regex = re.compile(regex_pattern)
 
-            matches = []
+            matches = [fp for fp in accessible_files if compiled_regex.match(fp)]
+
+        # =====================================================================
+        # Strategy: FNMATCH_SIMPLE - Use fnmatch for simple patterns
+        # =====================================================================
+        if strategy == GlobStrategy.FNMATCH_SIMPLE and not matches:
             for file_path in accessible_files:
-                if re.match(regex_pattern, file_path):
-                    matches.append(file_path)
-        else:
-            # Use fnmatch for simpler patterns
-            matches = []
-            for file_path in accessible_files:
-                # Remove leading / for matching
                 path_for_match = file_path[1:] if file_path.startswith("/") else file_path
                 if fnmatch.fnmatch(path_for_match, full_pattern):
                     matches.append(file_path)
 
+        match_elapsed = time.time() - match_start
+        total_elapsed = time.time() - glob_start
+        logger.debug(
+            f"[GLOB] {strategy.value}: matched {len(matches)}/{len(accessible_files)} files "
+            f"in {match_elapsed:.3f}s (total: {total_elapsed:.3f}s)"
+        )
+
         return sorted(matches)
+
+    @rpc_expose(description="Execute multiple glob patterns in single call")
+    def glob_batch(
+        self, patterns: list[str], path: str = "/", context: Any = None
+    ) -> dict[str, list[str]]:
+        """
+        Execute multiple glob patterns in a single call (Issue #859).
+
+        This reduces network round trips when matching many patterns at once.
+        Processing 10 patterns requires 1 round trip instead of 10.
+
+        Args:
+            patterns: List of glob patterns to match
+            path: Base path to search from (default: "/")
+            context: Operation context for permission filtering
+
+        Returns:
+            Dictionary mapping each pattern to its list of matching file paths.
+            Empty list for patterns with no matches.
+
+        Performance:
+            - Single RPC call instead of N calls
+            - 10x fewer round trips for multi-pattern operations
+            - Shares file listing across all patterns (major optimization)
+
+        Examples:
+            >>> results = nx.glob_batch(["**/*.py", "**/*.js", "*.txt"])
+            >>> print(results["**/*.py"])
+            ["/src/main.py", "/tests/test_foo.py"]
+            >>> print(results["**/*.js"])
+            ["/static/app.js"]
+            >>> print(results["*.txt"])
+            ["/README.txt"]
+        """
+        results: dict[str, list[str]] = {}
+
+        # Get all accessible files once (shared across all patterns)
+        # This is the major optimization - we list files only once
+        try:
+            if path and path != "/":
+                path = self._validate_path(path)
+            accessible_files: list[str] = cast(
+                list[str], self.list(path, recursive=True, context=context)
+            )
+        except Exception:
+            # If listing fails, return empty results for all patterns
+            for pattern in patterns:
+                results[pattern] = []
+            return results
+
+        # Process each pattern using Rust acceleration when available
+        for pattern in patterns:
+            try:
+                # Build full pattern
+                search_path = path
+                if not search_path.endswith("/"):
+                    search_path = search_path + "/"
+                if search_path == "/":
+                    full_pattern = pattern
+                    # Auto-prepend **/ for patterns that look relative
+                    if (
+                        "**" not in full_pattern
+                        and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                        and "/" in full_pattern
+                    ):
+                        full_pattern = "**/" + full_pattern
+                else:
+                    base_path = search_path[1:] if search_path.startswith("/") else search_path
+                    full_pattern = base_path + pattern
+
+                # Try Rust acceleration first (10-20x faster)
+                rust_pattern = (
+                    full_pattern if full_pattern.startswith("/") else "/" + full_pattern
+                )
+                rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
+                if rust_matches is not None:
+                    results[pattern] = sorted(rust_matches)
+                else:
+                    # Fallback to Python implementation
+                    if "**" in full_pattern:
+                        # Convert glob pattern to regex for ** matching
+                        parts = full_pattern.split("**")
+                        regex_parts = []
+                        for i, part in enumerate(parts):
+                            if i > 0:
+                                regex_parts.append("(?:.*/)?")
+                            escaped = re.escape(part)
+                            escaped = escaped.replace(r"\*", "[^/]*")
+                            escaped = escaped.replace(r"\?", ".")
+                            escaped = escaped.replace(r"\[", "[").replace(r"\]", "]")
+                            while escaped.startswith("/"):
+                                escaped = escaped[1:]
+                            regex_parts.append(escaped)
+                        regex_pattern = "^/" + "".join(regex_parts) + "$"
+
+                        matches = [
+                            file_path
+                            for file_path in accessible_files
+                            if re.match(regex_pattern, file_path)
+                        ]
+                    else:
+                        # Use fnmatch for simpler patterns
+                        matches = []
+                        for file_path in accessible_files:
+                            path_for_match = (
+                                file_path[1:] if file_path.startswith("/") else file_path
+                            )
+                            if fnmatch.fnmatch(path_for_match, full_pattern):
+                                matches.append(file_path)
+
+                    results[pattern] = sorted(matches)
+            except Exception:
+                results[pattern] = []
+
+        return results
 
     @rpc_expose(description="Search file contents")
     def grep(
@@ -961,98 +1143,151 @@ class NexusFSSearchMixin:
         except re.error as e:
             raise ValueError(f"Invalid regex pattern: {e}") from e
 
-        import logging
         import time
 
-        logger = logging.getLogger(__name__)
         grep_start = time.time()
 
-        # Try Zoekt first if available (much faster for large codebases)
-        zoekt_results = self._try_grep_with_zoekt(
-            pattern=pattern,
-            path=path,
-            file_pattern=file_pattern,
-            ignore_case=ignore_case,
-            max_results=max_results,
-            context=context,
-        )
-        if zoekt_results is not None:
-            total_elapsed = time.time() - grep_start
-            logger.debug(f"[GREP] Zoekt: {total_elapsed:.3f}s, {len(zoekt_results)} results")
-            return zoekt_results
-
-        # Fallback to standard grep (Zoekt not available or not suitable)
-        # Get files to search
+        # Phase 1: Get files to search
         list_start = time.time()
         if file_pattern:
             files = self.glob(file_pattern, path, context=context)
         else:
-            # Get all files under path (with ReBAC filtering)
             files = cast(list[str], self.list(path, recursive=True, context=context))
         list_elapsed = time.time() - list_start
         logger.debug(f"[GREP] Phase 1: list() found {len(files)} files in {list_elapsed:.3f}s")
+
+        if not files:
+            return []
 
         # Phase 2: Bulk fetch searchable text (from content_cache or file_metadata)
         text_start = time.time()
         searchable_texts = self.metadata.get_searchable_text_bulk(files)
         text_elapsed = time.time() - text_start
         logger.debug(
-            f"[GREP] Phase 2: get_searchable_text_bulk() returned {len(searchable_texts)} texts in {text_elapsed:.3f}s"
+            f"[GREP] Phase 2: get_searchable_text_bulk() returned "
+            f"{len(searchable_texts)} texts in {text_elapsed:.3f}s"
         )
 
-        # Files that need raw content fallback
+        # Calculate cached text ratio for strategy selection (Issue #929)
+        cached_text_ratio = len(searchable_texts) / len(files) if files else 0.0
         files_needing_raw = [f for f in files if f not in searchable_texts]
 
-        # Phase 3: Search cached texts
-        search_start = time.time()
+        # Phase 3: Select strategy based on data characteristics (Issue #929)
+        strategy = self._select_grep_strategy(
+            file_count=len(files),
+            cached_text_ratio=cached_text_ratio,
+        )
+        logger.debug(
+            f"[GREP] Strategy selected: {strategy.value} "
+            f"(files={len(files)}, cached_ratio={cached_text_ratio:.2f})"
+        )
+
+        # Phase 4: Execute strategy-specific search
         results: list[dict[str, Any]] = []
 
-        for file_path, text in searchable_texts.items():
-            if len(results) >= max_results:
-                break
+        # =====================================================================
+        # Strategy: ZOEKT_INDEX - Use Zoekt trigram index for large codebases
+        # =====================================================================
+        if strategy == SearchStrategy.ZOEKT_INDEX:
+            zoekt_results = self._try_grep_with_zoekt(
+                pattern=pattern,
+                path=path,
+                file_pattern=file_pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                context=context,
+            )
+            if zoekt_results is not None:
+                total_elapsed = time.time() - grep_start
+                logger.debug(
+                    f"[GREP] ZOEKT_INDEX completed: {total_elapsed:.3f}s, "
+                    f"{len(zoekt_results)} results"
+                )
+                return zoekt_results
+            # Fall through to other strategies if Zoekt fails
+            logger.debug("[GREP] ZOEKT_INDEX failed, falling back to RUST_BULK")
+            strategy = SearchStrategy.RUST_BULK
 
-            for line_num, line in enumerate(text.splitlines(), start=1):
+        # =====================================================================
+        # Strategy: CACHED_TEXT - Search pre-parsed text (fastest path)
+        # =====================================================================
+        if strategy == SearchStrategy.CACHED_TEXT or searchable_texts:
+            search_start = time.time()
+            for file_path, text in searchable_texts.items():
                 if len(results) >= max_results:
                     break
+                for line_num, line in enumerate(text.splitlines(), start=1):
+                    if len(results) >= max_results:
+                        break
+                    match_obj = regex.search(line)
+                    if match_obj:
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": line,
+                                "match": match_obj.group(0),
+                            }
+                        )
+            search_elapsed = time.time() - search_start
+            logger.debug(f"[GREP] Cached text search: {search_elapsed:.3f}s")
 
-                match_obj = regex.search(line)
-                if match_obj:
-                    results.append(
-                        {
-                            "file": file_path,
-                            "line": line_num,
-                            "content": line,
-                            "match": match_obj.group(0),
-                        }
-                    )
+            # If CACHED_TEXT strategy and we have enough results, return early
+            if strategy == SearchStrategy.CACHED_TEXT and len(results) >= max_results:
+                total_elapsed = time.time() - grep_start
+                logger.debug(
+                    f"[GREP] CACHED_TEXT completed: {total_elapsed:.3f}s, {len(results)} results"
+                )
+                return results[:max_results]
 
-        search_elapsed = time.time() - search_start
-        logger.debug(f"[GREP] Phase 3: Searched cached texts in {search_elapsed:.3f}s")
+        # If we have enough results from cached text, return
+        if len(results) >= max_results:
+            total_elapsed = time.time() - grep_start
+            logger.debug(f"[GREP] TOTAL: {total_elapsed:.3f}s, {len(results)} results")
+            return results[:max_results]
 
-        # Phase 4: Fall back to raw content for files without cached text
-        if len(results) < max_results and files_needing_raw:
-            raw_start = time.time()
-            remaining_results = max_results - len(results)
+        # =====================================================================
+        # Process remaining files that need raw content
+        # =====================================================================
+        if not files_needing_raw:
+            total_elapsed = time.time() - grep_start
+            logger.debug(f"[GREP] TOTAL: {total_elapsed:.3f}s, {len(results)} results")
+            return results
 
+        remaining_results = max_results - len(results)
+        raw_start = time.time()
+
+        # =====================================================================
+        # Strategy: PARALLEL_POOL - Parallel processing for medium-large sets
+        # =====================================================================
+        if strategy == SearchStrategy.PARALLEL_POOL:
+            parallel_results = self._grep_parallel(
+                regex=regex,
+                files=files_needing_raw,
+                max_results=remaining_results,
+                context=context,
+            )
+            results.extend(parallel_results)
+
+        # =====================================================================
+        # Strategy: RUST_BULK or SEQUENTIAL - Process remaining files
+        # =====================================================================
+        elif strategy in (SearchStrategy.RUST_BULK, SearchStrategy.SEQUENTIAL):
             # Try mmap-accelerated grep first (Issue #893)
-            # This is faster for large files as it avoids Python->Rust data copy
             mmap_used = False
             if grep_fast.is_mmap_available():
                 try:
                     from nexus.storage.file_cache import get_file_cache
 
-                    # Get tenant for disk path lookup
                     tenant_id, _, _ = self._get_routing_params(context)
                     if tenant_id:
                         file_cache = get_file_cache()
                         disk_paths = file_cache.get_disk_paths_bulk(tenant_id, files_needing_raw)
 
                         if disk_paths:
-                            # Create mapping from disk_path back to virtual_path
                             disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}
                             disk_path_list = list(disk_paths.values())
 
-                            # Use mmap-based grep directly on disk files
                             mmap_results = grep_fast.grep_files_mmap(
                                 pattern,
                                 disk_path_list,
@@ -1061,7 +1296,6 @@ class NexusFSSearchMixin:
                             )
 
                             if mmap_results is not None:
-                                # Map disk paths back to virtual paths in results
                                 for match in mmap_results:
                                     disk_path = match.get("file", "")
                                     virtual_path = disk_to_virtual.get(disk_path, disk_path)
@@ -1069,18 +1303,24 @@ class NexusFSSearchMixin:
                                 results.extend(mmap_results)
                                 mmap_used = True
 
-                                # Update files_needing_raw to exclude files processed by mmap
                                 files_needing_raw = [
                                     f for f in files_needing_raw if f not in disk_paths
                                 ]
                                 remaining_results = max_results - len(results)
 
                 except Exception as e:
-                    logger.debug(f"[GREP] Mmap optimization failed, falling back: {e}")
+                    logger.debug(f"[GREP] Mmap optimization failed: {e}")
 
-            # Try Rust-accelerated grep if available (for files not handled by mmap)
-            if grep_fast.is_available() and remaining_results > 0 and files_needing_raw:
-                bulk_results = self.read_bulk(files_needing_raw, context=context, skip_errors=True)
+            # Try Rust-accelerated grep for remaining files
+            if (
+                strategy == SearchStrategy.RUST_BULK
+                and grep_fast.is_available()
+                and remaining_results > 0
+                and files_needing_raw
+            ):
+                bulk_results = self.read_bulk(
+                    files_needing_raw, context=context, skip_errors=True
+                )
                 file_contents: dict[str, bytes] = {
                     fp: content
                     for fp, content in bulk_results.items()
@@ -1088,13 +1328,17 @@ class NexusFSSearchMixin:
                 }
 
                 rust_results = grep_fast.grep_bulk(
-                    pattern, file_contents, ignore_case=ignore_case, max_results=remaining_results
+                    pattern,
+                    file_contents,
+                    ignore_case=ignore_case,
+                    max_results=remaining_results,
                 )
 
                 if rust_results is not None:
                     results.extend(rust_results)
-            elif not mmap_used:
-                # Python fallback for raw content
+
+            # Python sequential fallback
+            elif not mmap_used and files_needing_raw:
                 for file_path in files_needing_raw:
                     if len(results) >= max_results:
                         break
@@ -1126,15 +1370,16 @@ class NexusFSSearchMixin:
                     except Exception:
                         continue
 
-            raw_elapsed = time.time() - raw_start
-            logger.debug(
-                f"[GREP] Phase 4: Raw content fallback for {len(files_needing_raw)} files in {raw_elapsed:.3f}s"
-            )
+        raw_elapsed = time.time() - raw_start
+        logger.debug(
+            f"[GREP] Raw content processing ({strategy.value}): "
+            f"{len(files_needing_raw)} files in {raw_elapsed:.3f}s"
+        )
 
         total_elapsed = time.time() - grep_start
         logger.debug(f"[GREP] TOTAL: {total_elapsed:.3f}s, {len(results)} results")
 
-        return results
+        return results[:max_results]
 
     def _try_grep_with_zoekt(
         self,
@@ -1254,6 +1499,237 @@ class NexusFSSearchMixin:
         except Exception as e:
             logger.warning(f"[GREP] Zoekt search failed, falling back: {e}")
             return None
+
+    # =========================================================================
+    # Issue #929: Adaptive Algorithm Selection
+    # =========================================================================
+
+    def _is_zoekt_available(self) -> bool:
+        """Check if Zoekt indexing service is available (cached check)."""
+        try:
+            from nexus.search.zoekt_client import get_zoekt_client
+
+            client = get_zoekt_client()
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return False
+                return loop.run_until_complete(client.is_available())
+            except RuntimeError:
+                return asyncio.run(client.is_available())
+        except ImportError:
+            return False
+        except Exception:
+            return False
+
+    def _select_grep_strategy(
+        self,
+        file_count: int,
+        cached_text_ratio: float,
+        zoekt_available: bool | None = None,
+    ) -> SearchStrategy:
+        """Select optimal grep strategy based on data characteristics (Issue #929).
+
+        Decision tree inspired by ClickHouse's adaptive algorithm selection:
+        1. Check if most files have cached text (fastest path)
+        2. For small file sets, use sequential (no parallelization overhead)
+        3. For large file sets with Zoekt, use indexed search
+        4. For medium file sets, use Rust bulk or parallel processing
+
+        Args:
+            file_count: Number of files to search
+            cached_text_ratio: Ratio of files with pre-parsed text (0.0-1.0)
+            zoekt_available: Whether Zoekt is available (None = check lazily)
+
+        Returns:
+            SearchStrategy enum indicating optimal approach
+        """
+        # If most files have cached text, use that path (fastest - no I/O)
+        if cached_text_ratio >= GREP_CACHED_TEXT_RATIO:
+            logger.debug(
+                f"[GREP-STRATEGY] CACHED_TEXT selected: "
+                f"cached_ratio={cached_text_ratio:.2f} >= {GREP_CACHED_TEXT_RATIO}"
+            )
+            return SearchStrategy.CACHED_TEXT
+
+        # Small file sets - sequential is fastest (no overhead)
+        if file_count < GREP_SEQUENTIAL_THRESHOLD:
+            logger.debug(
+                f"[GREP-STRATEGY] SEQUENTIAL selected: "
+                f"file_count={file_count} < {GREP_SEQUENTIAL_THRESHOLD}"
+            )
+            return SearchStrategy.SEQUENTIAL
+
+        # Large file sets with Zoekt available - use indexed search
+        if file_count > GREP_ZOEKT_THRESHOLD:
+            # Lazy check Zoekt availability if not provided
+            if zoekt_available is None:
+                zoekt_available = self._is_zoekt_available()
+            if zoekt_available:
+                logger.debug(
+                    f"[GREP-STRATEGY] ZOEKT_INDEX selected: "
+                    f"file_count={file_count} > {GREP_ZOEKT_THRESHOLD}"
+                )
+                return SearchStrategy.ZOEKT_INDEX
+
+        # Medium-large file sets - use parallel if beneficial
+        if file_count >= GREP_PARALLEL_THRESHOLD and file_count <= 10000:
+            logger.debug(
+                f"[GREP-STRATEGY] PARALLEL_POOL selected: "
+                f"{GREP_PARALLEL_THRESHOLD} <= file_count={file_count} <= 10000"
+            )
+            return SearchStrategy.PARALLEL_POOL
+
+        # Default: Rust bulk for medium sets
+        if grep_fast.is_available():
+            logger.debug(
+                f"[GREP-STRATEGY] RUST_BULK selected: "
+                f"file_count={file_count}, Rust available"
+            )
+            return SearchStrategy.RUST_BULK
+
+        # Fallback to sequential
+        logger.debug(
+            f"[GREP-STRATEGY] SEQUENTIAL selected (fallback): "
+            f"file_count={file_count}"
+        )
+        return SearchStrategy.SEQUENTIAL
+
+    def _select_glob_strategy(
+        self,
+        pattern: str,
+        file_count: int,
+    ) -> GlobStrategy:
+        """Select optimal glob strategy based on pattern and file count (Issue #929).
+
+        Args:
+            pattern: Glob pattern to match
+            file_count: Number of files to match against
+
+        Returns:
+            GlobStrategy enum indicating optimal approach
+        """
+        # Check for static prefix (directory pruning optimization)
+        static_prefix = glob_fast.extract_static_prefix(pattern)
+        if static_prefix:
+            logger.debug(
+                f"[GLOB-STRATEGY] DIRECTORY_PRUNED selected: "
+                f"static_prefix='{static_prefix}'"
+            )
+            return GlobStrategy.DIRECTORY_PRUNED
+
+        # Large file sets with Rust available
+        if file_count > GLOB_RUST_THRESHOLD and glob_fast.is_available():
+            logger.debug(
+                f"[GLOB-STRATEGY] RUST_BULK selected: "
+                f"file_count={file_count} > {GLOB_RUST_THRESHOLD}"
+            )
+            return GlobStrategy.RUST_BULK
+
+        # Complex patterns with ** need regex
+        if "**" in pattern:
+            logger.debug(
+                "[GLOB-STRATEGY] REGEX_COMPILED selected: "
+                "pattern contains '**'"
+            )
+            return GlobStrategy.REGEX_COMPILED
+
+        # Simple patterns - fnmatch is sufficient
+        logger.debug(
+            f"[GLOB-STRATEGY] FNMATCH_SIMPLE selected: "
+            f"simple pattern, file_count={file_count}"
+        )
+        return GlobStrategy.FNMATCH_SIMPLE
+
+    def _grep_parallel(
+        self,
+        regex: re.Pattern[str],
+        files: list[str],
+        max_results: int,
+        context: Any,
+    ) -> list[dict[str, Any]]:
+        """Parallel grep using ThreadPoolExecutor (Issue #929).
+
+        Splits files across worker threads for CPU-bound regex matching.
+        Best for 100-10000 files where parallelization overhead is worthwhile.
+
+        Args:
+            regex: Compiled regex pattern
+            files: List of file paths to search
+            max_results: Maximum results to return
+            context: Operation context for file reading
+
+        Returns:
+            List of match dicts with file, line, content, match keys
+        """
+        import time
+
+        start_time = time.time()
+
+        # Split files into chunks for parallel processing
+        chunk_size = max(1, len(files) // GREP_PARALLEL_WORKERS)
+        file_chunks = [
+            files[i : i + chunk_size] for i in range(0, len(files), chunk_size)
+        ]
+
+        all_results: list[dict[str, Any]] = []
+
+        def search_chunk(chunk_files: list[str]) -> list[dict[str, Any]]:
+            """Search a chunk of files."""
+            chunk_results: list[dict[str, Any]] = []
+            for file_path in chunk_files:
+                # Early exit if we have enough results globally
+                if len(all_results) >= max_results:
+                    break
+
+                try:
+                    read_result = self.read(file_path, context=context)
+                    if not isinstance(read_result, bytes):
+                        continue
+
+                    try:
+                        text = read_result.decode("utf-8")
+                    except UnicodeDecodeError:
+                        continue
+
+                    for line_num, line in enumerate(text.splitlines(), start=1):
+                        match_obj = regex.search(line)
+                        if match_obj:
+                            chunk_results.append(
+                                {
+                                    "file": file_path,
+                                    "line": line_num,
+                                    "content": line,
+                                    "match": match_obj.group(0),
+                                }
+                            )
+                            if len(chunk_results) >= max_results:
+                                break
+                except Exception:
+                    continue
+
+            return chunk_results
+
+        # Execute chunks in parallel
+        with ThreadPoolExecutor(max_workers=GREP_PARALLEL_WORKERS) as executor:
+            futures = [executor.submit(search_chunk, chunk) for chunk in file_chunks]
+
+            for future in futures:
+                try:
+                    chunk_results = future.result(timeout=30)
+                    all_results.extend(chunk_results)
+                    if len(all_results) >= max_results:
+                        break
+                except Exception as e:
+                    logger.debug(f"[GREP-PARALLEL] Chunk failed: {e}")
+
+        elapsed = time.time() - start_time
+        logger.debug(
+            f"[GREP-PARALLEL] Completed: {len(files)} files, "
+            f"{len(all_results)} results in {elapsed:.3f}s"
+        )
+
+        return all_results[:max_results]
 
     # Semantic Search Methods (v0.4.0)
 

@@ -1878,6 +1878,9 @@ class ReBACManager:
                 # We're the leader - compute and release
                 try:
                     logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
+                    import time as time_module
+
+                    start_time = time_module.perf_counter()
                     result = self._compute_permission(
                         subject_entity,
                         permission,
@@ -1887,9 +1890,10 @@ class ReBACManager:
                         context=context,
                         tenant_id=tenant_id,
                     )
+                    delta = time_module.perf_counter() - start_time
                     logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
 
-                    # Cache result and release lock
+                    # Cache result and release lock with delta for XFetch (Issue #718)
                     self._l1_cache.release_compute(
                         cache_key,
                         result,
@@ -1899,10 +1903,11 @@ class ReBACManager:
                         object_entity.entity_type,
                         object_entity.entity_id,
                         tenant_id,
+                        delta=delta,
                     )
                     # Also cache in L2
                     self._cache_check_result(
-                        subject_entity, permission, object_entity, result, tenant_id
+                        subject_entity, permission, object_entity, result, tenant_id, delta=delta
                     )
                     return result
                 except Exception:
@@ -1912,6 +1917,9 @@ class ReBACManager:
 
         # Context-based check or no L1 cache - compute directly (no stampede prevention)
         logger.debug("🔎 Computing permission (no cache hit, computing from graph)")
+        import time as time_module
+
+        start_time = time_module.perf_counter()
         result = self._compute_permission(
             subject_entity,
             permission,
@@ -1921,12 +1929,15 @@ class ReBACManager:
             context=context,
             tenant_id=tenant_id,
         )
+        delta = time_module.perf_counter() - start_time
 
         logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
 
-        # Cache result (only if no context)
+        # Cache result (only if no context) with delta for XFetch (Issue #718)
         if context is None:
-            self._cache_check_result(subject_entity, permission, object_entity, result, tenant_id)
+            self._cache_check_result(
+                subject_entity, permission, object_entity, result, tenant_id, delta=delta
+            )
 
         return result
 
@@ -1974,13 +1985,17 @@ class ReBACManager:
             else:
                 uncached_checks.append((i, subject_entity, permission, object_entity))
 
-        # Phase 2: Compute uncached checks
+        # Phase 2: Compute uncached checks with delta tracking for XFetch (Issue #718)
+        import time as time_module
+
         for i, subject_entity, permission, object_entity in uncached_checks:
+            start_time = time_module.perf_counter()
             result = self._compute_permission(
                 subject_entity, permission, object_entity, visited=set(), depth=0
             )
+            delta = time_module.perf_counter() - start_time
             self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id=None
+                subject_entity, permission, object_entity, result, tenant_id=None, delta=delta
             )
             results[i] = result
 
@@ -2051,16 +2066,28 @@ class ReBACManager:
                     f"⚡ Using Rust acceleration for {len(uncached_checks)} uncached checks"
                 )
                 try:
+                    import time as time_module
+
+                    start_time = time_module.perf_counter()
                     rust_results = self._compute_batch_rust([check for _, check in uncached_checks])
+                    total_delta = time_module.perf_counter() - start_time
+                    # Approximate per-check delta (Rust computes in bulk)
+                    avg_delta = total_delta / len(uncached_checks) if uncached_checks else 0.0
+
                     for idx, (i, _) in enumerate(uncached_checks):
                         result = rust_results[idx]
                         results[i] = result
-                        # Cache the result
+                        # Cache the result with XFetch delta (Issue #718)
                         subject, permission, obj = uncached_checks[idx][1]
                         subject_entity = Entity(subject[0], subject[1])
                         object_entity = Entity(obj[0], obj[1])
                         self._cache_check_result(
-                            subject_entity, permission, object_entity, result, tenant_id=None
+                            subject_entity,
+                            permission,
+                            object_entity,
+                            result,
+                            tenant_id=None,
+                            delta=avg_delta,
                         )
                 except Exception as e:
                     logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
@@ -2085,14 +2112,18 @@ class ReBACManager:
         results: dict[int, bool],
     ) -> None:
         """Compute uncached checks using Python (original implementation)."""
+        import time as time_module
+
         for i, (subject, permission, obj) in uncached_checks:
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
+            start_time = time_module.perf_counter()
             result = self._compute_permission(
                 subject_entity, permission, object_entity, visited=set(), depth=0
             )
+            delta = time_module.perf_counter() - start_time
             self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id=None
+                subject_entity, permission, object_entity, result, tenant_id=None, delta=delta
             )
             results[i] = result
 
@@ -3730,7 +3761,10 @@ class ReBACManager:
             subject_entity = Entity(subject[0], subject[1])
             object_entity = Entity(obj[0], obj[1])
 
-            # Compute permission (bypassing cache)
+            # Compute permission (bypassing cache) and measure delta for XFetch
+            import time as time_module
+
+            start_time = time_module.perf_counter()
             result = self._compute_permission(
                 subject_entity,
                 permission,
@@ -3740,8 +3774,9 @@ class ReBACManager:
                 context=None,
                 tenant_id=tenant_id,
             )
+            delta = time_module.perf_counter() - start_time
 
-            # Update cache
+            # Update cache with delta for XFetch (Issue #718)
             if self._l1_cache:
                 self._l1_cache.set(
                     subject[0],
@@ -3751,6 +3786,7 @@ class ReBACManager:
                     obj[1],
                     result,
                     tenant_id,
+                    delta=delta,
                 )
 
             # Also update L2 cache
@@ -3771,6 +3807,7 @@ class ReBACManager:
         result: bool,
         tenant_id: str | None = None,
         conn: Any | None = None,
+        delta: float = 0.0,
     ) -> None:
         """Cache permission check result in both L1 and L2 caches.
 
@@ -3780,6 +3817,8 @@ class ReBACManager:
             obj: Object entity
             result: Check result
             tenant_id: Optional tenant ID for multi-tenant isolation
+            conn: Optional database connection
+            delta: Recomputation time in seconds for XFetch (Issue #718)
         """
         # Cache in L1 first (faster)
         if self._l1_cache:
@@ -3791,6 +3830,7 @@ class ReBACManager:
                 obj.entity_id,
                 result,
                 tenant_id,
+                delta=delta,
             )
 
         # Then cache in L2 (database)
@@ -3953,9 +3993,12 @@ class ReBACManager:
                             affected_permissions.append(perm)
 
                     # Eagerly recompute and update cache for these permissions
+                    import time as time_module
+
                     for permission in affected_permissions[:5]:  # Limit to 5 most common
                         try:
-                            # Recompute the permission
+                            # Recompute the permission with delta tracking for XFetch (Issue #718)
+                            start_time = time_module.perf_counter()
                             result = self._compute_permission(
                                 subject,
                                 permission,
@@ -3964,9 +4007,10 @@ class ReBACManager:
                                 depth=0,
                                 tenant_id=tenant_id,
                             )
+                            delta = time_module.perf_counter() - start_time
                             # Update cache immediately (not invalidate)
                             self._cache_check_result(
-                                subject, permission, obj, result, tenant_id, conn=conn
+                                subject, permission, obj, result, tenant_id, conn=conn, delta=delta
                             )
                             logger.debug(
                                 f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"

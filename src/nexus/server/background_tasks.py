@@ -297,9 +297,7 @@ async def hotspot_prefetch_task(
 
             # Get prefetch candidates
             cache_ttl = getattr(tiger_cache, "_cache_ttl", 300)
-            candidates = hotspot_detector.get_prefetch_candidates(
-                tiger_cache, cache_ttl=cache_ttl
-            )
+            candidates = hotspot_detector.get_prefetch_candidates(tiger_cache, cache_ttl=cache_ttl)
 
             if candidates:
                 prefetched = 0

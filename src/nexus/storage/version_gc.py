@@ -63,8 +63,7 @@ class VersionGCSettings:
 
     # Enable/disable GC
     enabled: bool = field(
-        default_factory=lambda: os.environ.get("NEXUS_VERSION_GC_ENABLED", "true").lower()
-        == "true"
+        default_factory=lambda: os.environ.get("NEXUS_VERSION_GC_ENABLED", "true").lower() == "true"
     )
 
     # Keep versions for N days (default: 30 days)
@@ -161,7 +160,9 @@ class VersionHistoryGC:
         config = config or VersionGCSettings.from_env()
 
         # Allow parameter overrides
-        effective_retention = retention_days if retention_days is not None else config.retention_days
+        effective_retention = (
+            retention_days if retention_days is not None else config.retention_days
+        )
         effective_max_versions = (
             max_versions if max_versions is not None else config.max_versions_per_resource
         )
@@ -327,9 +328,9 @@ class VersionHistoryGC:
             batch_bytes = sum(row[1] or 0 for row in rows)
 
             # Delete the batch using expanding bindparam for SQLite compatibility
-            delete_query = text(
-                "DELETE FROM version_history WHERE version_id IN :ids"
-            ).bindparams(bindparam("ids", expanding=True))
+            delete_query = text("DELETE FROM version_history WHERE version_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            )
             session.execute(delete_query, {"ids": ids_to_delete})
 
             total_deleted += len(ids_to_delete)
@@ -415,9 +416,9 @@ class VersionHistoryGC:
             ids_to_delete = [row[0] for row in rows]
             batch_bytes = sum(row[1] or 0 for row in rows)
 
-            delete_query = text(
-                "DELETE FROM version_history WHERE version_id IN :ids"
-            ).bindparams(bindparam("ids", expanding=True))
+            delete_query = text("DELETE FROM version_history WHERE version_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            )
             session.execute(delete_query, {"ids": ids_to_delete})
 
             total_deleted += len(ids_to_delete)
@@ -493,9 +494,9 @@ class VersionHistoryGC:
             ids_to_delete = [row[0] for row in rows]
             batch_bytes = sum(row[1] or 0 for row in rows)
 
-            delete_query = text(
-                "DELETE FROM version_history WHERE version_id IN :ids"
-            ).bindparams(bindparam("ids", expanding=True))
+            delete_query = text("DELETE FROM version_history WHERE version_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            )
             session.execute(delete_query, {"ids": ids_to_delete})
 
             total_deleted += len(ids_to_delete)
@@ -558,9 +559,9 @@ class VersionHistoryGC:
             ids_to_delete = [row[0] for row in rows]
             batch_bytes = sum(row[1] or 0 for row in rows)
 
-            delete_query = text(
-                "DELETE FROM version_history WHERE version_id IN :ids"
-            ).bindparams(bindparam("ids", expanding=True))
+            delete_query = text("DELETE FROM version_history WHERE version_id IN :ids").bindparams(
+                bindparam("ids", expanding=True)
+            )
             session.execute(delete_query, {"ids": ids_to_delete})
 
             total_deleted += len(ids_to_delete)

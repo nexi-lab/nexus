@@ -688,8 +688,14 @@ def gc_versions_stats(
                 size_str = f"{total_bytes} bytes"
             table.add_row("Total size:", size_str)
 
-            table.add_row("Oldest version:", result.get("oldest_version", "N/A")[:19] if result.get("oldest_version") else "N/A")
-            table.add_row("Newest version:", result.get("newest_version", "N/A")[:19] if result.get("newest_version") else "N/A")
+            table.add_row(
+                "Oldest version:",
+                result.get("oldest_version", "N/A")[:19] if result.get("oldest_version") else "N/A",
+            )
+            table.add_row(
+                "Newest version:",
+                result.get("newest_version", "N/A")[:19] if result.get("newest_version") else "N/A",
+            )
 
             _console.print(table)
 
@@ -702,11 +708,17 @@ def gc_versions_stats(
                 config_table.add_column("Setting", style="cyan")
                 config_table.add_column("Value", style="white")
 
-                status = "[green]Enabled[/green]" if gc_config.get("enabled") else "[red]Disabled[/red]"
+                status = (
+                    "[green]Enabled[/green]" if gc_config.get("enabled") else "[red]Disabled[/red]"
+                )
                 config_table.add_row("Status:", status)
                 config_table.add_row("Retention:", f"{gc_config.get('retention_days', 30)} days")
-                config_table.add_row("Max versions/resource:", str(gc_config.get("max_versions_per_resource", 100)))
-                config_table.add_row("Run interval:", f"{gc_config.get('run_interval_hours', 24)} hours")
+                config_table.add_row(
+                    "Max versions/resource:", str(gc_config.get("max_versions_per_resource", 100))
+                )
+                config_table.add_row(
+                    "Run interval:", f"{gc_config.get('run_interval_hours', 24)} hours"
+                )
 
                 _console.print(config_table)
 

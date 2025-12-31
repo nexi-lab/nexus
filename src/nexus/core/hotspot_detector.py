@@ -418,8 +418,7 @@ class HotspotPrefetcher:
                 # Periodic cleanup
                 cleanup_counter += 1
                 if cleanup_counter >= (
-                    self._config.cleanup_interval_seconds
-                    // self._config.prefetch_interval_seconds
+                    self._config.cleanup_interval_seconds // self._config.prefetch_interval_seconds
                 ):
                     self._detector.cleanup_stale_entries()
                     cleanup_counter = 0

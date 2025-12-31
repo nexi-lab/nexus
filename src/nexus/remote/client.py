@@ -1624,7 +1624,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return exists  # type: ignore[no-any-return]
 
     def exists_batch(
-        self, paths: list[str], context: Any = None  # noqa: ARG002
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
     ) -> dict[str, bool]:
         """Check existence of multiple paths in a single call (Issue #859).
 
@@ -1644,7 +1646,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return result  # type: ignore[no-any-return]
 
     def metadata_batch(
-        self, paths: list[str], context: Any = None  # noqa: ARG002
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
     ) -> dict[str, dict[str, Any] | None]:
         """Get metadata for multiple paths in a single call (Issue #859).
 
@@ -1664,7 +1668,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return result  # type: ignore[no-any-return]
 
     def glob_batch(
-        self, patterns: list[str], path: str = "/", context: Any = None  # noqa: ARG002
+        self,
+        patterns: list[str],
+        path: str = "/",
+        context: Any = None,  # noqa: ARG002
     ) -> dict[str, builtins.list[str]]:
         """Execute multiple glob patterns in a single call (Issue #859).
 

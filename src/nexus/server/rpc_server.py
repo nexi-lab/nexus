@@ -753,7 +753,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         return stats.to_dict()
 
-    def _admin_gc_versions_stats(self, params: Any) -> dict[str, Any]:
+    def _admin_gc_versions_stats(self, _params: Any) -> dict[str, Any]:
         """Get version history table statistics (admin only, Issue #974).
 
         Args:

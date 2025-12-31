@@ -33,6 +33,7 @@ Issue: #951
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -214,10 +215,8 @@ class SearchDaemon:
         # Cancel refresh task
         if self._refresh_task:
             self._refresh_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
-            except asyncio.CancelledError:
-                pass
 
         # Close database connections
         if self._async_engine:
@@ -248,7 +247,9 @@ class SearchDaemon:
             # Initialize with mmap=True for instant loading
             if await self._bm25s_index.initialize():
                 # Access document count if available
-                doc_count = len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
+                doc_count = (
+                    len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
+                )
                 self.stats.bm25_documents = doc_count
                 self.stats.bm25_load_time_ms = (time.perf_counter() - start) * 1000
                 logger.info(
@@ -292,6 +293,7 @@ class SearchDaemon:
             # Warm the pool by executing a simple query
             async with self._async_engine.connect() as conn:
                 from sqlalchemy import text
+
                 await conn.execute(text("SELECT 1"))
 
             self.stats.db_pool_size = self.config.db_pool_min_size
@@ -322,9 +324,7 @@ class SearchDaemon:
             # Use a zero vector which won't match anything but loads the index
             async with self._async_engine.connect() as conn:
                 # Set HNSW search parameters for high recall
-                await conn.execute(
-                    text(f"SET hnsw.ef_search = {self.config.vector_ef_search}")
-                )
+                await conn.execute(text(f"SET hnsw.ef_search = {self.config.vector_ef_search}"))
 
                 # Dummy query to warm index (SELECT 1 with vector operation)
                 await conn.execute(
@@ -769,7 +769,7 @@ class SearchDaemon:
     # Index Refresh
     # =========================================================================
 
-    async def notify_file_change(self, path: str, change_type: str = "update") -> None:
+    async def notify_file_change(self, path: str, _change_type: str = "update") -> None:
         """Notify the daemon of a file change for index refresh.
 
         Changes are debounced and batched for efficiency.

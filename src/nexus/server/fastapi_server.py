@@ -464,7 +464,8 @@ async def lifespan(_app: FastAPI) -> Any:
                 bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
                 db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
                 db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
-                refresh_enabled=os.getenv("NEXUS_SEARCH_REFRESH", "true").lower() in (
+                refresh_enabled=os.getenv("NEXUS_SEARCH_REFRESH", "true").lower()
+                in (
                     "true",
                     "1",
                     "yes",
@@ -891,9 +892,11 @@ def _register_routes(app: FastAPI) -> None:
         type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
         limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
         path: str | None = Query(None, description="Optional path prefix filter"),
-        alpha: float = Query(0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0),
+        alpha: float = Query(
+            0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0
+        ),
         fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
-        auth_result: dict[str, Any] = Depends(require_auth),
+        _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Execute a fast search query using the search daemon.
 
@@ -980,7 +983,7 @@ def _register_routes(app: FastAPI) -> None:
     async def search_refresh_notify(
         path: str = Query(..., description="Path of the changed file"),
         change_type: str = Query("update", description="Type of change: create, update, delete"),
-        auth_result: dict[str, Any] = Depends(require_auth),
+        _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Notify the search daemon of a file change for index refresh.
 
@@ -1014,7 +1017,7 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/v1/admin/hotspot-stats", tags=["admin"])
     async def get_hotspot_stats(
-        auth_result: dict[str, Any] = Depends(require_auth),
+        _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Get hotspot detection statistics (Issue #921).
 
@@ -1042,7 +1045,7 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/api/v1/admin/hot-entries", tags=["admin"])
     async def get_hot_entries(
         limit: int = Query(10, description="Maximum number of entries", ge=1, le=100),
-        auth_result: dict[str, Any] = Depends(require_auth),
+        _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> list[dict[str, Any]]:
         """Get current hot permission entries (Issue #921).
 

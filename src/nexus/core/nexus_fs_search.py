@@ -23,6 +23,9 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
+from nexus.core.exceptions import PermissionDeniedError
+from nexus.core.permissions import Permission
+from nexus.core.rpc_decorator import rpc_expose
 
 # =============================================================================
 # Issue #929: Adaptive Algorithm Selection Configuration
@@ -64,10 +67,6 @@ class GlobStrategy(StrEnum):
     RUST_BULK = "rust_bulk"  # > 50 files with Rust available
     DIRECTORY_PRUNED = "directory_pruned"  # Pattern has static prefix for pruning
 
-
-from nexus.core.exceptions import PermissionDeniedError
-from nexus.core.permissions import Permission
-from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
@@ -883,7 +882,9 @@ class NexusFSSearchMixin:
             list[str], self.list(search_path, recursive=True, context=context)
         )
         list_elapsed = time.time() - list_start
-        logger.debug(f"[GLOB] Phase 1: list() found {len(accessible_files)} files in {list_elapsed:.3f}s")
+        logger.debug(
+            f"[GLOB] Phase 1: list() found {len(accessible_files)} files in {list_elapsed:.3f}s"
+        )
 
         if not accessible_files:
             return []
@@ -927,7 +928,9 @@ class NexusFSSearchMixin:
                 # Fall through to Python implementation
                 logger.debug("[GLOB] Rust acceleration failed, falling back to Python")
                 strategy = (
-                    GlobStrategy.REGEX_COMPILED if "**" in full_pattern else GlobStrategy.FNMATCH_SIMPLE
+                    GlobStrategy.REGEX_COMPILED
+                    if "**" in full_pattern
+                    else GlobStrategy.FNMATCH_SIMPLE
                 )
 
         # =====================================================================
@@ -1040,9 +1043,7 @@ class NexusFSSearchMixin:
                     full_pattern = base_path + pattern
 
                 # Try Rust acceleration first (10-20x faster)
-                rust_pattern = (
-                    full_pattern if full_pattern.startswith("/") else "/" + full_pattern
-                )
+                rust_pattern = full_pattern if full_pattern.startswith("/") else "/" + full_pattern
                 rust_matches = glob_fast.glob_match_bulk([rust_pattern], accessible_files)
                 if rust_matches is not None:
                     results[pattern] = sorted(rust_matches)
@@ -1318,9 +1319,7 @@ class NexusFSSearchMixin:
                 and remaining_results > 0
                 and files_needing_raw
             ):
-                bulk_results = self.read_bulk(
-                    files_needing_raw, context=context, skip_errors=True
-                )
+                bulk_results = self.read_bulk(files_needing_raw, context=context, skip_errors=True)
                 file_contents: dict[str, bytes] = {
                     fp: content
                     for fp, content in bulk_results.items()
@@ -1583,16 +1582,12 @@ class NexusFSSearchMixin:
         # Default: Rust bulk for medium sets
         if grep_fast.is_available():
             logger.debug(
-                f"[GREP-STRATEGY] RUST_BULK selected: "
-                f"file_count={file_count}, Rust available"
+                f"[GREP-STRATEGY] RUST_BULK selected: file_count={file_count}, Rust available"
             )
             return SearchStrategy.RUST_BULK
 
         # Fallback to sequential
-        logger.debug(
-            f"[GREP-STRATEGY] SEQUENTIAL selected (fallback): "
-            f"file_count={file_count}"
-        )
+        logger.debug(f"[GREP-STRATEGY] SEQUENTIAL selected (fallback): file_count={file_count}")
         return SearchStrategy.SEQUENTIAL
 
     def _select_glob_strategy(
@@ -1613,8 +1608,7 @@ class NexusFSSearchMixin:
         static_prefix = glob_fast.extract_static_prefix(pattern)
         if static_prefix:
             logger.debug(
-                f"[GLOB-STRATEGY] DIRECTORY_PRUNED selected: "
-                f"static_prefix='{static_prefix}'"
+                f"[GLOB-STRATEGY] DIRECTORY_PRUNED selected: static_prefix='{static_prefix}'"
             )
             return GlobStrategy.DIRECTORY_PRUNED
 
@@ -1628,16 +1622,12 @@ class NexusFSSearchMixin:
 
         # Complex patterns with ** need regex
         if "**" in pattern:
-            logger.debug(
-                "[GLOB-STRATEGY] REGEX_COMPILED selected: "
-                "pattern contains '**'"
-            )
+            logger.debug("[GLOB-STRATEGY] REGEX_COMPILED selected: pattern contains '**'")
             return GlobStrategy.REGEX_COMPILED
 
         # Simple patterns - fnmatch is sufficient
         logger.debug(
-            f"[GLOB-STRATEGY] FNMATCH_SIMPLE selected: "
-            f"simple pattern, file_count={file_count}"
+            f"[GLOB-STRATEGY] FNMATCH_SIMPLE selected: simple pattern, file_count={file_count}"
         )
         return GlobStrategy.FNMATCH_SIMPLE
 
@@ -1668,9 +1658,7 @@ class NexusFSSearchMixin:
 
         # Split files into chunks for parallel processing
         chunk_size = max(1, len(files) // GREP_PARALLEL_WORKERS)
-        file_chunks = [
-            files[i : i + chunk_size] for i in range(0, len(files), chunk_size)
-        ]
+        file_chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
 
         all_results: list[dict[str, Any]] = []
 

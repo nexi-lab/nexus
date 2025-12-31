@@ -4,6 +4,12 @@ Provides fully async semantic search using:
 - asyncpg (PostgreSQL) or aiosqlite (SQLite) for non-blocking DB operations
 - Parallel embedding generation with batching
 - Optimized bulk insert/query operations
+- pg_textsearch BM25 ranking (PostgreSQL 17+) for true relevance ranking
+
+BM25 ranking (pg_textsearch):
+- True BM25 with IDF, term frequency saturation, length normalization
+- ~10ms queries vs ts_rank's 25-30s degradation at 800K rows
+- Falls back to ts_rank() on PostgreSQL < 17 or when extension unavailable
 
 This module is designed for high-load scenarios where blocking DB operations
 would impact throughput.
@@ -138,6 +144,9 @@ class AsyncSemanticSearch:
         # Detect DB type
         self.db_type = "postgresql" if "postgresql" in database_url else "sqlite"
 
+        # Feature flags
+        self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
+
     @asynccontextmanager
     async def _session(self) -> Any:
         """Get async database session with cancellation-safe cleanup.
@@ -160,13 +169,33 @@ class AsyncSemanticSearch:
                 await self._init_sqlite(session)
 
     async def _init_postgresql(self, session: AsyncSession) -> None:
-        """Initialize pgvector extension."""
+        """Initialize pgvector and pg_textsearch extensions."""
+        # Initialize pgvector for semantic search
         try:
             await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await session.commit()
             logger.info("pgvector extension initialized")
         except Exception as e:
             logger.warning(f"Could not initialize pgvector: {e}")
+
+        # Initialize pg_textsearch for BM25 ranking (PostgreSQL 17+)
+        try:
+            result = await session.execute(text("SHOW server_version_num"))
+            version_scalar = result.scalar()
+            version_num = int(version_scalar) if version_scalar else 0
+
+            if version_num >= 170000:
+                await session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_textsearch"))
+                await session.commit()
+                # Verify the extension is loaded
+                result = await session.execute(
+                    text("SELECT 1 FROM pg_am WHERE amname = 'bm25' LIMIT 1")
+                )
+                if result.scalar():
+                    self.bm25_available = True
+                    logger.info("pg_textsearch BM25 extension initialized")
+        except Exception as e:
+            logger.debug(f"pg_textsearch not available: {e}. Using ts_rank fallback.")
 
     async def _init_sqlite(self, session: AsyncSession) -> None:
         """Initialize sqlite-vec and FTS5."""
@@ -300,7 +329,7 @@ class AsyncSemanticSearch:
                             VALUES
                             (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
                              :start_offset, :end_offset, :line_start, :line_end,
-                             :embedding_model, :embedding::vector, :created_at)
+                             :embedding_model, :embedding::halfvec, :created_at)
                         """),
                         {
                             "chunk_id": chunk_id,
@@ -385,31 +414,58 @@ class AsyncSemanticSearch:
         limit: int,
         path_filter: str | None,
     ) -> list[AsyncSearchResult]:
-        """Async keyword search using Zoekt (if available) or FTS."""
+        """Async keyword search using Zoekt, BM25, or FTS fallback.
+
+        Search priority:
+        1. Zoekt (fast trigram-based)
+        2. pg_textsearch BM25 (PostgreSQL 17+ with true relevance ranking)
+        3. ts_rank (PostgreSQL fallback)
+        4. FTS5 (SQLite)
+        """
         # Try Zoekt first for accelerated search
         zoekt_results = await self._try_keyword_search_with_zoekt(query, limit, path_filter)
         if zoekt_results is not None:
             logger.debug(f"[KEYWORD-ASYNC] Zoekt returned {len(zoekt_results)} results")
             return zoekt_results
 
-        # Fall back to FTS
-        logger.debug("[KEYWORD-ASYNC] Using FTS fallback")
+        # Fall back to database FTS
+        logger.debug("[KEYWORD-ASYNC] Using database FTS fallback")
         if self.db_type == "postgresql":
-            sql = text("""
-                SELECT
-                    c.chunk_id, c.chunk_index, c.chunk_text,
-                    c.start_offset, c.end_offset, c.line_start, c.line_end,
-                    fp.virtual_path,
-                    ts_rank(to_tsvector('english', c.chunk_text),
-                            plainto_tsquery('english', :query)) as score
-                FROM document_chunks c
-                JOIN file_paths fp ON c.path_id = fp.path_id
-                WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
-                  AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-                ORDER BY score DESC
-                LIMIT :limit
-            """)
+            if self.bm25_available:
+                # Use pg_textsearch BM25 ranking (PostgreSQL 17+)
+                # BM25 scores are negative (lower = better), ORDER BY ASC
+                sql = text("""
+                    SELECT
+                        c.chunk_id, c.chunk_index, c.chunk_text,
+                        c.start_offset, c.end_offset, c.line_start, c.line_end,
+                        fp.virtual_path,
+                        c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25') as score
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
+                    ORDER BY c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25')
+                    LIMIT :limit
+                """)
+                logger.debug("[KEYWORD-ASYNC] Using pg_textsearch BM25 ranking")
+            else:
+                # Fall back to ts_rank (slower at scale)
+                sql = text("""
+                    SELECT
+                        c.chunk_id, c.chunk_index, c.chunk_text,
+                        c.start_offset, c.end_offset, c.line_start, c.line_end,
+                        fp.virtual_path,
+                        ts_rank(to_tsvector('english', c.chunk_text),
+                                plainto_tsquery('english', :query)) as score
+                    FROM document_chunks c
+                    JOIN file_paths fp ON c.path_id = fp.path_id
+                    WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
+                      AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
+                    ORDER BY score DESC
+                    LIMIT :limit
+                """)
+                logger.debug("[KEYWORD-ASYNC] Using ts_rank fallback")
         else:
+            # SQLite FTS5
             sql = text("""
                 SELECT
                     c.chunk_id, c.chunk_index, c.chunk_text,
@@ -440,7 +496,7 @@ class AsyncSemanticSearch:
                 path=row.virtual_path,
                 chunk_index=row.chunk_index,
                 chunk_text=row.chunk_text,
-                score=abs(float(row.score)),
+                score=abs(float(row.score)),  # BM25 and FTS5 scores are negative
                 start_offset=row.start_offset,
                 end_offset=row.end_offset,
                 line_start=row.line_start,
@@ -529,12 +585,12 @@ class AsyncSemanticSearch:
                 c.chunk_id, c.chunk_index, c.chunk_text,
                 c.start_offset, c.end_offset, c.line_start, c.line_end,
                 fp.virtual_path,
-                1 - (c.embedding <=> CAST(:embedding AS vector)) as score
+                1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
             FROM document_chunks c
             JOIN file_paths fp ON c.path_id = fp.path_id
             WHERE c.embedding IS NOT NULL
               AND (:path_filter IS NULL OR fp.virtual_path LIKE :path_pattern)
-            ORDER BY c.embedding <=> CAST(:embedding AS vector)
+            ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
             LIMIT :limit
         """)
 

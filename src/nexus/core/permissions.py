@@ -23,6 +23,7 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.permission_boundary_cache import PermissionBoundaryCache
     from nexus.core.permissions_enhanced import AuditStore
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
@@ -209,6 +210,9 @@ class PermissionEnforcer:
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
         audit_store: AuditStore | None = None,  # P0-4: Audit logging
         admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
+        # Issue #922: Permission boundary cache for O(1) inheritance checks
+        boundary_cache: PermissionBoundaryCache | None = None,
+        enable_boundary_cache: bool = True,
     ):
         """Initialize permission enforcer.
 
@@ -222,6 +226,8 @@ class PermissionEnforcer:
             allow_system_bypass: Enable system bypass (for internal operations)
             audit_store: Audit store for bypass logging
             admin_bypass_paths: Optional path allowlist for admin bypass (e.g., ["/admin/*"])
+            boundary_cache: Permission boundary cache for O(1) inheritance (Issue #922)
+            enable_boundary_cache: Enable boundary caching (default: True)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
@@ -233,6 +239,32 @@ class PermissionEnforcer:
         self.allow_system_bypass = allow_system_bypass
         self.audit_store = audit_store
         self.admin_bypass_paths = admin_bypass_paths or []
+
+        # Issue #922: Permission boundary cache
+        self._enable_boundary_cache = enable_boundary_cache
+        self._boundary_cache: PermissionBoundaryCache | None = None
+        if boundary_cache is not None:
+            self._boundary_cache = boundary_cache
+            logger.info("[PermissionEnforcer] Using provided boundary cache")
+        elif enable_boundary_cache:
+            # Lazy import to avoid circular dependencies
+            from nexus.core.permission_boundary_cache import PermissionBoundaryCache
+
+            self._boundary_cache = PermissionBoundaryCache()
+            logger.info("[PermissionEnforcer] Boundary cache ENABLED (50k entries, 300s TTL)")
+
+        # Register boundary cache invalidation callback with rebac_manager
+        if (
+            self._boundary_cache
+            and self.rebac_manager
+            and hasattr(self.rebac_manager, "register_boundary_cache_invalidator")
+        ):
+            # Create a unique ID for this enforcer's callback
+            callback_id = f"permission_enforcer_{id(self)}"
+            self.rebac_manager.register_boundary_cache_invalidator(
+                callback_id,
+                self._boundary_cache.invalidate_permission_change,
+            )
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -498,13 +530,45 @@ class PermissionEnforcer:
         # 3. Check parent directories for inherited permissions (filesystem hierarchy)
         # For READ/WRITE/TRAVERSE, if user has permission on parent directory, grant access to child
         # This enables permission inheritance: grant /workspace → inherits to /workspace/file.txt
+        #
+        # Issue #922: Use boundary cache for O(1) inheritance checks
+        # Instead of walking up O(depth) for every file, cache the nearest ancestor with a grant
         if permission_name in ("read", "write", "traverse") and object_id:
             import os
 
+            subject_type, subject_id = subject
+
+            # FAST PATH: Check boundary cache first (Issue #922)
+            if self._boundary_cache:
+                boundary = self._boundary_cache.get_boundary(
+                    tenant_id, subject_type, subject_id, permission_name, object_id
+                )
+                if boundary:
+                    # Found cached boundary - verify it's still valid
+                    boundary_result = self.rebac_manager.rebac_check(
+                        subject=subject,
+                        permission=permission_name,
+                        object=(object_type, boundary),
+                        tenant_id=tenant_id,
+                    )
+                    if boundary_result:
+                        logger.debug(
+                            f"[_check_rebac] ALLOW (boundary cache hit: {object_id} → {boundary})"
+                        )
+                        return True
+                    else:
+                        # Boundary no longer valid - invalidate and fall through to slow path
+                        logger.debug(
+                            f"[_check_rebac] Boundary cache stale: {boundary} no longer grants {permission_name}"
+                        )
+                        self._boundary_cache.invalidate_permission_change(
+                            tenant_id, subject_type, subject_id, permission_name, boundary
+                        )
+
+            # SLOW PATH: Walk up the directory tree
             parent_path = object_id
             checked_parents = []
 
-            # Walk up the directory tree
             while parent_path and parent_path != "/":
                 parent_path = os.path.dirname(parent_path)
                 if not parent_path or parent_path == object_id:
@@ -526,6 +590,16 @@ class PermissionEnforcer:
                     logger.debug(
                         f"[_check_rebac] ALLOW (inherited from parent directory: {parent_path})"
                     )
+                    # Cache this boundary for future lookups (Issue #922)
+                    if self._boundary_cache:
+                        self._boundary_cache.set_boundary(
+                            tenant_id,
+                            subject_type,
+                            subject_id,
+                            permission_name,
+                            object_id,
+                            parent_path,
+                        )
                     return True
 
                 # Stop at root
@@ -657,6 +731,34 @@ class PermissionEnforcer:
 
         return glob_fast.glob_match(path, list(allowlist))
 
+    def get_boundary_cache_stats(self) -> dict[str, Any] | None:
+        """Get permission boundary cache statistics (Issue #922).
+
+        Returns statistics about the boundary cache including hit rate,
+        miss rate, and number of cached entries.
+
+        Returns:
+            Dictionary with cache statistics, or None if boundary cache is disabled
+
+        Example:
+            >>> enforcer = PermissionEnforcer(metadata_store, rebac_manager=rebac)
+            >>> stats = enforcer.get_boundary_cache_stats()
+            >>> print(f"Hit rate: {stats['hit_rate_percent']}%")
+        """
+        if self._boundary_cache is None:
+            return None
+        return self._boundary_cache.get_stats()
+
+    def reset_boundary_cache_stats(self) -> None:
+        """Reset permission boundary cache statistics (Issue #922)."""
+        if self._boundary_cache is not None:
+            self._boundary_cache.reset_stats()
+
+    def clear_boundary_cache(self) -> None:
+        """Clear all entries from the permission boundary cache (Issue #922)."""
+        if self._boundary_cache is not None:
+            self._boundary_cache.clear()
+
     def filter_list(
         self,
         paths: list[str],
@@ -701,6 +803,137 @@ class PermissionEnforcer:
             logger.debug(
                 f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={tenant_id}"
             )
+
+            # TIGER CACHE + RUST ACCELERATION (Issue #896)
+            # Try O(1) bitmap filtering before falling back to O(n) graph traversal
+            tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
+            if tiger_cache is not None and len(paths) > 0:
+                try:
+                    tiger_start = time.time()
+                    subject = context.get_subject()
+                    subject_type, subject_id = subject
+
+                    # Get bitmap bytes for this subject's read permissions on files
+                    bitmap_bytes = tiger_cache.get_bitmap_bytes(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission="read",
+                        resource_type="file",
+                        tenant_id=tenant_id,
+                    )
+
+                    if bitmap_bytes is not None:
+                        # Get path int IDs from resource map
+                        resource_map = tiger_cache._resource_map
+                        path_to_int: dict[str, int] = {}
+                        int_to_path: dict[int, str] = {}
+
+                        # Bulk lookup path int IDs
+                        with resource_map._lock:
+                            for path in paths:
+                                key = ("file", path, tenant_id)
+                                int_id = resource_map._uuid_to_int.get(key)
+                                if int_id is not None:
+                                    path_to_int[path] = int_id
+                                    int_to_path[int_id] = path
+
+                        if path_to_int:
+                            # Use Rust for O(1) bitmap filtering
+                            try:
+                                import nexus_fast
+
+                                path_int_ids = list(path_to_int.values())
+                                accessible_ids = nexus_fast.filter_paths_with_tiger_cache(
+                                    path_int_ids, bitmap_bytes
+                                )
+
+                                # Convert back to paths
+                                filtered = [
+                                    int_to_path[id] for id in accessible_ids if id in int_to_path
+                                ]
+
+                                # Handle paths not in resource map (need fallback check)
+                                paths_not_in_map = [p for p in paths if p not in path_to_int]
+
+                                # CRITICAL FIX: Also handle paths that ARE in the map but NOT
+                                # in the bitmap. These might have inherited permissions via
+                                # parent directories (e.g., agent has viewer on directory,
+                                # child files inherit read permission via parent_viewer).
+                                # Tiger Cache only stores direct grants, not inherited permissions.
+                                paths_in_map_but_not_granted = [
+                                    p for p in paths if p in path_to_int and p not in filtered
+                                ]
+
+                                paths_needing_fallback = (
+                                    paths_not_in_map + paths_in_map_but_not_granted
+                                )
+
+                                if paths_needing_fallback:
+                                    # OPTIMIZATION: Only check fallback paths via rebac_check_bulk,
+                                    # not ALL paths. Combine Tiger Cache results with bulk results.
+                                    logger.debug(
+                                        f"[TIGER-RUST] {len(paths_needing_fallback)} paths need fallback: "
+                                        f"{len(paths_not_in_map)} not in map, "
+                                        f"{len(paths_in_map_but_not_granted)} in map but not in bitmap "
+                                        "(may have inherited permissions)"
+                                    )
+
+                                    # Build checks only for paths needing fallback
+                                    fallback_checks = []
+                                    subject = context.get_subject()
+                                    for path in paths_needing_fallback:
+                                        fallback_checks.append((subject, "read", ("file", path)))
+
+                                    # Check fallback paths via rebac_check_bulk
+                                    fallback_results = self.rebac_manager.rebac_check_bulk(
+                                        fallback_checks, tenant_id=tenant_id
+                                    )
+
+                                    # Add paths that passed fallback check to filtered results
+                                    for path, check in zip(
+                                        paths_needing_fallback, fallback_checks, strict=False
+                                    ):
+                                        if fallback_results.get(check, False):
+                                            filtered.append(path)
+
+                                    tiger_elapsed = time.time() - tiger_start
+                                    logger.info(
+                                        f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
+                                        f"allowed {len(filtered)}/{len(paths)} paths "
+                                        f"(bitmap: {len(filtered) - len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])}, "
+                                        f"fallback: {len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])})"
+                                    )
+                                    return filtered
+                                else:
+                                    tiger_elapsed = time.time() - tiger_start
+                                    overall_elapsed = time.time() - overall_start
+                                    logger.info(
+                                        f"[TIGER-RUST] filter_list via Rust bitmap: {tiger_elapsed:.3f}s, "
+                                        f"allowed {len(filtered)}/{len(paths)} paths"
+                                    )
+                                    return filtered
+
+                            except ImportError:
+                                logger.debug(
+                                    "[TIGER-RUST] nexus_fast not available, falling back to rebac_check_bulk"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"[TIGER-RUST] Rust filtering failed: {e}, falling back to rebac_check_bulk"
+                                )
+                        else:
+                            logger.debug(
+                                "[TIGER-RUST] No paths found in resource map, falling back to rebac_check_bulk"
+                            )
+                    else:
+                        logger.debug(
+                            "[TIGER-RUST] No bitmap available for subject, falling back to rebac_check_bulk"
+                        )
+
+                except Exception as e:
+                    logger.warning(
+                        f"[TIGER-RUST] Tiger Cache integration error: {e}, falling back to rebac_check_bulk"
+                    )
 
             # OPTIMIZATION: Pre-filter paths by tenant before permission checks
             # This avoids checking permissions on paths the user can never access

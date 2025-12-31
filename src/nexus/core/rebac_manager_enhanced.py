@@ -254,6 +254,27 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             ttl_seconds=cache_ttl_seconds,
         )
 
+        # Issue #922: Permission boundary cache for O(1) inheritance checks
+        # Instead of walking up O(depth) parent relations in the graph,
+        # cache the nearest ancestor with an explicit permission grant.
+        from nexus.core.permission_boundary_cache import PermissionBoundaryCache
+
+        self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
+
+        # Issue #922: Boundary cache invalidation callbacks (for external caches)
+        # PermissionEnforcer can register a callback to invalidate its boundary cache
+        # when permission tuples are written
+        self._boundary_cache_invalidators: list[
+            tuple[str, Any]  # (callback_id, callback_fn)
+        ] = []
+
+        # Issue #919: Directory visibility cache invalidation callbacks
+        # NexusFS can register its DirectoryVisibilityCache for automatic invalidation
+        # when permission tuples are written or deleted
+        self._dir_visibility_invalidators: list[
+            tuple[str, Any]  # (callback_id, callback_fn)
+        ] = []
+
     def rebac_check(
         self,
         subject: tuple[str, str],
@@ -286,7 +307,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             f"EnhancedReBACManager.rebac_check called: enforce_tenant_isolation={self.enforce_tenant_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
-        # OPTIMIZATION: Try Tiger Cache first (O(1) lookup)
+        object_type, object_id = object
+        subject_type, subject_id = subject
+        effective_tenant = tenant_id or "default"
+
+        # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
+        # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
+        if (
+            object_type == "file"
+            and permission in ("read", "write", "execute")
+            and self._boundary_cache
+        ):
+            boundary = self._boundary_cache.get_boundary(
+                effective_tenant, subject_type, subject_id, permission, object_id
+            )
+            if boundary:
+                # Found cached boundary - verify it's still valid by checking the boundary path
+                boundary_result = self._check_direct_grant(
+                    subject, permission, (object_type, boundary), tenant_id
+                )
+                if boundary_result:
+                    logger.debug(f"  -> Boundary Cache HIT: {object_id} → {boundary}")
+                    return True
+                else:
+                    # Boundary no longer valid - invalidate
+                    logger.debug(
+                        f"  -> Boundary Cache STALE: {boundary} no longer grants {permission}"
+                    )
+                    self._boundary_cache.invalidate_permission_change(
+                        effective_tenant, subject_type, subject_id, permission, boundary
+                    )
+
+        # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
         if self._tiger_cache and tenant_id:
             tiger_result = self.tiger_check_access(
@@ -315,6 +367,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             if result and self._tiger_cache and tenant_id:
                 self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
 
+            # Issue #922: Cache boundary if permission was granted via parent
+            if result and object_type == "file" and self._boundary_cache:
+                self._cache_boundary_if_inherited(subject, permission, object, tenant_id, logger)
+
             return result
 
         logger.debug("  -> Using rebac_check_detailed")
@@ -329,7 +385,156 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if detailed_result.allowed and self._tiger_cache and tenant_id:
             self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
 
+        # Issue #922: Cache boundary if permission was granted via parent
+        if detailed_result.allowed and object_type == "file" and self._boundary_cache:
+            self._cache_boundary_if_inherited(subject, permission, object, tenant_id, logger)
+
         return detailed_result.allowed
+
+    def _check_direct_grant(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None,
+    ) -> bool:
+        """Check if subject has a DIRECT grant on the object (no inheritance).
+
+        Issue #922: Used by boundary cache to verify cached boundaries are still valid.
+        This is a lightweight check that only looks for direct grants, not inherited ones.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+
+        Returns:
+            True if direct grant exists, False otherwise
+        """
+        # Map permission to relations that grant it
+        direct_relations = {
+            "read": ["direct_viewer", "direct_editor", "direct_owner", "viewer", "editor", "owner"],
+            "write": ["direct_editor", "direct_owner", "editor", "owner"],
+            "execute": ["direct_owner", "owner"],
+        }
+
+        relations_to_check = direct_relations.get(permission, [])
+        if not relations_to_check:
+            return False
+
+        # Check if any direct relation tuple exists
+        for relation in relations_to_check:
+            if self.has_direct_relation(subject, relation, object, tenant_id):
+                return True
+
+        return False
+
+    def has_direct_relation(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        tenant_id: str | None,
+    ) -> bool:
+        """Check if a specific relation tuple exists (no graph traversal).
+
+        Issue #922: Used by boundary cache to check for direct grants.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            relation: Relation name (e.g., "direct_viewer")
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+
+        Returns:
+            True if tuple exists, False otherwise
+        """
+        from datetime import UTC, datetime
+
+        effective_tenant = tenant_id or "default"
+        subject_type, subject_id = subject
+        object_type, object_id = object
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT 1 FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                      AND relation = ?
+                      AND object_type = ? AND object_id = ?
+                      AND tenant_id = ?
+                      AND subject_relation IS NULL
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    LIMIT 1
+                    """
+                ),
+                (
+                    subject_type,
+                    subject_id,
+                    relation,
+                    object_type,
+                    object_id,
+                    effective_tenant,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+            return cursor.fetchone() is not None
+
+    def _cache_boundary_if_inherited(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None,
+        logger: Any,
+    ) -> None:
+        """Cache the permission boundary if permission was granted via parent inheritance.
+
+        Issue #922: After graph traversal grants permission, check if it was via a parent.
+        If so, cache the parent as the boundary for future O(1) lookups.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission that was granted
+            object: (object_type, object_id) tuple
+            tenant_id: Tenant ID
+            logger: Logger instance
+        """
+        import os
+
+        object_type, object_id = object
+        subject_type, subject_id = subject
+        effective_tenant = tenant_id or "default"
+
+        # Check if this was a direct grant (if so, no need to cache boundary)
+        if self._check_direct_grant(subject, permission, object, tenant_id):
+            return  # Direct grant, no boundary caching needed
+
+        # Walk up the path to find the boundary (ancestor with direct grant)
+        current_path = object_id
+        while current_path and current_path != "/":
+            parent_path = os.path.dirname(current_path)
+            if not parent_path:
+                parent_path = "/"
+
+            # Check if parent has direct grant
+            if self._check_direct_grant(subject, permission, (object_type, parent_path), tenant_id):
+                # Found the boundary! Cache it
+                self._boundary_cache.set_boundary(
+                    effective_tenant, subject_type, subject_id, permission, object_id, parent_path
+                )
+                logger.info(
+                    f"[BoundaryCache] Cached: {subject_type}:{subject_id} {permission} "
+                    f"{object_id} → {parent_path}"
+                )
+                return
+
+            if parent_path == "/":
+                break
+            current_path = parent_path
 
     def rebac_check_detailed(
         self,
@@ -830,6 +1035,198 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             del self._tenant_graph_cache[tenant_id]
             logger.debug(f"[GRAPH-CACHE] Invalidated cache for tenant {tenant_id}")
 
+    # =========================================================================
+    # Issue #922: Permission Boundary Cache Invalidation
+    # =========================================================================
+
+    def register_boundary_cache_invalidator(
+        self,
+        callback_id: str,
+        callback: Any,
+    ) -> None:
+        """Register a callback to invalidate boundary cache on permission changes.
+
+        This allows PermissionEnforcer to register its boundary cache for
+        automatic invalidation when permission tuples are written.
+
+        Args:
+            callback_id: Unique identifier for this callback (for deregistration)
+            callback: Function that takes (tenant_id, subject_type, subject_id,
+                      permission, object_path) and invalidates relevant cache entries
+
+        Example:
+            >>> def invalidator(tenant_id, subject_type, subject_id, perm, path):
+            ...     boundary_cache.invalidate_permission_change(
+            ...         tenant_id, subject_type, subject_id, perm, path
+            ...     )
+            >>> manager.register_boundary_cache_invalidator("enforcer1", invalidator)
+        """
+        # Avoid duplicate registrations
+        for cid, _ in self._boundary_cache_invalidators:
+            if cid == callback_id:
+                return
+        self._boundary_cache_invalidators.append((callback_id, callback))
+
+    def unregister_boundary_cache_invalidator(self, callback_id: str) -> bool:
+        """Unregister a boundary cache invalidation callback.
+
+        Args:
+            callback_id: ID of callback to remove
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        for i, (cid, _) in enumerate(self._boundary_cache_invalidators):
+            if cid == callback_id:
+                self._boundary_cache_invalidators.pop(i)
+                return True
+        return False
+
+    def _notify_boundary_cache_invalidators(
+        self,
+        tenant_id: str,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+    ) -> None:
+        """Notify all registered boundary cache invalidators of a permission change.
+
+        Extracts the permission from the relation and calls each invalidator.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not self._boundary_cache_invalidators:
+            return
+
+        # Map relation to permission(s) for invalidation
+        # This maps relation names to permissions they grant
+        relation_to_permissions: dict[str, list[str]] = {
+            "direct_viewer": ["read"],
+            "direct_editor": ["read", "write"],
+            "direct_owner": ["read", "write", "execute"],
+            "viewer": ["read"],
+            "editor": ["read", "write"],
+            "owner": ["read", "write", "execute"],
+            "viewer-of": ["read"],
+            "owner-of": ["read", "write", "execute"],
+            "shared-viewer": ["read"],
+            "shared-editor": ["read", "write"],
+            "shared-owner": ["read", "write", "execute"],
+            "traverser-of": ["read"],
+            "reader": ["read"],
+            "writer": ["read", "write"],
+            "parent_viewer": ["read"],
+            "parent_editor": ["read", "write"],
+            "parent_owner": ["read", "write", "execute"],
+            "group_viewer": ["read"],
+            "group_editor": ["read", "write"],
+            "group_owner": ["read", "write", "execute"],
+        }
+
+        permissions = relation_to_permissions.get(relation, [])
+        if not permissions:
+            return
+
+        subject_type = subject[0]
+        subject_id = subject[1]
+        object_type = object[0]
+        object_id = object[1]
+
+        # Only invalidate for file objects (boundary cache is for file paths)
+        if object_type != "file":
+            return
+
+        for callback_id, callback in self._boundary_cache_invalidators:
+            try:
+                for permission in permissions:
+                    callback(tenant_id, subject_type, subject_id, permission, object_id)
+            except Exception as e:
+                logger.warning(f"[BOUNDARY-CACHE] Invalidator {callback_id} failed: {e}")
+
+    # =========================================================================
+    # Issue #919: Directory Visibility Cache Invalidation
+    # =========================================================================
+
+    def register_dir_visibility_invalidator(
+        self,
+        callback_id: str,
+        callback: Any,
+    ) -> None:
+        """Register a callback to invalidate directory visibility cache on permission changes.
+
+        This allows NexusFS to register its DirectoryVisibilityCache for
+        automatic invalidation when permission tuples are written or deleted.
+
+        Args:
+            callback_id: Unique identifier for this callback (for deregistration)
+            callback: Function that takes (tenant_id, object_path) and invalidates
+                      relevant cache entries for that path and its ancestors
+
+        Example:
+            >>> def invalidator(tenant_id, path):
+            ...     dir_visibility_cache.invalidate_for_resource(path, tenant_id)
+            >>> manager.register_dir_visibility_invalidator("nexusfs", invalidator)
+        """
+        # Avoid duplicate registrations
+        for cid, _ in self._dir_visibility_invalidators:
+            if cid == callback_id:
+                return
+        self._dir_visibility_invalidators.append((callback_id, callback))
+
+    def unregister_dir_visibility_invalidator(self, callback_id: str) -> bool:
+        """Unregister a directory visibility cache invalidation callback.
+
+        Args:
+            callback_id: ID of callback to remove
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        for i, (cid, _) in enumerate(self._dir_visibility_invalidators):
+            if cid == callback_id:
+                self._dir_visibility_invalidators.pop(i)
+                return True
+        return False
+
+    def _notify_dir_visibility_invalidators(
+        self,
+        tenant_id: str,
+        object: tuple[str, str],
+    ) -> None:
+        """Notify all registered directory visibility cache invalidators.
+
+        When a permission tuple is written or deleted, the directory visibility
+        for the affected path and all its ancestors must be invalidated.
+
+        Args:
+            tenant_id: Tenant ID
+            object: (object_type, object_id) tuple - only file objects trigger invalidation
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not self._dir_visibility_invalidators:
+            return
+
+        object_type = object[0]
+        object_path = object[1]
+
+        # Only invalidate for file objects (directory visibility is for file paths)
+        if object_type != "file":
+            return
+
+        for callback_id, callback in self._dir_visibility_invalidators:
+            try:
+                callback(tenant_id, object_path)
+                logger.debug(
+                    f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {tenant_id}:{object_path}"
+                )
+            except Exception as e:
+                logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
+
     def rebac_write(
         self,
         subject: tuple[str, str] | tuple[str, str, str],
@@ -961,6 +1358,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     tenant_id=effective_tenant,
                 )
 
+        # Issue #922: Notify boundary cache invalidators
+        self._notify_boundary_cache_invalidators(effective_tenant, subject, relation, object)
+
+        # Issue #919: Notify directory visibility cache invalidators
+        self._notify_dir_visibility_invalidators(effective_tenant, object)
+
+        # Invalidate L1 permission cache for affected subject and object
+        # This ensures subsequent rebac_check_bulk calls see the new permission
+        if self._l1_cache is not None:
+            subject_type, subject_id = subject[0], subject[1]
+            object_type, object_id = object[0], object[1]
+            self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
+            self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
+
         return result
 
     def rebac_write_batch(
@@ -1081,6 +1492,21 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             resource_id=object_id,
                             tenant_id=tenant_id,
                         )
+
+            # Issue #919: Notify directory visibility cache invalidators for all affected objects
+            for t in tuples:
+                obj = t["object"]
+                tenant_id = t.get("tenant_id") or "default"
+                self._notify_dir_visibility_invalidators(tenant_id, obj)
+
+            # Invalidate L1 permission cache for all affected subjects and objects
+            if self._l1_cache is not None:
+                for t in tuples:
+                    subject = t["subject"]
+                    obj = t["object"]
+                    tenant_id = t.get("tenant_id") or "default"
+                    self._l1_cache.invalidate_subject(subject[0], subject[1], tenant_id)
+                    self._l1_cache.invalidate_object(obj[0], obj[1], tenant_id)
 
         return created_count
 
@@ -1205,6 +1631,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 except Exception as e:
                     # Log but don't fail the delete - closure can be rebuilt
                     logger.warning(f"[LEOPARD] Failed to update closure on delete: {e}")
+
+            # Issue #919: Notify directory visibility cache invalidators
+            object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
+            self._notify_dir_visibility_invalidators(tenant_id or "default", object_tuple)
+
+            # Invalidate L1 permission cache for affected subject and object
+            if self._l1_cache is not None:
+                subject_type = tuple_info["subject_type"]
+                subject_id = tuple_info["subject_id"]
+                object_type = tuple_info["object_type"]
+                object_id = tuple_info["object_id"]
+                effective_tenant = tenant_id or "default"
+                self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
+                self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
 
         return result
 

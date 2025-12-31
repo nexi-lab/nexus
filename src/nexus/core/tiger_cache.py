@@ -549,6 +549,81 @@ class TigerCache:
         )
         return None
 
+    def get_bitmap_bytes(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+        conn: Connection | None = None,
+    ) -> bytes | None:
+        """Get serialized bitmap bytes for Rust interop (Issue #896).
+
+        Returns the raw serialized Roaring Bitmap bytes that can be passed
+        to Rust's filter_paths_with_tiger_cache() for O(1) permission filtering.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission to check (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            tenant_id: Tenant ID
+            conn: Optional database connection
+
+        Returns:
+            Serialized bitmap bytes if found, None if not in cache
+        """
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        # Check in-memory cache first
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, cached_at = self._cache[key]
+                if time.time() - cached_at < self._cache_ttl:
+                    logger.debug(f"[TIGER] get_bitmap_bytes memory hit for {key}")
+                    return bytes(bitmap.serialize())
+
+        # Load from database and return raw bytes
+        from sqlalchemy import text
+
+        query = text("""
+            SELECT bitmap_data, revision FROM tiger_cache
+            WHERE subject_type = :subject_type
+              AND subject_id = :subject_id
+              AND permission = :permission
+              AND resource_type = :resource_type
+              AND tenant_id = :tenant_id
+        """)
+
+        params = {
+            "subject_type": key.subject_type,
+            "subject_id": key.subject_id,
+            "permission": key.permission,
+            "resource_type": key.resource_type,
+            "tenant_id": key.tenant_id,
+        }
+
+        def execute(connection: Connection) -> bytes | None:
+            result = connection.execute(query, params)
+            row = result.fetchone()
+            if row:
+                # Cache the deserialized bitmap in memory for future use
+                bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                with self._lock:
+                    self._evict_if_needed()
+                    self._cache[key] = (bitmap, int(row.revision), time.time())
+                logger.debug(f"[TIGER] get_bitmap_bytes DB hit for {key}")
+                # Return raw bytes (already serialized from DB)
+                return bytes(row.bitmap_data)
+            return None
+
+        if conn:
+            return execute(conn)
+        else:
+            with self._engine.connect() as new_conn:
+                return execute(new_conn)
+
     def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
         """Load bitmap from database.
 

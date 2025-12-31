@@ -1,12 +1,17 @@
 """Vector database integration using sqlite-vec and pgvector.
 
 Provides vector search capabilities using native database extensions:
-- SQLite: sqlite-vec extension
-- PostgreSQL: pgvector extension
+- SQLite: sqlite-vec extension for vectors, FTS5 for keywords
+- PostgreSQL: pgvector for vectors, pg_textsearch BM25 for keywords (PG17+)
+
+BM25 ranking (pg_textsearch):
+- True BM25 ranking with IDF, term frequency saturation, length normalization
+- 3x faster than Elasticsearch, ~10ms vs ts_rank's 25-30s at 800K rows
+- Falls back to ts_rank() on PostgreSQL < 17 or when extension unavailable
 
 Zoekt integration:
 - keyword_search tries Zoekt first for fast candidate retrieval
-- Falls back to FTS if Zoekt unavailable
+- Falls back to FTS/BM25 if Zoekt unavailable
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ class VectorDatabase:
         self.db_type = engine.dialect.name
         self._initialized = False
         self.vec_available = False  # Set to True if vector extension is loaded
+        self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
         self._sqlite_vec_loaded = False  # Track if we've set up the event listener
 
     def initialize(self) -> None:
@@ -180,7 +186,7 @@ class VectorDatabase:
             pass
 
     def _init_postgresql(self, conn: Any) -> None:
-        """Initialize PostgreSQL with pgvector.
+        """Initialize PostgreSQL with pgvector and pg_textsearch.
 
         Args:
             conn: Database connection
@@ -208,11 +214,34 @@ class VectorDatabase:
 
         self.vec_available = vec_available
 
+        # Try to create pg_textsearch extension (optional - for true BM25 ranking)
+        # Requires PostgreSQL 17+
+        bm25_available = False
+        try:
+            # Check PostgreSQL version first
+            result = conn.execute(text("SHOW server_version_num"))
+            version_num = int(result.scalar())
+
+            if version_num >= 170000:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_textsearch"))
+                conn.commit()
+                # Verify the extension is loaded by checking for the bm25 index type
+                result = conn.execute(text("SELECT 1 FROM pg_am WHERE amname = 'bm25' LIMIT 1"))
+                if result.scalar():
+                    bm25_available = True
+                    logger.info("pg_textsearch BM25 extension initialized")
+        except Exception as e:
+            # pg_textsearch not available - will use ts_rank fallback
+            logger.debug(f"pg_textsearch not available: {e}. Using ts_rank fallback.")
+            conn.rollback()
+
+        self.bm25_available = bm25_available
+
         # Add embedding column if pgvector is available
         if vec_available:
             # Note: Dimension will be set dynamically based on model
             try:
-                conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding vector(1536)"))
+                conn.execute(text("ALTER TABLE document_chunks ADD COLUMN embedding halfvec(1536)"))
                 conn.commit()
             except Exception:
                 # Column might already exist (duplicate column error) - rollback and continue
@@ -243,7 +272,7 @@ class VectorDatabase:
                     text("""
                     CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
                     ON document_chunks
-                    USING hnsw (embedding vector_cosine_ops)
+                    USING hnsw (embedding halfvec_cosine_ops)
                     WITH (m = 24, ef_construction = 128)
                 """)
                 )
@@ -414,12 +443,12 @@ class VectorDatabase:
                     c.line_start,
                     c.line_end,
                     fp.virtual_path,
-                    1 - (c.embedding <=> CAST(:embedding AS vector)) as score
+                    1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
                 FROM document_chunks c
                 JOIN file_paths fp ON c.path_id = fp.path_id
                 WHERE c.embedding IS NOT NULL
                   AND fp.virtual_path LIKE :path_filter
-                ORDER BY c.embedding <=> CAST(:embedding AS vector)
+                ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
                 LIMIT :limit
             """)
             results = session.execute(
@@ -438,11 +467,11 @@ class VectorDatabase:
                     c.line_start,
                     c.line_end,
                     fp.virtual_path,
-                    1 - (c.embedding <=> CAST(:embedding AS vector)) as score
+                    1 - (c.embedding <=> CAST(:embedding AS halfvec)) as score
                 FROM document_chunks c
                 JOIN file_paths fp ON c.path_id = fp.path_id
                 WHERE c.embedding IS NOT NULL
-                ORDER BY c.embedding <=> CAST(:embedding AS vector)
+                ORDER BY c.embedding <=> CAST(:embedding AS halfvec)
                 LIMIT :limit
             """)
             results = session.execute(query, {"embedding": embedding, "limit": limit})
@@ -650,7 +679,15 @@ class VectorDatabase:
     def _postgres_keyword_search(
         self, session: Session, query: str, limit: int, path_filter: str | None
     ) -> list[dict[str, Any]]:
-        """PostgreSQL keyword search using tsvector.
+        """PostgreSQL keyword search using BM25 (pg_textsearch) or tsvector fallback.
+
+        Uses pg_textsearch BM25 ranking when available (PostgreSQL 17+),
+        falls back to ts_rank() on older versions or when extension unavailable.
+
+        BM25 provides true relevance ranking with:
+        - Inverse Document Frequency (IDF): Rare terms weighted higher
+        - Term Frequency Saturation (k1=1.2): Prevents keyword stuffing
+        - Length Normalization (b=0.75): Fair comparison across doc lengths
 
         Args:
             session: Database session
@@ -660,6 +697,101 @@ class VectorDatabase:
 
         Returns:
             Search results
+        """
+        if self.bm25_available:
+            return self._postgres_bm25_search(session, query, limit, path_filter)
+        return self._postgres_tsrank_search(session, query, limit, path_filter)
+
+    def _postgres_bm25_search(
+        self, session: Session, query: str, limit: int, path_filter: str | None
+    ) -> list[dict[str, Any]]:
+        """PostgreSQL keyword search using pg_textsearch BM25 ranking.
+
+        BM25 scores are negative (lower = better match), so we ORDER BY ASC.
+        We convert to positive scores (abs) for consistent API.
+
+        Args:
+            session: Database session
+            query: Search query
+            limit: Max results
+            path_filter: Path filter
+
+        Returns:
+            Search results with BM25 relevance scores
+        """
+        if path_filter:
+            sql = text("""
+                SELECT
+                    c.chunk_id,
+                    c.path_id,
+                    c.chunk_index,
+                    c.chunk_text,
+                    c.start_offset,
+                    c.end_offset,
+                    c.line_start,
+                    c.line_end,
+                    fp.virtual_path,
+                    c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25') as score
+                FROM document_chunks c
+                JOIN file_paths fp ON c.path_id = fp.path_id
+                WHERE fp.virtual_path LIKE :path_filter
+                ORDER BY c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25')
+                LIMIT :limit
+            """)
+            results = session.execute(
+                sql, {"query": query, "limit": limit, "path_filter": f"{path_filter}%"}
+            )
+        else:
+            sql = text("""
+                SELECT
+                    c.chunk_id,
+                    c.path_id,
+                    c.chunk_index,
+                    c.chunk_text,
+                    c.start_offset,
+                    c.end_offset,
+                    c.line_start,
+                    c.line_end,
+                    fp.virtual_path,
+                    c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25') as score
+                FROM document_chunks c
+                JOIN file_paths fp ON c.path_id = fp.path_id
+                ORDER BY c.chunk_text <@> to_bm25query(:query, 'idx_chunks_bm25')
+                LIMIT :limit
+            """)
+            results = session.execute(sql, {"query": query, "limit": limit})
+
+        return [
+            {
+                "chunk_id": row.chunk_id,
+                "path": row.virtual_path,
+                "chunk_index": row.chunk_index,
+                "chunk_text": row.chunk_text,
+                "start_offset": row.start_offset,
+                "end_offset": row.end_offset,
+                "line_start": row.line_start,
+                "line_end": row.line_end,
+                "score": abs(float(row.score)),  # BM25 scores are negative
+            }
+            for row in results
+        ]
+
+    def _postgres_tsrank_search(
+        self, session: Session, query: str, limit: int, path_filter: str | None
+    ) -> list[dict[str, Any]]:
+        """PostgreSQL keyword search using tsvector ts_rank() fallback.
+
+        Used when pg_textsearch BM25 is not available.
+        ts_rank() is not true BM25 and degrades at scale (25-30s on 800K rows).
+
+        Args:
+            session: Database session
+            query: Search query
+            limit: Max results
+            path_filter: Path filter
+
+        Returns:
+            Search results with ts_rank scores
         """
         if path_filter:
             sql = text("""

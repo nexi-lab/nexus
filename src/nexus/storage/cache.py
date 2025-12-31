@@ -4,18 +4,81 @@ This module provides thread-safe in-memory caching to reduce database queries
 and improve performance for frequently accessed metadata.
 
 Issue #911: Added compact metadata support for 3x memory reduction at scale.
+Issue #715: Added adaptive TTL based on write frequency.
 """
 
 import threading
+import time
 from typing import Any, cast
 
-from cachetools import LRUCache, TTLCache
+from cachetools import LRUCache
 
+from nexus.core.adaptive_ttl import AdaptiveTTLMixin
 from nexus.core.compact_metadata import CompactFileMetadata
 from nexus.core.metadata import FileMetadata
 
 
-class MetadataCache:
+class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
+    """LRU cache with per-entry adaptive TTL support.
+
+    Each entry stores (value, expiry_time). Expired entries are lazily removed on access.
+    Supports variable TTL per entry, unlike cachetools.TTLCache which uses fixed TTL.
+
+    Issue #715: Enables adaptive TTL based on write frequency.
+    """
+
+    def __init__(self, maxsize: int):
+        super().__init__()
+        self._maxsize = maxsize
+        self._order: list[str] = []  # Track access order for LRU
+
+    @property
+    def maxsize(self) -> int:
+        return self._maxsize
+
+    def get_with_expiry(self, key: str, default: Any = None) -> Any:
+        """Get value if not expired."""
+        if key not in self:
+            return default
+
+        value, expiry = self[key]
+        if time.time() > expiry:
+            # Expired - remove and return default
+            self.pop(key, None)
+            if key in self._order:
+                self._order.remove(key)
+            return default
+
+        # Move to end (most recently used)
+        if key in self._order:
+            self._order.remove(key)
+        self._order.append(key)
+
+        return value
+
+    def set_with_ttl(self, key: str, value: Any, ttl: float) -> None:
+        """Set value with specific TTL."""
+        expiry = time.time() + ttl
+
+        # Evict LRU entries if at capacity
+        while len(self) >= self._maxsize and self._order:
+            lru_key = self._order.pop(0)
+            self.pop(lru_key, None)
+
+        self[key] = (value, expiry)
+        if key in self._order:
+            self._order.remove(key)
+        self._order.append(key)
+
+    def pop_entry(self, key: str) -> Any:
+        """Remove entry and return value."""
+        if key in self._order:
+            self._order.remove(key)
+        entry = self.pop(key, None)
+        return entry[0] if entry else None
+
+
+class MetadataCache(AdaptiveTTLMixin):
     """
     Multi-level in-memory cache for metadata operations.
 
@@ -38,6 +101,7 @@ class MetadataCache:
         exists_cache_size: int = 1024,
         ttl_seconds: int | None = None,
         use_compact: bool = True,
+        enable_adaptive_ttl: bool = True,
     ):
         """
         Initialize metadata cache.
@@ -50,46 +114,41 @@ class MetadataCache:
             ttl_seconds: Time-to-live for cache entries in seconds (None = no expiry)
             use_compact: If True, store FileMetadata as CompactFileMetadata internally
                         for 3x memory reduction (Issue #911). Default: True.
+            enable_adaptive_ttl: If True, adjust TTL based on write frequency
+                        (Issue #715). Default: True. Requires ttl_seconds to be set.
         """
+        # Initialize adaptive TTL mixin
+        base_ttl = ttl_seconds if ttl_seconds else 300
+        AdaptiveTTLMixin.__init__(
+            self,
+            base_ttl=base_ttl,
+            enable_adaptive_ttl=enable_adaptive_ttl and ttl_seconds is not None,
+        )
+
         self._ttl_seconds = ttl_seconds
         self._use_compact = use_compact
         self._lock = threading.RLock()
 
-        # Cache for path metadata (get operation)
-        # When use_compact=True, stores CompactFileMetadata instead of FileMetadata
-        # Type annotation covers both cases for compatibility
+        # Use adaptive TTL cache when TTL is enabled (Issue #715)
+        # Otherwise use simple LRU cache (no expiry)
         if ttl_seconds:
+            # Adaptive TTL cache supports per-entry TTL
             self._path_cache: (
-                LRUCache[str, FileMetadata | CompactFileMetadata | None]
-                | TTLCache[str, FileMetadata | CompactFileMetadata | None]
-            ) = TTLCache(maxsize=path_cache_size, ttl=ttl_seconds)
+                LRUCache[str, FileMetadata | CompactFileMetadata | None] | AdaptiveTTLCache
+            ) = AdaptiveTTLCache(maxsize=path_cache_size)
+            self._list_cache: (
+                LRUCache[str, list[FileMetadata] | list[CompactFileMetadata]] | AdaptiveTTLCache
+            ) = AdaptiveTTLCache(maxsize=list_cache_size)
+            self._kv_cache: LRUCache[tuple[str, str], Any] | AdaptiveTTLCache = AdaptiveTTLCache(
+                maxsize=kv_cache_size
+            )
+            self._exists_cache: LRUCache[str, bool] | AdaptiveTTLCache = AdaptiveTTLCache(
+                maxsize=exists_cache_size
+            )
         else:
             self._path_cache = LRUCache(maxsize=path_cache_size)
-
-        # Cache for directory listings (list operation)
-        # When use_compact=True, stores list[CompactFileMetadata]
-        if ttl_seconds:
-            self._list_cache: (
-                LRUCache[str, list[FileMetadata] | list[CompactFileMetadata]]
-                | TTLCache[str, list[FileMetadata] | list[CompactFileMetadata]]
-            ) = TTLCache(maxsize=list_cache_size, ttl=ttl_seconds)
-        else:
             self._list_cache = LRUCache(maxsize=list_cache_size)
-
-        # Cache for file metadata key-value pairs (get_file_metadata operation)
-        if ttl_seconds:
-            self._kv_cache: LRUCache[tuple[str, str], Any] | TTLCache[tuple[str, str], Any] = (
-                TTLCache(maxsize=kv_cache_size, ttl=ttl_seconds)
-            )
-        else:
             self._kv_cache = LRUCache(maxsize=kv_cache_size)
-
-        # Cache for existence checks (exists operation)
-        if ttl_seconds:
-            self._exists_cache: LRUCache[str, bool] | TTLCache[str, bool] = TTLCache(
-                maxsize=exists_cache_size, ttl=ttl_seconds
-            )
-        else:
             self._exists_cache = LRUCache(maxsize=exists_cache_size)
 
     def get_path(self, path: str) -> FileMetadata | None | object:
@@ -107,8 +166,12 @@ class MetadataCache:
             but always returns FileMetadata to callers (Issue #911).
         """
         with self._lock:
-            # Use object() as sentinel to distinguish "not in cache" from "cached as None"
-            result = self._path_cache.get(path, _CACHE_MISS)
+            # Use adaptive TTL cache if enabled (Issue #715)
+            if isinstance(self._path_cache, AdaptiveTTLCache):
+                result = self._path_cache.get_with_expiry(path, _CACHE_MISS)
+            else:
+                result = self._path_cache.get(path, _CACHE_MISS)
+
             if result is _CACHE_MISS or result is None:
                 return result
             # Convert from compact format if needed
@@ -127,13 +190,20 @@ class MetadataCache:
         Note:
             When use_compact=True, converts FileMetadata to CompactFileMetadata
             for 3x memory reduction (Issue #911).
+            When adaptive TTL is enabled, TTL is based on write frequency (Issue #715).
         """
         with self._lock:
-            if metadata is None or not self._use_compact:
-                self._path_cache[path] = metadata
+            # Convert to compact format for memory efficiency (Issue #911)
+            value: FileMetadata | CompactFileMetadata | None = (
+                metadata if metadata is None or not self._use_compact else metadata.to_compact()
+            )
+
+            # Use adaptive TTL if enabled (Issue #715)
+            if isinstance(self._path_cache, AdaptiveTTLCache):
+                ttl = self.get_adaptive_ttl(path)
+                self._path_cache.set_with_ttl(path, value, ttl)
             else:
-                # Convert to compact format for memory efficiency
-                self._path_cache[path] = metadata.to_compact()
+                self._path_cache[path] = value
 
     def get_list(self, prefix: str) -> list[FileMetadata] | None:
         """
@@ -150,7 +220,12 @@ class MetadataCache:
             but always returns list[FileMetadata] to callers (Issue #911).
         """
         with self._lock:
-            result = self._list_cache.get(prefix)
+            # Use adaptive TTL cache if enabled (Issue #715)
+            if isinstance(self._list_cache, AdaptiveTTLCache):
+                result = self._list_cache.get_with_expiry(prefix)
+            else:
+                result = self._list_cache.get(prefix)
+
             if result is None:
                 return None
             # Convert from compact format if needed
@@ -169,13 +244,18 @@ class MetadataCache:
         Note:
             When use_compact=True, converts list[FileMetadata] to list[CompactFileMetadata]
             for 3x memory reduction (Issue #911).
+            When adaptive TTL is enabled, TTL is based on write frequency (Issue #715).
         """
         with self._lock:
-            if not self._use_compact or not files:
-                self._list_cache[prefix] = files
+            # Convert to compact format for memory efficiency (Issue #911)
+            value = files if not self._use_compact or not files else [f.to_compact() for f in files]
+
+            # Use adaptive TTL if enabled (Issue #715)
+            if isinstance(self._list_cache, AdaptiveTTLCache):
+                ttl = self.get_adaptive_ttl(prefix)
+                self._list_cache.set_with_ttl(prefix, value, ttl)
             else:
-                # Convert to compact format for memory efficiency
-                self._list_cache[prefix] = [f.to_compact() for f in files]
+                self._list_cache[prefix] = value
 
     def get_kv(self, path: str, key: str) -> Any | object:
         """
@@ -189,6 +269,9 @@ class MetadataCache:
             Metadata value if cached, sentinel if not cached
         """
         with self._lock:
+            cache_key = f"{path}:{key}"
+            if isinstance(self._kv_cache, AdaptiveTTLCache):
+                return self._kv_cache.get_with_expiry(cache_key, _CACHE_MISS)
             return self._kv_cache.get((path, key), _CACHE_MISS)
 
     def set_kv(self, path: str, key: str, value: Any) -> None:
@@ -201,7 +284,12 @@ class MetadataCache:
             value: Metadata value
         """
         with self._lock:
-            self._kv_cache[(path, key)] = value
+            if isinstance(self._kv_cache, AdaptiveTTLCache):
+                cache_key = f"{path}:{key}"
+                ttl = self.get_adaptive_ttl(path)
+                self._kv_cache.set_with_ttl(cache_key, value, ttl)
+            else:
+                self._kv_cache[(path, key)] = value
 
     def get_exists(self, path: str) -> bool | None:
         """
@@ -214,7 +302,10 @@ class MetadataCache:
             True/False if cached, None if not cached
         """
         with self._lock:
-            result: bool | None = self._exists_cache.get(path)
+            if isinstance(self._exists_cache, AdaptiveTTLCache):
+                result = self._exists_cache.get_with_expiry(path)
+            else:
+                result = self._exists_cache.get(path)
             return result
 
     def set_exists(self, path: str, exists: bool) -> None:
@@ -226,23 +317,38 @@ class MetadataCache:
             exists: Whether the path exists
         """
         with self._lock:
-            self._exists_cache[path] = exists
+            if isinstance(self._exists_cache, AdaptiveTTLCache):
+                ttl = self.get_adaptive_ttl(path)
+                self._exists_cache.set_with_ttl(path, exists, ttl)
+            else:
+                self._exists_cache[path] = exists
 
     def invalidate_path(self, path: str) -> None:
         """
         Invalidate all cache entries related to a path.
 
         Called when a file is created, updated, or deleted.
+        Also tracks the write for adaptive TTL calculation (Issue #715).
 
         Args:
             path: Virtual path
         """
+        # Track write for adaptive TTL (Issue #715)
+        # This must be called even if cache entry doesn't exist
+        self.track_write(path)
+
         with self._lock:
             # Invalidate path metadata cache
-            self._path_cache.pop(path, None)
+            if isinstance(self._path_cache, AdaptiveTTLCache):
+                self._path_cache.pop_entry(path)
+            else:
+                self._path_cache.pop(path, None)
 
             # Invalidate existence cache
-            self._exists_cache.pop(path, None)
+            if isinstance(self._exists_cache, AdaptiveTTLCache):
+                self._exists_cache.pop_entry(path)
+            else:
+                self._exists_cache.pop(path, None)
 
             # Invalidate list cache entries that might contain this path
             # Need to invalidate all prefixes that could include this path
@@ -274,12 +380,24 @@ class MetadataCache:
                     cache_keys_to_invalidate.append(cache_key)
 
             for cache_key in cache_keys_to_invalidate:
-                self._list_cache.pop(cache_key, None)
+                if isinstance(self._list_cache, AdaptiveTTLCache):
+                    self._list_cache.pop_entry(cache_key)
+                else:
+                    self._list_cache.pop(cache_key, None)
 
             # Invalidate all KV cache entries for this path
-            kv_keys_to_invalidate = [(p, k) for (p, k) in list(self._kv_cache.keys()) if p == path]
-            for kv_key in kv_keys_to_invalidate:
-                self._kv_cache.pop(kv_key, None)
+            if isinstance(self._kv_cache, AdaptiveTTLCache):
+                kv_keys_to_invalidate = [
+                    k for k in list(self._kv_cache.keys()) if k.startswith(f"{path}:")
+                ]
+                for kv_key in kv_keys_to_invalidate:
+                    self._kv_cache.pop_entry(kv_key)
+            else:
+                kv_keys_to_invalidate = [
+                    (p, k) for (p, k) in list(self._kv_cache.keys()) if p == path
+                ]
+                for kv_key in kv_keys_to_invalidate:
+                    self._kv_cache.pop(kv_key, None)
 
     def invalidate_kv(self, path: str, key: str) -> None:
         """
@@ -290,7 +408,11 @@ class MetadataCache:
             key: Metadata key
         """
         with self._lock:
-            self._kv_cache.pop((path, key), None)
+            if isinstance(self._kv_cache, AdaptiveTTLCache):
+                cache_key = f"{path}:{key}"
+                self._kv_cache.pop_entry(cache_key)
+            else:
+                self._kv_cache.pop((path, key), None)
 
     def clear(self) -> None:
         """Clear all cache entries."""
@@ -305,7 +427,7 @@ class MetadataCache:
         Get cache statistics.
 
         Returns:
-            Dictionary with cache statistics including compact mode status
+            Dictionary with cache statistics including compact mode and adaptive TTL status
         """
         with self._lock:
             stats: dict[str, Any] = {
@@ -326,6 +448,9 @@ class MetadataCache:
                 from nexus.core.compact_metadata import get_pool_stats
 
                 stats["intern_pools"] = get_pool_stats()
+
+            # Add adaptive TTL stats (Issue #715)
+            stats["adaptive_ttl"] = self.get_adaptive_ttl_stats()
 
             return stats
 

@@ -505,3 +505,324 @@ class DragonflyResourceMapCache:
             key = self._make_key(resource_type, tenant_id)
             pipe.hset(key, mapping=mapping)
         await pipe.execute()
+
+
+class DragonflyEmbeddingCache:
+    """Dragonfly-backed embedding cache for semantic search.
+
+    Caches embedding vectors by content hash to avoid redundant API calls.
+    Implements Level 1 (content-based) caching from Issue #950.
+
+    Key format:
+        emb:v1:{sha256(model:text)[:32]}
+
+    Value:
+        JSON-serialized embedding vector (list of floats)
+
+    Features:
+        - Content-hash based deduplication
+        - Batch operations with pipeline
+        - Configurable TTL (default: 24 hours)
+        - Graceful degradation on errors
+    """
+
+    # Cache key version - increment when changing key format
+    CACHE_VERSION = "v1"
+
+    def __init__(
+        self,
+        client: DragonflyClient,
+        ttl: int = 86400,
+    ):
+        """Initialize embedding cache.
+
+        Args:
+            client: DragonflyClient instance
+            ttl: TTL in seconds (default: 24 hours)
+        """
+        self._client = client
+        self._ttl = ttl
+        # Metrics (Issue #973)
+        self._hits = 0
+        self._misses = 0
+        self._errors = 0
+
+    def _content_hash(self, text: str, model: str) -> str:
+        """Generate content hash for cache key.
+
+        Args:
+            text: Text content to hash
+            model: Embedding model name
+
+        Returns:
+            32-character hex hash
+        """
+        import hashlib
+
+        content = f"{model}:{text}"
+        return hashlib.sha256(content.encode()).hexdigest()[:32]
+
+    def _make_key(self, text: str, model: str) -> str:
+        """Create cache key for embedding.
+
+        Args:
+            text: Text content
+            model: Embedding model name
+
+        Returns:
+            Cache key string
+        """
+        content_hash = self._content_hash(text, model)
+        return f"emb:{self.CACHE_VERSION}:{content_hash}"
+
+    async def get(self, text: str, model: str) -> list[float] | None:
+        """Get cached embedding for text.
+
+        Args:
+            text: Text content
+            model: Embedding model name
+
+        Returns:
+            Embedding vector if cached, None otherwise
+        """
+        import json
+
+        key = self._make_key(text, model)
+        try:
+            cached = await self._client.client.get(key)
+            if cached:
+                self._hits += 1
+                return json.loads(cached)
+            self._misses += 1
+            return None
+        except Exception as e:
+            logger.warning(f"Embedding cache get failed: {e}")
+            self._errors += 1
+            return None
+
+    async def set(
+        self,
+        text: str,
+        model: str,
+        embedding: list[float],
+    ) -> None:
+        """Cache embedding for text.
+
+        Args:
+            text: Text content
+            model: Embedding model name
+            embedding: Embedding vector to cache
+        """
+        import json
+
+        key = self._make_key(text, model)
+        try:
+            await self._client.client.setex(
+                key,
+                self._ttl,
+                json.dumps(embedding),
+            )
+        except Exception as e:
+            logger.warning(f"Embedding cache set failed: {e}")
+            self._errors += 1
+
+    async def get_batch(
+        self,
+        texts: list[str],
+        model: str,
+    ) -> dict[str, list[float] | None]:
+        """Get cached embeddings for multiple texts.
+
+        Args:
+            texts: List of text contents
+            model: Embedding model name
+
+        Returns:
+            Dict mapping text -> embedding (None if not cached)
+        """
+        import json
+
+        if not texts:
+            return {}
+
+        # Build keys and track mapping
+        keys = [self._make_key(text, model) for text in texts]
+
+        try:
+            cached_values = await self._client.client.mget(keys)
+
+            results = {}
+            for text, cached in zip(texts, cached_values, strict=True):
+                if cached:
+                    self._hits += 1
+                    results[text] = json.loads(cached)
+                else:
+                    self._misses += 1
+                    results[text] = None
+
+            return results
+        except Exception as e:
+            logger.warning(f"Embedding cache batch get failed: {e}")
+            self._errors += 1
+            return dict.fromkeys(texts, None)
+
+    async def set_batch(
+        self,
+        embeddings: dict[str, list[float]],
+        model: str,
+    ) -> None:
+        """Cache multiple embeddings.
+
+        Args:
+            embeddings: Dict mapping text -> embedding vector
+            model: Embedding model name
+        """
+        import json
+
+        if not embeddings:
+            return
+
+        try:
+            pipe = self._client.client.pipeline()
+            for text, embedding in embeddings.items():
+                key = self._make_key(text, model)
+                pipe.setex(key, self._ttl, json.dumps(embedding))
+            await pipe.execute()
+        except Exception as e:
+            logger.warning(f"Embedding cache batch set failed: {e}")
+            self._errors += 1
+
+    async def get_or_embed_batch(
+        self,
+        texts: list[str],
+        model: str,
+        embed_fn,
+    ) -> list[list[float]]:
+        """Get cached embeddings or generate new ones.
+
+        This is the main entry point for cached embedding generation.
+        Implements batch deduplication to minimize API calls.
+
+        Args:
+            texts: List of texts to embed
+            model: Embedding model name
+            embed_fn: Async function to generate embeddings for uncached texts
+                      Signature: async (list[str]) -> list[list[float]]
+
+        Returns:
+            List of embeddings in the same order as input texts
+        """
+        if not texts:
+            return []
+
+        # Step 1: Deduplicate texts (same text appears multiple times)
+        unique_texts = list(dict.fromkeys(texts))  # Preserve order
+
+        # Step 2: Check cache for all unique texts
+        cached = await self.get_batch(unique_texts, model)
+
+        # Step 3: Find uncached texts
+        uncached_texts = [text for text in unique_texts if cached[text] is None]
+
+        # Step 4: Generate embeddings for uncached texts only
+        if uncached_texts:
+            logger.info(
+                f"Embedding cache: {len(unique_texts) - len(uncached_texts)}/{len(unique_texts)} "
+                f"hits, generating {len(uncached_texts)} new embeddings"
+            )
+            new_embeddings = await embed_fn(uncached_texts)
+
+            # Cache new embeddings
+            new_cache_entries = dict(zip(uncached_texts, new_embeddings, strict=True))
+            await self.set_batch(new_cache_entries, model)
+
+            # Update cached dict with new embeddings
+            for text, embedding in new_cache_entries.items():
+                cached[text] = embedding
+        else:
+            logger.info(f"Embedding cache: 100% hit rate ({len(unique_texts)} texts)")
+
+        # Step 5: Build result in original order (handling duplicates)
+        results = [cached[text] for text in texts]
+        return results
+
+    async def invalidate(self, text: str, model: str) -> bool:
+        """Invalidate cached embedding for text.
+
+        Args:
+            text: Text content
+            model: Embedding model name
+
+        Returns:
+            True if key was deleted, False otherwise
+        """
+        key = self._make_key(text, model)
+        try:
+            deleted = await self._client.client.delete(key)
+            return deleted > 0
+        except Exception as e:
+            logger.warning(f"Embedding cache invalidate failed: {e}")
+            self._errors += 1
+            return False
+
+    async def clear(self, _model: str | None = None) -> int:
+        """Clear cached embeddings.
+
+        Args:
+            model: If provided, only clear embeddings for this model.
+                   If None, clear all embeddings.
+
+        Returns:
+            Number of keys deleted
+        """
+        pattern = f"emb:{self.CACHE_VERSION}:*"
+        return await self._delete_by_pattern(pattern)
+
+    async def _delete_by_pattern(self, pattern: str) -> int:
+        """Delete keys matching pattern using SCAN (non-blocking)."""
+        deleted = 0
+        try:
+            async for key in self._client.client.scan_iter(match=pattern, count=1000):
+                await self._client.client.delete(key)
+                deleted += 1
+        except Exception as e:
+            logger.warning(f"Embedding cache clear failed: {e}")
+            self._errors += 1
+        return deleted
+
+    async def health_check(self) -> bool:
+        """Check if cache backend is healthy."""
+        return await self._client.health_check()
+
+    def get_metrics(self) -> dict:
+        """Get cache metrics.
+
+        Returns:
+            Dict with cache statistics
+        """
+        total = self._hits + self._misses
+        hit_rate = self._hits / total if total > 0 else 0.0
+
+        # Estimate cost savings (OpenAI: $0.13/1M tokens, ~500 tokens/embedding)
+        tokens_saved = self._hits * 500
+        cost_saved = (tokens_saved / 1_000_000) * 0.13
+
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "errors": self._errors,
+            "hit_rate": round(hit_rate, 4),
+            "estimated_tokens_saved": tokens_saved,
+            "estimated_cost_saved_usd": round(cost_saved, 4),
+            "ttl_seconds": self._ttl,
+        }
+
+    async def get_stats(self) -> dict:
+        """Get cache statistics including backend info."""
+        info = await self._client.get_info()
+        metrics = self.get_metrics()
+        return {
+            "backend": "dragonfly",
+            "status": info.get("status", "unknown"),
+            **metrics,
+        }

@@ -4,12 +4,22 @@ Provides multiple search capabilities:
 - Semantic search using vector embeddings (sqlite-vec, pgvector)
 - Code search using Zoekt trigram indexing (optional)
 - BM25S ranked text search (Issue #796)
-- Hybrid search combining keyword and semantic search
+- Hybrid search combining keyword and semantic search (Issue #798)
+
+Hybrid search fusion methods (Issue #798):
+- RRF (Reciprocal Rank Fusion): Rank-based, no score normalization needed
+- Weighted: Score-based with optional min-max normalization
+- RRF Weighted: RRF with alpha weighting for BM25/vector bias
 
 Embedding providers:
 - OpenAI: High quality, recommended for production
 - Voyage AI: Fast, cost-effective (voyage-3, voyage-3-lite)
 - FastEmbed: Local ONNX embeddings (no API, free)
+
+Embedding caching (Issue #950):
+- CachedEmbeddingProvider: Wraps any provider with caching
+- Reduces embedding API calls by 90% through content-hash deduplication
+- Requires Redis/Dragonfly backend
 
 Async support:
 - AsyncSemanticSearch: Fully async for high-throughput scenarios
@@ -30,13 +40,24 @@ from nexus.search.chunking import (
     DocumentChunker,
 )
 from nexus.search.embeddings import (
+    CachedEmbeddingProvider,
     EmbeddingModel,
     EmbeddingProvider,
     FastEmbedProvider,
     OpenAIEmbeddingProvider,
     OpenRouterEmbeddingProvider,
     VoyageAIEmbeddingProvider,
+    create_cached_embedding_provider,
     create_embedding_provider,
+)
+from nexus.search.fusion import (
+    FusionConfig,
+    FusionMethod,
+    fuse_results,
+    normalize_scores_minmax,
+    rrf_fusion,
+    rrf_weighted_fusion,
+    weighted_fusion,
 )
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase
@@ -60,7 +81,9 @@ __all__ = [
     "VoyageAIEmbeddingProvider",
     "OpenRouterEmbeddingProvider",
     "FastEmbedProvider",
+    "CachedEmbeddingProvider",
     "create_embedding_provider",
+    "create_cached_embedding_provider",
     # Vector DB (sqlite-vec + pgvector)
     "VectorDatabase",
     # Semantic Search (sync)
@@ -69,6 +92,14 @@ __all__ = [
     # Async Semantic Search (high-throughput)
     "AsyncSemanticSearch",
     "AsyncSearchResult",
+    # Hybrid Search Fusion (Issue #798)
+    "FusionConfig",
+    "FusionMethod",
+    "fuse_results",
+    "normalize_scores_minmax",
+    "rrf_fusion",
+    "rrf_weighted_fusion",
+    "weighted_fusion",
     # BM25S Fast Text Search (Issue #796)
     "BM25SIndex",
     "BM25SSearchResult",

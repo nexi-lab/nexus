@@ -26,6 +26,7 @@ from nexus.core.cache.base import (
     ResourceMapCacheProtocol,
     TigerCacheProtocol,
 )
+from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
 from nexus.core.cache.settings import CacheSettings
 
 if TYPE_CHECKING:
@@ -226,6 +227,32 @@ class CacheFactory:
         if not self._db_engine:
             raise RuntimeError("PostgreSQL cache requires db_engine but none was provided")
         return PostgresResourceMapCache(engine=self._db_engine)
+
+    def get_embedding_cache(self) -> DragonflyEmbeddingCache | None:
+        """Get embedding cache instance (Issue #950).
+
+        Returns embedding cache if Dragonfly is available, None otherwise.
+        Embedding cache is only supported with Dragonfly backend (no PostgreSQL fallback).
+
+        Returns:
+            DragonflyEmbeddingCache instance if available, None otherwise
+
+        Raises:
+            RuntimeError: If factory not initialized
+        """
+        if not self._initialized:
+            raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
+
+        if self._using_dragonfly and self._dragonfly_client:
+            return DragonflyEmbeddingCache(
+                client=self._dragonfly_client,
+                ttl=self._settings.embedding_ttl,
+            )
+
+        # No PostgreSQL fallback for embedding cache - return None
+        # Caller should fall back to direct API calls
+        logger.debug("Embedding cache not available (requires Dragonfly backend)")
+        return None
 
     async def health_check(self) -> dict:
         """Check health of all cache backends.

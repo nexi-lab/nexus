@@ -975,8 +975,8 @@ class NexusFSSearchMixin:
 
     @rpc_expose(description="Execute multiple glob patterns in single call")
     def glob_batch(
-        self, patterns: list[str], path: str = "/", context: Any = None
-    ) -> dict[str, list[str]]:
+        self, patterns: builtins.list[str], path: str = "/", context: Any = None
+    ) -> dict[str, builtins.list[str]]:
         """
         Execute multiple glob patterns in a single call (Issue #859).
 
@@ -1013,8 +1013,8 @@ class NexusFSSearchMixin:
         try:
             if path and path != "/":
                 path = self._validate_path(path)
-            accessible_files: list[str] = cast(
-                list[str], self.list(path, recursive=True, context=context)
+            accessible_files: builtins.list[str] = cast(
+                builtins.list[str], self.list(path, recursive=True, context=context)
             )
         except Exception:
             # If listing fails, return empty results for all patterns
@@ -1634,10 +1634,10 @@ class NexusFSSearchMixin:
     def _grep_parallel(
         self,
         regex: re.Pattern[str],
-        files: list[str],
+        files: builtins.list[str],
         max_results: int,
         context: Any,
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """Parallel grep using ThreadPoolExecutor (Issue #929).
 
         Splits files across worker threads for CPU-bound regex matching.
@@ -1660,11 +1660,11 @@ class NexusFSSearchMixin:
         chunk_size = max(1, len(files) // GREP_PARALLEL_WORKERS)
         file_chunks = [files[i : i + chunk_size] for i in range(0, len(files), chunk_size)]
 
-        all_results: list[dict[str, Any]] = []
+        all_results: builtins.list[dict[str, Any]] = []
 
-        def search_chunk(chunk_files: list[str]) -> list[dict[str, Any]]:
+        def search_chunk(chunk_files: builtins.list[str]) -> builtins.list[dict[str, Any]]:
             """Search a chunk of files."""
-            chunk_results: list[dict[str, Any]] = []
+            chunk_results: builtins.list[dict[str, Any]] = []
             for file_path in chunk_files:
                 # Early exit if we have enough results globally
                 if len(all_results) >= max_results:

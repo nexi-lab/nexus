@@ -2401,7 +2401,7 @@ class NexusFSCoreMixin:
                         continue
 
                 # Check if it's a directory
-                is_dir = self.is_directory(path, context=context)
+                is_dir = self.is_directory(path, context=context)  # type: ignore[attr-defined]
 
                 results[path] = {
                     "path": meta.path,

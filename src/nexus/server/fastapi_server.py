@@ -869,7 +869,7 @@ def _register_routes(app: FastAPI) -> None:
                 "message": "Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
             }
 
-        health = _app_state.search_daemon.get_health()
+        health: dict[str, Any] = _app_state.search_daemon.get_health()
         return health
 
     @app.get("/api/search/stats", tags=["search"])
@@ -884,7 +884,8 @@ def _register_routes(app: FastAPI) -> None:
                 detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
             )
 
-        return _app_state.search_daemon.get_stats()
+        stats: dict[str, Any] = _app_state.search_daemon.get_stats()
+        return stats
 
     @app.get("/api/search/query", tags=["search"])
     async def search_query(
@@ -946,7 +947,7 @@ def _register_routes(app: FastAPI) -> None:
         try:
             results = await _app_state.search_daemon.search(
                 query=q,
-                search_type=type,  # type: ignore[arg-type]
+                search_type=type,
                 limit=limit,
                 path_filter=path,
                 alpha=alpha,
@@ -1040,7 +1041,8 @@ def _register_routes(app: FastAPI) -> None:
                 "message": "Hotspot tracking not enabled",
             }
 
-        return hotspot_detector.get_stats()
+        stats: dict[str, Any] = hotspot_detector.get_stats()
+        return stats
 
     @app.get("/api/v1/admin/hot-entries", tags=["admin"])
     async def get_hot_entries(

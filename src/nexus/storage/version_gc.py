@@ -237,7 +237,10 @@ class VersionHistoryGC:
 
     def _is_sqlite(self, session: Session) -> bool:
         """Check if the database is SQLite."""
-        return "sqlite" in str(session.bind.url) if session.bind else False
+        if session.bind is None:
+            return False
+        bind_url = getattr(session.bind, "url", None)
+        return "sqlite" in str(bind_url) if bind_url else False
 
     def _delete_old_versions(
         self,
@@ -582,7 +585,7 @@ class VersionHistoryGC:
             ) AS unique_resources
         """)
         result = session.execute(query).fetchone()
-        return result[0] if result else 0
+        return int(result[0]) if result else 0
 
     def get_stats(self) -> dict[str, Any]:
         """Get current version_history table statistics."""

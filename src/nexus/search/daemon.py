@@ -360,8 +360,8 @@ class SearchDaemon:
         try:
             from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
 
-            cache = DragonflyEmbeddingCache()
-            self.stats.embedding_cache_connected = await cache.is_connected()
+            cache = DragonflyEmbeddingCache()  # type: ignore[call-arg]
+            self.stats.embedding_cache_connected = await cache.is_connected()  # type: ignore[attr-defined]
 
             if self.stats.embedding_cache_connected:
                 logger.info("Embedding cache (Dragonfly) connected")
@@ -532,12 +532,16 @@ class SearchDaemon:
         )
 
         # Handle errors
-        if isinstance(keyword_results, Exception):
+        kw_results: list[SearchResult] = []
+        sem_results: list[SearchResult] = []
+        if isinstance(keyword_results, BaseException):
             logger.warning(f"Keyword search failed: {keyword_results}")
-            keyword_results = []
-        if isinstance(semantic_results, Exception):
+        else:
+            kw_results = keyword_results
+        if isinstance(semantic_results, BaseException):
             logger.warning(f"Semantic search failed: {semantic_results}")
-            semantic_results = []
+        else:
+            sem_results = semantic_results
 
         # Convert to dicts for fusion
         keyword_dicts = [
@@ -551,7 +555,7 @@ class SearchDaemon:
                 "line_start": r.line_start,
                 "line_end": r.line_end,
             }
-            for r in keyword_results
+            for r in kw_results
         ]
 
         semantic_dicts = [
@@ -565,7 +569,7 @@ class SearchDaemon:
                 "line_start": r.line_start,
                 "line_end": r.line_end,
             }
-            for r in semantic_results
+            for r in sem_results
         ]
 
         # Fuse results
@@ -753,7 +757,8 @@ class SearchDaemon:
     async def _get_query_embedding(self, query: str) -> list[float] | None:
         """Get embedding for query text."""
         if self._embedding_provider:
-            return await self._embedding_provider.embed_text(query)
+            result = await self._embedding_provider.embed_text(query)
+            return list(result) if result else None
 
         # Try to get from environment/default provider
         try:

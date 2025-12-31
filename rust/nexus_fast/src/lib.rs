@@ -1419,9 +1419,6 @@ fn grep_bulk<'py>(
 /// Threshold for using parallel processing in grep_files_mmap
 const GREP_MMAP_PARALLEL_THRESHOLD: usize = 10;
 
-/// Minimum file size to benefit from mmap (smaller files have mmap overhead)
-const GREP_MMAP_MIN_FILE_SIZE: u64 = 4096; // 4KB
-
 /// Maximum file size to mmap (avoid excessive memory usage for huge files)
 const GREP_MMAP_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 
@@ -1458,7 +1455,6 @@ fn grep_files_mmap<'py>(
     let is_literal = is_literal_pattern(pattern);
 
     // Build the search pattern/regex
-    let pattern_lower: String;
     let pattern_owned = pattern.to_string();
 
     // For parallel processing, we need to create thread-safe search components
@@ -1475,7 +1471,7 @@ fn grep_files_mmap<'py>(
         None
     };
 
-    pattern_lower = if is_literal && ignore_case {
+    let pattern_lower: String = if is_literal && ignore_case {
         pattern.to_lowercase()
     } else {
         String::new()

@@ -2602,6 +2602,7 @@ dependencies = [
     { name = "authlib" },
     { name = "bcrypt" },
     { name = "blake3" },
+    { name = "bm25s" },
     { name = "boto3" },
     { name = "bsdiff4" },
     { name = "cachetools" },
@@ -2639,7 +2640,6 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "bm25s" },
     { name = "e2b-code-interpreter" },
     { name = "openai" },
     { name = "pgvector" },
@@ -2681,7 +2681,6 @@ postgres = [
     { name = "psycopg2-binary" },
 ]
 semantic-search = [
-    { name = "bm25s" },
     { name = "pgvector" },
     { name = "sqlite-vec" },
 ]
@@ -2715,8 +2714,7 @@ requires-dist = [
     { name = "authlib", specifier = ">=1.6.5" },
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "blake3", specifier = ">=1.0.0" },
-    { name = "bm25s", marker = "extra == 'all'", specifier = ">=0.2.0" },
-    { name = "bm25s", marker = "extra == 'semantic-search'", specifier = ">=0.2.0" },
+    { name = "bm25s", specifier = ">=0.2.0" },
     { name = "boto3", specifier = ">=1.42.4" },
     { name = "bsdiff4", specifier = ">=1.2.0" },
     { name = "cachetools", specifier = ">=6.2.2" },

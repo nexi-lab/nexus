@@ -221,7 +221,7 @@ class CodeTokenizer:
         return self._split_camel_case(identifier)
 
     def _split_camel_case(self, text: str) -> list[str]:
-        """Split camelCase/PascalCase into words.
+        """Split camelCase/PascalCase into words, including number boundaries.
 
         Args:
             text: Text to split
@@ -236,6 +236,11 @@ class CodeTokenizer:
         # Also handles sequences like "HTTPServer" -> "HTTP Server"
         result = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
         result = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", result)
+
+        # Split on letter-to-number and number-to-letter boundaries
+        # e.g., "user123" -> "user 123", "123user" -> "123 user"
+        result = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", result)
+        result = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", result)
 
         # Split and lowercase
         words = result.split()

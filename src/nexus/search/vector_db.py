@@ -494,9 +494,13 @@ class VectorDatabase:
     def keyword_search(
         self, session: Session, query: str, limit: int = 10, path_filter: str | None = None
     ) -> list[dict[str, Any]]:
-        """Search by keywords using Zoekt (if available) or FTS.
+        """Search by keywords using Zoekt, BM25S, or FTS.
 
-        Tries Zoekt first for fast trigram-based search, falls back to FTS.
+        Search priority:
+        1. Zoekt (fast trigram-based code search)
+        2. BM25S (fast in-memory BM25 with code-aware tokenization, Issue #796)
+        3. pg_textsearch BM25 (PostgreSQL 17+)
+        4. FTS5 (SQLite)
 
         Args:
             session: Database session
@@ -512,6 +516,12 @@ class VectorDatabase:
         if zoekt_results is not None:
             logger.debug(f"[KEYWORD] Zoekt returned {len(zoekt_results)} results")
             return zoekt_results
+
+        # Try BM25S for fast ranked text search (Issue #796)
+        bm25s_results = self._try_keyword_search_with_bm25s(query, limit, path_filter)
+        if bm25s_results is not None:
+            logger.debug(f"[KEYWORD] BM25S returned {len(bm25s_results)} results")
+            return bm25s_results
 
         # Fall back to FTS
         logger.debug("[KEYWORD] Using FTS fallback")
@@ -599,6 +609,102 @@ class VectorDatabase:
 
         except Exception as e:
             logger.warning(f"[KEYWORD] Zoekt search failed, falling back to FTS: {e}")
+            return None
+
+    def _try_keyword_search_with_bm25s(
+        self, query: str, limit: int, path_filter: str | None
+    ) -> list[dict[str, Any]] | None:
+        """Try to use BM25S for keyword search (Issue #796).
+
+        BM25S provides fast ranked text search with:
+        - Code-aware tokenization (camelCase, snake_case splitting)
+        - In-memory sparse matrix scoring (500x faster than rank-bm25)
+        - True BM25 with IDF weighting
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            path_filter: Optional path prefix
+
+        Returns:
+            List of results if BM25S succeeded, None to fall back to FTS
+        """
+        try:
+            from nexus.search.bm25s_search import get_bm25s_index, is_bm25s_available
+        except ImportError:
+            return None
+
+        if not is_bm25s_available():
+            return None
+
+        index = get_bm25s_index()
+
+        # Check if index is initialized and has documents
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In async context, can't use run_until_complete
+                return None
+
+            # Initialize if needed
+            if not loop.run_until_complete(index.initialize()):
+                return None
+
+            # Get stats to check if index has documents
+            stats = loop.run_until_complete(index.get_stats())
+            if stats.get("total_documents", 0) == 0:
+                return None
+
+        except RuntimeError:
+            # No event loop - create new one
+            if not asyncio.run(index.initialize()):
+                return None
+            stats = asyncio.run(index.get_stats())
+            if stats.get("total_documents", 0) == 0:
+                return None
+
+        logger.debug("[KEYWORD] Using BM25S for fast ranked text search")
+
+        try:
+            # Run search
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return None
+                bm25s_results = loop.run_until_complete(
+                    index.search(query=query, limit=limit, path_filter=path_filter)
+                )
+            except RuntimeError:
+                bm25s_results = asyncio.run(
+                    index.search(query=query, limit=limit, path_filter=path_filter)
+                )
+
+            if not bm25s_results:
+                return None
+
+            # Convert BM25S results to keyword_search format
+            results = []
+            for r in bm25s_results:
+                results.append(
+                    {
+                        "chunk_id": None,
+                        "path_id": r.path_id,
+                        "chunk_index": 0,
+                        "chunk_text": r.content_preview,
+                        "start_offset": 0,
+                        "end_offset": len(r.content_preview),
+                        "line_start": 1,
+                        "line_end": None,
+                        "virtual_path": r.path,
+                        "score": r.score,
+                    }
+                )
+
+            logger.debug(f"[KEYWORD] BM25S: {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.warning(f"[KEYWORD] BM25S search failed, falling back to FTS: {e}")
             return None
 
     def _sqlite_keyword_search(

@@ -46,6 +46,8 @@ from nexus.search.embeddings import EmbeddingProvider
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from nexus.search.bm25s_search import BM25SIndex
+
 logger = logging.getLogger(__name__)
 
 
@@ -147,6 +149,10 @@ class AsyncSemanticSearch:
         # Feature flags
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
 
+        # BM25S index for fast ranked text search (Issue #796)
+        self._bm25s_index: BM25SIndex | None = None
+        self._bm25s_enabled = False
+
     @asynccontextmanager
     async def _session(self) -> Any:
         """Get async database session with cancellation-safe cleanup.
@@ -161,12 +167,35 @@ class AsyncSemanticSearch:
                 await asyncio.shield(session.close())
 
     async def initialize(self) -> None:
-        """Initialize database extensions (vector, FTS)."""
+        """Initialize database extensions (vector, FTS) and BM25S index."""
         async with self.async_session() as session:
             if self.db_type == "postgresql":
                 await self._init_postgresql(session)
             else:
                 await self._init_sqlite(session)
+
+        # Initialize BM25S index (Issue #796)
+        await self._init_bm25s()
+
+    async def _init_bm25s(self) -> None:
+        """Initialize BM25S index for fast ranked text search."""
+        try:
+            from nexus.search.bm25s_search import BM25SIndex, is_bm25s_available
+
+            if not is_bm25s_available():
+                logger.debug("BM25S not available (bm25s package not installed)")
+                return
+
+            self._bm25s_index = BM25SIndex()
+            if await self._bm25s_index.initialize():
+                self._bm25s_enabled = True
+                logger.info("BM25S index initialized for fast ranked text search")
+            else:
+                logger.warning("BM25S index initialization failed")
+        except ImportError:
+            logger.debug("BM25S not available (bm25s package not installed)")
+        except Exception as e:
+            logger.warning(f"Could not initialize BM25S: {e}")
 
     async def _init_postgresql(self, session: AsyncSession) -> None:
         """Initialize pgvector and pg_textsearch extensions."""
@@ -247,6 +276,13 @@ class AsyncSemanticSearch:
 
         # Bulk insert chunks
         await self._bulk_insert_chunks(path_id, chunks, embeddings)
+
+        # Index in BM25S for fast ranked text search (Issue #796)
+        if self._bm25s_enabled and self._bm25s_index:
+            try:
+                await self._bm25s_index.index_document(path_id, path, content)
+            except Exception as e:
+                logger.debug(f"BM25S indexing failed for {path}: {e}")
 
         return len(chunks)
 
@@ -414,19 +450,26 @@ class AsyncSemanticSearch:
         limit: int,
         path_filter: str | None,
     ) -> list[AsyncSearchResult]:
-        """Async keyword search using Zoekt, BM25, or FTS fallback.
+        """Async keyword search using Zoekt, BM25S, database BM25, or FTS fallback.
 
         Search priority:
-        1. Zoekt (fast trigram-based)
-        2. pg_textsearch BM25 (PostgreSQL 17+ with true relevance ranking)
-        3. ts_rank (PostgreSQL fallback)
-        4. FTS5 (SQLite)
+        1. Zoekt (fast trigram-based code search)
+        2. BM25S (fast in-memory BM25 with code-aware tokenization, Issue #796)
+        3. pg_textsearch BM25 (PostgreSQL 17+ with true relevance ranking)
+        4. ts_rank (PostgreSQL fallback)
+        5. FTS5 (SQLite)
         """
         # Try Zoekt first for accelerated search
         zoekt_results = await self._try_keyword_search_with_zoekt(query, limit, path_filter)
         if zoekt_results is not None:
             logger.debug(f"[KEYWORD-ASYNC] Zoekt returned {len(zoekt_results)} results")
             return zoekt_results
+
+        # Try BM25S for fast ranked text search (Issue #796)
+        bm25s_results = await self._try_keyword_search_with_bm25s(query, limit, path_filter)
+        if bm25s_results is not None:
+            logger.debug(f"[KEYWORD-ASYNC] BM25S returned {len(bm25s_results)} results")
+            return bm25s_results
 
         # Fall back to database FTS
         logger.debug("[KEYWORD-ASYNC] Using database FTS fallback")
@@ -569,6 +612,67 @@ class AsyncSemanticSearch:
             logger.warning(f"[KEYWORD-ASYNC] Zoekt search failed: {e}")
             return None
 
+    async def _try_keyword_search_with_bm25s(
+        self,
+        query: str,
+        limit: int,
+        path_filter: str | None,
+    ) -> list[AsyncSearchResult] | None:
+        """Try to use BM25S for async keyword search (Issue #796).
+
+        BM25S provides fast ranked text search with:
+        - Code-aware tokenization (camelCase, snake_case splitting)
+        - In-memory sparse matrix scoring (500x faster than rank-bm25)
+        - True BM25 with IDF weighting
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            path_filter: Optional path prefix
+
+        Returns:
+            List of results if BM25S succeeded, None to fall back to database FTS
+        """
+        if not self._bm25s_enabled or self._bm25s_index is None:
+            return None
+
+        logger.debug("[KEYWORD-ASYNC] Using BM25S for fast ranked text search")
+
+        try:
+            bm25s_results = await self._bm25s_index.search(
+                query=query,
+                limit=limit,
+                path_filter=path_filter,
+            )
+
+            if not bm25s_results:
+                # No results from BM25S, fall back to database FTS
+                return None
+
+            # Convert BM25S results to AsyncSearchResult format
+            results = []
+            for r in bm25s_results:
+                results.append(
+                    AsyncSearchResult(
+                        path=r.path,
+                        chunk_index=0,
+                        chunk_text=r.content_preview,
+                        score=r.score,
+                        start_offset=0,
+                        end_offset=len(r.content_preview),
+                        line_start=1,
+                        line_end=None,
+                        keyword_score=r.score,
+                    )
+                )
+
+            logger.debug(f"[KEYWORD-ASYNC] BM25S: {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.warning(f"[KEYWORD-ASYNC] BM25S search failed: {e}")
+            return None
+
     async def _vector_search(
         self,
         session: AsyncSession,
@@ -694,6 +798,13 @@ class AsyncSemanticSearch:
             )
             await session.commit()
 
+        # Delete from BM25S index (Issue #796)
+        if self._bm25s_enabled and self._bm25s_index:
+            try:
+                await self._bm25s_index.delete_document(path_id)
+            except Exception as e:
+                logger.debug(f"BM25S delete failed for {path_id}: {e}")
+
     async def get_stats(self) -> dict[str, Any]:
         """Get index statistics."""
         async with self.async_session() as session:
@@ -707,7 +818,7 @@ class AsyncSemanticSearch:
             )
             row = result.one()
 
-            return {
+            stats = {
                 "total_chunks": row.total_chunks,
                 "indexed_files": row.indexed_files,
                 "db_type": self.db_type,
@@ -717,6 +828,16 @@ class AsyncSemanticSearch:
                     else None
                 ),
             }
+
+        # Add BM25S stats (Issue #796)
+        if self._bm25s_enabled and self._bm25s_index:
+            try:
+                bm25s_stats = await self._bm25s_index.get_stats()
+                stats["bm25s"] = bm25s_stats
+            except Exception as e:
+                logger.debug(f"Failed to get BM25S stats: {e}")
+
+        return stats
 
     async def close(self) -> None:
         """Close database connections."""

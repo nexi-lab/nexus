@@ -252,6 +252,176 @@ class TestRustGrepBenchmarks:
 
 
 # =============================================================================
+# RUST MMAP GREP BENCHMARKS (Issue #893)
+# =============================================================================
+
+
+@pytest.mark.benchmark_hash
+class TestRustMmapGrepBenchmarks:
+    """Benchmarks for Rust mmap-accelerated grep operations (Issue #893)."""
+
+    @pytest.fixture(autouse=True)
+    def setup_temp_files(self, tmp_path):
+        """Create temporary files for mmap benchmarks."""
+        self.tmp_path = tmp_path
+        self.test_files = {}
+
+        # Create test files with various sizes
+        for i in range(10):
+            content = generate_log_content(1000)
+            file_path = tmp_path / f"file_{i}.log"
+            file_path.write_bytes(content)
+            self.test_files[str(file_path)] = content
+
+        # Create a large file for mmap performance testing
+        large_content = generate_log_content(10000)
+        large_file = tmp_path / "large_file.log"
+        large_file.write_bytes(large_content)
+        self.large_file = str(large_file)
+        self.large_content = large_content
+
+    def test_mmap_grep_available(self):
+        """Check if mmap grep is available."""
+        from nexus.core.grep_fast import MMAP_AVAILABLE
+
+        print(f"\n[INFO] Mmap grep available: {MMAP_AVAILABLE}")
+
+    def test_mmap_grep_single_file(self, benchmark):
+        """Benchmark mmap grep on a single file."""
+        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+
+        def search():
+            result = grep_files_mmap("ERROR", [self.large_file], ignore_case=False)
+            if result is None:
+                # Fallback to Python if mmap not available
+                import re
+
+                pattern = re.compile(r"ERROR")
+                matches = []
+                content_str = self.large_content.decode("utf-8")
+                for i, line in enumerate(content_str.split("\n")):
+                    if pattern.search(line):
+                        matches.append({"file": self.large_file, "line": i + 1, "content": line})
+                return matches
+            return result
+
+        result = benchmark(search)
+        assert len(result) == 1000  # 1 ERROR per 10 lines in 10000 lines
+
+        if MMAP_AVAILABLE:
+            print("\n[INFO] Mmap acceleration was used")
+        else:
+            print("\n[INFO] Python fallback was used")
+
+    def test_mmap_grep_multiple_files(self, benchmark):
+        """Benchmark mmap grep across multiple files."""
+        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_files_mmap
+
+        file_paths = list(self.test_files.keys())
+
+        def search():
+            result = grep_files_mmap("ERROR", file_paths, ignore_case=False)
+            if result is None:
+                # Fallback to Python if mmap not available
+                import re
+
+                pattern = re.compile(r"ERROR")
+                matches = []
+                for path, content in self.test_files.items():
+                    content_str = content.decode("utf-8")
+                    for i, line in enumerate(content_str.split("\n")):
+                        if pattern.search(line):
+                            matches.append({"file": path, "line": i + 1, "content": line})
+                return matches
+            return result
+
+        result = benchmark(search)
+        assert len(result) == 1000  # 100 ERRORs per file * 10 files
+
+        if MMAP_AVAILABLE:
+            print("\n[INFO] Mmap acceleration was used")
+        else:
+            print("\n[INFO] Python fallback was used")
+
+    def test_mmap_vs_bulk_grep_comparison(self, benchmark):
+        """Compare mmap grep vs bulk grep (read + grep)."""
+        from nexus.core.grep_fast import MMAP_AVAILABLE, grep_bulk, grep_files_mmap
+
+        file_paths = list(self.test_files.keys())
+
+        def search_mmap():
+            """Use mmap-based grep (zero-copy)."""
+            result = grep_files_mmap("ERROR", file_paths, ignore_case=False)
+            return result if result else []
+
+        def search_bulk():
+            """Use bulk grep (read + copy)."""
+            # Read files into memory first
+            file_contents = {}
+            for path in file_paths:
+                with open(path, "rb") as f:
+                    file_contents[path] = f.read()
+            result = grep_bulk("ERROR", file_contents, ignore_case=False)
+            return result if result else []
+
+        if MMAP_AVAILABLE:
+            result = benchmark(search_mmap)
+            print("\n[INFO] Benchmarking mmap grep")
+        else:
+            result = benchmark(search_bulk)
+            print("\n[INFO] Benchmarking bulk grep (mmap not available)")
+
+        assert len(result) == 1000
+
+    def test_mmap_grep_case_insensitive(self, benchmark):
+        """Benchmark mmap grep with case-insensitive search."""
+        from nexus.core.grep_fast import grep_files_mmap
+
+        def search():
+            result = grep_files_mmap("error", [self.large_file], ignore_case=True)
+            if result is None:
+                import re
+
+                pattern = re.compile("error", re.IGNORECASE)
+                matches = []
+                content_str = self.large_content.decode("utf-8")
+                for i, line in enumerate(content_str.split("\n")):
+                    if pattern.search(line):
+                        matches.append({"file": self.large_file, "line": i + 1, "content": line})
+                return matches
+            return result
+
+        result = benchmark(search)
+        assert len(result) == 1000
+
+    def test_mmap_grep_regex_pattern(self, benchmark):
+        """Benchmark mmap grep with regex pattern."""
+        from nexus.core.grep_fast import grep_files_mmap
+
+        # Create code files for regex testing
+        code_content = generate_code_content(5000)
+        code_file = self.tmp_path / "code.py"
+        code_file.write_bytes(code_content)
+
+        def search():
+            result = grep_files_mmap(r"def\s+\w+", [str(code_file)], ignore_case=False)
+            if result is None:
+                import re
+
+                pattern = re.compile(r"def\s+\w+")
+                matches = []
+                content_str = code_content.decode("utf-8")
+                for i, line in enumerate(content_str.split("\n")):
+                    if pattern.search(line):
+                        matches.append({"file": str(code_file), "line": i + 1, "content": line})
+                return matches
+            return result
+
+        result = benchmark(search)
+        assert len(result) > 0
+
+
+# =============================================================================
 # GLOB PATTERN MATCHING BENCHMARKS
 # =============================================================================
 

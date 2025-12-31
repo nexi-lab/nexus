@@ -2,13 +2,16 @@
 
 This module provides thread-safe in-memory caching to reduce database queries
 and improve performance for frequently accessed metadata.
+
+Issue #911: Added compact metadata support for 3x memory reduction at scale.
 """
 
 import threading
-from typing import Any
+from typing import Any, cast
 
 from cachetools import LRUCache, TTLCache
 
+from nexus.core.compact_metadata import CompactFileMetadata
 from nexus.core.metadata import FileMetadata
 
 
@@ -21,6 +24,10 @@ class MetadataCache:
     - Directory listing cache: Caches list() results
     - File metadata KV cache: Caches get_file_metadata() results
     - Existence cache: Caches exists() results
+
+    Issue #911: Supports compact metadata storage for 3x memory reduction.
+    When use_compact=True, FileMetadata objects are converted to CompactFileMetadata
+    internally, reducing memory from ~200-300 bytes to ~64-100 bytes per entry.
     """
 
     def __init__(
@@ -30,6 +37,7 @@ class MetadataCache:
         kv_cache_size: int = 256,
         exists_cache_size: int = 1024,
         ttl_seconds: int | None = None,
+        use_compact: bool = True,
     ):
         """
         Initialize metadata cache.
@@ -40,22 +48,30 @@ class MetadataCache:
             kv_cache_size: Maximum entries for file metadata KV cache
             exists_cache_size: Maximum entries for existence check cache
             ttl_seconds: Time-to-live for cache entries in seconds (None = no expiry)
+            use_compact: If True, store FileMetadata as CompactFileMetadata internally
+                        for 3x memory reduction (Issue #911). Default: True.
         """
         self._ttl_seconds = ttl_seconds
+        self._use_compact = use_compact
         self._lock = threading.RLock()
 
         # Cache for path metadata (get operation)
+        # When use_compact=True, stores CompactFileMetadata instead of FileMetadata
+        # Type annotation covers both cases for compatibility
         if ttl_seconds:
             self._path_cache: (
-                LRUCache[str, FileMetadata | None] | TTLCache[str, FileMetadata | None]
+                LRUCache[str, FileMetadata | CompactFileMetadata | None]
+                | TTLCache[str, FileMetadata | CompactFileMetadata | None]
             ) = TTLCache(maxsize=path_cache_size, ttl=ttl_seconds)
         else:
             self._path_cache = LRUCache(maxsize=path_cache_size)
 
         # Cache for directory listings (list operation)
+        # When use_compact=True, stores list[CompactFileMetadata]
         if ttl_seconds:
             self._list_cache: (
-                LRUCache[str, list[FileMetadata]] | TTLCache[str, list[FileMetadata]]
+                LRUCache[str, list[FileMetadata] | list[CompactFileMetadata]]
+                | TTLCache[str, list[FileMetadata] | list[CompactFileMetadata]]
             ) = TTLCache(maxsize=list_cache_size, ttl=ttl_seconds)
         else:
             self._list_cache = LRUCache(maxsize=list_cache_size)
@@ -85,11 +101,20 @@ class MetadataCache:
 
         Returns:
             FileMetadata if cached, None if cached as not found, sentinel if not cached
+
+        Note:
+            Internally may store CompactFileMetadata for memory efficiency,
+            but always returns FileMetadata to callers (Issue #911).
         """
         with self._lock:
             # Use object() as sentinel to distinguish "not in cache" from "cached as None"
-            result: FileMetadata | None | object = self._path_cache.get(path, _CACHE_MISS)
-            return result
+            result = self._path_cache.get(path, _CACHE_MISS)
+            if result is _CACHE_MISS or result is None:
+                return result
+            # Convert from compact format if needed
+            if self._use_compact and isinstance(result, CompactFileMetadata):
+                return result.to_file_metadata()
+            return cast(FileMetadata, result)
 
     def set_path(self, path: str, metadata: FileMetadata | None) -> None:
         """
@@ -98,9 +123,17 @@ class MetadataCache:
         Args:
             path: Virtual path
             metadata: File metadata (None if path doesn't exist)
+
+        Note:
+            When use_compact=True, converts FileMetadata to CompactFileMetadata
+            for 3x memory reduction (Issue #911).
         """
         with self._lock:
-            self._path_cache[path] = metadata
+            if metadata is None or not self._use_compact:
+                self._path_cache[path] = metadata
+            else:
+                # Convert to compact format for memory efficiency
+                self._path_cache[path] = metadata.to_compact()
 
     def get_list(self, prefix: str) -> list[FileMetadata] | None:
         """
@@ -111,10 +144,19 @@ class MetadataCache:
 
         Returns:
             List of FileMetadata if cached, None if not cached
+
+        Note:
+            Internally may store list[CompactFileMetadata] for memory efficiency,
+            but always returns list[FileMetadata] to callers (Issue #911).
         """
         with self._lock:
-            result: list[FileMetadata] | None = self._list_cache.get(prefix)
-            return result
+            result = self._list_cache.get(prefix)
+            if result is None:
+                return None
+            # Convert from compact format if needed
+            if self._use_compact and result and isinstance(result[0], CompactFileMetadata):
+                return [cast(CompactFileMetadata, item).to_file_metadata() for item in result]
+            return cast(list[FileMetadata], result)
 
     def set_list(self, prefix: str, files: list[FileMetadata]) -> None:
         """
@@ -123,9 +165,17 @@ class MetadataCache:
         Args:
             prefix: Path prefix
             files: List of file metadata
+
+        Note:
+            When use_compact=True, converts list[FileMetadata] to list[CompactFileMetadata]
+            for 3x memory reduction (Issue #911).
         """
         with self._lock:
-            self._list_cache[prefix] = files
+            if not self._use_compact or not files:
+                self._list_cache[prefix] = files
+            else:
+                # Convert to compact format for memory efficiency
+                self._list_cache[prefix] = [f.to_compact() for f in files]
 
     def get_kv(self, path: str, key: str) -> Any | object:
         """
@@ -255,10 +305,10 @@ class MetadataCache:
         Get cache statistics.
 
         Returns:
-            Dictionary with cache statistics
+            Dictionary with cache statistics including compact mode status
         """
         with self._lock:
-            return {
+            stats: dict[str, Any] = {
                 "path_cache_size": len(self._path_cache),
                 "list_cache_size": len(self._list_cache),
                 "kv_cache_size": len(self._kv_cache),
@@ -268,7 +318,16 @@ class MetadataCache:
                 "kv_cache_maxsize": self._kv_cache.maxsize,
                 "exists_cache_maxsize": self._exists_cache.maxsize,
                 "ttl_seconds": self._ttl_seconds,
+                "use_compact": self._use_compact,  # Issue #911
             }
+
+            # Add interning pool stats when using compact mode
+            if self._use_compact:
+                from nexus.core.compact_metadata import get_pool_stats
+
+                stats["intern_pools"] = get_pool_stats()
+
+            return stats
 
 
 # Sentinel object to distinguish "not in cache" from "cached as None"

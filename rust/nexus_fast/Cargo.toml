@@ -24,6 +24,7 @@ lru = "0.16"  # LRU cache for namespace config caching (Issue #861)
 memchr = "2.7"  # SIMD-accelerated literal pattern search (Issue #863)
 simdutf8 = "0.1"  # SIMD-accelerated UTF-8 validation (Issue #864)
 roaring = "0.10"  # Roaring Bitmaps for Tiger Cache acceleration (Issue #896)
+simsimd = "6"  # SIMD-accelerated vector similarity (Issue #952)
 
 [profile.release]
 lto = true

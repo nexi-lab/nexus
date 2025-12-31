@@ -369,6 +369,37 @@ class FileContentCache:
                 result[path] = text
         return result
 
+    def get_disk_paths_bulk(
+        self,
+        tenant_id: str,
+        virtual_paths: list[str],
+    ) -> dict[str, str]:
+        """Get disk paths for cached files (Issue #893).
+
+        Returns the actual disk paths where cached content is stored,
+        enabling mmap-based operations to bypass Python.
+
+        Args:
+            tenant_id: Tenant ID
+            virtual_paths: List of virtual file paths
+
+        Returns:
+            Dict mapping virtual_path to disk_path (only for existing cached files)
+        """
+        # Filter out paths that definitely don't exist (via Bloom filter)
+        paths_to_check = [p for p in virtual_paths if self._bloom_check(tenant_id, p)]
+
+        if not paths_to_check:
+            return {}
+
+        result: dict[str, str] = {}
+        for vpath in paths_to_check:
+            cache_path = self._get_cache_path(tenant_id, vpath)
+            if cache_path.exists():
+                result[vpath] = str(cache_path)
+
+        return result
+
     def exists(self, tenant_id: str, virtual_path: str) -> bool:
         """Check if content is cached.
 

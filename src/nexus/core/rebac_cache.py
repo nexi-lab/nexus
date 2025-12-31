@@ -17,6 +17,7 @@ Revision Quantization (Issue #909):
 """
 
 import logging
+import math
 import random
 import threading
 import time
@@ -61,6 +62,7 @@ class ReBACPermissionCache:
         enable_revision_quantization: bool = True,
         ttl_jitter_percent: float = 0.2,
         refresh_ahead_factor: float = 0.7,
+        xfetch_beta: float = 1.0,
     ):
         """
         Initialize ReBAC permission cache.
@@ -80,6 +82,11 @@ class ReBACPermissionCache:
                 Prevents thundering herd by staggering cache expiry (Issue #932)
             refresh_ahead_factor: Refresh cache at this fraction of TTL (default: 0.7)
                 Triggers background refresh before expiry (Issue #932)
+            xfetch_beta: XFetch algorithm aggressiveness parameter (default: 1.0)
+                Controls probabilistic early expiration (Issue #718):
+                - beta > 1.0: More aggressive (refresh earlier)
+                - beta < 1.0: Less aggressive (refresh later)
+                - beta = 1.0: Mathematically optimal (VLDB 2015 paper)
         """
         # Deprecation warning for old parameter
         if quantization_interval > 0:
@@ -147,11 +154,19 @@ class ReBACPermissionCache:
         # Prevents thundering herd by staggering cache expiry
         self._ttl_jitter_percent = ttl_jitter_percent
         self._refresh_ahead_factor = refresh_ahead_factor
-        # Track entry metadata for jitter and refresh-ahead
-        # Maps key -> (created_at, jittered_ttl)
-        self._entry_metadata: dict[str, tuple[float, float]] = {}
+        # Track entry metadata for jitter, refresh-ahead, and XFetch
+        # Maps key -> (created_at, jittered_ttl, delta)
+        # delta is the recomputation time in seconds (Issue #718)
+        self._entry_metadata: dict[str, tuple[float, float, float]] = {}
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
+
+        # XFetch probabilistic early expiration (Issue #718)
+        # Based on VLDB 2015 paper: "Optimal Probabilistic Cache Stampede Prevention"
+        # https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
+        self._xfetch_beta = xfetch_beta
+        self._xfetch_early_refreshes = 0  # Count of XFetch-triggered refreshes
+        self._xfetch_computed_refreshes = 0  # Count of refreshes that would have been stampedes
 
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
@@ -320,6 +335,7 @@ class ReBACPermissionCache:
         object_id: str,
         result: bool,
         tenant_id: str | None = None,
+        delta: float = 0.0,
     ) -> None:
         """
         Cache permission check result.
@@ -336,6 +352,9 @@ class ReBACPermissionCache:
             object_id: Object identifier
             result: Permission check result (True/False)
             tenant_id: Optional tenant ID
+            delta: Recomputation time in seconds (Issue #718: XFetch algorithm)
+                Used for probabilistic early expiration - items that take longer
+                to recompute are refreshed earlier.
         """
         key = self._make_key(
             subject_type, subject_id, permission, object_type, object_id, tenant_id
@@ -343,9 +362,10 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Track entry metadata with jittered TTL for refresh-ahead (Issue #932)
+            # and delta for XFetch (Issue #718)
             base_ttl = self._ttl_seconds if result else self._denial_ttl_seconds
             jittered_ttl = self._get_jittered_ttl(float(base_ttl))
-            self._entry_metadata[key] = (time.time(), jittered_ttl)
+            self._entry_metadata[key] = (time.time(), jittered_ttl, delta)
 
             # Route to appropriate cache based on result (Issue #877)
             # Grants get longer TTL, denials get shorter TTL for security
@@ -461,6 +481,7 @@ class ReBACPermissionCache:
         object_type: str,
         object_id: str,
         tenant_id: str | None = None,
+        delta: float = 0.0,
     ) -> None:
         """
         Release compute lock and cache the result.
@@ -477,11 +498,19 @@ class ReBACPermissionCache:
             object_type: Type of object
             object_id: Object identifier
             tenant_id: Optional tenant ID
+            delta: Recomputation time in seconds for XFetch (Issue #718)
         """
         with self._lock:
-            # Cache the result first
+            # Cache the result first with delta for XFetch
             self.set(
-                subject_type, subject_id, permission, object_type, object_id, result, tenant_id
+                subject_type,
+                subject_id,
+                permission,
+                object_type,
+                object_id,
+                result,
+                tenant_id,
+                delta=delta,
             )
 
             # Signal waiting requests and clean up
@@ -504,7 +533,94 @@ class ReBACPermissionCache:
                 event.set()
 
     # ============================================================
-    # Refresh-Ahead Pattern (Issue #932)
+    # XFetch Probabilistic Early Expiration (Issue #718)
+    # Based on VLDB 2015 paper: "Optimal Probabilistic Cache Stampede Prevention"
+    # https://www.vldb.org/pvldb/vol8/p886-vattani.pdf
+    # ============================================================
+
+    def _should_refresh_xfetch(self, key: str, beta: float | None = None) -> bool:
+        """
+        XFetch probabilistic early expiration check.
+
+        Uses exponential distribution to probabilistically trigger refresh
+        before expiration. The probability increases as expiry approaches,
+        and items that take longer to recompute (higher delta) are refreshed
+        earlier.
+
+        Formula: time() - delta * beta * log(random()) >= expiry
+
+        Args:
+            key: Cache key to check
+            beta: Optional override for aggressiveness parameter.
+                If not provided, uses instance's xfetch_beta.
+                - beta > 1.0: More aggressive (refresh earlier)
+                - beta < 1.0: Less aggressive (refresh later)
+                - beta = 1.0: Mathematically optimal
+
+        Returns:
+            True if we should trigger a refresh now
+        """
+        metadata = self._entry_metadata.get(key)
+        if metadata is None:
+            return False
+
+        created_at, jittered_ttl, delta = metadata
+        expiry = created_at + jittered_ttl
+        current_time = time.time()
+
+        # If already expired, definitely refresh
+        if current_time >= expiry:
+            return True
+
+        # If delta is 0 or very small, fall back to refresh-ahead threshold
+        # This handles cases where delta wasn't tracked
+        if delta < 0.001:  # Less than 1ms
+            age = current_time - created_at
+            refresh_threshold = jittered_ttl * self._refresh_ahead_factor
+            return age > refresh_threshold
+
+        # XFetch algorithm: probabilistic early expiration
+        # log(random()) is always negative (since 0 < random() < 1)
+        # So -delta * beta * log(random()) is always positive
+        # As we approach expiry, the probability of triggering increases
+        effective_beta = beta if beta is not None else self._xfetch_beta
+        random_factor = -delta * effective_beta * math.log(random.random())
+
+        return current_time + random_factor >= expiry
+
+    def should_refresh_xfetch(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str | None = None,
+        beta: float | None = None,
+    ) -> bool:
+        """
+        Public XFetch check for a permission cache entry.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: Subject identifier
+            permission: Permission to check
+            object_type: Type of object
+            object_id: Object identifier
+            tenant_id: Optional tenant ID
+            beta: Optional override for aggressiveness parameter
+
+        Returns:
+            True if we should trigger a refresh now
+        """
+        key = self._make_key(
+            subject_type, subject_id, permission, object_type, object_id, tenant_id
+        )
+        with self._lock:
+            return self._should_refresh_xfetch(key, beta)
+
+    # ============================================================
+    # Refresh-Ahead Pattern (Issue #932) - Now uses XFetch
     # ============================================================
 
     def get_with_refresh_check(
@@ -570,17 +686,13 @@ class ReBACPermissionCache:
             if result is None:
                 return None, False, key
 
-            # Check if refresh is needed based on entry metadata
-            metadata = self._entry_metadata.get(key)
-            if metadata is None:
-                # No metadata, don't trigger refresh
-                return result, False, key
+            # Check if refresh is needed using XFetch algorithm (Issue #718)
+            needs_refresh = (
+                self._should_refresh_xfetch(key) and key not in self._refresh_in_progress
+            )
 
-            created_at, jittered_ttl = metadata
-            age = time.time() - created_at
-            refresh_threshold = jittered_ttl * self._refresh_ahead_factor
-
-            needs_refresh = age > refresh_threshold and key not in self._refresh_in_progress
+            if needs_refresh and self._enable_metrics:
+                self._xfetch_early_refreshes += 1
 
             return result, needs_refresh, key
 
@@ -921,6 +1033,9 @@ class ReBACPermissionCache:
                 "stampede_waits": self._stampede_waits,
                 "stampede_timeouts": self._stampede_timeouts,
                 "stampede_active_computes": len(self._computing),
+                # XFetch metrics (Issue #718)
+                "xfetch_beta": self._xfetch_beta,
+                "xfetch_early_refreshes": self._xfetch_early_refreshes,
             }
 
     def reset_stats(self) -> None:
@@ -938,4 +1053,7 @@ class ReBACPermissionCache:
             self._lookup_count = 0
             self._stampede_waits = 0
             self._stampede_timeouts = 0
+            # XFetch metrics (Issue #718)
+            self._xfetch_early_refreshes = 0
+            self._xfetch_computed_refreshes = 0
             logger.info("L1 cache stats reset")

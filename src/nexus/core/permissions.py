@@ -23,6 +23,7 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.hotspot_detector import HotspotDetector
     from nexus.core.permission_boundary_cache import PermissionBoundaryCache
     from nexus.core.permissions_enhanced import AuditStore
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
@@ -213,6 +214,9 @@ class PermissionEnforcer:
         # Issue #922: Permission boundary cache for O(1) inheritance checks
         boundary_cache: PermissionBoundaryCache | None = None,
         enable_boundary_cache: bool = True,
+        # Issue #921: Hotspot detection for proactive cache prefetching
+        hotspot_detector: HotspotDetector | None = None,
+        enable_hotspot_tracking: bool = True,
     ):
         """Initialize permission enforcer.
 
@@ -228,6 +232,8 @@ class PermissionEnforcer:
             admin_bypass_paths: Optional path allowlist for admin bypass (e.g., ["/admin/*"])
             boundary_cache: Permission boundary cache for O(1) inheritance (Issue #922)
             enable_boundary_cache: Enable boundary caching (default: True)
+            hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
+            enable_hotspot_tracking: Enable hotspot tracking (default: True)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
@@ -265,6 +271,19 @@ class PermissionEnforcer:
                 callback_id,
                 self._boundary_cache.invalidate_permission_change,
             )
+
+        # Issue #921: Hotspot detection for proactive cache prefetching
+        self._enable_hotspot_tracking = enable_hotspot_tracking
+        self._hotspot_detector: HotspotDetector | None = None
+        if hotspot_detector is not None:
+            self._hotspot_detector = hotspot_detector
+            logger.info("[PermissionEnforcer] Using provided hotspot detector")
+        elif enable_hotspot_tracking:
+            # Lazy import to avoid circular dependencies
+            from nexus.core.hotspot_detector import HotspotDetector
+
+            self._hotspot_detector = HotspotDetector()
+            logger.info("[PermissionEnforcer] Hotspot tracking ENABLED (5min window, 50 threshold)")
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -485,6 +504,17 @@ class PermissionEnforcer:
         logger.debug(
             f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
         )
+
+        # Issue #921: Record access for hotspot detection (before cache/graph check)
+        # This tracks access patterns to enable proactive cache prefetching
+        if self._hotspot_detector:
+            self._hotspot_detector.record_access(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                resource_type=object_type,
+                permission=permission_name,
+                tenant_id=tenant_id,
+            )
 
         # NOTE: Removed implicit directory TRAVERSE optimization (was incorrectly granting
         # access to ALL authenticated users for ANY implicit directory, violating Unix semantics)
@@ -758,6 +788,49 @@ class PermissionEnforcer:
         """Clear all entries from the permission boundary cache (Issue #922)."""
         if self._boundary_cache is not None:
             self._boundary_cache.clear()
+
+    @property
+    def hotspot_detector(self) -> HotspotDetector | None:
+        """Get the hotspot detector instance (Issue #921).
+
+        Returns:
+            HotspotDetector instance, or None if hotspot tracking is disabled
+        """
+        return self._hotspot_detector
+
+    def get_hotspot_stats(self) -> dict[str, Any] | None:
+        """Get hotspot detection statistics (Issue #921).
+
+        Returns statistics about access pattern tracking including
+        hot entries count, total accesses, and prefetch triggers.
+
+        Returns:
+            Dictionary with hotspot statistics, or None if disabled
+
+        Example:
+            >>> enforcer = PermissionEnforcer(metadata_store, rebac_manager=rebac)
+            >>> stats = enforcer.get_hotspot_stats()
+            >>> print(f"Hot entries: {stats['hot_entries_detected']}")
+        """
+        if self._hotspot_detector is None:
+            return None
+        return self._hotspot_detector.get_stats()
+
+    def get_hot_entries(self, limit: int | None = 10) -> list[Any] | None:
+        """Get current hot permission entries (Issue #921).
+
+        Returns list of HotspotEntry objects representing frequently
+        accessed permission paths.
+
+        Args:
+            limit: Maximum number of entries to return (default: 10)
+
+        Returns:
+            List of HotspotEntry objects, or None if disabled
+        """
+        if self._hotspot_detector is None:
+            return None
+        return self._hotspot_detector.get_hot_entries(limit=limit)
 
     def filter_list(
         self,

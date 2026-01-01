@@ -206,7 +206,9 @@ class TestVersionHistoryGC:
 
             from nexus.storage.models import FilePathModel
 
-            file_path = session.scalar(select(FilePathModel).where(FilePathModel.virtual_path == path))
+            file_path = session.scalar(
+                select(FilePathModel).where(FilePathModel.virtual_path == path)
+            )
             resource_id = file_path.path_id
 
         # Run GC with max 3 versions

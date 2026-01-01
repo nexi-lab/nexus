@@ -624,6 +624,40 @@ class TigerCache:
             with self._engine.connect() as new_conn:
                 return execute(new_conn)
 
+    def get_cache_age(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        tenant_id: str,
+    ) -> float | None:
+        """Get cache age in seconds for a specific entry (Issue #921).
+
+        Used by HotspotDetector to determine if hot entries need prefetching
+        before TTL expiry.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+            tenant_id: Tenant ID
+
+        Returns:
+            Age in seconds if entry is in memory cache, None if not cached
+        """
+        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, cached_at = self._cache[key]
+                age = time.time() - cached_at
+                # Only return age if entry hasn't expired
+                if age < self._cache_ttl:
+                    return age
+        return None
+
     def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
         """Load bitmap from database.
 

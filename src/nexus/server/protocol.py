@@ -410,6 +410,37 @@ class GlobParams:
 
 
 @dataclass
+class ExistsBatchParams:
+    """Parameters for exists_batch() method (Issue #859).
+
+    Check existence of multiple paths in a single call to reduce network round trips.
+    """
+
+    paths: list[str]
+
+
+@dataclass
+class MetadataBatchParams:
+    """Parameters for metadata_batch() method (Issue #859).
+
+    Get metadata for multiple paths in a single call to reduce network round trips.
+    """
+
+    paths: list[str]
+
+
+@dataclass
+class GlobBatchParams:
+    """Parameters for glob_batch() method (Issue #859).
+
+    Execute multiple glob patterns in a single call to reduce network round trips.
+    """
+
+    patterns: list[str]
+    path: str = "/"
+
+
+@dataclass
 class GrepParams:
     """Parameters for grep() method."""
 
@@ -1167,6 +1198,28 @@ class AdminUpdateKeyParams:
 
 
 @dataclass
+class AdminGcVersionsParams:
+    """Parameters for admin_gc_versions() method (Issue #974).
+
+    Admin-only API to trigger version history garbage collection.
+    """
+
+    dry_run: bool = True  # Default to dry run for safety
+    retention_days: int | None = None  # Override default retention
+    max_versions: int | None = None  # Override default max versions per resource
+
+
+@dataclass
+class AdminGcVersionsStatsParams:
+    """Parameters for admin_gc_versions_stats() method (Issue #974).
+
+    Admin-only API to get version history statistics.
+    """
+
+    pass  # No parameters needed
+
+
+@dataclass
 class ProvisionUserParams:
     """Parameters for provision_user() method (Issue #820).
 
@@ -1704,6 +1757,9 @@ METHOD_PARAMS = {
     "delete_bulk": DeleteBulkParams,
     "rename_bulk": RenameBulkParams,
     "exists": ExistsParams,
+    "exists_batch": ExistsBatchParams,  # Issue #859
+    "metadata_batch": MetadataBatchParams,  # Issue #859
+    "glob_batch": GlobBatchParams,  # Issue #859
     "get_etag": GetEtagParams,
     "stat": StatParams,
     "list": ListParams,
@@ -1781,6 +1837,8 @@ METHOD_PARAMS = {
     "admin_get_key": AdminGetKeyParams,
     "admin_revoke_key": AdminRevokeKeyParams,
     "admin_update_key": AdminUpdateKeyParams,
+    "admin_gc_versions": AdminGcVersionsParams,  # Issue #974
+    "admin_gc_versions_stats": AdminGcVersionsStatsParams,  # Issue #974
     "provision_user": ProvisionUserParams,  # Issue #820
     "deprovision_user": DeprovisionUserParams,
     # Sandbox management methods (v0.8.0 - Issue #372)

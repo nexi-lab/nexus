@@ -560,6 +560,173 @@ def update_key(
         sys.exit(1)
 
 
+@admin.command("gc-versions")
+@click.option("--dry-run/--execute", default=True, help="Dry run (default) or execute")
+@click.option("--retention-days", type=int, help="Override retention days")
+@click.option("--max-versions", type=int, help="Override max versions per resource")
+@click.option("--json-output", is_flag=True, help="Output as JSON")
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def gc_versions(
+    dry_run: bool,
+    retention_days: int | None,
+    max_versions: int | None,
+    json_output: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Trigger version history garbage collection (Issue #974).
+
+    Cleans up old version_history entries based on retention policy.
+    By default runs in dry-run mode (shows what would be deleted).
+
+    \b
+    Examples:
+        # Dry run - see what would be deleted
+        nexus admin gc-versions
+
+        # Execute with default settings
+        nexus admin gc-versions --execute
+
+        # Custom retention (keep 7 days)
+        nexus admin gc-versions --execute --retention-days 7
+
+        # Keep only 50 versions per file
+        nexus admin gc-versions --execute --max-versions 50
+    """
+    try:
+        nx = get_remote_client(remote_url, remote_api_key)
+
+        # Build parameters
+        params: dict[str, Any] = {"dry_run": dry_run}
+
+        if retention_days is not None:
+            params["retention_days"] = retention_days
+        if max_versions is not None:
+            params["max_versions"] = max_versions
+
+        # Call admin API
+        result = nx._call_rpc("admin_gc_versions", params)
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            mode = "[yellow]DRY RUN[/yellow]" if dry_run else "[green]EXECUTED[/green]"
+            console.print(f"\n{mode} Version History Garbage Collection\n")
+
+            table = Table(show_header=False, box=None)
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="white")
+
+            table.add_row("Deleted by age:", str(result.get("deleted_by_age", 0)))
+            table.add_row("Deleted by count:", str(result.get("deleted_by_count", 0)))
+            table.add_row("Total deleted:", f"[bold]{result.get('total_deleted', 0)}[/bold]")
+
+            bytes_reclaimed = result.get("bytes_reclaimed", 0)
+            if bytes_reclaimed > 1024 * 1024:
+                size_str = f"{bytes_reclaimed / 1024 / 1024:.2f} MB"
+            elif bytes_reclaimed > 1024:
+                size_str = f"{bytes_reclaimed / 1024:.2f} KB"
+            else:
+                size_str = f"{bytes_reclaimed} bytes"
+            table.add_row("Space reclaimed:", size_str)
+            table.add_row("Duration:", f"{result.get('duration_seconds', 0):.2f}s")
+
+            _console.print(table)
+
+            if dry_run:
+                console.print("\n[dim]Run with --execute to perform actual deletion[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error running GC:[/red] {e}")
+        sys.exit(1)
+
+
+@admin.command("gc-versions-stats")
+@click.option("--json-output", is_flag=True, help="Output as JSON")
+@REMOTE_API_KEY_OPTION
+@REMOTE_URL_OPTION
+def gc_versions_stats(
+    json_output: bool,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Show version history table statistics (Issue #974).
+
+    Displays current size and configuration of the version_history table.
+
+    \b
+    Examples:
+        nexus admin gc-versions-stats
+    """
+    try:
+        nx = get_remote_client(remote_url, remote_api_key)
+
+        # Call admin API
+        result = nx._call_rpc("admin_gc_versions_stats", {})
+
+        if json_output:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            console.print("\n[bold]Version History Statistics[/bold]\n")
+
+            table = Table(show_header=False, box=None)
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="white")
+
+            table.add_row("Total versions:", f"{result.get('total_versions', 0):,}")
+            table.add_row("Unique resources:", f"{result.get('unique_resources', 0):,}")
+
+            total_bytes = result.get("total_bytes", 0)
+            if total_bytes > 1024 * 1024 * 1024:
+                size_str = f"{total_bytes / 1024 / 1024 / 1024:.2f} GB"
+            elif total_bytes > 1024 * 1024:
+                size_str = f"{total_bytes / 1024 / 1024:.2f} MB"
+            elif total_bytes > 1024:
+                size_str = f"{total_bytes / 1024:.2f} KB"
+            else:
+                size_str = f"{total_bytes} bytes"
+            table.add_row("Total size:", size_str)
+
+            table.add_row(
+                "Oldest version:",
+                result.get("oldest_version", "N/A")[:19] if result.get("oldest_version") else "N/A",
+            )
+            table.add_row(
+                "Newest version:",
+                result.get("newest_version", "N/A")[:19] if result.get("newest_version") else "N/A",
+            )
+
+            _console.print(table)
+
+            # Show GC config
+            gc_config = result.get("gc_config", {})
+            if gc_config:
+                console.print("\n[bold]GC Configuration[/bold]\n")
+
+                config_table = Table(show_header=False, box=None)
+                config_table.add_column("Setting", style="cyan")
+                config_table.add_column("Value", style="white")
+
+                status = (
+                    "[green]Enabled[/green]" if gc_config.get("enabled") else "[red]Disabled[/red]"
+                )
+                config_table.add_row("Status:", status)
+                config_table.add_row("Retention:", f"{gc_config.get('retention_days', 30)} days")
+                config_table.add_row(
+                    "Max versions/resource:", str(gc_config.get("max_versions_per_resource", 100))
+                )
+                config_table.add_row(
+                    "Run interval:", f"{gc_config.get('run_interval_hours', 24)} hours"
+                )
+
+                _console.print(config_table)
+
+    except Exception as e:
+        console.print(f"[red]Error getting stats:[/red] {e}")
+        sys.exit(1)
+
+
 def register_commands(cli: click.Group) -> None:
     """Register admin command group to the main CLI.
 

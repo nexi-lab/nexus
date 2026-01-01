@@ -727,6 +727,60 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
             }
 
+    def _admin_gc_versions(self, params: Any) -> dict[str, Any]:
+        """Trigger version history garbage collection (admin only, Issue #974).
+
+        Args:
+            params: AdminGcVersionsParams with dry_run, retention_days, max_versions
+
+        Returns:
+            GC statistics including deleted counts and bytes reclaimed
+        """
+        from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
+
+        if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
+            raise RuntimeError("Database auth provider not configured")
+
+        gc = VersionHistoryGC(self.auth_provider.session_factory)
+        config = VersionGCSettings.from_env()
+
+        stats = gc.run_gc(
+            config=config,
+            dry_run=params.dry_run,
+            retention_days=params.retention_days,
+            max_versions=params.max_versions,
+        )
+
+        return stats.to_dict()
+
+    def _admin_gc_versions_stats(self, _params: Any) -> dict[str, Any]:
+        """Get version history table statistics (admin only, Issue #974).
+
+        Args:
+            params: AdminGcVersionsStatsParams (no parameters)
+
+        Returns:
+            Statistics about version_history table size and age
+        """
+        from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
+
+        if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
+            raise RuntimeError("Database auth provider not configured")
+
+        gc = VersionHistoryGC(self.auth_provider.session_factory)
+        stats = gc.get_stats()
+
+        # Add current GC config
+        config = VersionGCSettings.from_env()
+        stats["gc_config"] = {
+            "enabled": config.enabled,
+            "retention_days": config.retention_days,
+            "max_versions_per_resource": config.max_versions_per_resource,
+            "run_interval_hours": config.run_interval_hours,
+        }
+
+        return stats
+
     def _get_asyncio_debug_info(self) -> dict[str, Any]:
         """Get asyncio task introspection information.
 
@@ -1376,6 +1430,14 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         elif method == "admin_update_key":
             self._require_admin()
             return self._admin_update_key(params)
+
+        elif method == "admin_gc_versions":
+            self._require_admin()
+            return self._admin_gc_versions(params)
+
+        elif method == "admin_gc_versions_stats":
+            self._require_admin()
+            return self._admin_gc_versions_stats(params)
 
         else:
             raise ValueError(f"Unknown method: {method}")

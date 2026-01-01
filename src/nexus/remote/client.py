@@ -1623,6 +1623,74 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         return exists  # type: ignore[no-any-return]
 
+    def exists_batch(
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, bool]:
+        """Check existence of multiple paths in a single call (Issue #859).
+
+        This reduces network round trips when checking many paths at once.
+        Processing 10 paths requires 1 round trip instead of 10.
+
+        Args:
+            paths: List of virtual paths to check
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dictionary mapping each path to its existence status (True/False)
+        """
+        if not paths:
+            return {}
+        result = self._call_rpc("exists_batch", {"paths": paths})
+        return result  # type: ignore[no-any-return]
+
+    def metadata_batch(
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, dict[str, Any] | None]:
+        """Get metadata for multiple paths in a single call (Issue #859).
+
+        This reduces network round trips when fetching metadata for many files.
+        Processing 10 paths requires 1 round trip instead of 10.
+
+        Args:
+            paths: List of virtual paths to get metadata for
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dictionary mapping each path to its metadata dict or None if not found.
+        """
+        if not paths:
+            return {}
+        result = self._call_rpc("metadata_batch", {"paths": paths})
+        return result  # type: ignore[no-any-return]
+
+    def glob_batch(
+        self,
+        patterns: list[str],
+        path: str = "/",
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, builtins.list[str]]:
+        """Execute multiple glob patterns in a single call (Issue #859).
+
+        This reduces network round trips when matching many patterns at once.
+        Processing 10 patterns requires 1 round trip instead of 10.
+
+        Args:
+            patterns: List of glob patterns to match
+            path: Base path to search from (default: "/")
+            context: Unused in remote client (handled server-side)
+
+        Returns:
+            Dictionary mapping each pattern to its list of matching file paths.
+        """
+        if not patterns:
+            return {}
+        result = self._call_rpc("glob_batch", {"patterns": patterns, "path": path})
+        return result  # type: ignore[no-any-return]
+
     def get_etag(self, path: str) -> str | None:
         """Get the ETag (content hash) for a file without reading content.
 

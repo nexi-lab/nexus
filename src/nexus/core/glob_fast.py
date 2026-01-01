@@ -247,3 +247,31 @@ def extract_static_prefix(pattern: str) -> str:
         prefix += "/"
 
     return prefix
+
+
+def is_simple_pattern(pattern: str) -> bool:
+    """Check if a glob pattern is simple (no ** recursive matching).
+
+    Simple patterns can be matched efficiently with fnmatch without
+    needing regex compilation. This helps with strategy selection (Issue #929).
+
+    Args:
+        pattern: Glob pattern to check
+
+    Returns:
+        True if pattern is simple (no **), False if it requires regex
+
+    Examples:
+        >>> is_simple_pattern("*.py")
+        True
+
+        >>> is_simple_pattern("src/*.py")
+        True
+
+        >>> is_simple_pattern("**/*.py")
+        False
+
+        >>> is_simple_pattern("src/**/test.py")
+        False
+    """
+    return "**" not in pattern

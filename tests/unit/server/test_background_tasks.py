@@ -226,7 +226,11 @@ class TestStartBackgroundTasks:
         """Test starting background tasks without sandbox manager."""
         session_factory = Mock()
 
-        with patch("nexus.server.background_tasks.asyncio.create_task") as mock_create:
+        with (
+            patch("nexus.server.background_tasks.asyncio.create_task") as mock_create,
+            patch("nexus.server.background_tasks.VersionGCSettings.from_env") as mock_gc,
+        ):
+            mock_gc.return_value = Mock(enabled=False)
             mock_create.return_value = Mock()
             tasks = start_background_tasks(session_factory, sandbox_manager=None)
 
@@ -239,7 +243,11 @@ class TestStartBackgroundTasks:
         session_factory = Mock()
         sandbox_manager = Mock()
 
-        with patch("nexus.server.background_tasks.asyncio.create_task") as mock_create:
+        with (
+            patch("nexus.server.background_tasks.asyncio.create_task") as mock_create,
+            patch("nexus.server.background_tasks.VersionGCSettings.from_env") as mock_gc,
+        ):
+            mock_gc.return_value = Mock(enabled=False)
             mock_create.return_value = Mock()
             tasks = start_background_tasks(session_factory, sandbox_manager=sandbox_manager)
 
@@ -251,7 +259,11 @@ class TestStartBackgroundTasks:
         """Test that start_background_tasks returns a list of tasks."""
         session_factory = Mock()
 
-        with patch("nexus.server.background_tasks.asyncio.create_task") as mock_create:
+        with (
+            patch("nexus.server.background_tasks.asyncio.create_task") as mock_create,
+            patch("nexus.server.background_tasks.VersionGCSettings.from_env") as mock_gc,
+        ):
+            mock_gc.return_value = Mock(enabled=False)
             mock_task1 = Mock()
             mock_task2 = Mock()
             mock_create.side_effect = [mock_task1, mock_task2]

@@ -63,6 +63,7 @@ class FileMetadata:
     tenant_id: str | None = None  # P0 SECURITY: Defense-in-depth tenant isolation
     created_by: str | None = None  # User or agent ID who created/modified this version
     is_directory: bool = False  # Whether this path represents a directory
+    owner_id: str | None = None  # Issue #920: Owner for O(1) permission checks (posix_uid)
 
     def validate(self) -> None:
         """Validate file metadata before database operations.

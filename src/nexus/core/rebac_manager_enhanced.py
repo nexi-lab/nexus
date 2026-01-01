@@ -26,6 +26,7 @@ Usage:
 
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -3501,7 +3502,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             except Exception as e:
                                 logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
-                    # Bulk add to Tiger Cache bitmaps
+                    # Bulk add to Tiger Cache bitmaps (memory)
                     for group_key, int_ids in tiger_updates.items():
                         subj_type, subj_id, perm, res_type, tid = group_key
                         self._tiger_cache.add_to_bitmap_bulk(
@@ -3513,10 +3514,34 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             resource_int_ids=int_ids,
                         )
 
+                    # Persist to database in background (Issue #979)
+                    tiger_cache = self._tiger_cache  # Capture reference for closure
+
+                    def _persist_tiger_updates(updates: dict, cache: Any) -> None:
+                        for gkey, ids in updates.items():
+                            st, si, p, rt, t = gkey
+                            try:
+                                cache.persist_bitmap_bulk(
+                                    subject_type=st,
+                                    subject_id=si,
+                                    permission=p,
+                                    resource_type=rt,
+                                    resource_int_ids=ids,
+                                    tenant_id=t,
+                                )
+                            except Exception as e:
+                                logger.debug(f"[TIGER] Background persist failed: {e}")
+
+                    threading.Thread(
+                        target=_persist_tiger_updates,
+                        args=(tiger_updates.copy(), tiger_cache),
+                        daemon=True,
+                    ).start()
+
                     if tiger_writes > 0:
                         logger.debug(
                             f"[TIGER] Write-through: {tiger_writes} positive results "
-                            f"to {len(tiger_updates)} Tiger Cache bitmaps"
+                            f"to {len(tiger_updates)} Tiger Cache bitmaps (async persist started)"
                         )
 
                 rust_success = True
@@ -3600,7 +3625,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         except Exception as e:
                             logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
-                # Bulk add to Tiger Cache bitmaps
+                # Bulk add to Tiger Cache bitmaps (memory)
                 for group_key, int_ids in fallback_tiger_updates.items():
                     subj_type, subj_id, perm, res_type, tid = group_key
                     self._tiger_cache.add_to_bitmap_bulk(
@@ -3612,10 +3637,34 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         resource_int_ids=int_ids,
                     )
 
+                # Persist to database in background (Issue #979)
+                fallback_tiger_cache = self._tiger_cache  # Capture reference for closure
+
+                def _persist_fallback_updates(updates: dict, cache: Any) -> None:
+                    for gkey, ids in updates.items():
+                        st, si, p, rt, t = gkey
+                        try:
+                            cache.persist_bitmap_bulk(
+                                subject_type=st,
+                                subject_id=si,
+                                permission=p,
+                                resource_type=rt,
+                                resource_int_ids=ids,
+                                tenant_id=t,
+                            )
+                        except Exception as e:
+                            logger.debug(f"[TIGER] Background persist failed: {e}")
+
+                threading.Thread(
+                    target=_persist_fallback_updates,
+                    args=(fallback_tiger_updates.copy(), fallback_tiger_cache),
+                    daemon=True,
+                ).start()
+
                 if tiger_writes > 0:
                     logger.debug(
                         f"[TIGER] Write-through (Python path): {tiger_writes} positive results "
-                        f"to {len(fallback_tiger_updates)} Tiger Cache bitmaps"
+                        f"to {len(fallback_tiger_updates)} Tiger Cache bitmaps (async persist started)"
                     )
 
         # Report actual cache statistics

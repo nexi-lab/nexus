@@ -1173,6 +1173,10 @@ class NexusFSCoreMixin:
 
         # Store metadata with content hash as both etag and physical_path
         # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
+        # Issue #920: Set owner_id for O(1) permission checks (only on new files)
+        ctx = context if context is not None else self._default_context
+        owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user)
+
         metadata = FileMetadata(
             path=path,
             backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
@@ -1184,6 +1188,7 @@ class NexusFSCoreMixin:
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
             tenant_id=tenant_id,  # Issue #904: Store tenant_id for PREWHERE filtering
+            owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
         self.metadata.put(metadata)

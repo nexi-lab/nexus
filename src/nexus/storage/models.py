@@ -130,6 +130,11 @@ class FilePathModel(Base):
     # Version tracking
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
+    # Issue #920: POSIX owner for O(1) permission checks
+    # Stores the owner's subject_id for fast ownership verification
+    # When set, allows bypassing ReBAC graph traversal for owner checks
+    posix_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Relationships
     metadata_entries: Mapped[list["FileMetadataModel"]] = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
@@ -154,6 +159,8 @@ class FilePathModel(Base):
         Index("idx_file_paths_locked_by", "locked_by"),
         # Performance: Composite indexes for common query patterns (#384)
         Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
+        # Issue #920: Index for owner-based queries (e.g., "list my files")
+        Index("idx_file_paths_posix_uid", "posix_uid"),
     )
 
     def __repr__(self) -> str:

@@ -1144,7 +1144,19 @@ class NexusFS(  # type: ignore[misc]
         else:
             permission_path = path
 
-        # Check permission using enforcer
+        # Issue #920: O(1) owner fast-path check
+        # If the file has posix_uid set and it matches the requesting user, skip ReBAC
+        # This avoids expensive graph traversal for owner accessing their own files
+        file_meta = self.metadata.get(permission_path)
+        if file_meta and file_meta.owner_id:
+            subject_id = ctx.subject_id or ctx.user
+            if file_meta.owner_id == subject_id:
+                logger.debug(
+                    f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
+                )
+                return  # Owner has all permissions
+
+        # Check permission using enforcer (ReBAC graph traversal)
         result = self._permission_enforcer.check(permission_path, permission, ctx)
         logger.debug(f"  -> permission_enforcer.check returned: {result}")
 

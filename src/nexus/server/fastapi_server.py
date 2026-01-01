@@ -509,6 +509,26 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         logger.debug("Tiger Cache queue processor disabled (write-through handles grants)")
 
+    # Tiger Cache warm-up on startup (Issue #979)
+    # Pre-load recently used permission bitmaps to avoid cold-start penalties
+    # Non-blocking: runs in background thread, server starts immediately
+    if _app_state.nexus_fs:
+        try:
+            tiger_cache = getattr(_app_state.nexus_fs._rebac_manager, "_tiger_cache", None)
+            if tiger_cache:
+                warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
+
+                async def _warm_tiger_cache() -> None:
+                    import asyncio
+
+                    loaded = await asyncio.to_thread(tiger_cache.warm_from_db, warm_limit)
+                    logger.info(f"Tiger Cache warmed with {loaded} entries from database")
+
+                asyncio.create_task(_warm_tiger_cache())
+                logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
+        except Exception as e:
+            logger.debug(f"Tiger Cache warm-up skipped: {e}")
+
     yield
 
     # Cleanup

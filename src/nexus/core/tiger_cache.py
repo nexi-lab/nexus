@@ -36,13 +36,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CacheKey:
-    """Key for Tiger Cache lookup."""
+    """Key for Tiger Cache lookup.
+
+    Note: tenant_id is intentionally excluded from the cache key.
+    Tenant isolation is enforced during permission computation, not caching.
+    This allows shared resources (e.g., /skills in 'default' tenant) to be
+    accessible across tenants without cache misses.
+
+    See: Issue #979 - Tiger Cache persistence and cross-tenant optimization
+    """
 
     subject_type: str
     subject_id: str
     permission: str
     resource_type: str
-    tenant_id: str
 
     def __hash__(self) -> int:
         return hash(
@@ -51,7 +58,6 @@ class CacheKey:
                 self.subject_id,
                 self.permission,
                 self.resource_type,
-                self.tenant_id,
             )
         )
 
@@ -436,7 +442,7 @@ class TigerCache:
             CacheKey, tuple[Any, int, float]
         ] = {}  # key -> (bitmap, revision, cached_at)
         self._cache_ttl = 300  # 5 minutes
-        self._cache_max_size = 10_000
+        self._cache_max_size = 100_000  # Increased from 10k per Issue #979
         self._lock = threading.RLock()
 
     def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
@@ -449,7 +455,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
@@ -459,13 +465,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
             Set of integer resource IDs
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         # Check in-memory cache first
         with self._lock:
@@ -502,13 +508,13 @@ class TigerCache:
             permission: Permission to check
             resource_type: Type of resource
             resource_id: String ID of resource
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (used for resource lookup, not cache key)
             conn: Optional database connection
 
         Returns:
             True if allowed, False if denied, None if not in cache (fallback to rebac_check)
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         # Get resource int ID
         resource_key = (resource_type, resource_id, tenant_id)
@@ -555,7 +561,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
@@ -568,13 +574,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
             Serialized bitmap bytes if found, None if not in cache
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         # Check in-memory cache first
         with self._lock:
@@ -593,7 +599,6 @@ class TigerCache:
               AND subject_id = :subject_id
               AND permission = :permission
               AND resource_type = :resource_type
-              AND tenant_id = :tenant_id
         """)
 
         params = {
@@ -601,7 +606,6 @@ class TigerCache:
             "subject_id": key.subject_id,
             "permission": key.permission,
             "resource_type": key.resource_type,
-            "tenant_id": key.tenant_id,
         }
 
         def execute(connection: Connection) -> bytes | None:
@@ -630,7 +634,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
     ) -> float | None:
         """Get cache age in seconds for a specific entry (Issue #921).
 
@@ -642,12 +646,12 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            tenant_id: Deprecated, kept for API compatibility
 
         Returns:
             Age in seconds if entry is in memory cache, None if not cached
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -676,7 +680,6 @@ class TigerCache:
               AND subject_id = :subject_id
               AND permission = :permission
               AND resource_type = :resource_type
-              AND tenant_id = :tenant_id
         """)
 
         params = {
@@ -684,7 +687,6 @@ class TigerCache:
             "subject_id": key.subject_id,
             "permission": key.permission,
             "resource_type": key.resource_type,
-            "tenant_id": key.tenant_id,
         }
 
         def execute(connection: Connection) -> Any:  # Returns Bitmap or None
@@ -742,17 +744,17 @@ class TigerCache:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database
+        # Bulk fetch from database (tenant_id removed from cache key per Issue #979)
         is_postgresql = "postgresql" in str(self._engine.url)
 
         if is_postgresql:
             query = text("""
-                SELECT subject_type, subject_id, permission, resource_type, tenant_id,
+                SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision
                 FROM tiger_cache
-                WHERE (subject_type, subject_id, permission, resource_type, tenant_id) IN (
+                WHERE (subject_type, subject_id, permission, resource_type) IN (
                     SELECT UNNEST(:subj_types), UNNEST(:subj_ids), UNNEST(:perms),
-                           UNNEST(:res_types), UNNEST(:tenants)
+                           UNNEST(:res_types)
                 )
             """)
             params = {
@@ -760,7 +762,6 @@ class TigerCache:
                 "subj_ids": [k.subject_id for k in to_fetch],
                 "perms": [k.permission for k in to_fetch],
                 "res_types": [k.resource_type for k in to_fetch],
-                "tenants": [k.tenant_id for k in to_fetch],
             }
             db_result = conn.execute(query, params)
         else:
@@ -774,14 +775,14 @@ class TigerCache:
                 return results
 
             values = ", ".join(
-                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}', '{k.tenant_id}')"
+                f"('{k.subject_type}', '{k.subject_id}', '{k.permission}', '{k.resource_type}')"
                 for k in to_fetch
             )
             query = text(f"""
-                SELECT subject_type, subject_id, permission, resource_type, tenant_id,
+                SELECT subject_type, subject_id, permission, resource_type,
                        bitmap_data, revision
                 FROM tiger_cache
-                WHERE (subject_type, subject_id, permission, resource_type, tenant_id)
+                WHERE (subject_type, subject_id, permission, resource_type)
                     IN (VALUES {values})
             """)
             db_result = conn.execute(query)
@@ -794,7 +795,6 @@ class TigerCache:
                     row.subject_id,
                     row.permission,
                     row.resource_type,
-                    row.tenant_id,
                 )
                 bitmap = RoaringBitmap.deserialize(row.bitmap_data)
                 results[key] = bitmap
@@ -835,7 +835,7 @@ class TigerCache:
 
         for subj_type, subj_id, perm, res_type, res_id, tenant in checks:
             unique_resources.add((res_type, res_id, tenant))
-            unique_keys.add(CacheKey(subj_type, subj_id, perm, res_type, tenant))
+            unique_keys.add(CacheKey(subj_type, subj_id, perm, res_type))
 
         with self._engine.connect() as conn:
             # Step 2: Bulk load resource int IDs (1 query)
@@ -847,7 +847,7 @@ class TigerCache:
         # Step 4: Check each item against in-memory data
         for check in checks:
             subj_type, subj_id, perm, res_type, res_id, tenant = check
-            key = CacheKey(subj_type, subj_id, perm, res_type, tenant)
+            key = CacheKey(subj_type, subj_id, perm, res_type)
             resource_key = (res_type, res_id, tenant)
 
             # Get bitmap for this subject/permission/resource_type
@@ -902,9 +902,10 @@ class TigerCache:
         bitmap = RoaringBitmap(resource_int_ids)
 
         bitmap_data = bitmap.serialize()
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
-        # Upsert to database
+        # Upsert to database (tenant_id removed from unique constraint per Issue #979)
+        # Note: tenant_id still included in INSERT for backward compatibility (NOT NULL column)
         query: Any  # TextClause or tuple[TextClause, TextClause]
         if self._is_postgresql:
             query = text("""
@@ -912,7 +913,7 @@ class TigerCache:
                     (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, created_at, updated_at)
                 VALUES
                     (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, NOW(), NOW())
-                ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                ON CONFLICT (subject_type, subject_id, permission, resource_type)
                 DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data, revision = EXCLUDED.revision, updated_at = NOW()
             """)
         else:
@@ -924,7 +925,6 @@ class TigerCache:
                   AND subject_id = :subject_id
                   AND permission = :permission
                   AND resource_type = :resource_type
-                  AND tenant_id = :tenant_id
             """)
             insert_query = text("""
                 INSERT INTO tiger_cache
@@ -939,7 +939,7 @@ class TigerCache:
             "subject_id": subject_id,
             "permission": permission,
             "resource_type": resource_type,
-            "tenant_id": tenant_id,
+            "tenant_id": tenant_id,  # Keep for backward compatibility
             "bitmap_data": bitmap_data,
             "revision": revision,
         }
@@ -1057,8 +1057,8 @@ class TigerCache:
                     match = False
                 if resource_type and key.resource_type != resource_type:
                     match = False
-                if tenant_id and key.tenant_id != tenant_id:
-                    match = False
+                # Note: tenant_id removed from CacheKey per Issue #979
+                # Tenant isolation is enforced during permission computation
                 if match:
                     keys_to_remove.append(key)
 
@@ -1092,7 +1092,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Add a single resource to subject's permission bitmap (in-memory only).
@@ -1105,13 +1105,13 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to add
 
         Returns:
             True if added successfully, False otherwise
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1164,14 +1164,14 @@ class TigerCache:
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being granted
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (used for resource lookup, not cache key)
 
         Returns:
             True if persisted successfully, False on error
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
@@ -1202,7 +1202,8 @@ class TigerCache:
                     bitmap = RoaringBitmap([resource_int_id])
                     revision = 0
 
-                # Step 3: Persist to database
+                # Step 3: Persist to database (tenant_id removed from key per Issue #979)
+                # Note: tenant_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
 
                 if self._is_postgresql:
@@ -1213,7 +1214,7 @@ class TigerCache:
                         VALUES
                             (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1278,14 +1279,14 @@ class TigerCache:
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being revoked
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (used for resource lookup, not cache key)
 
         Returns:
             True if persisted successfully, False on error
         """
         from sqlalchemy import text
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         try:
             with self._engine.begin() as conn:
@@ -1343,7 +1344,8 @@ class TigerCache:
                     if key in self._cache:
                         _, revision, _ = self._cache[key]
 
-                # Step 4: Persist to database
+                # Step 4: Persist to database (tenant_id removed from key per Issue #979)
+                # Note: tenant_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
 
                 if self._is_postgresql:
@@ -1354,7 +1356,7 @@ class TigerCache:
                         VALUES
                             (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1403,7 +1405,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Remove a resource from subject's permission bitmap (write-through).
@@ -1416,7 +1418,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to remove
 
         Returns:
@@ -1426,7 +1428,7 @@ class TigerCache:
             This is a write-through operation. For security, revocations
             should also invalidate L1 cache entries.
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1452,7 +1454,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_ids: set[int],
     ) -> int:
         """Add multiple resources to subject's permission bitmap in bulk.
@@ -1465,7 +1467,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (kept for API compatibility)
             resource_int_ids: Set of integer resource IDs to add
 
         Returns:
@@ -1474,7 +1476,7 @@ class TigerCache:
         if not resource_int_ids:
             return 0
 
-        key = CacheKey(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
 
         with self._lock:
             if key in self._cache:
@@ -1495,6 +1497,157 @@ class TigerCache:
                     f"(now {len(bitmap)} resources)"
                 )
             return added
+
+    def persist_bitmap_bulk(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        resource_int_ids: set[int],
+        tenant_id: str = "default",
+    ) -> bool:
+        """Persist bitmap to database after bulk read operations (Issue #979).
+
+        This is a write-behind method called after add_to_bitmap_bulk() to ensure
+        computed permissions survive restarts. Should be called asynchronously
+        to avoid blocking the read path.
+
+        Usage:
+            # In rebac_check_bulk after computing permissions:
+            self._tiger_cache.add_to_bitmap_bulk(...)      # Memory (sync)
+            asyncio.create_task(
+                asyncio.to_thread(
+                    self._tiger_cache.persist_bitmap_bulk, ...  # DB (async)
+                )
+            )
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission type
+            resource_type: Type of resource
+            resource_int_ids: Set of integer resource IDs to persist
+            tenant_id: Tenant ID (for backward compatibility, not used in cache key)
+
+        Returns:
+            True if persisted successfully, False on error
+        """
+        from sqlalchemy import text
+
+        if not resource_int_ids:
+            return True
+
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
+
+        try:
+            # Get current bitmap from memory (may have more entries than resource_int_ids)
+            with self._lock:
+                if key in self._cache:
+                    bitmap, revision, _ = self._cache[key]
+                else:
+                    bitmap = RoaringBitmap(resource_int_ids)
+                    revision = 0
+
+            bitmap_data = bitmap.serialize()
+
+            # Note: tenant_id still included in INSERT for backward compatibility
+            if self._is_postgresql:
+                upsert_query = text("""
+                    INSERT INTO tiger_cache
+                        (subject_type, subject_id, permission, resource_type, tenant_id,
+                         bitmap_data, revision, created_at, updated_at)
+                    VALUES
+                        (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                         :bitmap_data, :revision, NOW(), NOW())
+                    ON CONFLICT (subject_type, subject_id, permission, resource_type)
+                    DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
+                                  revision = EXCLUDED.revision,
+                                  updated_at = NOW()
+                """)
+            else:
+                upsert_query = text("""
+                    INSERT OR REPLACE INTO tiger_cache
+                        (subject_type, subject_id, permission, resource_type, tenant_id,
+                         bitmap_data, revision, created_at, updated_at)
+                    VALUES
+                        (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                         :bitmap_data, :revision, datetime('now'), datetime('now'))
+                """)
+
+            with self._engine.begin() as conn:
+                conn.execute(
+                    upsert_query,
+                    {
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "permission": permission,
+                        "resource_type": resource_type,
+                        "tenant_id": tenant_id,
+                        "bitmap_data": bitmap_data,
+                        "revision": revision,
+                    },
+                )
+
+            logger.debug(f"[TIGER] Persisted bulk bitmap for {key} ({len(bitmap)} resources)")
+            return True
+
+        except Exception as e:
+            logger.error(f"[TIGER] persist_bitmap_bulk failed for {key}: {e}")
+            return False
+
+    def warm_from_db(self, limit: int = 1000) -> int:
+        """Load recently used bitmaps from database into memory cache (Issue #979).
+
+        Called during startup to warm the cache and avoid cold-start penalties.
+        Uses non-blocking background loading - server can start immediately.
+
+        Args:
+            limit: Maximum number of entries to load (default 1000)
+
+        Returns:
+            Number of entries loaded
+
+        Usage:
+            # In NexusFS startup (non-blocking):
+            asyncio.create_task(
+                asyncio.to_thread(tiger_cache.warm_from_db, limit=500)
+            )
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            SELECT subject_type, subject_id, permission, resource_type,
+                   bitmap_data, revision
+            FROM tiger_cache
+            ORDER BY updated_at DESC
+            LIMIT :limit
+        """)
+
+        loaded = 0
+        try:
+            with self._engine.connect() as conn:
+                result = conn.execute(query, {"limit": limit})
+
+                with self._lock:
+                    for row in result:
+                        key = CacheKey(
+                            row.subject_type,
+                            row.subject_id,
+                            row.permission,
+                            row.resource_type,
+                        )
+                        bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                        self._evict_if_needed()
+                        self._cache[key] = (bitmap, int(row.revision), time.time())
+                        loaded += 1
+
+            logger.info(f"[TIGER] Warmed cache with {loaded} entries from database")
+            return loaded
+
+        except Exception as e:
+            logger.error(f"[TIGER] warm_from_db failed: {e}")
+            return loaded
 
 
 class TigerCacheUpdater:

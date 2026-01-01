@@ -65,7 +65,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         self,
         db_path: str | Path | None = None,
         db_url: str | None = None,
-        run_migrations: bool = False,
+        run_migrations: bool = False,  # Auto-run migrations on startup (Issue #979)
         enable_cache: bool = True,
         cache_path_size: int = 512,
         cache_list_size: int = 1024,  # Increased from 128 for better descendant caching
@@ -81,7 +81,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             db_url: Database URL (e.g., 'postgresql://user:pass@host/db' or 'sqlite:///path/to/db')
                    If not provided, checks NEXUS_DATABASE_URL or POSTGRES_URL env vars,
                    then falls back to db_path parameter
-            run_migrations: If True, run Alembic migrations on startup (default: False)
+            run_migrations: If True, run Alembic migrations on startup (default: True)
             enable_cache: If True, enable in-memory caching (default: True)
             cache_path_size: Max entries for path metadata cache (default: 512)
             cache_list_size: Max entries for directory listing cache (default: 1024)
@@ -582,6 +582,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     modified_at=file_path.updated_at,
                     version=file_path.current_version,  # Version tracking (v0.3.5)
                     tenant_id=file_path.tenant_id,  # P0 SECURITY: Defense-in-depth (v0.7.0)
+                    owner_id=file_path.posix_uid,  # Issue #920: O(1) owner permission checks
                 )
 
                 # Cache the result
@@ -752,6 +753,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             updated_at=metadata.modified_at or datetime.now(UTC),
                             current_version=1,  # Initial version
                             tenant_id=metadata.tenant_id,  # P0 SECURITY: Defense-in-depth (v0.7.0)
+                            posix_uid=metadata.owner_id,  # Issue #920: O(1) owner permission checks
                         )
                         # Validate model before inserting
                         file_path.validate()

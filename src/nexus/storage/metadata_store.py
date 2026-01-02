@@ -1171,13 +1171,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
             with self.SessionLocal() as session:
                 # Build base conditions list
                 # Issue #904: PREWHERE-style tenant filtering at DB level
-                # Include both matching tenant AND legacy NULL tenant files for backward compatibility
+                # Include matching tenant, 'default' tenant, AND legacy NULL files
                 base_conditions: list[Any] = [FilePathModel.deleted_at.is_(None)]
                 if tenant_id is not None:
                     from sqlalchemy import or_
 
                     base_conditions.append(
-                        or_(FilePathModel.tenant_id == tenant_id, FilePathModel.tenant_id.is_(None))
+                        or_(
+                            FilePathModel.tenant_id == tenant_id,
+                            FilePathModel.tenant_id == "default",  # Include default tenant files
+                            FilePathModel.tenant_id.is_(None),
+                        )
                     )
 
                 if prefix:
@@ -1321,12 +1325,14 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 conditions: builtins.list[Any] = [FilePathModel.deleted_at.is_(None)]
 
                 # Tenant filtering (Issue #904 PREWHERE optimization)
+                # Include matching tenant, 'default' tenant, AND legacy NULL files
                 if tenant_id is not None:
                     from sqlalchemy import or_
 
                     conditions.append(
                         or_(
                             FilePathModel.tenant_id == tenant_id,
+                            FilePathModel.tenant_id == "default",  # Include default tenant files
                             FilePathModel.tenant_id.is_(None),
                         )
                     )
@@ -2712,10 +2718,18 @@ class SQLAlchemyMetadataStore(MetadataStore):
         try:
             with self.SessionLocal() as session:
                 # Check if we have any entries for this path
+                # Include entries with matching tenant_id OR NULL/default tenant_id (shared/system paths)
+                from sqlalchemy import or_
+
+                tenant_condition = or_(
+                    DirectoryEntryModel.tenant_id == tenant_id,
+                    DirectoryEntryModel.tenant_id.is_(None),
+                    DirectoryEntryModel.tenant_id == "default",  # Legacy backfill entries
+                )
                 stmt = (
                     select(DirectoryEntryModel)
                     .where(
-                        DirectoryEntryModel.tenant_id == tenant_id,
+                        tenant_condition,
                         DirectoryEntryModel.parent_path == parent_path,
                     )
                     .order_by(DirectoryEntryModel.entry_name)
@@ -2723,8 +2737,24 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
                 entries = session.scalars(stmt).all()
 
+                # Debug: log query details when MISS
                 if not entries:
-                    # No index data - return None to trigger fallback
+                    # Check what entries exist for this parent_path (any tenant)
+                    debug_stmt = (
+                        select(DirectoryEntryModel.tenant_id, DirectoryEntryModel.entry_name)
+                        .where(DirectoryEntryModel.parent_path == parent_path)
+                        .limit(5)
+                    )
+                    debug_entries = session.execute(debug_stmt).all()
+                    if debug_entries:
+                        sample = [(str(t), n) for t, n in debug_entries]
+                        logger.info(
+                            f"[SPARSE-DEBUG] MISS for parent={parent_path}, tenant={tenant_id}, but found entries with tenants: {sample}"
+                        )
+                    else:
+                        logger.info(
+                            f"[SPARSE-DEBUG] MISS for parent={parent_path}, tenant={tenant_id}, NO entries exist for this parent_path"
+                        )
                     return None
 
                 return [
@@ -2739,6 +2769,109 @@ class SQLAlchemyMetadataStore(MetadataStore):
         except Exception as e:
             logger.warning(f"Failed to query directory index: {e}")
             return None  # Fallback to LIKE query
+
+    def backfill_directory_index(self, prefix: str = "/", tenant_id: str | None = None) -> int:
+        """Backfill sparse directory index from existing file_paths.
+
+        Use this to populate the index for directories that existed before
+        the sparse index feature was added.
+
+        Args:
+            prefix: Path prefix to backfill (default: "/" for all)
+            tenant_id: Tenant ID to backfill (None for all tenants)
+
+        Returns:
+            Number of directory entries created
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        try:
+            with self.SessionLocal() as session:
+                # Get all file paths matching the prefix
+                conditions: list[Any] = [FilePathModel.deleted_at.is_(None)]
+                if prefix and prefix != "/":
+                    conditions.append(FilePathModel.virtual_path.like(f"{prefix}%"))
+                if tenant_id is not None:
+                    conditions.append(FilePathModel.tenant_id == tenant_id)
+
+                stmt = select(FilePathModel.virtual_path, FilePathModel.tenant_id).where(
+                    *conditions
+                )
+                paths = session.execute(stmt).all()
+
+                logger.info(f"[BACKFILL] Found {len(paths)} paths to process for prefix={prefix}")
+
+                # Track unique directory entries to create
+                entries_to_create: dict[
+                    tuple[str | None, str, str], str
+                ] = {}  # (tenant, parent, name) -> type
+
+                for vpath, file_tenant_id in paths:
+                    # Build directory entries for each path component
+                    parts = vpath.strip("/").split("/")
+                    current_path = "/"
+
+                    for i, part in enumerate(parts):
+                        parent_path = (
+                            current_path if current_path.endswith("/") else current_path + "/"
+                        )
+                        is_last = i == len(parts) - 1
+                        entry_type = "file" if is_last else "directory"
+
+                        key = (file_tenant_id, parent_path, part)
+                        # Directories take precedence over files with same name
+                        if key not in entries_to_create or entry_type == "directory":
+                            entries_to_create[key] = entry_type
+
+                        current_path = parent_path + part
+
+                # Log sample of entries being created
+                sample_entries = list(entries_to_create.items())[:5]
+                sample_str = [
+                    (f"tenant={t}", f"parent={p}", f"name={n}", f"type={ty}")
+                    for (t, p, n), ty in sample_entries
+                ]
+                logger.info(
+                    f"[BACKFILL] Creating {len(entries_to_create)} directory entries, sample: {sample_str}"
+                )
+
+                # Batch insert using upsert
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                created = 0
+                batch = []
+                for (t_id, parent, name), entry_type in entries_to_create.items():
+                    batch.append(
+                        {
+                            "tenant_id": t_id,
+                            "parent_path": parent,
+                            "entry_name": name,
+                            "entry_type": entry_type,
+                        }
+                    )
+
+                    if len(batch) >= 1000:
+                        insert_stmt = pg_insert(DirectoryEntryModel).values(batch)
+                        insert_stmt = insert_stmt.on_conflict_do_nothing()
+                        result = session.execute(insert_stmt)
+                        created += getattr(result, "rowcount", None) or len(batch)
+                        batch = []
+
+                if batch:
+                    insert_stmt = pg_insert(DirectoryEntryModel).values(batch)
+                    insert_stmt = insert_stmt.on_conflict_do_nothing()
+                    result = session.execute(insert_stmt)
+                    created += getattr(result, "rowcount", None) or len(batch)
+
+                session.commit()
+                logger.info(f"[BACKFILL] Created {created} directory entries")
+                return created
+
+        except Exception as e:
+            logger.error(f"[BACKFILL] Failed: {e}")
+            raise
 
     def __enter__(self) -> SQLAlchemyMetadataStore:
         """Context manager entry."""

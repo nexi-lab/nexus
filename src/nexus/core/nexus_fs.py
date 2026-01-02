@@ -1597,7 +1597,6 @@ class NexusFS(  # type: ignore[misc]
                 subject=subject_tuple,
                 permission=rebac_permission,
                 object=("file", path),
-                tenant_id=tenant_id,
             )
             if tiger_result is True:
                 # Cache this positive result

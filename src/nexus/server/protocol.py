@@ -1757,7 +1757,9 @@ class MCPSyncParams:
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
+    "read_bulk": ReadBulkParams,
     "write": WriteParams,
+    "write_batch": WriteBatchParams,
     "append": AppendParams,
     "delete": DeleteParams,
     "rename": RenameParams,

@@ -17,7 +17,9 @@ Use rebac_create() to grant permissions instead of chmod/chown.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
+from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
@@ -284,6 +286,20 @@ class PermissionEnforcer:
 
             self._hotspot_detector = HotspotDetector()
             logger.info("[PermissionEnforcer] Hotspot tracking ENABLED (5min window, 50 threshold)")
+
+        # perf19: Bitmap completeness cache
+        # Tracks users whose Tiger bitmap contains ALL their permissions
+        # (no directory-level grants that could provide inherited access)
+        # Key: (subject_type, subject_id, tenant_id) -> (is_complete, cached_at)
+        self._bitmap_completeness_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
+        self._bitmap_completeness_ttl = 60.0  # 1 minute TTL (conservative)
+
+        # perf19: Leopard Directory Index (Option 4)
+        # Caches which directories a user can access (for inheritance checks)
+        # Key: (subject_type, subject_id, tenant_id) -> (accessible_dirs: set, cached_at)
+        # When filtering, if any ancestor dir is in this set, path inherits access
+        self._leopard_dir_index: dict[tuple[str, str, str], tuple[set[str], float]] = {}
+        self._leopard_dir_ttl = 60.0  # 1 minute TTL
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -951,30 +967,221 @@ class PermissionEnforcer:
                                         "(may have inherited permissions)"
                                     )
 
-                                    # Build checks only for paths needing fallback
-                                    fallback_checks = []
                                     subject = context.get_subject()
+                                    subject_type, subject_id = subject
+
+                                    # BITMAP COMPLETENESS CHECK (perf19 - Option 3):
+                                    # If we've previously determined this user's bitmap is complete
+                                    # (no directory grants providing inherited access), skip fallback entirely
+                                    completeness_key = (subject_type, subject_id, tenant_id)
+                                    cached_completeness = self._bitmap_completeness_cache.get(
+                                        completeness_key
+                                    )
+                                    if cached_completeness:
+                                        is_complete, cached_at = cached_completeness
+                                        if (
+                                            is_complete
+                                            and (time.time() - cached_at)
+                                            < self._bitmap_completeness_ttl
+                                        ):
+                                            # Bitmap is complete - all permissions are direct grants
+                                            # No need to check fallback, paths not in bitmap are denied
+                                            tiger_elapsed = time.time() - tiger_start
+                                            logger.info(
+                                                f"[BITMAP-COMPLETE] Skipped {len(paths_needing_fallback)} fallback checks "
+                                                f"(bitmap complete for {subject_type}:{subject_id}), "
+                                                f"filter_list: {tiger_elapsed:.3f}s, allowed {len(filtered)}/{len(paths)} paths"
+                                            )
+                                            return filtered
+
+                                    # LEOPARD DIRECTORY INDEX (perf19 - Option 4):
+                                    # Check cached accessible directories first - if any ancestor
+                                    # of a path is in the index, the path inherits access
+                                    leopard_key = (subject_type, subject_id, tenant_id)
+                                    cached_leopard = self._leopard_dir_index.get(leopard_key)
+                                    leopard_allowed: list[str] = []
+
+                                    if cached_leopard:
+                                        accessible_dirs, cached_at = cached_leopard
+                                        if (
+                                            time.time() - cached_at
+                                        ) < self._leopard_dir_ttl and accessible_dirs:
+                                            # Check each path against cached accessible directories
+                                            remaining_paths = []
+                                            for p in paths_needing_fallback:
+                                                # Check if any ancestor is in accessible_dirs
+                                                current = p
+                                                found = False
+                                                while current and current != "/":
+                                                    parent = os.path.dirname(current) or "/"
+                                                    if parent in accessible_dirs:
+                                                        leopard_allowed.append(p)
+                                                        found = True
+                                                        break
+                                                    current = parent
+                                                if not found:
+                                                    remaining_paths.append(p)
+
+                                            if leopard_allowed:
+                                                logger.info(
+                                                    f"[LEOPARD-INDEX] Allowed {len(leopard_allowed)} paths via cached directory grants, "
+                                                    f"{len(remaining_paths)} remaining"
+                                                )
+                                                paths_needing_fallback = remaining_paths
+                                                # Add leopard-allowed paths to filtered results
+                                                filtered.extend(leopard_allowed)
+
+                                    # HIERARCHICAL PRE-FILTER (perf19 - Option 2):
+                                    # Instead of checking N paths individually, first check unique
+                                    # parent directories. If user has no access to a parent dir
+                                    # (and bitmap already has all their grants), skip all children.
+                                    # This reduces 5000+ checks to ~50 parent directory checks.
+                                    hierarchy_start = time.time()
+                                    original_fallback_count = len(paths_needing_fallback)
+
+                                    # Skip if no paths left after Leopard check
+                                    if not paths_needing_fallback:
+                                        tiger_elapsed = time.time() - tiger_start
+                                        logger.info(
+                                            f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
+                                            f"allowed {len(filtered)}/{len(paths)} paths "
+                                            f"(bitmap: {len(filtered) - len(leopard_allowed)}, leopard: {len(leopard_allowed)})"
+                                        )
+                                        return filtered
+
+                                    # Group paths by their immediate parent directory
+                                    paths_by_parent: dict[str, list[str]] = defaultdict(list)
+                                    for p in paths_needing_fallback:
+                                        parent = os.path.dirname(p) or "/"
+                                        paths_by_parent[parent].append(p)
+
+                                    unique_parents = list(paths_by_parent.keys())
+
+                                    # Only do hierarchical check if it would save significant work
+                                    # (more than 100 paths and fewer unique parents than paths)
+                                    if (
+                                        len(unique_parents) < len(paths_needing_fallback)
+                                        and len(paths_needing_fallback) > 100
+                                    ):
+                                        # Check which parent directories user might have access to
+                                        parent_checks = [
+                                            (subject, "read", ("file", parent))
+                                            for parent in unique_parents
+                                        ]
+                                        parent_results = self.rebac_manager.rebac_check_bulk(
+                                            parent_checks, tenant_id=tenant_id
+                                        )
+
+                                        # Find parents with access (children may inherit)
+                                        accessible_parents = {
+                                            parent
+                                            for parent, check in zip(
+                                                unique_parents, parent_checks, strict=False
+                                            )
+                                            if parent_results.get(check, False)
+                                        }
+
+                                        hierarchy_elapsed = (time.time() - hierarchy_start) * 1000
+                                        logger.info(
+                                            f"[HIERARCHY-PREFILTER] {len(accessible_parents)}/{len(unique_parents)} "
+                                            f"parents accessible in {hierarchy_elapsed:.1f}ms"
+                                        )
+
+                                        # Store accessible directories in Leopard index for future requests
+                                        if accessible_parents:
+                                            # Merge with existing cached dirs (if any)
+                                            existing_dirs = set()
+                                            if (
+                                                cached_leopard
+                                                and (time.time() - cached_leopard[1])
+                                                < self._leopard_dir_ttl
+                                            ):
+                                                existing_dirs = cached_leopard[0]
+                                            new_dirs = existing_dirs | accessible_parents
+                                            self._leopard_dir_index[leopard_key] = (
+                                                new_dirs,
+                                                time.time(),
+                                            )
+                                            logger.info(
+                                                f"[LEOPARD-INDEX] Cached {len(accessible_parents)} accessible directories "
+                                                f"for {subject_type}:{subject_id} (total: {len(new_dirs)})"
+                                            )
+
+                                        # Only check paths under accessible parents
+                                        if len(accessible_parents) < len(unique_parents):
+                                            paths_needing_fallback = []
+                                            for parent in accessible_parents:
+                                                paths_needing_fallback.extend(
+                                                    paths_by_parent[parent]
+                                                )
+
+                                            logger.info(
+                                                f"[HIERARCHY-PREFILTER] Reduced fallback: {original_fallback_count} -> "
+                                                f"{len(paths_needing_fallback)} paths "
+                                                f"(skipped {original_fallback_count - len(paths_needing_fallback)} under denied parents)"
+                                            )
+
+                                            # If NO accessible parents, mark bitmap as complete
+                                            # This user has no directory-level grants, so bitmap has all their permissions
+                                            if (
+                                                len(accessible_parents) == 0
+                                                and original_fallback_count > 100
+                                            ):
+                                                self._bitmap_completeness_cache[
+                                                    completeness_key
+                                                ] = (True, time.time())
+                                                logger.info(
+                                                    f"[BITMAP-COMPLETE] Marked bitmap complete for {subject_type}:{subject_id} "
+                                                    f"(0 accessible parents out of {len(unique_parents)})"
+                                                )
+
+                                    # Build checks only for remaining paths needing fallback
+                                    fallback_checks = []
                                     for path in paths_needing_fallback:
                                         fallback_checks.append((subject, "read", ("file", path)))
 
                                     # Check fallback paths via rebac_check_bulk
-                                    fallback_results = self.rebac_manager.rebac_check_bulk(
-                                        fallback_checks, tenant_id=tenant_id
-                                    )
+                                    if fallback_checks:
+                                        fallback_results = self.rebac_manager.rebac_check_bulk(
+                                            fallback_checks, tenant_id=tenant_id
+                                        )
+                                    else:
+                                        fallback_results = {}
 
                                     # Add paths that passed fallback check to filtered results
+                                    fallback_allowed_count = 0
                                     for path, check in zip(
                                         paths_needing_fallback, fallback_checks, strict=False
                                     ):
                                         if fallback_results.get(check, False):
                                             filtered.append(path)
+                                            fallback_allowed_count += 1
+
+                                    # If fallback found 0 additional paths, mark bitmap as complete
+                                    # (all permissions are direct grants in bitmap, no inheritance)
+                                    if (
+                                        fallback_allowed_count == 0
+                                        and original_fallback_count > 100
+                                    ):
+                                        self._bitmap_completeness_cache[completeness_key] = (
+                                            True,
+                                            time.time(),
+                                        )
+                                        logger.info(
+                                            f"[BITMAP-COMPLETE] Marked bitmap complete for {subject_type}:{subject_id} "
+                                            f"(0 fallback results from {original_fallback_count} checks)"
+                                        )
 
                                     tiger_elapsed = time.time() - tiger_start
+                                    bitmap_count = (
+                                        len(filtered)
+                                        - fallback_allowed_count
+                                        - len(leopard_allowed)
+                                    )
                                     logger.info(
                                         f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
                                         f"allowed {len(filtered)}/{len(paths)} paths "
-                                        f"(bitmap: {len(filtered) - len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])}, "
-                                        f"fallback: {len([p for p in paths_needing_fallback if fallback_results.get((subject, 'read', ('file', p)), False)])})"
+                                        f"(bitmap: {bitmap_count}, leopard: {len(leopard_allowed)}, fallback: {fallback_allowed_count})"
                                     )
                                     return filtered
                                 else:

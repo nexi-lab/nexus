@@ -15,6 +15,11 @@ on:
       - 'src/**/*.py'
       - 'tests/**/*.py'
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   file-size-check:
     name: Check File Size Limits

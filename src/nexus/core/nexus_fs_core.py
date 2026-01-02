@@ -1502,6 +1502,7 @@ class NexusFSCoreMixin:
             force=force,
         )
 
+    @rpc_expose(description="Write multiple files in a single transaction")
     def write_batch(
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:

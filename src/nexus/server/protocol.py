@@ -332,6 +332,13 @@ class AppendParams:
 
 
 @dataclass
+class WriteBatchParams:
+    """Parameters for write_batch() method."""
+
+    files: list[tuple[str, bytes]]  # List of (path, content) tuples
+
+
+@dataclass
 class DeleteParams:
     """Parameters for delete() method."""
 

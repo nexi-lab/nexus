@@ -209,11 +209,7 @@ class DirectoryVisibilityCache:
         for int_id in accessible_ids:
             res_info = resource_map.get_resource_id(int_id)
             if res_info:
-                res_type, res_path, res_tenant = res_info
-
-                # Check tenant match
-                if res_tenant != tenant_id:
-                    continue
+                res_type, res_path = res_info
 
                 # Check if resource is under the directory
                 if res_path == dir_path or res_path.startswith(prefix):

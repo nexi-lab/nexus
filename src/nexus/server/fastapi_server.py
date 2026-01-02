@@ -25,6 +25,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import logging
 import os
@@ -238,6 +239,38 @@ def _verify_stream_token(token: str, path: str, tenant_id: str = "default") -> b
 # Dependencies
 # ============================================================================
 
+# Auth cache: token_hash -> (result, expiry_time)
+# TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
+_AUTH_CACHE: dict[str, tuple[dict[str, Any], float]] = {}
+_AUTH_CACHE_TTL = 900  # 15 minutes in seconds
+_AUTH_CACHE_MAX_SIZE = 1000  # Prevent unbounded growth
+
+
+def _get_cached_auth(token: str) -> dict[str, Any] | None:
+    """Get cached auth result if valid."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
+    cached = _AUTH_CACHE.get(token_hash)
+    if cached:
+        result, expiry = cached
+        if time.time() < expiry:
+            return result
+        # Expired, remove from cache
+        _AUTH_CACHE.pop(token_hash, None)
+    return None
+
+
+def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
+    """Cache auth result with TTL."""
+    # Simple size limit: remove oldest if too large
+    if len(_AUTH_CACHE) >= _AUTH_CACHE_MAX_SIZE:
+        # Remove ~10% of entries (oldest first by expiry)
+        to_remove = sorted(_AUTH_CACHE.items(), key=lambda x: x[1][1])[: _AUTH_CACHE_MAX_SIZE // 10]
+        for key, _ in to_remove:
+            _AUTH_CACHE.pop(key, None)
+
+    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
+    _AUTH_CACHE[token_hash] = (result, time.time() + _AUTH_CACHE_TTL)
+
 
 async def get_auth_result(
     authorization: str | None = Header(None, alias="Authorization"),
@@ -246,6 +279,8 @@ async def get_auth_result(
     x_nexus_tenant_id: str | None = Header(None, alias="X-Nexus-Tenant-ID"),
 ) -> dict[str, Any] | None:
     """Validate authentication and return auth result.
+
+    Note: Timing added for performance debugging (Issue #perf19).
 
     Args:
         authorization: Bearer token from Authorization header
@@ -312,10 +347,26 @@ async def get_auth_result(
 
     # Try auth provider first
     if _app_state.auth_provider:
+        import time as _time
+
+        # Check cache first (15 min TTL)
+        cached_result = _get_cached_auth(token)
+        if cached_result:
+            # Update x_agent_id and timing for this request
+            cached_result["x_agent_id"] = x_agent_id
+            cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
+            cached_result["_auth_cached"] = True
+            return cached_result
+
+        # Cache miss - call provider
+        _auth_start = _time.time()
         result = await _app_state.auth_provider.authenticate(token)
+        _auth_elapsed = (_time.time() - _auth_start) * 1000
+        if _auth_elapsed > 10:  # Log if auth takes >10ms
+            logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
         if result is None:
             return None
-        return {
+        auth_result = {
             "authenticated": result.authenticated,
             "is_admin": result.is_admin,
             "subject_type": result.subject_type,
@@ -326,7 +377,12 @@ async def get_auth_result(
             else True,
             "metadata": result.metadata if hasattr(result, "metadata") else {},
             "x_agent_id": x_agent_id,
+            "_auth_time_ms": _auth_elapsed,  # Pass to RPC for logging
+            "_auth_cached": False,
         }
+        # Cache successful auth result
+        _set_cached_auth(token, auth_result.copy())
+        return auth_result
 
     # Fall back to static API key
     if _app_state.api_key:
@@ -528,6 +584,33 @@ async def lifespan(_app: FastAPI) -> Any:
                 logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
         except Exception as e:
             logger.debug(f"Tiger Cache warm-up skipped: {e}")
+
+    # Auto-backfill sparse directory index for system paths (Issue #perf19)
+    # This ensures /skills and other shared paths have index entries for O(1) lookups
+    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+        try:
+            _nexus_fs = _app_state.nexus_fs  # Capture for closure
+
+            async def _backfill_system_paths() -> None:
+                import asyncio
+
+                for prefix in ["/skills", "/sessions"]:
+                    try:
+                        # Backfill without tenant filter to include NULL tenant files
+                        created = await asyncio.to_thread(
+                            _nexus_fs.metadata.backfill_directory_index,
+                            prefix=prefix,
+                            tenant_id=None,
+                        )
+                        if created > 0:
+                            logger.info(f"Sparse index backfill: {created} entries for {prefix}")
+                    except Exception as e:
+                        logger.debug(f"Sparse index backfill skipped for {prefix}: {e}")
+
+            asyncio.create_task(_backfill_system_paths())
+            logger.info("Sparse directory index backfill started for system paths")
+        except Exception as e:
+            logger.warning(f"Sparse index backfill skipped: {e}")
 
     yield
 
@@ -1318,11 +1401,17 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> Response:
         """Handle RPC method calls."""
+        import time as _time
+
+        _rpc_start = _time.time()
+
         try:
             # Parse request body using decode_rpc_message to handle bytes encoding
+            _parse_start = _time.time()
             body_bytes = await request.body()
             body = decode_rpc_message(body_bytes) if body_bytes else {}
             rpc_request = RPCRequest.from_dict(body)
+            _parse_elapsed = (_time.time() - _parse_start) * 1000
 
             # Validate method matches URL
             if rpc_request.method and rpc_request.method != method:
@@ -1341,6 +1430,7 @@ def _register_routes(app: FastAPI) -> None:
 
             # Get operation context
             context = get_operation_context(auth_result)
+            _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
             # Early 304 check for read operations - check ETag BEFORE reading content
             # This avoids downloading/reading content if client already has it cached
@@ -1371,7 +1461,9 @@ def _register_routes(app: FastAPI) -> None:
                     logger.debug(f"Early ETag check failed for {params.path}: {e}")
 
             # Dispatch method
+            _dispatch_start = _time.time()
             result = await _dispatch_method(method, params, context)
+            _dispatch_elapsed = (_time.time() - _dispatch_start) * 1000
 
             # Build response with cache headers (includes ETag for read operations)
             headers = _get_cache_headers(method, result)
@@ -1393,6 +1485,7 @@ def _register_routes(app: FastAPI) -> None:
                     )
 
             # Success response - use encode_rpc_message for proper serialization
+            _encode_start = _time.time()
             success_response = {
                 "jsonrpc": "2.0",
                 "id": rpc_request.id,
@@ -1400,6 +1493,18 @@ def _register_routes(app: FastAPI) -> None:
             }
             # encode_rpc_message handles bytes, datetime, etc.
             encoded = encode_rpc_message(success_response)
+            _encode_elapsed = (_time.time() - _encode_start) * 1000
+            _total_rpc = (_time.time() - _rpc_start) * 1000
+
+            # Log API timing (auth time not included in total - happens in Depends before this)
+            _auth_time = auth_result.get("_auth_time_ms", 0) if auth_result else 0
+            _full_server_time = _auth_time + _total_rpc
+            if _full_server_time > 20:  # Log if server time >20ms
+                logger.info(
+                    f"[RPC-TIMING] method={method}, auth={_auth_time:.1f}ms, parse={_parse_elapsed:.1f}ms, "
+                    f"setup={_setup_elapsed:.1f}ms, dispatch={_dispatch_elapsed:.1f}ms, "
+                    f"encode={_encode_elapsed:.1f}ms, rpc={_total_rpc:.1f}ms, server_total={_full_server_time:.1f}ms"
+                )
 
             # Using Response directly with pre-encoded JSON for performance
             return Response(content=encoded, media_type="application/json", headers=headers)
@@ -1872,6 +1977,10 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     - If limit not provided: returns {"files": [...]} (legacy format)
     - If limit provided: returns {"files": [...], "next_cursor": ..., "has_more": ...}
     """
+    import time as _time
+
+    _handle_start = _time.time()
+
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
 
@@ -1884,31 +1993,49 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
         kwargs["details"] = params.details
 
     # Check for pagination mode (Issue #937)
+    # Only use pagination if client explicitly requests it
     limit = getattr(params, "limit", None)
     cursor = getattr(params, "cursor", None)
 
     if limit is not None:
-        # Paginated mode - pass limit and cursor to list()
         kwargs["limit"] = limit
-        if cursor:
-            kwargs["cursor"] = cursor
+    if cursor:
+        kwargs["cursor"] = cursor
 
-        result = nexus_fs.list(params.path, **kwargs)
+    _list_start = _time.time()
+    result = nexus_fs.list(params.path, **kwargs)
+    _list_elapsed = (_time.time() - _list_start) * 1000
 
-        # Result is PaginatedResult when limit is provided
-        if hasattr(result, "to_dict"):
-            paginated = result.to_dict()
-            return {
-                "files": paginated["items"],
-                "next_cursor": paginated["next_cursor"],
-                "has_more": paginated["has_more"],
-                "total_count": paginated.get("total_count"),
-            }
+    # Result is PaginatedResult when limit is provided
+    if hasattr(result, "to_dict"):
+        _build_start = _time.time()
+        paginated = result.to_dict()
+        response = {
+            "files": paginated["items"],
+            "next_cursor": paginated["next_cursor"],
+            "has_more": paginated["has_more"],
+            "total_count": paginated.get("total_count"),
+        }
+        _build_elapsed = (_time.time() - _build_start) * 1000
+        _total_elapsed = (_time.time() - _handle_start) * 1000
+        logger.info(
+            f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
+            f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, "
+            f"files={len(paginated['items'])}, has_more={paginated['has_more']}"
+        )
+        return response
 
-    # Legacy mode - return flat list
-    entries = nexus_fs.list(params.path, **kwargs)
-    # Client expects "files" key, not "entries"
-    return {"files": entries}
+    # Fallback for non-paginated result (shouldn't happen)
+    _build_start = _time.time()
+    entries = result if isinstance(result, list) else []
+    response = {"files": entries, "has_more": False, "next_cursor": None}
+    _build_elapsed = (_time.time() - _build_start) * 1000
+    _total_elapsed = (_time.time() - _handle_start) * 1000
+    logger.info(
+        f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
+        f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, files={len(entries)}"
+    )
+    return response
 
 
 def _handle_delete(params: Any, context: Any) -> dict[str, Any]:

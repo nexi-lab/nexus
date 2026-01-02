@@ -575,14 +575,11 @@ class NexusFS(  # type: ignore[misc]
                 batch = all_files[i : i + batch_size]
 
                 for meta in batch:
-                    # Use file's tenant_id, default to "default" for legacy files
-                    tenant_id = meta.tenant_id if meta.tenant_id else "default"
-
                     # Register resource in the map (idempotent operation)
+                    # Note: tenant_id removed from resource map (Issue #xyz)
                     resource_map.get_or_create_int_id(
                         resource_type="file",
                         resource_id=meta.path,
-                        tenant_id=tenant_id,
                     )
                     count += 1
 
@@ -6127,6 +6124,31 @@ class NexusFS(  # type: ignore[misc]
         """
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             self._dir_visibility_cache.clear()
+
+    @rpc_expose(description="Backfill sparse directory index for fast listings")
+    def backfill_directory_index(
+        self,
+        prefix: str = "/",
+        tenant_id: str | None = None,
+        _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
+    ) -> dict[str, Any]:
+        """Backfill sparse directory index from existing files.
+
+        Use this to populate the index for directories that existed before
+        the sparse index feature was added. This improves list() performance
+        from O(n) LIKE queries to O(1) index lookups.
+
+        Args:
+            prefix: Path prefix to backfill (default: "/" for all)
+            tenant_id: Tenant ID to backfill (None for all tenants)
+            context: Operation context (admin required)
+
+        Returns:
+            Dict with entries_created count
+        """
+        # TODO: Add admin check when context is provided
+        created = self.metadata.backfill_directory_index(prefix=prefix, tenant_id=tenant_id)
+        return {"entries_created": created, "prefix": prefix}
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

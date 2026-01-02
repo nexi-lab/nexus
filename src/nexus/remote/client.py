@@ -5722,6 +5722,30 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("mcp_sync", {"name": name})
         return result  # type: ignore[no-any-return]
 
+    def backfill_directory_index(
+        self,
+        prefix: str = "/",
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Backfill sparse directory index from existing files.
+
+        Use this to populate the index for directories that existed before
+        the sparse index feature was added. This improves list() performance
+        from O(n) LIKE queries to O(1) index lookups.
+
+        Args:
+            prefix: Path prefix to backfill (default: "/" for all)
+            tenant_id: Optional tenant filter
+
+        Returns:
+            Dict with 'created' count of new index entries
+        """
+        result = self._call_rpc(
+            "backfill_directory_index",
+            {"prefix": prefix, "tenant_id": tenant_id},
+        )
+        return result  # type: ignore[no-any-return]
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

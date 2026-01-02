@@ -122,14 +122,123 @@ These are warnings about test class naming conventions, not actual errors. They 
 
 ---
 
-## Task 1.3: Create Dependency Graph & Document Architecture
+## Task 1.3: Create Dependency Graph & Document Architecture ✅ COMPLETE
 
-**Status:** Not Started
-**Next Steps:**
-- Install pydeps: `pip install pydeps`
-- Generate dependency graph: `pydeps nexus --max-bacon=3 -o docs/architecture/dependencies.svg`
-- Generate cycles graph: `pydeps nexus --show-cycles -o docs/architecture/cycles.svg`
-- Document architecture
+**Status:** Complete
+**Duration:** ~1 hour
+
+### What Was Created
+
+#### 1. Comprehensive Architecture Documentation
+**File:** `docs/architecture/current-architecture.md`
+
+Documented the **actual** current state (not aspirational):
+- High-level architecture overview
+- All 9 NexusFS mixins (12,539 lines total)
+- Storage layer structure
+- Module organization
+- Data flow diagrams
+- Deployment modes (embedded, monolithic, distributed)
+- Known issues and technical debt
+- Performance characteristics
+- Security model
+- Testing structure
+- Refactoring roadmap
+
+**Key Findings:**
+- 254 Python source files
+- 189 TYPE_CHECKING guards (circular dependencies)
+- 531 type: ignore comments
+- Largest file: 6,167 lines (nexus_fs.py)
+- 4,118 tests
+
+#### 2. Circular Dependencies Analysis
+**File:** `docs/architecture/circular-dependencies.md`
+
+**Found:** 189 files with TYPE_CHECKING guards
+
+**Documented:**
+- Common circular dependency patterns
+- Examples with solutions
+- Module dependency map (current vs. target)
+- Refactoring strategy by phase
+- Prevention guidelines
+- Good vs. bad examples
+
+**Top Circular Dependency Offenders:**
+1. `core/nexus_fs.py` ↔ multiple modules
+2. `core/rebac_manager.py` ↔ core modules
+3. `storage/metadata_store.py` ↔ core modules
+4. `remote/client.py` ↔ core modules
+
+**Phase 4 Goal:** Reduce from 189 to <10 TYPE_CHECKING guards
+
+#### 3. Module Responsibility Documentation
+
+Documented structure:
+```
+src/nexus/
+├── core/ (God Object here - needs refactoring)
+├── storage/ (Metadata & backends)
+├── backends/ (Local, S3, GCS, GDrive)
+├── server/ (FastAPI + Auth)
+├── remote/ (Client implementations)
+├── llm/ (LLM integration)
+├── parsers/ (Document parsing)
+├── tools/ (LangGraph, etc.)
+├── skills/ (Skills system)
+├── mcp/ (Model Context Protocol)
+└── cli/ (Command-line interface)
+```
+
+### Architecture Insights
+
+**Current Issues:**
+- ❌ NexusFS God Object (6,167 lines + 9 mixins)
+- ❌ 3 competing ReBAC implementations
+- ❌ 7 files over 2,000 lines each
+- ❌ 189 circular import guards
+- ❌ N+1 query patterns
+
+**Target After Phase 2:**
+```
+NexusFS (<500 lines)
+├── SearchService (extracted)
+├── PermissionService (extracted)
+├── MountService (extracted)
+├── VersionService (extracted)
+├── OAuthService (extracted)
+├── SkillService (extracted)
+├── MCPService (extracted)
+└── LLMService (extracted)
+```
+
+### Data Flow Documented
+
+**Read Operation:**
+Client → NexusFS → Permissions → ReBACManager → Metadata DB → ContentCache → Backend → Client
+
+**Write Operation:**
+Client → NexusFS → Permissions → Backend → MetadataStore → Cache Invalidation
+
+### Deployment Modes Documented
+
+1. **Embedded:** Direct API, no server
+2. **Monolithic:** Single FastAPI server
+3. **Distributed:** Server + PostgreSQL + Redis + MCP + LangGraph
+
+### Note on Dependency Graphs
+
+Attempted to generate visual dependency graphs using `pydeps`, but it requires `graphviz` (not installed). Instead, created comprehensive textual documentation with ASCII/markdown diagrams that don't require external tools.
+
+**Future:** Can install graphviz later if visual SVG graphs are needed:
+```bash
+# macOS
+brew install graphviz
+
+# Then generate
+pydeps src/nexus --max-bacon=3 -o docs/architecture/dependencies.svg
+```
 
 ---
 

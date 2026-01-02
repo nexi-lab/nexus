@@ -73,6 +73,68 @@ make format  # Auto-format code
 make lint    # Check for issues
 ```
 
+### Code Quality Standards (Phase 1)
+
+We enforce strict code quality standards to maintain a healthy codebase:
+
+#### File Size Limits
+- **Maximum 1,000 lines per Python file**
+- Files exceeding this limit must be split into smaller, focused modules
+- Exception: Legacy files being refactored (listed in `.pre-commit-hooks/check_file_size.py`)
+- Pre-commit hook automatically checks file sizes
+
+**Why?** Large files are harder to understand, test, and maintain. Breaking them down improves code quality.
+
+#### Type Safety
+- **No new `# type: ignore` comments allowed**
+- Goal: Eliminate all 531 existing type suppressions by Phase 3
+- All code must pass strict type checking
+- Use proper type annotations, Protocols, and TypedDicts instead of suppressing errors
+
+**Current baseline:** 531 type: ignore comments (tracked in CI)
+**Phase 3 goal:** Zero type: ignore comments
+
+**Instead of type: ignore, use:**
+```python
+# ❌ Bad: Suppressing type errors
+result = some_function()  # type: ignore[return-value]
+
+# ✅ Good: Proper typing
+from typing import Protocol
+
+class HasRead(Protocol):
+    def read(self) -> bytes: ...
+
+result: HasRead = some_function()
+```
+
+#### Pre-commit Hooks
+We use pre-commit hooks to enforce standards before commit:
+```bash
+# Install pre-commit hooks
+pre-commit install
+
+# Run manually
+pre-commit run --all-files
+```
+
+**Active hooks:**
+- File size limit checker
+- Type: ignore blocker
+- Ruff linting and formatting
+- Mypy type checking
+- Trailing whitespace fixer
+- YAML/TOML validation
+
+#### CI Quality Checks
+Our CI pipeline enforces:
+- File size limits on all Python files
+- No new type: ignore comments in PRs
+- Code complexity metrics (radon)
+- Type ignore baseline tracking (must not increase)
+
+Failed checks will block PR merging.
+
 ### Testing
 
 We use pytest for testing. Write tests for all new features.

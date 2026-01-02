@@ -438,7 +438,11 @@ class TestFastAPIServerHandlers:
 
         result = fas._handle_list(params, ctx)
 
-        assert result == {"files": ["/file1.txt", "/file2.txt"]}
+        assert result == {
+            "files": ["/file1.txt", "/file2.txt"],
+            "has_more": False,
+            "next_cursor": None,
+        }
 
     @pytest.mark.asyncio
     async def test_handle_stat(self):

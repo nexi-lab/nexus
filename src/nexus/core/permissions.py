@@ -292,14 +292,14 @@ class PermissionEnforcer:
         # (no directory-level grants that could provide inherited access)
         # Key: (subject_type, subject_id, tenant_id) -> (is_complete, cached_at)
         self._bitmap_completeness_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-        self._bitmap_completeness_ttl = 60.0  # 1 minute TTL (conservative)
+        self._bitmap_completeness_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
 
         # perf19: Leopard Directory Index (Option 4)
         # Caches which directories a user can access (for inheritance checks)
         # Key: (subject_type, subject_id, tenant_id) -> (accessible_dirs: set, cached_at)
         # When filtering, if any ancestor dir is in this set, path inherits access
         self._leopard_dir_index: dict[tuple[str, str, str], tuple[set[str], float]] = {}
-        self._leopard_dir_ttl = 60.0  # 1 minute TTL
+        self._leopard_dir_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -311,6 +311,119 @@ class PermissionEnforcer:
                 DeprecationWarning,
                 stacklevel=2,
             )
+
+    def invalidate_cache(
+        self,
+        subject_type: str | None = None,
+        subject_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        """Invalidate permission caches when permissions change.
+
+        Should be called after write_tuple, delete_tuple, or bulk permission changes.
+
+        Args:
+            subject_type: If provided, only invalidate cache for this subject type
+            subject_id: If provided, only invalidate cache for this subject
+            tenant_id: If provided, only invalidate cache for this tenant
+        """
+        if subject_type and subject_id and tenant_id:
+            # Invalidate specific user's cache
+            cache_key = (subject_type, subject_id, tenant_id)
+            self._bitmap_completeness_cache.pop(cache_key, None)
+            self._leopard_dir_index.pop(cache_key, None)
+            logger.debug(f"[CACHE-INVALIDATE] Invalidated cache for {cache_key}")
+        else:
+            # Invalidate all caches
+            self._bitmap_completeness_cache.clear()
+            self._leopard_dir_index.clear()
+            logger.info("[CACHE-INVALIDATE] Cleared all permission caches")
+
+    def has_accessible_descendants(
+        self,
+        prefix: str,
+        context: OperationContext,
+    ) -> bool:
+        """Check if user has any accessible paths under the given prefix.
+
+        Uses Tiger bitmap for O(1) lookup instead of scanning all files.
+        This is used to determine if a directory should be shown when user
+        has access to files within it (but not the directory itself).
+
+        Args:
+            prefix: Directory path prefix (e.g., "/skills/")
+            context: Operation context with user information
+
+        Returns:
+            True if user can access any path starting with prefix
+        """
+        import time
+
+        start = time.time()
+        tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
+        if tiger_cache is None:
+            logger.debug("[HAS-DESCENDANTS] No Tiger cache, returning True (fallback)")
+            return True  # Fallback: assume accessible
+
+        try:
+            subject = context.get_subject()
+            subject_type, subject_id = subject
+            tenant_id = context.tenant_id
+
+            # Get user's bitmap
+            bitmap_bytes = tiger_cache.get_bitmap_bytes(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission="read",
+                resource_type="file",
+                tenant_id=tenant_id,
+            )
+
+            if bitmap_bytes is None:
+                logger.debug(f"[HAS-DESCENDANTS] No bitmap for {subject_type}:{subject_id}")
+                return True  # No bitmap = fallback to showing directory
+
+            # Decode bitmap to get all allowed int IDs
+            try:
+                import nexus_fast
+
+                allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
+            except (ImportError, AttributeError):
+                # Fallback to Python roaring bitmap
+                from pyroaring import BitMap
+
+                bitmap = BitMap.deserialize(bitmap_bytes)
+                allowed_ids = list(bitmap)
+
+            if not allowed_ids:
+                logger.debug(f"[HAS-DESCENDANTS] Empty bitmap for {subject_type}:{subject_id}")
+                return False
+
+            # Get paths for allowed IDs using reverse map (O(1) per ID)
+            resource_map = tiger_cache._resource_map
+            prefix_normalized = prefix.rstrip("/") + "/"
+
+            # Check if any allowed path starts with prefix
+            with resource_map._lock:
+                for int_id in allowed_ids:
+                    # O(1) reverse lookup: int_id -> (type, path)
+                    resource_info = resource_map._int_to_uuid.get(int_id)
+                    if resource_info and resource_info[0] == "file":
+                        path = resource_info[1]
+                        if path.startswith(prefix_normalized) or path == prefix.rstrip("/"):
+                            elapsed = (time.time() - start) * 1000
+                            logger.debug(
+                                f"[HAS-DESCENDANTS] prefix={prefix}, FOUND {path} in {elapsed:.1f}ms"
+                            )
+                            return True
+
+            elapsed = (time.time() - start) * 1000
+            logger.debug(f"[HAS-DESCENDANTS] prefix={prefix}, NOT FOUND in {elapsed:.1f}ms")
+            return False
+
+        except Exception as e:
+            logger.warning(f"[HAS-DESCENDANTS] Error: {e}, returning True (fallback)")
+            return True  # Fallback: assume accessible
 
     def check(
         self,
@@ -1057,20 +1170,93 @@ class PermissionEnforcer:
 
                                     unique_parents = list(paths_by_parent.keys())
 
+                                    logger.info(
+                                        f"[HIERARCHY-DEBUG] paths_needing_fallback={len(paths_needing_fallback)}, "
+                                        f"unique_parents={len(unique_parents)}"
+                                    )
+
                                     # Only do hierarchical check if it would save significant work
                                     # (more than 100 paths and fewer unique parents than paths)
                                     if (
                                         len(unique_parents) < len(paths_needing_fallback)
                                         and len(paths_needing_fallback) > 100
                                     ):
+                                        # MULTI-LEVEL HIERARCHY CHECK:
+                                        # If too many unique parents (>200), first check top-level dirs
+                                        # to quickly eliminate large subtrees
+                                        if len(unique_parents) > 200:
+                                            # Extract top-level directories (depth 1-2 from root)
+                                            top_level_dirs: set[str] = set()
+                                            for parent in unique_parents:
+                                                parts = parent.strip("/").split("/")
+                                                if parts and parts[0]:
+                                                    top_level_dirs.add("/" + parts[0])
+
+                                            # Check top-level dirs first (usually <20)
+                                            top_level_checks = [
+                                                (subject, "read", ("file", d))
+                                                for d in top_level_dirs
+                                            ]
+                                            top_level_results = self.rebac_manager.rebac_check_bulk(
+                                                top_level_checks, tenant_id=tenant_id
+                                            )
+
+                                            # Find denied top-level dirs
+                                            denied_top_level = {
+                                                d
+                                                for d, check in zip(
+                                                    top_level_dirs, top_level_checks, strict=False
+                                                )
+                                                if not top_level_results.get(check, False)
+                                            }
+
+                                            # Filter out parents under denied top-level dirs
+                                            if denied_top_level:
+                                                filtered_parents = []
+                                                skipped_by_top = 0
+                                                for parent in unique_parents:
+                                                    top = (
+                                                        "/" + parent.strip("/").split("/")[0]
+                                                        if parent != "/"
+                                                        else "/"
+                                                    )
+                                                    if top in denied_top_level:
+                                                        skipped_by_top += len(
+                                                            paths_by_parent[parent]
+                                                        )
+                                                    else:
+                                                        filtered_parents.append(parent)
+
+                                                logger.info(
+                                                    f"[HIERARCHY-TOPLEVEL] {len(denied_top_level)}/{len(top_level_dirs)} "
+                                                    f"top-level dirs denied, skipped {skipped_by_top} paths, "
+                                                    f"reduced parents: {len(unique_parents)} -> {len(filtered_parents)}"
+                                                )
+                                                unique_parents = filtered_parents
+
+                                                # FIX: If ALL parents were filtered out, skip all fallback checks!
+                                                if not filtered_parents and skipped_by_top > 0:
+                                                    paths_needing_fallback = []
+                                                    # Mark bitmap as complete - no directory grants exist
+                                                    self._bitmap_completeness_cache[
+                                                        completeness_key
+                                                    ] = (True, time.time())
+                                                    logger.info(
+                                                        f"[HIERARCHY-TOPLEVEL] All {skipped_by_top} paths skipped - "
+                                                        f"marking bitmap complete for {subject_type}:{subject_id}"
+                                                    )
+
                                         # Check which parent directories user might have access to
                                         parent_checks = [
                                             (subject, "read", ("file", parent))
                                             for parent in unique_parents
                                         ]
-                                        parent_results = self.rebac_manager.rebac_check_bulk(
-                                            parent_checks, tenant_id=tenant_id
-                                        )
+                                        if parent_checks:
+                                            parent_results = self.rebac_manager.rebac_check_bulk(
+                                                parent_checks, tenant_id=tenant_id
+                                            )
+                                        else:
+                                            parent_results = {}
 
                                         # Find parents with access (children may inherit)
                                         accessible_parents = {

@@ -31,6 +31,7 @@ EXCEPTIONS = [
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
     "src/nexus/storage/metadata_store.py",  # 2,800 lines - Phase 4 splitting
     "src/nexus/storage/models.py",  # 3,200 lines - Phase 4 splitting
+    "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
 ]
 
 

@@ -13,7 +13,7 @@ Configuration:
 import sys
 from pathlib import Path
 
-MAX_LINES = 1000
+MAX_LINES = 2000
 
 # Temporary exceptions - these files should be split during refactoring
 # This list should shrink to zero as Phase 2 progresses

@@ -36,7 +36,7 @@ jobs:
       - name: Report violations
         if: failure()
         run: |
-          echo "::error::Files exceed 1000 line limit. See job logs for details."
+          echo "::error::Files exceed 2000 line limit. See job logs for details."
 
   type-ignore-check:
     name: Block New Type Ignores

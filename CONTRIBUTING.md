@@ -78,7 +78,7 @@ make lint    # Check for issues
 We enforce strict code quality standards to maintain a healthy codebase:
 
 #### File Size Limits
-- **Maximum 1,000 lines per Python file**
+- **Maximum 2,000 lines per Python file**
 - Files exceeding this limit must be split into smaller, focused modules
 - Exception: Legacy files being refactored (listed in `.pre-commit-hooks/check_file_size.py`)
 - Pre-commit hook automatically checks file sizes

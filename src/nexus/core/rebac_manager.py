@@ -1762,6 +1762,60 @@ class ReBACManager:
 
                 updated_count += len(subject_rows)
 
+            # BUG FIX: Also update Tiger Resource Map when files are renamed
+            # The resource map maps (resource_type, resource_id, tenant_id) -> integer ID
+            # If the old path is still in the resource map, Tiger Cache checks may return
+            # stale results because the bitmap might still reference the old resource_int_id
+            if hasattr(self, "_tiger_cache") and self._tiger_cache:
+                try:
+                    # Delete old path entries from resource map (database)
+                    if is_directory:
+                        cursor.execute(
+                            self._fix_sql_placeholders(
+                                """
+                                DELETE FROM tiger_resource_map
+                                WHERE resource_type = ?
+                                  AND (resource_id = ? OR resource_id LIKE ?)
+                                """
+                            ),
+                            (object_type, old_path, old_path + "/%"),
+                        )
+                    else:
+                        cursor.execute(
+                            self._fix_sql_placeholders(
+                                """
+                                DELETE FROM tiger_resource_map
+                                WHERE resource_type = ? AND resource_id = ?
+                                """
+                            ),
+                            (object_type, old_path),
+                        )
+                    deleted_resource_map_entries = cursor.rowcount
+                    if deleted_resource_map_entries > 0:
+                        logger.info(
+                            f"[UPDATE-OBJECT-PATH] Deleted {deleted_resource_map_entries} entries from tiger_resource_map"
+                        )
+
+                    # Also clear the in-memory resource map cache for the old path
+                    resource_map = self._tiger_cache._resource_map
+                    if hasattr(resource_map, "_uuid_to_int"):
+                        keys_to_remove = []
+                        for key in resource_map._uuid_to_int:
+                            res_type, res_id, tenant = key
+                            if res_type == object_type:
+                                if is_directory:
+                                    if res_id == old_path or res_id.startswith(old_path + "/"):
+                                        keys_to_remove.append(key)
+                                else:
+                                    if res_id == old_path:
+                                        keys_to_remove.append(key)
+                        for key in keys_to_remove:
+                            int_id = resource_map._uuid_to_int.pop(key, None)
+                            if int_id is not None and hasattr(resource_map, "_int_to_uuid"):
+                                resource_map._int_to_uuid.pop(int_id, None)
+                except Exception as e:
+                    logger.warning(f"[UPDATE-OBJECT-PATH] Failed to update tiger_resource_map: {e}")
+
             conn.commit()
             if updated_count > 0:
                 self._tuple_version += 1  # Invalidate Rust graph cache

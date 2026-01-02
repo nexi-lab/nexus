@@ -111,33 +111,33 @@ class TestTigerResourceMap:
         id3 = resource_map.get_or_create_int_id("file", "file-uuid-2", "tenant1")
         assert id3 != id1
 
-    def test_tenant_isolation(self, resource_map):
-        """Test that resource IDs are tenant-isolated."""
+    def test_tenant_ignored_for_resource_mapping(self, resource_map):
+        """Test that tenant is ignored for resource mapping (global resource IDs)."""
         id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant1")
         id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant2")
 
-        # Same resource ID in different tenants gets different int IDs
-        assert id1 != id2
+        # Same resource ID gets same int ID regardless of tenant
+        assert id1 == id2
 
     def test_get_resource_id(self, resource_map):
         """Test reverse lookup from int ID to resource info."""
         int_id = resource_map.get_or_create_int_id("file", "my-file", "tenant1")
 
         info = resource_map.get_resource_id(int_id)
-        assert info == ("file", "my-file", "tenant1")
+        assert info == ("file", "my-file")  # Returns (type, id), tenant is not stored
 
     def test_memory_cache(self, resource_map):
         """Test that mappings are cached in memory."""
         int_id = resource_map.get_or_create_int_id("file", "cached-file", "tenant1")
 
-        # Check it's in memory cache
-        assert ("file", "cached-file", "tenant1") in resource_map._uuid_to_int
+        # Check it's in memory cache - key is (type, id), tenant is not part of key
+        assert ("file", "cached-file") in resource_map._uuid_to_int
         assert int_id in resource_map._int_to_uuid
 
         # Clear cache
         resource_map.clear_cache()
 
-        assert ("file", "cached-file", "tenant1") not in resource_map._uuid_to_int
+        assert ("file", "cached-file") not in resource_map._uuid_to_int
         assert int_id not in resource_map._int_to_uuid
 
 

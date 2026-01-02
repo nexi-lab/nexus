@@ -901,10 +901,10 @@ class PermissionEnforcer:
                         path_to_int: dict[str, int] = {}
                         int_to_path: dict[int, str] = {}
 
-                        # Bulk lookup path int IDs
+                        # Bulk lookup path int IDs (no tenant - resource paths are globally unique)
                         with resource_map._lock:
                             for path in paths:
-                                key = ("file", path, tenant_id)
+                                key = ("file", path)  # No tenant - cross-tenant fix
                                 int_id = resource_map._uuid_to_int.get(key)
                                 if int_id is not None:
                                     path_to_int[path] = int_id

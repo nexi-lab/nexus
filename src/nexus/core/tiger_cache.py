@@ -67,6 +67,13 @@ class TigerResourceMap:
 
     Maintains a bidirectional mapping between string resource IDs and
     integer IDs suitable for Roaring Bitmaps.
+
+    Note: tenant_id is intentionally excluded from resource mapping.
+    Resource paths are globally unique (e.g., /skills/system/docs is the same
+    file regardless of who queries it). Tenant isolation is enforced at the
+    bitmap/permission level, not the resource ID mapping.
+
+    See: Issue #979 - Cross-tenant resource map optimization
     """
 
     def __init__(self, engine: Engine):
@@ -74,15 +81,16 @@ class TigerResourceMap:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # In-memory cache for frequently accessed mappings
-        self._uuid_to_int: dict[tuple[str, str, str], int] = {}  # (type, id, tenant) -> int
-        self._int_to_uuid: dict[int, tuple[str, str, str]] = {}  # int -> (type, id, tenant)
+        # Key is (type, id) - tenant excluded for cross-tenant compatibility
+        self._uuid_to_int: dict[tuple[str, str], int] = {}  # (type, id) -> int
+        self._int_to_uuid: dict[int, tuple[str, str]] = {}  # int -> (type, id)
         self._lock = threading.RLock()
 
     def get_or_create_int_id(
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        _tenant_id: str | None = None,  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> int:
         """Get or create an integer ID for a resource.
@@ -90,13 +98,14 @@ class TigerResourceMap:
         Args:
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of resource (e.g., UUID or path)
-            tenant_id: Tenant ID
+            tenant_id: DEPRECATED - ignored, kept for API compatibility
             conn: Optional database connection
 
         Returns:
             Integer ID for use in bitmaps
         """
-        key = (resource_type, resource_id, tenant_id)
+        # Key excludes tenant - resource paths are globally unique
+        key = (resource_type, resource_id)
 
         # Check memory cache first
         with self._lock:
@@ -107,19 +116,17 @@ class TigerResourceMap:
         from sqlalchemy import text
 
         def do_get_or_create(connection: Connection) -> int:
-            # Try to get existing
+            # Try to get existing (no tenant filter)
             query = text("""
                 SELECT resource_int_id FROM tiger_resource_map
                 WHERE resource_type = :resource_type
                   AND resource_id = :resource_id
-                  AND tenant_id = :tenant_id
             """)
             result = connection.execute(
                 query,
                 {
                     "resource_type": resource_type,
                     "resource_id": resource_id,
-                    "tenant_id": tenant_id,
                 },
             )
             row = result.fetchone()
@@ -129,9 +136,9 @@ class TigerResourceMap:
             # Insert new
             if self._is_postgresql:
                 insert_query = text("""
-                    INSERT INTO tiger_resource_map (resource_type, resource_id, tenant_id, created_at)
-                    VALUES (:resource_type, :resource_id, :tenant_id, NOW())
-                    ON CONFLICT (resource_type, resource_id, tenant_id) DO NOTHING
+                    INSERT INTO tiger_resource_map (resource_type, resource_id, created_at)
+                    VALUES (:resource_type, :resource_id, NOW())
+                    ON CONFLICT (resource_type, resource_id) DO NOTHING
                     RETURNING resource_int_id
                 """)
                 result = connection.execute(
@@ -139,7 +146,6 @@ class TigerResourceMap:
                     {
                         "resource_type": resource_type,
                         "resource_id": resource_id,
-                        "tenant_id": tenant_id,
                     },
                 )
                 row = result.fetchone()
@@ -153,7 +159,6 @@ class TigerResourceMap:
                     {
                         "resource_type": resource_type,
                         "resource_id": resource_id,
-                        "tenant_id": tenant_id,
                     },
                 )
                 row = result.fetchone()
@@ -162,15 +167,14 @@ class TigerResourceMap:
                 # SQLite - use INSERT OR IGNORE then SELECT
                 # Need to commit after INSERT so SELECT can see the new row
                 insert_query = text("""
-                    INSERT OR IGNORE INTO tiger_resource_map (resource_type, resource_id, tenant_id, created_at)
-                    VALUES (:resource_type, :resource_id, :tenant_id, datetime('now'))
+                    INSERT OR IGNORE INTO tiger_resource_map (resource_type, resource_id, created_at)
+                    VALUES (:resource_type, :resource_id, datetime('now'))
                 """)
                 connection.execute(
                     insert_query,
                     {
                         "resource_type": resource_type,
                         "resource_id": resource_id,
-                        "tenant_id": tenant_id,
                     },
                 )
                 # Commit so the SELECT can see the inserted row
@@ -181,7 +185,6 @@ class TigerResourceMap:
                     {
                         "resource_type": resource_type,
                         "resource_id": resource_id,
-                        "tenant_id": tenant_id,
                     },
                 )
                 row = result.fetchone()
@@ -202,7 +205,7 @@ class TigerResourceMap:
 
     def get_resource_id(
         self, int_id: int, conn: Connection | None = None
-    ) -> tuple[str, str, str] | None:
+    ) -> tuple[str, str] | None:
         """Get resource info from integer ID.
 
         Args:
@@ -210,7 +213,7 @@ class TigerResourceMap:
             conn: Optional database connection
 
         Returns:
-            Tuple of (resource_type, resource_id, tenant_id) or None if not found
+            Tuple of (resource_type, resource_id) or None if not found
         """
         # Check memory cache first
         with self._lock:
@@ -221,16 +224,16 @@ class TigerResourceMap:
         from sqlalchemy import text
 
         query = text("""
-            SELECT resource_type, resource_id, tenant_id
+            SELECT resource_type, resource_id
             FROM tiger_resource_map
             WHERE resource_int_id = :int_id
         """)
 
-        def execute(connection: Connection) -> tuple[str, str, str] | None:
+        def execute(connection: Connection) -> tuple[str, str] | None:
             result = connection.execute(query, {"int_id": int_id})
             row = result.fetchone()
             if row:
-                return (row.resource_type, row.resource_id, row.tenant_id)
+                return (row.resource_type, row.resource_id)
             return None
 
         if conn:
@@ -249,13 +252,13 @@ class TigerResourceMap:
 
     def bulk_get_int_ids(
         self,
-        resources: list[tuple[str, str, str]],  # List of (resource_type, resource_id, tenant_id)
+        resources: list[tuple[str, str]],  # List of (resource_type, resource_id)
         conn: Connection,
-    ) -> dict[tuple[str, str, str], int | None]:
+    ) -> dict[tuple[str, str], int | None]:
         """Bulk get integer IDs for multiple resources in a single query.
 
         Args:
-            resources: List of (resource_type, resource_id, tenant_id) tuples
+            resources: List of (resource_type, resource_id) tuples
             conn: Database connection
 
         Returns:
@@ -266,8 +269,8 @@ class TigerResourceMap:
         if not resources:
             return {}
 
-        results: dict[tuple[str, str, str], int | None] = {}
-        to_fetch: list[tuple[str, str, str]] = []
+        results: dict[tuple[str, str], int | None] = {}
+        to_fetch: list[tuple[str, str]] = []
 
         # Check memory cache first
         with self._lock:
@@ -281,20 +284,19 @@ class TigerResourceMap:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database
+        # Bulk fetch from database (no tenant filter)
         if self._is_postgresql:
             # PostgreSQL: Use UNNEST for efficient bulk lookup
             query = text("""
-                SELECT resource_type, resource_id, tenant_id, resource_int_id
+                SELECT resource_type, resource_id, resource_int_id
                 FROM tiger_resource_map
-                WHERE (resource_type, resource_id, tenant_id) IN (
-                    SELECT UNNEST(:types), UNNEST(:ids), UNNEST(:tenants)
+                WHERE (resource_type, resource_id) IN (
+                    SELECT UNNEST(:types), UNNEST(:ids)
                 )
             """)
             types = [r[0] for r in to_fetch]
             ids = [r[1] for r in to_fetch]
-            tenants = [r[2] for r in to_fetch]
-            result = conn.execute(query, {"types": types, "ids": ids, "tenants": tenants})
+            result = conn.execute(query, {"types": types, "ids": ids})
         else:
             # SQLite: Use VALUES clause
             if len(to_fetch) > 500:
@@ -305,18 +307,18 @@ class TigerResourceMap:
                     results.update(batch_results)
                 return results
 
-            values = ", ".join(f"('{r[0]}', '{r[1]}', '{r[2]}')" for r in to_fetch)
+            values = ", ".join(f"('{r[0]}', '{r[1]}')" for r in to_fetch)
             query = text(f"""
-                SELECT resource_type, resource_id, tenant_id, resource_int_id
+                SELECT resource_type, resource_id, resource_int_id
                 FROM tiger_resource_map
-                WHERE (resource_type, resource_id, tenant_id) IN (VALUES {values})
+                WHERE (resource_type, resource_id) IN (VALUES {values})
             """)
             result = conn.execute(query)
 
         # Process results and update cache
         with self._lock:
             for row in result:
-                key = (row.resource_type, row.resource_id, row.tenant_id)
+                key = (row.resource_type, row.resource_id)
                 int_id = int(row.resource_int_id)
                 results[key] = int_id
                 self._uuid_to_int[key] = int_id
@@ -326,20 +328,20 @@ class TigerResourceMap:
 
     def get_int_ids_batch(
         self,
-        resources: list[tuple[str, str, str]],
+        resources: list[tuple[str, str]],
         conn: Connection | None = None,
-    ) -> dict[tuple[str, str, str], int]:
+    ) -> dict[tuple[str, str], int]:
         """Get integer IDs for multiple resources in batch.
 
         Args:
-            resources: List of (resource_type, resource_id, tenant_id) tuples
+            resources: List of (resource_type, resource_id) tuples
             conn: Optional database connection
 
         Returns:
             Dict mapping resource tuples to integer IDs
         """
-        result: dict[tuple[str, str, str], int] = {}
-        missing: list[tuple[str, str, str]] = []
+        result: dict[tuple[str, str], int] = {}
+        missing: list[tuple[str, str]] = []
 
         # Check memory cache first
         with self._lock:
@@ -352,28 +354,25 @@ class TigerResourceMap:
         if not missing:
             return result
 
-        # Query database for missing
+        # Query database for missing (no tenant filter)
         from sqlalchemy import text
 
         if self._is_postgresql:
             # Use UNNEST for efficient batch lookup
             query = text("""
-                SELECT resource_type, resource_id, tenant_id, resource_int_id
+                SELECT resource_type, resource_id, resource_int_id
                 FROM tiger_resource_map
-                WHERE (resource_type, resource_id, tenant_id) IN (
-                    SELECT unnest(:types::text[]), unnest(:ids::text[]), unnest(:tenants::text[])
+                WHERE (resource_type, resource_id) IN (
+                    SELECT unnest(:types::text[]), unnest(:ids::text[])
                 )
             """)
             types = [m[0] for m in missing]
             ids = [m[1] for m in missing]
-            tenants = [m[2] for m in missing]
 
             def execute(connection: Connection) -> None:
-                db_result = connection.execute(
-                    query, {"types": types, "ids": ids, "tenants": tenants}
-                )
+                db_result = connection.execute(query, {"types": types, "ids": ids})
                 for row in db_result:
-                    key = (row.resource_type, row.resource_id, row.tenant_id)
+                    key = (row.resource_type, row.resource_id)
                     result[key] = row.resource_int_id
                     with self._lock:
                         self._uuid_to_int[key] = row.resource_int_id
@@ -382,14 +381,12 @@ class TigerResourceMap:
             # SQLite: Use individual queries (less efficient)
             query = text("""
                 SELECT resource_int_id FROM tiger_resource_map
-                WHERE resource_type = :type AND resource_id = :id AND tenant_id = :tenant
+                WHERE resource_type = :type AND resource_id = :id
             """)
 
             def execute(connection: Connection) -> None:
                 for key in missing:
-                    db_result = connection.execute(
-                        query, {"type": key[0], "id": key[1], "tenant": key[2]}
-                    )
+                    db_result = connection.execute(query, {"type": key[0], "id": key[1]})
                     row = db_result.fetchone()
                     if row:
                         result[key] = row.resource_int_id
@@ -497,7 +494,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
@@ -516,16 +513,14 @@ class TigerCache:
         """
         key = CacheKey(subject_type, subject_id, permission, resource_type)
 
-        # Get resource int ID
-        resource_key = (resource_type, resource_id, tenant_id)
+        # Get resource int ID (no tenant - paths are globally unique)
+        resource_key = (resource_type, resource_id)
         with self._lock:
             int_id = self._resource_map._uuid_to_int.get(resource_key)
 
         if int_id is None:
             # Resource not in map - need to create it
-            int_id = self._resource_map.get_or_create_int_id(
-                resource_type, resource_id, tenant_id, conn
-            )
+            int_id = self._resource_map.get_or_create_int_id(resource_type, resource_id, conn=conn)
 
         # Check in-memory cache
         with self._lock:
@@ -830,11 +825,12 @@ class TigerCache:
         results: dict[tuple[str, str, str, str, str, str], bool | None] = {}
 
         # Step 1: Collect unique resources and cache keys
-        unique_resources: set[tuple[str, str, str]] = set()  # (res_type, res_id, tenant)
+        # Note: resource key excludes tenant - paths are globally unique
+        unique_resources: set[tuple[str, str]] = set()  # (res_type, res_id)
         unique_keys: set[CacheKey] = set()
 
-        for subj_type, subj_id, perm, res_type, res_id, tenant in checks:
-            unique_resources.add((res_type, res_id, tenant))
+        for subj_type, subj_id, perm, res_type, res_id, _tenant in checks:
+            unique_resources.add((res_type, res_id))
             unique_keys.add(CacheKey(subj_type, subj_id, perm, res_type))
 
         with self._engine.connect() as conn:
@@ -848,7 +844,7 @@ class TigerCache:
         for check in checks:
             subj_type, subj_id, perm, res_type, res_id, tenant = check
             key = CacheKey(subj_type, subj_id, perm, res_type)
-            resource_key = (res_type, res_id, tenant)
+            resource_key = (res_type, res_id)  # No tenant
 
             # Get bitmap for this subject/permission/resource_type
             bitmap = bitmaps.get(key)
@@ -1291,24 +1287,23 @@ class TigerCache:
         try:
             with self._engine.begin() as conn:
                 # Step 1: Get resource int ID (don't create if doesn't exist)
-                resource_key = (resource_type, resource_id, tenant_id)
+                # Note: resource key excludes tenant - paths are globally unique
+                resource_key = (resource_type, resource_id)
                 with self._lock:
                     resource_int_id = self._resource_map._uuid_to_int.get(resource_key)
 
                 if resource_int_id is None:
-                    # Try to get from DB
+                    # Try to get from DB (no tenant filter)
                     query = text("""
                         SELECT resource_int_id FROM tiger_resource_map
                         WHERE resource_type = :resource_type
                           AND resource_id = :resource_id
-                          AND tenant_id = :tenant_id
                     """)
                     result = conn.execute(
                         query,
                         {
                             "resource_type": resource_type,
                             "resource_id": resource_id,
-                            "tenant_id": tenant_id,
                         },
                     )
                     row = result.fetchone()

@@ -3260,7 +3260,12 @@ class TigerResourceMapModel(Base):
     Roaring Bitmaps require integer IDs, but our resources use UUIDs.
     This table provides a stable mapping.
 
-    Related: Issue #682
+    Note: tenant_id is intentionally excluded from this table.
+    Resource paths are globally unique (e.g., /skills/system/docs is the same
+    file regardless of who queries it). Tenant isolation is enforced at the
+    bitmap/permission level, not the resource ID mapping.
+
+    Related: Issue #682, Issue #979 (cross-tenant fix)
     """
 
     __tablename__ = "tiger_resource_map"
@@ -3269,10 +3274,9 @@ class TigerResourceMapModel(Base):
     # Integer for SQLite auto-increment compatibility (SQLite only auto-increments INTEGER PRIMARY KEY)
     resource_int_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Resource identification
+    # Resource identification (no tenant - paths are globally unique)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -3280,9 +3284,9 @@ class TigerResourceMapModel(Base):
     )
 
     __table_args__ = (
-        # Unique constraint on (resource_type, resource_id, tenant_id)
-        UniqueConstraint("resource_type", "resource_id", "tenant_id", name="uq_tiger_resource"),
-        Index("idx_tiger_resource_lookup", "tenant_id", "resource_type", "resource_id"),
+        # Unique constraint on (resource_type, resource_id) - no tenant
+        UniqueConstraint("resource_type", "resource_id", name="uq_tiger_resource"),
+        Index("idx_tiger_resource_lookup", "resource_type", "resource_id"),
     )
 
     def __repr__(self) -> str:

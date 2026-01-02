@@ -346,7 +346,6 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject=subject,
                 permission=permission,
                 object=object,
-                tenant_id=tenant_id,
             )
             if tiger_result is True:
                 logger.debug("  -> Tiger Cache HIT: ALLOW")
@@ -1809,7 +1808,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         try:
             # Check memory cache ONLY - no DB hit on read path
-            resource_key = (object[0], object[1], tenant_id)
+            # Note: resource_key excludes tenant - paths are globally unique
+            resource_key = (object[0], object[1])
             resource_int_id = self._tiger_cache._resource_map._uuid_to_int.get(resource_key)
 
             if resource_int_id is not None:
@@ -1842,7 +1842,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str,
+        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
     ) -> bool | None:
         """Check permission using Tiger Cache (O(1) bitmap lookup).
 
@@ -1864,7 +1864,6 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission=permission,
             resource_type=object[0],
             resource_id=object[1],
-            tenant_id=tenant_id,
         )
 
     def tiger_get_accessible_resources(
@@ -2060,7 +2059,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
     ) -> int:
         """Register a resource in the Tiger resource map.
 
@@ -2080,7 +2079,6 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         return self._tiger_cache._resource_map.get_or_create_int_id(
             resource_type=resource_type,
             resource_id=resource_id,
-            tenant_id=tenant_id,
         )
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:

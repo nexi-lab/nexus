@@ -1,0 +1,170 @@
+name: Code Quality Standards
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**/*.py'
+      - 'tests/**/*.py'
+      - '.pre-commit-hooks/**'
+      - '.pre-commit-config.yaml'
+      - 'pyproject.toml'
+  push:
+    branches: [main, refactor/**]
+    paths:
+      - 'src/**/*.py'
+      - 'tests/**/*.py'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  file-size-check:
+    name: Check File Size Limits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better diffs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check Python file sizes
+        run: |
+          python .pre-commit-hooks/check_file_size.py $(find src -name '*.py')
+
+      - name: Report violations
+        if: failure()
+        run: |
+          echo "::error::Files exceed 2000 line limit. See job logs for details."
+
+  type-ignore-check:
+    name: Block New Type Ignores
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check for new type ignore comments
+        run: |
+          # Get list of changed Python files
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CHANGED_FILES=$(git diff --name-only --diff-filter=AM origin/main...HEAD | grep '\.py$' || true)
+          else
+            CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD^...HEAD | grep '\.py$' || true)
+          fi
+
+          if [ -n "$CHANGED_FILES" ]; then
+            echo "Checking files: $CHANGED_FILES"
+            python .pre-commit-hooks/check_type_ignore.py $CHANGED_FILES
+          else
+            echo "No Python files changed"
+          fi
+
+      - name: Report violations
+        if: failure()
+        run: |
+          echo "::error::New type: ignore comments detected. Fix type errors properly instead."
+
+  code-metrics:
+    name: Code Quality Metrics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install radon
+
+      - name: Calculate code metrics
+        run: |
+          echo "## Code Quality Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Cyclomatic Complexity
+          echo "### Cyclomatic Complexity (files with CC > 10)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          radon cc src -a -nb | grep -E "^[A-Z]|F \(" || echo "No files with high complexity" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Maintainability Index
+          echo "### Maintainability Index (files with MI < 20)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          radon mi src -nb | grep -E "^[A-Z]|[A-C] \(" || echo "All files maintainable" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+          # Line counts
+          echo "### Largest Files (top 10)" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          find src -name '*.py' -exec wc -l {} \; | sort -rn | head -10 >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  type-ignore-baseline:
+    name: Track Type Ignore Baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Count type ignore comments
+        id: count
+        run: |
+          CURRENT_COUNT=$(grep -r "# type: ignore" src/ --include="*.py" | wc -l | tr -d ' ')
+          echo "count=$CURRENT_COUNT" >> $GITHUB_OUTPUT
+          echo "Current type: ignore count: $CURRENT_COUNT"
+
+          # Baseline from Phase 3 start (531 suppressions)
+          BASELINE=531
+
+          if [ "$CURRENT_COUNT" -gt "$BASELINE" ]; then
+            echo "::error::Type ignore count increased from $BASELINE to $CURRENT_COUNT"
+            echo "increased=true" >> $GITHUB_OUTPUT
+            exit 1
+          elif [ "$CURRENT_COUNT" -lt "$BASELINE" ]; then
+            echo "::notice::Great! Type ignore count decreased from $BASELINE to $CURRENT_COUNT"
+            echo "decreased=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update baseline comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const count = ${{ steps.count.outputs.count }};
+            const baseline = 531;
+            const diff = baseline - count;
+            const emoji = diff > 0 ? '📉' : (diff < 0 ? '📈' : '➡️');
+
+            const body = `## Type Safety Progress ${emoji}
+
+            **Current:** ${count} type: ignore comments
+            **Baseline:** ${baseline} (Phase 3 start)
+            **Change:** ${diff > 0 ? '-' : '+'}${Math.abs(diff)}
+
+            ${diff > 0 ? '✅ Progress! Keep eliminating type suppressions!' :
+              diff < 0 ? '⚠️  Type suppressions increased. Phase 3 goal is to eliminate all.' :
+              'No change in type suppressions.'}
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

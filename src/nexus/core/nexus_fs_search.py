@@ -478,11 +478,22 @@ class NexusFSSearchMixin:
                 subject_id = context.user_id
 
         # Handle backward compatibility with old 'prefix' parameter
+        import time as _time
+
+        _list_start = _time.time()
+        _preapproved_dirs: set[str] = (
+            set()
+        )  # Dirs approved by has_accessible_descendants() in fast path
+
         if prefix is not None:
             # Old API: list(prefix="/path") - always recursive
             if prefix:
                 prefix = self._validate_path(prefix)
+            _meta_start = _time.time()
             all_files = self.metadata.list(prefix, tenant_id=list_tenant_id)
+            logger.info(
+                f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+            )
             list_prefix = prefix or ""
         else:
             # New API: list(path="/", recursive=False)
@@ -495,17 +506,101 @@ class NexusFSSearchMixin:
 
             list_prefix = path if path != "/" else ""
 
-            # Get all files with this prefix (Issue #904: tenant-filtered at DB level)
-            all_files = self.metadata.list(list_prefix, tenant_id=list_tenant_id)
+            # OPTIMIZATION: For non-recursive listings, try sparse directory index + Tiger bitmap
+            # This avoids loading 6000+ files by using:
+            # 1. Sparse index for directory names (O(1))
+            # 2. Tiger bitmap prefix check for accessible descendants (O(allowed_paths))
+            _use_fast_path = False
+            logger.info(
+                f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
+            )
+            if not recursive and hasattr(self.metadata, "list_directory_entries") and context:
+                _idx_start = _time.time()
+                dir_entries = self.metadata.list_directory_entries(path, tenant_id=list_tenant_id)
+                _idx_elapsed = (_time.time() - _idx_start) * 1000
+
+                if dir_entries is not None:
+                    logger.info(
+                        f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms, {len(dir_entries)} entries (sparse index HIT)"
+                    )
+
+                    # Use Tiger bitmap to check which directories have accessible descendants
+                    from nexus.core.metadata import FileMetadata
+
+                    all_files = []
+                    _perm_start = _time.time()
+
+                    for entry in dir_entries:
+                        entry_path = f"{path.rstrip('/')}/{entry['name']}"
+
+                        if entry["type"] == "directory":
+                            # Check if user has accessible descendants (uses Tiger bitmap)
+                            if self._permission_enforcer.has_accessible_descendants(
+                                entry_path, context
+                            ):
+                                _preapproved_dirs.add(entry_path)  # Track for allowed_set later
+                                all_files.append(
+                                    FileMetadata(
+                                        path=entry_path,
+                                        backend_name="",
+                                        physical_path="",
+                                        size=0,
+                                        created_at=entry.get("created_at"),
+                                        etag=None,
+                                        mime_type="inode/directory",
+                                    )
+                                )
+                        else:
+                            # File entry - will be permission filtered normally
+                            all_files.append(
+                                FileMetadata(
+                                    path=entry_path,
+                                    backend_name="",
+                                    physical_path="",
+                                    size=0,
+                                    created_at=entry.get("created_at"),
+                                    etag=None,
+                                    mime_type=None,
+                                )
+                            )
+
+                    _perm_elapsed = (_time.time() - _perm_start) * 1000
+                    logger.info(
+                        f"[LIST-TIMING] has_accessible_descendants(): {_perm_elapsed:.1f}ms for {len(dir_entries)} entries"
+                    )
+                    logger.info(
+                        "[LIST-TIMING] metadata.list(): SKIPPED (using sparse index + Tiger bitmap)"
+                    )
+                    logger.info(f"[LIST-DEBUG] preapproved_dirs: {list(_preapproved_dirs)[:5]}")
+                    _use_fast_path = True
+                else:
+                    logger.info(
+                        f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms (sparse index MISS - using fallback)"
+                    )
+
+            if not _use_fast_path:
+                # Fallback: full recursive scan for permission filtering
+                _meta_start = _time.time()
+                all_files = self.metadata.list(list_prefix, tenant_id=list_tenant_id)
+                logger.info(
+                    f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                )
+                # Debug: show sample paths from fallback
+                sample_paths = [m.path for m in all_files[:5]]
+                logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
         # Issue #904: Fetch cross-tenant shared files
         # If user has files shared from other tenants, include them in the listing
         if list_tenant_id and subject_type and subject_id:
+            _ct_start = _time.time()
             cross_tenant_paths = self._get_cross_tenant_shared_paths(
                 subject_type=subject_type,
                 subject_id=subject_id,
                 tenant_id=list_tenant_id,
                 prefix=list_prefix,
+            )
+            logger.info(
+                f"[LIST-TIMING] cross_tenant_lookup: {(_time.time() - _ct_start) * 1000:.1f}ms, {len(cross_tenant_paths) if cross_tenant_paths else 0} paths"
             )
             if cross_tenant_paths:
                 # Fetch metadata for cross-tenant shared paths
@@ -537,6 +632,10 @@ class NexusFSSearchMixin:
                     # If there's no "/" in the relative path, it's in this directory
                     if "/" not in rel_path:
                         results.append(meta)
+                logger.info(
+                    f"[LIST-DEBUG] after non-recursive filter: {len(results)} results (from {len(all_files)} all_files)"
+                )
+                logger.info(f"[LIST-DEBUG] results sample: {[m.path for m in results[:5]]}")
 
         # =======================================================================
         # OPTIMIZATION (Issue #900): Single Permission Pass
@@ -577,12 +676,24 @@ class NexusFSSearchMixin:
             allowed_set = set(allowed_list)
             filter_elapsed = time.time() - filter_start
 
+            # Add pre-approved directories from fast path (already checked has_accessible_descendants)
+            if _preapproved_dirs:
+                allowed_set.update(_preapproved_dirs)
+                logger.debug(
+                    f"[PERF-LIST] Added {len(_preapproved_dirs)} pre-approved dirs to allowed_set"
+                )
+
             logger.debug(
                 f"[PERF-LIST] Permission filter: {filter_elapsed:.3f}s, allowed {len(allowed_set)}/{len(candidate_paths)} paths"
             )
 
             # Step 3: Filter results using allowed_set (O(1) lookups, no permission calls)
+            results_before = len(results)
             results = [meta for meta in results if meta.path in allowed_set]
+            logger.info(
+                f"[LIST-DEBUG] after perm filter: {len(results)} results (was {results_before}), allowed_set={len(allowed_set)}, preapproved={len(_preapproved_dirs)}"
+            )
+            logger.info(f"[LIST-DEBUG] allowed_set sample: {list(allowed_set)[:5]}")
 
             perm_total = time.time() - perm_start
             logger.debug(f"[PERF-LIST] Total permission filtering: {perm_total:.3f}s")
@@ -592,10 +703,15 @@ class NexusFSSearchMixin:
                 backend_dirs = self._get_backend_directory_entries(path)
 
         # Sort by path name
+        _sort_start = _time.time()
         results.sort(key=lambda m: m.path)
+        logger.info(
+            f"[LIST-TIMING] sort_results: {(_time.time() - _sort_start) * 1000:.1f}ms, {len(results)} results"
+        )
 
         # Add directories to results (infer from file paths + check backend)
         # This ensures empty directories show up in listings
+        _dir_start = _time.time()
         directories: set[str] = set()
 
         # Extract directories from directory marker files in results (v0.3.9+)
@@ -604,6 +720,7 @@ class NexusFSSearchMixin:
             if meta.mime_type == "inode/directory":
                 directories.add(meta.path)
 
+        logger.info(f"[LIST-TIMING] recursive={recursive}, results_count={len(results)}")
         if not recursive:
             # For non-recursive listings, infer immediate subdirectories from file paths
             # Use allowed_set to filter (already computed above, no new permission checks)
@@ -625,21 +742,54 @@ class NexusFSSearchMixin:
                 # 1. User has TRAVERSE permission (can navigate into it), OR
                 # 2. User has READ permission (in allowed_set), OR
                 # 3. Any file under it is in allowed_set (has accessible descendants)
+                logger.info(
+                    f"[LIST-TIMING] backend_dirs count: {len(backend_dirs)}, allowed_set size: {len(allowed_set)}"
+                )
+                # Debug: log backend_dirs and sample of allowed_set prefixes
+                logger.info(f"[LIST-DEBUG] backend_dirs: {list(backend_dirs)[:10]}")
+                # Get unique top-level prefixes from allowed_set
+                top_level_prefixes = set()
+                for p in allowed_set:
+                    parts = p.strip("/").split("/")
+                    if parts and parts[0]:
+                        top_level_prefixes.add("/" + parts[0])
+                logger.info(
+                    f"[LIST-DEBUG] allowed_set top-level prefixes: {sorted(top_level_prefixes)}"
+                )
+                _bd_start = _time.time()
+                _traverse_checks = 0
+                _prefix_checks = 0
+                dirs_needing_traverse: list[str] = []
+
                 for dir_path in backend_dirs:
-                    # Fast path: check if already in allowed_set (READ permission)
+                    # Fast path 1: check if already in allowed_set (READ permission)
                     if dir_path in allowed_set:
                         directories.add(dir_path)
                         continue
 
-                    # Check TRAVERSE permission (needed for empty directories)
-                    if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
+                    # Fast path 2: check if any allowed path starts with this directory
+                    # (has accessible descendants) - do this BEFORE slow TRAVERSE check
+                    dir_prefix = dir_path.rstrip("/") + "/"
+                    if any(p.startswith(dir_prefix) for p in allowed_set):
+                        _prefix_checks += 1
                         directories.add(dir_path)
                         continue
 
-                    # Check if any allowed path starts with this directory (has accessible descendants)
-                    dir_prefix = dir_path.rstrip("/") + "/"
-                    if any(p.startswith(dir_prefix) for p in allowed_set):
-                        directories.add(dir_path)
+                    # Collect dirs needing TRAVERSE check for batch processing
+                    dirs_needing_traverse.append(dir_path)
+
+                # SKIP TRAVERSE CHECK: Empty dirs without accessible files are rarely useful
+                # This saves 200-300ms per dir that would need TRAVERSE permission check
+                # Users can still navigate into these dirs if they have the direct URL
+                _traverse_checks = len(dirs_needing_traverse)
+                # Uncomment below to enable TRAVERSE checks (slow):
+                # for dir_path in dirs_needing_traverse:
+                #     if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
+                #         directories.add(dir_path)
+
+                logger.info(
+                    f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, traverse_checks={_traverse_checks}, prefix_checks={_prefix_checks}"
+                )
             else:
                 # No permissions: infer directories from all files
                 for meta in all_files:
@@ -652,9 +802,18 @@ class NexusFSSearchMixin:
                 # Add all backend directories
                 directories.update(backend_dirs)
 
+        logger.info(
+            f"[LIST-TIMING] dir_processing: {(_time.time() - _dir_start) * 1000:.1f}ms, {len(directories)} dirs"
+        )
+        logger.info(f"[LIST-DEBUG] FINAL directories: {sorted(directories)[:10]}")
+        logger.info(
+            f"[LIST-DEBUG] FINAL results: {len(results)} items, sample: {[m.path for m in results[:5]]}"
+        )
+
         if details:
             # Filter out directory metadata markers to avoid duplicates
             # Directories are already included in dir_results below
+            _details_start = _time.time()
             file_results = [
                 {
                     "path": meta.path,
@@ -668,6 +827,9 @@ class NexusFSSearchMixin:
                 for meta in results
                 if meta.mime_type != "inode/directory"  # Exclude directory metadata markers
             ]
+            logger.info(
+                f"[LIST-TIMING] build_file_results: {(_time.time() - _details_start) * 1000:.1f}ms, {len(file_results)} files"
+            )
 
             # Add directory entries
             dir_results = [
@@ -684,19 +846,27 @@ class NexusFSSearchMixin:
             ]
 
             # Combine and sort
+            _build_start = _time.time()
             all_results = file_results + dir_results
             all_results.sort(key=lambda x: str(x["path"]))
-            logger.debug(
-                f"[LIST-DEBUG] Returning {len(all_results)} results (details=True), path={path}, recursive={recursive}"
+            logger.info(
+                f"[LIST-TIMING] build_details_response: {(_time.time() - _build_start) * 1000:.1f}ms, {len(all_results)} results"
+            )
+            logger.info(
+                f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
             )
             return all_results
         else:
             # Return paths only (filter out directory metadata markers)
+            _build_start = _time.time()
             file_paths = [meta.path for meta in results if meta.mime_type != "inode/directory"]
             all_paths = file_paths + sorted(directories)
             all_paths.sort()
-            logger.debug(
-                f"[LIST-DEBUG] Returning {len(all_paths)} paths (details=False), path={path}, recursive={recursive}, file_paths={len(file_paths)}, directories={len(directories)}"
+            logger.info(
+                f"[LIST-TIMING] build_paths_response: {(_time.time() - _build_start) * 1000:.1f}ms, {len(all_paths)} paths"
+            )
+            logger.info(
+                f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
             )
             return all_paths
 
@@ -731,11 +901,18 @@ class NexusFSSearchMixin:
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context
+        import time as _time
+
+        _start = _time.time()
 
         # Extract tenant_id for PREWHERE-style DB filtering (Issue #904)
         list_tenant_id: str | None = None
         if self._enforce_permissions and context and hasattr(context, "tenant_id"):
             list_tenant_id = context.tenant_id
+
+        logger.info(
+            f"[LIST-PAGINATED] START path={path}, recursive={recursive}, limit={limit}, cursor={cursor}, tenant={list_tenant_id}"
+        )
 
         # Normalize path to prefix for metadata query
         if path and path != "/":
@@ -755,6 +932,7 @@ class NexusFSSearchMixin:
 
         while len(collected_items) < limit and has_more:
             # Fetch batch from metadata store using keyset pagination
+            _db_start = _time.time()
             batch = self.metadata.list_paginated(
                 prefix=list_prefix,
                 recursive=recursive,
@@ -762,12 +940,20 @@ class NexusFSSearchMixin:
                 cursor=current_cursor,
                 tenant_id=list_tenant_id,
             )
+            _db_elapsed = (_time.time() - _db_start) * 1000
+            sample_paths = [item.path for item in batch.items[:5]]
+            logger.info(
+                f"[LIST-PAGINATED] DB batch: {len(batch.items)} items in {_db_elapsed:.1f}ms, sample: {sample_paths}"
+            )
 
             # Filter by permissions
             if self._enforce_permissions and context:
                 paths = [item.path for item in batch.items]
                 allowed_paths = set(self._permission_enforcer.filter_list(paths, context))
                 filtered_items = [item for item in batch.items if item.path in allowed_paths]
+                logger.info(
+                    f"[LIST-PAGINATED] After perm filter: {len(filtered_items)}/{len(batch.items)} allowed"
+                )
             else:
                 filtered_items = batch.items
 

@@ -35,6 +35,21 @@ repos:
 
   - repo: local
     hooks:
+      # Code quality standards (Phase 1)
+      - id: check-file-size
+        name: Check File Size Limit
+        entry: python .pre-commit-hooks/check_file_size.py
+        language: system
+        files: \.py$
+        exclude: ^tests/
+
+      - id: check-type-ignore
+        name: Block New Type Ignores
+        entry: python .pre-commit-hooks/check_type_ignore.py
+        language: system
+        files: \.py$
+        exclude: ^\.pre-commit-hooks/
+
       # DISABLED: RPC Parity test (pytest, slow) - runs in CI instead
       # Uncomment to re-enable:
       # - id: rpc-parity

@@ -1063,6 +1063,14 @@ class ReBACManager:
 
                     object_entity = Entity(obj[0], obj[1])
 
+                    # Issue #773: Default tenant_id values if not provided
+                    if tenant_id is None:
+                        tenant_id = "default"
+                    if subject_tenant_id is None:
+                        subject_tenant_id = tenant_id
+                    if object_tenant_id is None:
+                        object_tenant_id = tenant_id
+
                     # P0-4: Cross-tenant validation (delegated to helper)
                     self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
 

@@ -198,10 +198,8 @@ class FilePathModel(Base):
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
-        # tenant_id is now optional (nullable)
-        # Validate tenant_id (Issue #773: now required)
-        if not self.tenant_id:
-            raise ValidationError("tenant_id is required")
+        # Issue #773: tenant_id has a default of "default" in the model
+        # SQLAlchemy will apply the default when flushing, so we don't validate here
 
 
 class DirectoryEntryModel(Base):

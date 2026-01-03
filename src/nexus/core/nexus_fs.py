@@ -393,6 +393,10 @@ class NexusFS(  # type: ignore[misc]
         # v0.8.0: Subscription manager for webhook notifications (set by server)
         self.subscription_manager: Any = None
 
+        # Issue #913: Track async event tasks to prevent memory leaks
+        # Tasks are auto-removed via done callback when completed
+        self._event_tasks: set[asyncio.Task[Any]] = set()
+
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine
             try:

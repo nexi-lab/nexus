@@ -547,7 +547,10 @@ async def lifespan(_app: FastAPI) -> Any:
     # Tiger Cache queue processor (Issue #935)
     # NOTE: Disabled by default - write-through handles grants/revokes immediately
     # Enable with NEXUS_ENABLE_TIGER_WORKER=true for cache warming scenarios
-    tiger_task: asyncio.Task | None = None
+    tiger_task: asyncio.Task[Any] | None = None
+    # Issue #913: Track startup tasks to prevent memory leaks on shutdown
+    warm_task: asyncio.Task[Any] | None = None
+    backfill_task: asyncio.Task[Any] | None = None
     if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
         "true",
         "1",
@@ -580,7 +583,8 @@ async def lifespan(_app: FastAPI) -> Any:
                     loaded = await asyncio.to_thread(tiger_cache.warm_from_db, warm_limit)
                     logger.info(f"Tiger Cache warmed with {loaded} entries from database")
 
-                asyncio.create_task(_warm_tiger_cache())
+                # Issue #913: Store task reference for proper shutdown
+                warm_task = asyncio.create_task(_warm_tiger_cache())
                 logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
         except Exception as e:
             logger.debug(f"Tiger Cache warm-up skipped: {e}")
@@ -607,7 +611,8 @@ async def lifespan(_app: FastAPI) -> Any:
                     except Exception as e:
                         logger.debug(f"Sparse index backfill skipped for {prefix}: {e}")
 
-            asyncio.create_task(_backfill_system_paths())
+            # Issue #913: Store task reference for proper shutdown
+            backfill_task = asyncio.create_task(_backfill_system_paths())
             logger.info("Sparse directory index backfill started for system paths")
         except Exception as e:
             logger.warning(f"Sparse index backfill skipped: {e}")
@@ -631,6 +636,28 @@ async def lifespan(_app: FastAPI) -> Any:
         with suppress(asyncio.CancelledError):
             await tiger_task
         logger.info("Tiger Cache queue processor stopped")
+
+    # Issue #913: Cancel startup tasks to prevent leaks
+    if warm_task:
+        warm_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await warm_task
+        logger.debug("Tiger Cache warm-up task cancelled")
+    if backfill_task:
+        backfill_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await backfill_task
+        logger.debug("Sparse index backfill task cancelled")
+
+    # Issue #913: Cancel any pending event tasks in NexusFS
+    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_tasks"):
+        event_tasks = _app_state.nexus_fs._event_tasks.copy()
+        for task in event_tasks:
+            task.cancel()
+        if event_tasks:
+            with suppress(asyncio.CancelledError):
+                await asyncio.gather(*event_tasks, return_exceptions=True)
+            logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
 
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()

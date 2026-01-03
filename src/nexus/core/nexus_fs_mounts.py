@@ -1927,16 +1927,33 @@ class NexusFSMountsMixin:
 
         # Schedule the job to start (non-blocking)
         # Get or create event loop and schedule the task
+        # Issue #913: Wrap in error handler to prevent silent failures
+        from typing import cast
+
+        from nexus.core.nexus_fs import NexusFS
+
+        nexus_fs = cast(NexusFS, self)  # Self is NexusFS at runtime (mixin pattern)
+
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(sync_manager.start_job(job_id, self))  # type: ignore[arg-type]
+
+            async def _start_sync_job() -> None:
+                try:
+                    await sync_manager.start_job(job_id, nexus_fs)
+                except Exception as e:
+                    logger.error(f"Sync job {job_id} failed to start: {e}")
+
+            loop.create_task(_start_sync_job())
         except RuntimeError:
             # No running loop - create one for the task
             # This handles the case when called from synchronous context
             import threading
 
             def run_async() -> None:
-                asyncio.run(sync_manager.start_job(job_id, self))  # type: ignore[arg-type]
+                try:
+                    asyncio.run(sync_manager.start_job(job_id, nexus_fs))
+                except Exception as e:
+                    logger.error(f"Sync job {job_id} failed to start: {e}")
 
             thread = threading.Thread(target=run_async, daemon=True)
             thread.start()

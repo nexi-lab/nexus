@@ -745,9 +745,9 @@ class ReBACManager:
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
-        subject_tenant_id: str | None = None,
-        object_tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
+        object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
     ) -> str:
         """Create a relationship tuple.
 
@@ -800,6 +800,15 @@ class ReBACManager:
         else:
             raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
         object_entity = Entity(object[0], object[1])
+
+        # Issue #773: Default tenant_id to "default" if not provided
+        if tenant_id is None:
+            tenant_id = "default"
+        # Default subject/object tenant to main tenant_id if not provided
+        if subject_tenant_id is None:
+            subject_tenant_id = tenant_id
+        if object_tenant_id is None:
+            object_tenant_id = tenant_id
 
         # P0-4: Cross-tenant validation at write-time (delegated to helper)
         self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
@@ -879,15 +888,15 @@ class ReBACManager:
                 ),
             )
 
-            # Log to changelog
+            # Log to changelog (Issue #773: include tenant_id)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO rebac_changelog (
                         change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, created_at
+                        relation, object_type, object_id, tenant_id, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                 ),
                 (
@@ -898,6 +907,7 @@ class ReBACManager:
                     relation,
                     object_entity.entity_type,
                     object_entity.entity_id,
+                    tenant_id or "default",
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -1137,15 +1147,15 @@ class ReBACManager:
                         ),
                     )
 
-                    # Log to changelog
+                    # Log to changelog (Issue #773: include tenant_id)
                     cursor.execute(
                         self._fix_sql_placeholders(
                             """
                             INSERT INTO rebac_changelog (
                                 change_type, tuple_id, subject_type, subject_id,
-                                relation, object_type, object_id, created_at
+                                relation, object_type, object_id, tenant_id, created_at
                             )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """
                         ),
                         (
@@ -1156,6 +1166,7 @@ class ReBACManager:
                             pt["relation"],
                             pt["object_type"],
                             pt["object_id"],
+                            pt["tenant_id"] or "default",
                             now,
                         ),
                     )
@@ -1369,15 +1380,15 @@ class ReBACManager:
             obj = Entity(row["object_type"], row["object_id"])
             tenant_id = row["tenant_id"]
 
-            # Log to changelog
+            # Log to changelog (Issue #773: include tenant_id)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO rebac_changelog (
                         change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, created_at
+                        relation, object_type, object_id, tenant_id, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
                 ),
                 (
@@ -1388,6 +1399,7 @@ class ReBACManager:
                     relation,
                     obj.entity_type,
                     obj.entity_id,
+                    tenant_id or "default",
                     now,
                 ),
             )
@@ -1536,7 +1548,7 @@ class ReBACManager:
 
                 logger.debug(f"update_object_path: Batch UPDATE affected {cursor.rowcount} rows")
 
-                # PERF: Batch INSERT changelog entries
+                # PERF: Batch INSERT changelog entries (Issue #773: include tenant_id)
                 changelog_entries = []
                 for row in rows:
                     old_object_id = row["object_id"]
@@ -1554,6 +1566,7 @@ class ReBACManager:
                             row["relation"],
                             object_type,
                             new_object_id,
+                            row["tenant_id"] or "default",
                             now_iso,
                         )
                     )
@@ -1563,9 +1576,9 @@ class ReBACManager:
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, created_at
+                            relation, object_type, object_id, tenant_id, created_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
                     changelog_entries,
@@ -1703,7 +1716,7 @@ class ReBACManager:
                     f"update_object_path: Batch UPDATE (subject_id) affected {cursor.rowcount} rows"
                 )
 
-                # PERF: Batch INSERT changelog entries
+                # PERF: Batch INSERT changelog entries (Issue #773: include tenant_id)
                 changelog_entries = []
                 for row in subject_rows:
                     old_subject_id = row["subject_id"]
@@ -1721,6 +1734,7 @@ class ReBACManager:
                             row["relation"],
                             row["object_type"],
                             row["object_id"],
+                            row["tenant_id"] or "default",
                             now_iso,
                         )
                     )
@@ -1730,9 +1744,9 @@ class ReBACManager:
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, created_at
+                            relation, object_type, object_id, tenant_id, created_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
                     changelog_entries,
@@ -4355,14 +4369,15 @@ class ReBACManager:
                 object_id = row["object_id"]
                 tenant_id = row["tenant_id"]
 
+                # Issue #773: include tenant_id in changelog
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, created_at
+                            relation, object_type, object_id, tenant_id, created_at
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
                     ),
                     (
@@ -4373,6 +4388,7 @@ class ReBACManager:
                         relation,
                         object_type,
                         object_id,
+                        tenant_id or "default",
                         datetime.now(UTC).isoformat(),
                     ),
                 )

@@ -90,7 +90,8 @@ class FilePathModel(Base):
     # tenant_id restored for database-level filtering (defense-in-depth)
     # Previous architecture relied solely on ReBAC, creating single point of failure
     # Note: Covered by composite index idx_file_paths_tenant_path in __table_args__
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -198,7 +199,9 @@ class FilePathModel(Base):
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
         # tenant_id is now optional (nullable)
-        # Validation removed for backward compatibility
+        # Validate tenant_id (Issue #773: now required)
+        if not self.tenant_id:
+            raise ValidationError("tenant_id is required")
 
 
 class DirectoryEntryModel(Base):
@@ -220,8 +223,10 @@ class DirectoryEntryModel(Base):
     __tablename__ = "directory_entries"
 
     # Composite primary key: (tenant_id, parent_path, entry_name)
-    # tenant_id can be NULL for legacy/default tenant
-    tenant_id: Mapped[str | None] = mapped_column(String(255), primary_key=True, nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        String(255), primary_key=True, nullable=False, default="default"
+    )
     parent_path: Mapped[str] = mapped_column(String(4096), primary_key=True, nullable=False)
     entry_name: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
 
@@ -629,7 +634,8 @@ class OperationLogModel(Base):
     )  # write, delete, rename, mkdir, rmdir, chmod, chown, etc.
 
     # Context
-    tenant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Affected paths
@@ -1031,7 +1037,8 @@ class MemoryModel(Base):
 
     # Identity relationships
     # Note: Indexes defined in __table_args__ (idx_memory_tenant, idx_memory_user, idx_memory_agent)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
 
@@ -1189,9 +1196,10 @@ class ReBACTupleModel(Base):
 
     # Tenant isolation - P0-2 Critical Security Fix
     # Note: Covered by composite indexes in __table_args__ (idx_rebac_tenant_subject, idx_rebac_tenant_object, etc.)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    subject_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    object_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    subject_tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    object_tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Subject (who/what has the relationship)
     # Note: Covered by composite indexes (idx_rebac_permission_check, idx_rebac_subject_relation)
@@ -1441,7 +1449,10 @@ class ReBACChangelogModel(Base):
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Tenant scoping for multi-tenancy
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="default", index=True
+    )
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -1483,7 +1494,8 @@ class ReBACCheckCacheModel(Base):
 
     # Tenant isolation
     # Note: Covered by composite index idx_rebac_cache_tenant_check in __table_args__
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Cached check parameters
     # Note: All covered by composite indexes idx_rebac_cache_tenant_check and idx_rebac_cache_check
@@ -1554,7 +1566,10 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="default", index=True
+    )
     is_admin: Mapped[int] = mapped_column(Integer, default=0)  # SQLite: bool as Integer
 
     # Permission inheritance (v0.5.1)
@@ -1663,8 +1678,9 @@ class MountConfigModel(Base):
     owner_user_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # User who created mount
-    tenant_id: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="default"
     )  # Tenant this mount belongs to
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -1961,7 +1977,8 @@ class TrajectoryModel(Base):
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # Agent that created it
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Task information
     task_description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2095,7 +2112,8 @@ class PlaybookModel(Base):
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # Agent that created it
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Playbook information
     # Note: Index defined in __table_args__ (idx_playbook_name)
@@ -2226,7 +2244,8 @@ class UserSessionModel(Base):
     # Note: Indexes defined in __table_args__ (idx_session_user, idx_session_agent, idx_session_tenant)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Lifecycle
     # Note: Indexes defined in __table_args__ (idx_session_created, idx_session_expires)
@@ -2502,7 +2521,8 @@ class OAuthCredentialModel(Base):
     # Note: Indexes defined in __table_args__ (idx_oauth_user_email, idx_oauth_user_id, idx_oauth_tenant)
     user_email: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Encrypted tokens (encrypted at rest)
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
@@ -3003,7 +3023,8 @@ class ContentCacheModel(Base):
 
     # Tenant isolation (same pattern as other tables)
     # Note: Index defined in __table_args__ (idx_content_cache_tenant)
-    tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Content storage
     content_text: Mapped[str | None] = mapped_column(

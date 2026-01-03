@@ -55,6 +55,7 @@ class NexusFSCoreMixin:
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
         _permission_enforcer: PermissionEnforcer
+        _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
 
         @property
         def tenant_id(self) -> str | None: ...
@@ -75,6 +76,36 @@ class NexusFSCoreMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
+
+    def _create_tracked_event_task(
+        self, coro: Any, timeout: float = 30.0, name: str | None = None
+    ) -> asyncio.Task[Any]:
+        """Create an async task that is tracked and auto-cleaned up.
+
+        Issue #913: Prevents memory leaks from fire-and-forget tasks.
+        Tasks are stored in _event_tasks and automatically removed when done.
+
+        Args:
+            coro: The coroutine to run
+            timeout: Timeout in seconds (default: 30s to prevent hanging tasks)
+            name: Optional task name for debugging
+
+        Returns:
+            The created task (already tracked)
+        """
+
+        async def wrapped_coro() -> Any:
+            try:
+                return await asyncio.wait_for(coro, timeout=timeout)
+            except TimeoutError:
+                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
+            except Exception as e:
+                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
+
+        task = asyncio.create_task(wrapped_coro(), name=name)
+        self._event_tasks.add(task)
+        task.add_done_callback(self._event_tasks.discard)
+        return task
 
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
@@ -1318,20 +1349,23 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file write)
+            # Issue #913: Use tracked tasks to prevent memory leaks
             try:
                 # Try to get the running event loop and create task
                 asyncio.get_running_loop()
-                asyncio.create_task(
+                self._create_tracked_event_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_WRITE, event_context
-                    )
+                    ),
+                    name=f"workflow:file_write:{path}",
                 )
                 # v0.8.0: Also broadcast to webhook subscriptions
                 if self.subscription_manager:  # type: ignore[attr-defined]
-                    asyncio.create_task(
+                    self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                             "file_write", event_context, event_context.get("tenant_id", "default")
-                        )
+                        ),
+                        name=f"webhook:file_write:{path}",
                     )
             except RuntimeError:
                 # No event loop running - run workflow synchronously in background thread
@@ -1854,19 +1888,22 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file delete)
+            # Issue #913: Use tracked tasks to prevent memory leaks
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(
+                self._create_tracked_event_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_DELETE, event_context
-                    )
+                    ),
+                    name=f"workflow:file_delete:{path}",
                 )
                 # v0.8.0: Also broadcast to webhook subscriptions
                 if self.subscription_manager:  # type: ignore[attr-defined]
-                    asyncio.create_task(
+                    self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                             "file_delete", event_context, event_context.get("tenant_id", "default")
-                        )
+                        ),
+                        name=f"webhook:file_delete:{path}",
                     )
             except RuntimeError:
                 # No event loop running - run in background thread
@@ -2110,19 +2147,22 @@ class NexusFSCoreMixin:
             }
 
             # Fire event asynchronously (don't block file rename)
+            # Issue #913: Use tracked tasks to prevent memory leaks
             try:
                 asyncio.get_running_loop()
-                asyncio.create_task(
+                self._create_tracked_event_task(
                     self.workflow_engine.fire_event(  # type: ignore[attr-defined]
                         TriggerType.FILE_RENAME, event_context
-                    )
+                    ),
+                    name=f"workflow:file_rename:{old_path}->{new_path}",
                 )
                 # v0.8.0: Also broadcast to webhook subscriptions
                 if self.subscription_manager:  # type: ignore[attr-defined]
-                    asyncio.create_task(
+                    self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                             "file_rename", event_context, event_context.get("tenant_id", "default")
-                        )
+                        ),
+                        name=f"webhook:file_rename:{old_path}->{new_path}",
                     )
             except RuntimeError:
                 # No event loop running - run in background thread

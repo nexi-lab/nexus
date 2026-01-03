@@ -1889,6 +1889,10 @@ class ReBACManager:
         # Ensure default namespaces are initialized
         self._ensure_namespaces_initialized()
 
+        # Issue #773: Default tenant_id to "default" if not provided
+        if tenant_id is None:
+            tenant_id = "default"
+
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
 

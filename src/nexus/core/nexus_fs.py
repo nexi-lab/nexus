@@ -487,6 +487,7 @@ class NexusFS(  # type: ignore[misc]
             rebac_manager=self._rebac_manager,
             enforce_permissions=self._enforce_permissions,
             enable_audit_logging=True,  # Production default
+            permission_enforcer=self._permission_enforcer,
         )
 
         # MountService: Dynamic backend mounting operations (17 methods)
@@ -5709,6 +5710,575 @@ class NexusFS(  # type: ignore[misc]
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
                 config=config,  # Pass config for Docker provider
             )
+
+    # =========================================================================
+    # Internal helper methods (migrated from mixins in Phase 2.3)
+    # =========================================================================
+
+    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
+        """Extract subject from operation context.
+
+        Args:
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+
+        Returns:
+            Subject tuple (type, id) or None if not found
+        """
+        if not context:
+            return None
+
+        # Handle dict format (used by RPC server and tests)
+        if isinstance(context, dict):
+            subject = context.get("subject")
+            if subject and isinstance(subject, tuple) and len(subject) == 2:
+                return (str(subject[0]), str(subject[1]))
+
+            # Construct from subject_type + subject_id
+            subject_type = context.get("subject_type", "user")
+            subject_id = context.get("subject_id") or context.get("user")
+            if subject_id:
+                return (subject_type, subject_id)
+
+            return None
+
+        # Handle OperationContext format - use get_subject() method
+        if hasattr(context, "get_subject") and callable(context.get_subject):
+            result = context.get_subject()
+            if result is not None:
+                return (str(result[0]), str(result[1]))
+            return None
+
+        # Fallback: construct from attributes
+        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+            subject_type = getattr(context, "subject_type", "user")
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            if subject_id:
+                return (subject_type, subject_id)
+
+        # Last resort: use user field
+        if hasattr(context, "user") and context.user:
+            return ("user", context.user)
+
+        return None
+
+    def _check_share_permission(
+        self,
+        resource: tuple[str, str],
+        context: Any,
+        required_permission: str = "execute",
+    ) -> None:
+        """Check if caller has permission to share/manage a resource.
+
+        This helper centralizes the permission check logic used by rebac_create,
+        share_with_user, and share_with_group to prevent code duplication.
+
+        Args:
+            resource: Resource tuple (object_type, object_id)
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            required_permission: Permission level required (default: "execute" for ownership)
+
+        Raises:
+            PermissionError: If caller lacks required permission to manage the resource
+        """
+        if not context:
+            return
+
+        # Extract OperationContext from context parameter
+        op_context: OperationContext | None = None
+        if isinstance(context, OperationContext):
+            op_context = context
+        elif isinstance(context, dict):
+            # Create OperationContext from dict
+            op_context = OperationContext(
+                user=context.get("user", "unknown"),
+                groups=context.get("groups", []),
+                tenant_id=context.get("tenant_id"),
+                is_admin=context.get("is_admin", False),
+                is_system=context.get("is_system", False),
+            )
+
+        # Skip permission check for admin and system contexts
+        if not op_context or not self._enforce_permissions:
+            return
+        if op_context.is_admin or op_context.is_system:
+            return
+
+        # Check if caller has required permission on the resource
+        # Map string permission to Permission enum
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
+        perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
+
+        # For file resources, use the path directly
+        if resource[0] == "file":
+            resource_path = resource[1]
+        else:
+            # For non-file resources, we need to check ReBAC permissions
+            # This ensures groups, workspaces, and other resources are also protected
+            # Check if user has ownership (execute permission) via ReBAC
+            has_permission = self.rebac_check(
+                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                permission="owner",  # Only owners can manage permissions
+                object=resource,
+                context=context,
+            )
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"permission to manage {resource[0]} '{resource[1]}'"
+                )
+            return
+
+        # Use permission enforcer to check permission for file resources
+        if hasattr(self, "_permission_enforcer"):
+            has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+
+            # If user is not owner, check if they are tenant admin
+            if not has_permission:
+                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
+                tenant_id = None
+                if resource_path.startswith("/tenant:"):
+                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                    if parts:
+                        tenant_id = parts[0]
+
+                # Check if user is tenant admin for this resource's tenant
+                if tenant_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_tenant_admin
+
+                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
+                        # Tenant admin can share resources in their tenant
+                        return
+
+                # Neither owner nor tenant admin - deny
+                perm_name = required_permission.upper()
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"permission to manage permissions on '{resource_path}'. "
+                    f"Only owners or tenant admins can share resources."
+                )
+
+    @rpc_expose(description="Share a resource with a specific user")
+    def share_with_user(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        user_tenant_id: str | None = None,
+        expires_at: Any | None = None,
+        context: Any = None,
+    ) -> str:
+        """Share a resource with a specific user, regardless of tenant.
+
+        This enables cross-tenant sharing - users from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to share with (e.g., "bob@partner-company.com")
+            relation: Permission level - "viewer" (read) or "editor" (read/write)
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
+        """
+        from datetime import datetime
+
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # SECURITY: Check execute permission before allowing permission management
+        self._check_share_permission(resource=resource, context=context)
+
+        # Map user-facing relation to internal tuple relation
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use shared-* relations which are allowed to cross tenant boundaries
+        return self._rebac_manager.rebac_write(
+            subject=("user", user_id),
+            relation=tuple_relation,
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=user_tenant_id,
+            expires_at=expires_dt,
+        )
+
+    @rpc_expose(description="Share a resource with a group (all members get access)")
+    def share_with_group(
+        self,
+        resource: tuple[str, str],
+        group_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        group_tenant_id: str | None = None,
+        expires_at: Any | None = None,
+        context: Any = None,
+    ) -> str:
+        """Share a resource with a group (all members get access).
+
+        Uses userset-as-subject pattern: ("group", group_id, "member")
+        All members of the group will have the specified permission level.
+
+        This enables cross-tenant sharing - groups from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            group_id: Group to share with (e.g., "developers")
+            relation: Permission level - "viewer" (read), "editor" (read/write), or "owner"
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            group_tenant_id: Recipient group's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
+        """
+        from datetime import datetime
+
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # SECURITY: Check execute permission before allowing permission management
+        self._check_share_permission(resource=resource, context=context)
+
+        # Map user-facing relation to internal tuple relation
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use userset-as-subject pattern: ("group", group_id, "member")
+        return self._rebac_manager.rebac_write(
+            subject=("group", group_id, "member"),  # Userset-as-subject pattern
+            relation=tuple_relation,
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=group_tenant_id,
+            expires_at=expires_dt,
+        )
+
+    def _map_provider_name(self, provider: str) -> str:
+        """Map user-facing provider name to config provider name.
+
+        Args:
+            provider: User-facing provider name (e.g., "google", "microsoft")
+
+        Returns:
+            Config provider name (e.g., "google-drive", "microsoft-onedrive")
+        """
+        provider_name_map = {
+            "google": "google-drive",  # Default to drive for user convenience
+            "twitter": "x",
+            "x": "x",
+            "microsoft": "microsoft-onedrive",
+            "microsoft-onedrive": "microsoft-onedrive",
+        }
+        return provider_name_map.get(provider, provider)
+
+    def _grant_mount_owner_permission(
+        self, mount_point: str, context: OperationContext | None
+    ) -> None:
+        """Grant direct_owner permission to the user who created the mount.
+
+        This helper function is called after successfully creating a mount to
+        automatically grant the creator full access to the mounted backend.
+        It also creates a directory entry for the mount point.
+
+        Args:
+            mount_point: The virtual path of the mount
+            context: Operation context containing user/subject information
+        """
+        import logging
+
+        from nexus.core.context_utils import get_tenant_id, get_user_identity
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Setting up mount point: {mount_point}")
+
+        # Create directory entry for the mount point
+        try:
+            if hasattr(self, "mkdir"):
+                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
+                logger.info(f"Created directory entry for mount point: {mount_point}")
+            else:
+                logger.warning(
+                    "[MOUNT-DIR] mkdir method not available, skipping directory creation"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if directory creation fails
+            logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+
+        # Grant direct_owner permission
+        if not context:
+            logger.warning("[MOUNT-PERM] Skipping permission grant - no context")
+            return
+
+        try:
+            # Get tenant and subject info from context
+            tenant_id = get_tenant_id(context)
+            subject_type, subject_id = get_user_identity(context)
+
+            # Check if we got a valid subject_id
+            if not subject_id:
+                logger.warning("[MOUNT-PERM] Skipping permission grant - no subject_id in context")
+                return
+
+            # Create permission tuple using rebac_create method
+            if hasattr(self, "rebac_create") and subject_id:
+                tuple_id = self.rebac_create(
+                    subject=(subject_type, subject_id),
+                    relation="direct_owner",
+                    object=("file", mount_point),
+                    tenant_id=tenant_id,
+                )
+
+                logger.info(
+                    f"Granted direct_owner permission to {subject_type}:{context.subject_id} "
+                    f"for mount {mount_point} (tenant={tenant_id}, tuple_id={tuple_id})"
+                )
+            else:
+                logger.warning(
+                    "[MOUNT-PERM] rebac_create method not available, skipping permission grant"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if permission grant fails
+            logger.warning(f"Failed to grant direct_owner permission for mount {mount_point}: {e}")
+
+    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
+        """Load all saved mount configurations from database and activate them.
+
+        This method is called during NexusFS initialization to restore all
+        persisted mounts from the database. It retrieves all saved mount configs
+        via mount_manager.list_mounts() and activates each one.
+
+        Args:
+            auto_sync: If True, automatically sync connector backends after loading.
+                      If False (default), skip auto-sync for faster server startup.
+                      Users can manually call sync_mount() after server is up.
+
+        Returns:
+            Dictionary with loading results:
+                - loaded: Number of successfully loaded mounts
+                - synced: Number of connector mounts that were synced (only if auto_sync=True)
+                - failed: Number of mounts that failed to load
+                - errors: List of error messages for failed mounts
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not hasattr(self, "mount_manager") or self.mount_manager is None:
+            logger.warning("Mount manager not available, skipping mount restoration")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        # Get all saved mounts from database (NOT active mounts)
+        saved_mounts = self.mount_manager.list_mounts()
+
+        if not saved_mounts:
+            logger.info("No saved mounts found in database")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
+
+        loaded = 0
+        failed = 0
+        synced = 0
+        errors: list[str] = []
+
+        for mount in saved_mounts:
+            mount_point = mount["mount_point"]
+            try:
+                logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
+
+                # Parse backend config from JSON (if it's a string)
+                backend_config = mount["backend_config"]
+                if isinstance(backend_config, str):
+                    backend_config = json.loads(backend_config)
+
+                # Activate the mount using add_mount
+                self.add_mount(
+                    mount_point=mount_point,
+                    backend_type=mount["backend_type"],
+                    backend_config=backend_config,
+                    priority=mount["priority"],
+                    readonly=bool(mount["readonly"]),
+                )
+
+                loaded += 1
+                logger.info(f"Successfully loaded mount: {mount_point}")
+
+                # Only auto-sync if explicitly requested (default: False for fast startup)
+                if auto_sync:
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                        try:
+                            logger.info(f"Auto-syncing connector mount: {mount_point}")
+                            # Create a minimal context from mount owner if available
+                            sync_context = None
+                            if mount.get("owner_user_id"):
+                                # Parse owner_user_id (format: "user:alice" or "agent:bot")
+                                owner_parts = mount["owner_user_id"].split(":", 1)
+                                if len(owner_parts) == 2:
+                                    subject_type, subject_id = owner_parts
+                                else:
+                                    subject_type, subject_id = "user", owner_parts[0]
+                                sync_context = OperationContext(
+                                    user=subject_id,
+                                    groups=[],
+                                    tenant_id=mount.get("tenant_id", "default"),
+                                    subject_type=subject_type,
+                                    subject_id=subject_id,
+                                )
+                                logger.info(
+                                    f"Using owner context for sync: {subject_type}:{subject_id}"
+                                )
+                            sync_result = self.sync_mount(
+                                mount_point, recursive=True, dry_run=False, context=sync_context
+                            )
+                            synced += 1
+                            logger.info(
+                                f"Synced {mount_point}: "
+                                f"{sync_result['files_scanned']} scanned, "
+                                f"{sync_result['files_created']} created, "
+                                f"{sync_result['files_updated']} updated, "
+                                f"{sync_result['files_deleted']} deleted"
+                            )
+                        except Exception as sync_e:
+                            # Log sync error but don't fail the mount
+                            logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
+                else:
+                    # Skip auto-sync for faster startup
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                        logger.info(
+                            f"Skipping auto-sync for {mount_point} (use sync_mount() to sync manually)"
+                        )
+
+            except Exception as e:
+                failed += 1
+                error_msg = f"Failed to load mount {mount_point}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                # Continue loading other mounts even if one fails
+
+        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
+
+        return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
+
+    def _matches_patterns(
+        self, file_path: str, include_patterns: list[str] | None, exclude_patterns: list[str] | None
+    ) -> bool:
+        """Check if a file path matches include/exclude patterns.
+
+        Args:
+            file_path: Virtual file path to check
+            include_patterns: Glob patterns to include (None or empty means include all)
+            exclude_patterns: Glob patterns to exclude (None or empty means exclude none)
+
+        Returns:
+            True if file should be included, False otherwise
+        """
+        from nexus.core import glob_fast
+
+        # Check include patterns (if specified, file must match at least one)
+        if include_patterns and not glob_fast.glob_match(file_path, list(include_patterns)):
+            return False
+
+        # Check exclude patterns (if file matches any, exclude it)
+        return not (exclude_patterns and glob_fast.glob_match(file_path, list(exclude_patterns)))
+
+    def _get_skill_registry(self) -> Any:
+        """Get or create SkillRegistry instance.
+
+        Returns:
+            SkillRegistry instance
+        """
+        from nexus.skills import SkillRegistry
+
+        return SkillRegistry(cast(NexusFilesystem, self))
+
+    def _get_skill_manager(self) -> Any:
+        """Get or create SkillManager instance.
+
+        Returns:
+            SkillManager instance
+        """
+        from nexus.skills import SkillManager
+
+        registry = self._get_skill_registry()
+        return SkillManager(cast(NexusFilesystem, self), registry)
+
+    def _get_skill_governance(self) -> Any:
+        """Get or create SkillGovernance instance.
+
+        Returns:
+            SkillGovernance instance
+        """
+        from nexus.skills import SkillGovernance
+
+        # Get database connection if available
+        db_conn = None
+        if (
+            hasattr(self, "metadata_store")
+            and self.metadata_store
+            and hasattr(self.metadata_store, "session")
+        ):
+            from nexus.cli.commands.skills import SQLAlchemyDatabaseConnection
+
+            db_conn = SQLAlchemyDatabaseConnection(self.metadata_store.session)
+
+        return SkillGovernance(db_connection=db_conn)
 
     @staticmethod
     def _get_event_loop() -> asyncio.AbstractEventLoop:

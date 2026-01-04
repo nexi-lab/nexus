@@ -156,6 +156,34 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "delete"):
             self._fs.metadata.delete(path)
 
+    def metadata_delete_batch(self, paths: list[str]) -> None:
+        """Delete metadata for multiple paths in a single transaction.
+
+        Args:
+            paths: List of virtual paths to delete
+        """
+        if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "delete_batch"):
+            self._fs.metadata.delete_batch(paths)
+
+    def delete_directory_entries_recursive(self, path: str, tenant_id: str | None = None) -> int:
+        """Delete all directory entries under a path (recursive).
+
+        Cleans up the sparse directory index for a path and all descendants.
+        Used for mount point cleanup.
+
+        Args:
+            path: Virtual path to clean up
+            tenant_id: Tenant ID for multi-tenant isolation
+
+        Returns:
+            Number of entries deleted
+        """
+        if hasattr(self._fs, "metadata") and hasattr(
+            self._fs.metadata, "delete_directory_entries_recursive"
+        ):
+            return self._fs.metadata.delete_directory_entries_recursive(path, tenant_id)
+        return 0
+
     # =========================================================================
     # Permission Operations (ReBAC)
     # =========================================================================

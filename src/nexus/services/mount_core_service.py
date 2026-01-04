@@ -162,13 +162,32 @@ class MountCoreService:
         result["removed"] = True
         logger.info(f"Removed mount from router: {mount_point}")
 
-        # Delete directory entry
+        # Delete all metadata entries (mount point + children)
         try:
-            self._gw.metadata_delete(mount_point)
-            result["directory_deleted"] = True
-            logger.info(f"Deleted mount point directory: {mount_point}")
+            dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
+            child_entries = self._gw.metadata_list(dir_prefix)
+            paths_to_delete = [entry.path for entry in child_entries] if child_entries else []
+            paths_to_delete.append(mount_point)  # Include mount point itself
+            self._gw.metadata_delete_batch(paths_to_delete)
+            result["files_deleted"] = len(paths_to_delete)
+            logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
         except Exception as e:
-            error_msg = f"Failed to delete directory {mount_point}: {e}"
+            error_msg = f"Failed to delete metadata entries for {mount_point}: {e}"
+            result["errors"].append(error_msg)
+            logger.warning(error_msg)
+
+        # Clean up sparse directory index entries
+        try:
+            tenant_id = get_tenant_id(context)
+            dir_entries_deleted = self._gw.delete_directory_entries_recursive(
+                mount_point, tenant_id
+            )
+            result["directory_entries_deleted"] = dir_entries_deleted
+            logger.info(
+                f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
+            )
+        except Exception as e:
+            error_msg = f"Failed to clean up directory index: {e}"
             result["errors"].append(error_msg)
             logger.warning(error_msg)
 

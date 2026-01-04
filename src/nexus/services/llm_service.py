@@ -153,8 +153,18 @@ class LLMService:
             This is the simplest method - use llm_read_detailed() if you need
             citations, sources, cost tracking, or other metadata.
         """
-        # TODO: Extract llm_read implementation
-        raise NotImplementedError("llm_read() not yet implemented - Phase 2 in progress")
+        reader = self._get_llm_reader(provider=provider, model=model, api_key=api_key)
+
+        result = await reader.read(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            use_search=use_search,
+            search_mode=search_mode,
+        )
+
+        return result.answer
 
     @rpc_expose(description="Read document with LLM and return detailed result")
     async def llm_read_detailed(
@@ -227,20 +237,30 @@ class LLMService:
             references to source documents. Accuracy depends on the model
             following citation instructions in the system prompt.
         """
-        # TODO: Extract llm_read_detailed implementation
-        raise NotImplementedError("llm_read_detailed() not yet implemented - Phase 2 in progress")
+        reader = self._get_llm_reader(provider=provider, model=model, api_key=api_key)
+
+        return await reader.read(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            use_search=use_search,
+            search_mode=search_mode,
+            search_limit=search_limit,
+            include_citations=include_citations,
+        )
 
     @rpc_expose(description="Stream document reading response")
     async def llm_read_stream(
         self,
-        _path: str,
-        _prompt: str,
-        _model: str = "claude-sonnet-4",
-        _max_tokens: int = 1000,
-        _api_key: str | None = None,
-        _use_search: bool = True,
-        _search_mode: str = "semantic",
-        _provider: LLMProvider | None = None,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: LLMProvider | None = None,
     ) -> AsyncIterator[str]:
         """Stream document reading response.
 
@@ -293,9 +313,17 @@ class LLMService:
             detailed metadata like citations or cost. Use llm_read_detailed()
             if you need that information.
         """
-        # TODO: Extract llm_read_stream implementation
-        raise NotImplementedError("llm_read_stream() not yet implemented - Phase 2 in progress")
-        yield  # pragma: no cover
+        reader = self._get_llm_reader(provider=provider, model=model, api_key=api_key)
+
+        async for chunk in reader.stream(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            use_search=use_search,
+            search_mode=search_mode,
+        ):
+            yield chunk
 
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
@@ -368,8 +396,13 @@ class LLMService:
             The reader has access to the full NexusFS instance and can read
             any files the current user has permission to access.
         """
-        # TODO: Extract create_llm_reader implementation
-        raise NotImplementedError("create_llm_reader() not yet implemented - Phase 2 in progress")
+        return self._get_llm_reader(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
 
     # =========================================================================
     # Helper Methods
@@ -377,11 +410,11 @@ class LLMService:
 
     def _get_llm_reader(
         self,
-        _provider: LLMProvider | None = None,
-        _model: str | None = None,
-        _api_key: str | None = None,
-        _system_prompt: str | None = None,
-        _max_context_tokens: int = 3000,
+        provider: LLMProvider | None = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        max_context_tokens: int = 3000,
     ) -> LLMDocumentReader:
         """Get or create LLM document reader.
 
@@ -389,11 +422,11 @@ class LLMService:
         configuration and integrations (semantic search, filesystem access).
 
         Args:
-            _provider: LLM provider instance (creates default if None)
-            _model: Model name (default: claude-sonnet-4)
-            _api_key: API key for provider
-            _system_prompt: Custom system prompt
-            _max_context_tokens: Maximum tokens for document context
+            provider: LLM provider instance (creates default if None)
+            model: Model name (default: claude-sonnet-4)
+            api_key: API key for provider
+            system_prompt: Custom system prompt
+            max_context_tokens: Maximum tokens for document context
 
         Returns:
             LLMDocumentReader instance
@@ -403,29 +436,85 @@ class LLMService:
             on the NexusFS instance. Handles provider-specific configuration
             like OpenRouter custom_llm_provider setting.
         """
-        # TODO: Extract LLM reader getter
-        raise NotImplementedError("_get_llm_reader() not yet implemented - Phase 2 in progress")
+        from pydantic import SecretStr
+
+        from nexus.llm.config import LLMConfig
+        from nexus.llm.document_reader import LLMDocumentReader
+        from nexus.llm.provider import LiteLLMProvider
+
+        # Create provider if not provided
+        if provider is None:
+            import os
+
+            model = model or "claude-sonnet-4"
+
+            # Handle OpenRouter specifically
+            if model and model.startswith("anthropic/"):
+                # OpenRouter model - need to configure for OpenRouter
+                if not api_key and os.getenv("OPENROUTER_API_KEY"):
+                    api_key = os.getenv("OPENROUTER_API_KEY")
+
+                # Set custom_llm_provider for OpenRouter
+                if api_key:
+                    config = LLMConfig(
+                        model=model,
+                        api_key=SecretStr(api_key),
+                        custom_llm_provider="openrouter",
+                    )
+                else:
+                    config = LLMConfig(model=model, custom_llm_provider="openrouter")
+            else:
+                if api_key:
+                    config = LLMConfig(model=model, api_key=SecretStr(api_key))
+                else:
+                    config = LLMConfig(model=model)
+
+            provider = LiteLLMProvider(config)
+
+        # Get semantic search if available
+        search = None
+        if self.nexus_fs and hasattr(self.nexus_fs, "_semantic_search"):
+            search = self.nexus_fs._semantic_search
+
+        # Create document reader
+        if self.nexus_fs is None:
+            raise RuntimeError("NexusFS not configured for LLMService")
+
+        return LLMDocumentReader(
+            nx=self.nexus_fs,
+            provider=provider,
+            search=search,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
 
 
 # =============================================================================
 # Phase 2 Extraction Progress
 # =============================================================================
 #
-# Status: Skeleton created ✅
+# Status: Implementation complete ✅
 #
-# TODO (in order of priority):
-# 1. [ ] Extract llm_read() for simple Q&A
-# 2. [ ] Extract llm_read_detailed() with citations and cost tracking
-# 3. [ ] Extract llm_read_stream() for real-time streaming
-# 4. [ ] Extract create_llm_reader() factory method
-# 5. [ ] Extract _get_llm_reader() helper with provider auto-configuration
+# Completed:
+# 1. [✅] Extract llm_read() for simple Q&A
+# 2. [✅] Extract llm_read_detailed() with citations and cost tracking
+# 3. [✅] Extract llm_read_stream() for real-time streaming
+# 4. [✅] Extract create_llm_reader() factory method
+# 5. [✅] Extract _get_llm_reader() helper with provider auto-configuration
+#
+# Remaining tasks:
 # 6. [ ] Add unit tests for LLMService
 # 7. [ ] Update NexusFS to use composition
 # 8. [ ] Add backward compatibility shims with deprecation warnings
 # 9. [ ] Update documentation and migration guide
 #
-# Lines extracted: 0 / 286 (0%)
-# Files affected: 1 created, 0 modified
+# Lines extracted: 286 / 286 (100%)
+# Files affected: 1 created (llm_service.py)
 #
-# This is a phased extraction to maintain working code at each step.
+# Key changes from original mixin:
+# - All async methods remain async (already async in original)
+# - No blocking I/O to wrap (LLMDocumentReader is already async)
+# - Clean dependency injection via __init__ (nexus_fs)
+# - Automatic integration with semantic search if available
+# - OpenRouter-specific configuration preserved
 #

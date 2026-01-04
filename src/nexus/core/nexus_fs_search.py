@@ -381,8 +381,11 @@ class NexusFSSearchMixin:
                     # List directory contents (with recursion if requested)
                     all_paths = list_recursive(path, route.backend_path)
 
-                    # FIX: Apply permission filtering (same as normal metadata path)
-                    # Without this, users see ALL files regardless of permissions
+                    # FIX #958: Apply permission filtering with proper directory handling
+                    # For directories, check has_accessible_descendants() (TRAVERSE semantics)
+                    # For files, check READ permission via filter_list()
+                    # Without this, connector directories (Gmail labels, etc.) are incorrectly
+                    # filtered out because users have READ on files inside, not on directories
                     if self._enforce_permissions and context:
                         from nexus.core.permissions import OperationContext
 
@@ -391,7 +394,27 @@ class NexusFSSearchMixin:
                             if isinstance(context, OperationContext)
                             else self._default_context
                         )
-                        all_paths = self._permission_enforcer.filter_list(all_paths, filter_ctx)
+
+                        # Separate directories from files
+                        dir_paths = [p for p in all_paths if p.endswith("/")]
+                        file_paths = [p for p in all_paths if not p.endswith("/")]
+
+                        # Filter files by READ permission
+                        filtered_files = self._permission_enforcer.filter_list(
+                            file_paths, filter_ctx
+                        )
+
+                        # Filter directories by has_accessible_descendants
+                        # This matches the behavior in regular FS listing (line 538)
+                        filtered_dirs = [
+                            d
+                            for d in dir_paths
+                            if self._permission_enforcer.has_accessible_descendants(
+                                d.rstrip("/"), filter_ctx
+                            )
+                        ]
+
+                        all_paths = filtered_dirs + filtered_files
 
                     # Format results
                     # FIX: Use correct field names for FUSE client compatibility:

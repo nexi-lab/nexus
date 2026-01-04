@@ -229,10 +229,11 @@ class NexusFSGateway:
             Number of tuples deleted
         """
         if hasattr(self._fs, "rebac_delete_object_tuples"):
-            return self._fs.rebac_delete_object_tuples(
+            result: int = self._fs.rebac_delete_object_tuples(
                 object=object,
                 tenant_id=tenant_id,
             )
+            return result
         return 0
 
     # =========================================================================

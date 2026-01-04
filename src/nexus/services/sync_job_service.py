@@ -47,7 +47,7 @@ class SyncJobService:
         """
         self._gw = gateway
         self._sync = sync_service
-        self._manager = None  # Lazy init
+        self._manager: Any = None  # Lazy init (SyncJobManager)
 
     def _get_manager(self) -> Any:
         """Get or create SyncJobManager.
@@ -84,7 +84,8 @@ class SyncJobService:
             Job ID (UUID string)
         """
         manager = self._get_manager()
-        return manager.create_job(mount_point, params, user_id)
+        result: str = manager.create_job(mount_point, params, user_id)
+        return result
 
     def start_job(self, job_id: str) -> None:
         """Start job execution in background thread.
@@ -155,7 +156,8 @@ class SyncJobService:
             Job details dict or None if not found
         """
         manager = self._get_manager()
-        return manager.get_job(job_id)
+        result: dict[str, Any] | None = manager.get_job(job_id)
+        return result
 
     def cancel_job(self, job_id: str) -> bool:
         """Request job cancellation.
@@ -167,7 +169,8 @@ class SyncJobService:
             True if cancellation was requested
         """
         manager = self._get_manager()
-        return manager.cancel_job(job_id)
+        result: bool = manager.cancel_job(job_id)
+        return result
 
     def list_jobs(
         self,

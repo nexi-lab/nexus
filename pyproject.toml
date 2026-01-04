@@ -96,6 +96,9 @@ dependencies = [
     "bm25s>=0.2.0",
     # LZ4 compression for ContentCache 3-4x capacity (Issue #908)
     "lz4>=4.3.0",
+    # Rate limiting for DoS protection (Issue #780)
+    "slowapi>=0.1.9",
+    "limits>=3.6.0",
 ]
 
 [project.optional-dependencies]

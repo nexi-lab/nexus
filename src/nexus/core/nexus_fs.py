@@ -6547,6 +6547,112 @@ class NexusFS(  # type: ignore[misc]
         """
         return await self.rebac_service.get_namespace(object_type=object_type)
 
+    # -------------------------------------------------------------------------
+    # MCPService Delegation Methods (5 methods)
+    # -------------------------------------------------------------------------
+
+    async def amcp_list_mounts(self, context: Any = None) -> list[dict[str, Any]]:
+        """List all MCP mounts - delegates to MCPService.
+
+        Async version of mcp_list_mounts() using the service layer.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            List of MCP mount dictionaries
+        """
+        return await self.mcp_service.mcp_list_mounts(context=context)
+
+    async def amcp_list_tools(
+        self,
+        name: str,
+        context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List MCP tools from specific mount - delegates to MCPService.
+
+        Async version of mcp_list_tools() using the service layer.
+
+        Args:
+            name: Mount name to list tools from
+            context: Operation context
+
+        Returns:
+            List of tool dictionaries
+        """
+        return await self.mcp_service.mcp_list_tools(
+            name=name,
+            context=context,
+        )
+
+    async def amcp_mount(
+        self,
+        name: str,
+        command: str | None = None,
+        args: list[str] | None = None,
+        url: str | None = None,
+        env: dict[str, str] | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Mount an MCP server - delegates to MCPService.
+
+        Async version of mcp_mount() using the service layer.
+
+        Args:
+            name: Mount name
+            command: Command to run (for stdio transport)
+            args: Command arguments
+            url: Server URL (for SSE transport)
+            env: Environment variables
+            context: Operation context
+
+        Returns:
+            Mount information dictionary
+        """
+        return await self.mcp_service.mcp_mount(
+            name=name,
+            command=command,
+            args=args,
+            url=url,
+            env=env,
+            context=context,
+        )
+
+    async def amcp_unmount(self, name: str, context: Any = None) -> dict[str, Any]:
+        """Unmount an MCP server - delegates to MCPService.
+
+        Async version of mcp_unmount() using the service layer.
+
+        Args:
+            name: Mount name to unmount
+            context: Operation context
+
+        Returns:
+            Result dictionary with success status
+        """
+        return await self.mcp_service.mcp_unmount(name=name, _context=context)
+
+    async def amcp_sync(
+        self,
+        name: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Sync/refresh tools from MCP mount - delegates to MCPService.
+
+        Async version of mcp_sync() using the service layer.
+
+        Args:
+            name: MCP mount name
+            context: Operation context
+
+        Returns:
+            Sync result dictionary with tool statistics
+        """
+        return await self.mcp_service.mcp_sync(
+            name=name,
+            context=context,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

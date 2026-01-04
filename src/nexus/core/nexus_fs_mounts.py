@@ -1,211 +1,114 @@
 """Mount management operations for NexusFS.
 
-This module contains mount management operations:
-- add_mount: Add dynamic backend mount
-- remove_mount: Remove backend mount
-- list_mounts: List all active mounts
-- get_mount: Get mount details
-- save_mount: Persist mount to database
-- load_mounts: Load persisted mounts from database
+This module provides a thin facade over mount services:
+- MountCoreService: add/remove/list mounts
+- SyncService: sync operations
+- SyncJobService: async job management
+- MountPersistService: database persistence
+
+Phase 2: Mount Mixin Refactoring
+- Original: 2,065 lines monolithic mixin
+- New: ~150 lines thin facade delegating to services
+
+All business logic is in services. This mixin only:
+1. Provides @rpc_expose decorated methods
+2. Instantiates services via cached_property
+3. Delegates to services
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from dataclasses import asdict
+from functools import cached_property
+from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend
-from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+    from nexus.services.gateway import NexusFSGateway
+    from nexus.services.mount_core_service import MountCoreService
+    from nexus.services.mount_persist_service import MountPersistService
+    from nexus.services.sync_job_service import SyncJobService
+    from nexus.services.sync_service import SyncService
 
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-# Type alias for progress callback: (files_scanned: int, current_path: str) -> None
+# Type alias for progress callback (backward compatibility)
 ProgressCallback = Callable[[int, str], None]
 
 
-@dataclass
-class SyncMountContext:
-    """Context object for sync_mount operations.
+class NexusFSMountsMixin:
+    """Thin facade exposing mount operations via RPC.
 
-    Groups all parameters needed for syncing a mount to reduce parameter passing.
+    All logic delegated to services:
+    - MountCoreService: add/remove/list mounts
+    - SyncService: sync operations
+    - SyncJobService: async job management
+    - MountPersistService: database persistence
+
+    AI-Friendly Design:
+    - Services accessed via self._mount_core_service, etc.
+    - Each service uses Gateway pattern (self._gw)
+    - Clear delegation, no business logic here
     """
 
-    mount_point: str
-    path: str | None
-    recursive: bool
-    dry_run: bool
-    sync_content: bool
-    include_patterns: list[str] | None
-    exclude_patterns: list[str] | None
-    generate_embeddings: bool
-    context: OperationContext | None
-    # Progress callback for async sync (Issue #609)
-    progress_callback: ProgressCallback | None = None
-    # Additional fields populated during sync
-    backend: Any | None = None
-    created_by: str | None = None
-    has_hierarchy: bool = False
-
-
-class MetadataSyncResult(NamedTuple):
-    """Result from metadata sync operation."""
-
-    stats: dict[str, int | list[str]]
-    files_found_in_backend: set[str]
-
-
-class NexusFSMountsMixin:
-    """Mixin providing mount management operations for NexusFS."""
-
-    # Type hints for attributes that will be provided by NexusFS parent class
+    # Type hints for attributes provided by NexusFS parent class
     if TYPE_CHECKING:
         router: PathRouter
         mount_manager: MountManager | None
 
-    def _grant_mount_owner_permission(
-        self, mount_point: str, context: OperationContext | None
-    ) -> None:
-        """Grant direct_owner permission to the user who created the mount.
+    # =========================================================================
+    # Service Properties (lazy initialization)
+    # =========================================================================
 
-        This helper function is called after successfully creating a mount to
-        automatically grant the creator full access to the mounted backend.
-        It also creates a directory entry for the mount point.
+    @cached_property
+    def _gateway(self) -> "NexusFSGateway":
+        """Get or create NexusFSGateway."""
+        from nexus.services.gateway import NexusFSGateway
 
-        Args:
-            mount_point: The virtual path of the mount
-            context: Operation context containing user/subject information
-        """
-        logger.info(f"Setting up mount point: {mount_point}")
+        return NexusFSGateway(self)  # type: ignore[arg-type]
 
-        # Create directory entry for the mount point
-        try:
-            if hasattr(self, "mkdir"):
-                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
-                logger.info(f"✓ Created directory entry for mount point: {mount_point}")
-            else:
-                logger.warning(
-                    "[MOUNT-DIR] mkdir method not available, skipping directory creation"
-                )
-        except Exception as e:
-            # Log but don't fail the mount operation if directory creation fails
-            logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+    @cached_property
+    def _mount_core_service(self) -> "MountCoreService":
+        """Get or create MountCoreService."""
+        from nexus.services.mount_core_service import MountCoreService
 
-        # Grant direct_owner permission
-        if not context:
-            logger.warning("[MOUNT-PERM] Skipping permission grant - no context")
-            return
+        return MountCoreService(self._gateway)
 
-        try:
-            # Get tenant and subject info from context
-            tenant_id = get_tenant_id(context)
-            subject_type, subject_id = get_user_identity(context)
+    @cached_property
+    def _sync_service(self) -> "SyncService":
+        """Get or create SyncService."""
+        from nexus.services.sync_service import SyncService
 
-            # Check if we got a valid subject_id
-            if not subject_id:
-                logger.warning("[MOUNT-PERM] Skipping permission grant - no subject_id in context")
-                return
+        return SyncService(self._gateway)
 
-            # Create permission tuple using rebac_create method
-            if hasattr(self, "rebac_create") and subject_id:
-                tuple_id = self.rebac_create(
-                    subject=(subject_type, subject_id),
-                    relation="direct_owner",
-                    object=("file", mount_point),
-                    tenant_id=tenant_id,
-                )
+    @cached_property
+    def _sync_job_service(self) -> "SyncJobService":
+        """Get or create SyncJobService."""
+        from nexus.services.sync_job_service import SyncJobService
 
-                logger.info(
-                    f"✓ Granted direct_owner permission to {subject_type}:{context.subject_id} "
-                    f"for mount {mount_point} (tenant={tenant_id}, tuple_id={tuple_id})"
-                )
-            else:
-                logger.warning(
-                    "[MOUNT-PERM] rebac_create method not available, skipping permission grant"
-                )
-        except Exception as e:
-            # Log but don't fail the mount operation if permission grant fails
-            logger.warning(f"Failed to grant direct_owner permission for mount {mount_point}: {e}")
+        return SyncJobService(self._gateway, self._sync_service)
 
-    def _generate_connector_skill(
-        self, mount_point: str, backend_type: str, context: OperationContext | None
-    ) -> bool:
-        """Generate SKILL.md for a connector mount.
+    @cached_property
+    def _mount_persist_service(self) -> "MountPersistService":
+        """Get or create MountPersistService."""
+        from nexus.services.mount_persist_service import MountPersistService
 
-        Creates a skill document describing the connector's capabilities,
-        folder structure, and operations. Uses pre-defined templates from
-        configs/connector-skills/ when available.
+        return MountPersistService(
+            mount_manager=getattr(self, "mount_manager", None),
+            mount_service=self._mount_core_service,
+            sync_service=self._sync_service,
+        )
 
-        Args:
-            mount_point: The virtual path of the mount (e.g., "/mnt/gdrive")
-            backend_type: Backend type (e.g., "gdrive_connector", "s3_connector")
-            context: Operation context containing user/subject information
-
-        Returns:
-            True if skill was generated, False otherwise
-        """
-        try:
-            from nexus.backends.service_map import ServiceMap
-            from nexus.skills.skill_generator import generate_skill_md
-
-            # Get unified service name from backend type
-            service_name = ServiceMap.get_service_name(connector=backend_type)
-            if not service_name:
-                # Use backend type as service name if not in registry
-                service_name = backend_type.replace("_connector", "").replace("_", "-")
-                logger.debug(f"No service mapping for {backend_type}, using: {service_name}")
-
-            # Determine skill path based on context
-            # Default to system tier, but could use tenant/user tiers based on context
-            if context and hasattr(context, "user_id") and context.user_id:
-                skill_base_path = f"/skills/users/{context.user_id}/"
-            elif context and hasattr(context, "tenant_id") and context.tenant_id:
-                skill_base_path = f"/skills/tenants/{context.tenant_id}/"
-            else:
-                skill_base_path = "/skills/system/"
-
-            skill_path = f"{skill_base_path}{service_name}/"
-            skill_md_path = f"{skill_path}SKILL.md"
-
-            # Generate skill content with connector template
-            # Note: If MCP was connected first, user can re-run mcp_connect to regenerate
-            # merged SKILL.md (mcp_connect uses ServiceMap to include connector template)
-            skill_md = generate_skill_md(
-                service_name=service_name,
-                mount_path=mount_point,
-            )
-
-            # Create skill directory and write SKILL.md
-            if hasattr(self, "mkdir"):
-                try:
-                    self.mkdir(skill_path, parents=True, exist_ok=True, context=context)
-                except Exception as mkdir_e:
-                    logger.warning(f"Failed to create skill directory {skill_path}: {mkdir_e}")
-
-            if hasattr(self, "write"):
-                self.write(
-                    skill_md_path,
-                    skill_md.encode("utf-8") if isinstance(skill_md, str) else skill_md,
-                    context=context,
-                )
-                logger.info(f"Generated connector skill: {skill_md_path}")
-                return True
-            else:
-                logger.warning("write method not available, skipping skill generation")
-                return False
-
-        except Exception as e:
-            # Log but don't fail the mount operation
-            logger.warning(f"Failed to generate skill for {backend_type} at {mount_point}: {e}")
-            return False
+    # =========================================================================
+    # Core Mount Operations
+    # =========================================================================
 
     @rpc_expose(description="Add dynamic backend mount")
     def add_mount(
@@ -215,850 +118,101 @@ class NexusFSMountsMixin:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
 
-        This adds a backend mount at runtime without requiring server restart.
-        Useful for user-specific storage, temporary backends, or multi-tenant scenarios.
-
-        Automatically grants direct_owner permission to the user who creates the mount.
-
         Args:
-            mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
-            backend_type: Backend type - "local", "gcs", "gcs_connector", "google_drive", etc.
-            backend_config: Backend-specific configuration dict
-            priority: Mount priority - higher values take precedence (default: 0)
-            readonly: Whether mount is read-only (default: False)
-            context: Operation context (automatically provided by RPC server)
+            mount_point: Virtual path where backend is mounted
+            backend_type: Backend type identifier
+            backend_config: Backend-specific configuration
+            priority: Mount priority (higher takes precedence)
+            readonly: Whether mount is read-only
+            context: Operation context
 
         Returns:
-            Mount ID (unique identifier for this mount)
-
-        Raises:
-            ValueError: If mount_point already exists or configuration is invalid
-            RuntimeError: If backend type is not supported
-
-        Examples:
-            >>> # Add personal GCS mount (CAS-based)
-            >>> mount_id = nx.add_mount(
-            ...     mount_point="/personal/alice",
-            ...     backend_type="gcs",
-            ...     backend_config={
-            ...         "bucket": "alice-personal-bucket",
-            ...         "project_id": "my-project"
-            ...     },
-            ...     priority=10
-            ... )
-
-            >>> # Add GCS connector mount (direct path mapping for external buckets)
-            >>> mount_id = nx.add_mount(
-            ...     mount_point="/workspace/gdrive",
-            ...     backend_type="gcs_connector",
-            ...     backend_config={
-            ...         "bucket": "my-external-bucket",
-            ...         "project_id": "my-project",
-            ...         "prefix": "workspace"  # Optional prefix in bucket
-            ...     }
-            ... )
-
-            >>> # Add local shared mount
-            >>> mount_id = nx.add_mount(
-            ...     mount_point="/shared/team",
-            ...     backend_type="local",
-            ...     backend_config={"data_dir": "/mnt/shared"},
-            ...     readonly=True
-            ... )
+            Mount ID (mount_point)
         """
-        # Auto-inject token_manager_db for OAuth-backed connectors
-        if (
-            backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
-            and "token_manager_db" not in backend_config
-        ):
-            # Use centralized database URL resolution
-            try:
-                database_url = get_database_url(self)
-                backend_config = {**backend_config, "token_manager_db": database_url}
-            except RuntimeError as e:
-                raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
-
-        # Import backend classes dynamically
-        backend: Backend
-        if backend_type == "local":
-            from nexus.backends.local import LocalBackend
-
-            backend = LocalBackend(root_path=backend_config["data_dir"])
-        elif backend_type == "gcs":
-            from nexus.backends.gcs import GCSBackend
-
-            backend = GCSBackend(
-                bucket_name=backend_config["bucket"],
-                project_id=backend_config.get("project_id"),
-                credentials_path=backend_config.get("credentials_path"),
-            )
-        elif backend_type == "gcs_connector":
-            from nexus.backends.gcs_connector import GCSConnectorBackend
-
-            # Get session factory for caching support if available
-            session_factory = None
-            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
-                session_factory = self.metadata.SessionLocal
-
-            backend = GCSConnectorBackend(
-                bucket_name=backend_config["bucket"],
-                project_id=backend_config.get("project_id"),
-                prefix=backend_config.get("prefix", ""),
-                credentials_path=backend_config.get("credentials_path"),
-                # OAuth access token (alternative to credentials_path)
-                access_token=backend_config.get("access_token"),
-                # Session factory for caching support
-                session_factory=session_factory,
-            )
-        elif backend_type == "s3_connector":
-            from nexus.backends.s3_connector import S3ConnectorBackend
-
-            # Get session factory for caching support if available
-            session_factory = None
-            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
-                session_factory = self.metadata.SessionLocal
-
-            backend = S3ConnectorBackend(
-                bucket_name=backend_config["bucket"],
-                region_name=backend_config.get("region_name"),
-                prefix=backend_config.get("prefix", ""),
-                credentials_path=backend_config.get("credentials_path"),
-                access_key_id=backend_config.get("access_key_id"),
-                secret_access_key=backend_config.get("secret_access_key"),
-                session_token=backend_config.get("session_token"),
-                # Session factory for caching support
-                session_factory=session_factory,
-            )
-        elif backend_type == "gdrive_connector":
-            from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-            backend = GoogleDriveConnectorBackend(
-                token_manager_db=backend_config["token_manager_db"],
-                root_folder=backend_config.get("root_folder", "nexus-data"),
-                user_email=backend_config.get(
-                    "user_email"
-                ),  # Optional - uses context.user_id if None
-            )
-        elif backend_type == "x_connector":
-            from nexus.backends.x_connector import XConnectorBackend
-
-            backend = XConnectorBackend(
-                token_manager_db=backend_config["token_manager_db"],
-                user_email=backend_config.get("user_email"),
-                cache_ttl=backend_config.get("cache_ttl"),
-                cache_dir=backend_config.get("cache_dir"),
-            )
-        elif backend_type == "hn_connector":
-            from nexus.backends.hn_connector import HNConnectorBackend
-
-            # Get session factory for caching support if available
-            hn_session_factory = None
-            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
-                hn_session_factory = self.metadata.SessionLocal
-
-            backend = HNConnectorBackend(
-                cache_ttl=backend_config.get("cache_ttl", 300),
-                stories_per_feed=backend_config.get("stories_per_feed", 10),
-                include_comments=backend_config.get("include_comments", True),
-                session_factory=hn_session_factory,
-            )
-        elif backend_type == "gmail_connector":
-            from nexus.backends.gmail_connector import GmailConnectorBackend
-
-            # Get session factory for caching support if available
-            gmail_session_factory = None
-            if hasattr(self, "metadata") and hasattr(self.metadata, "SessionLocal"):
-                gmail_session_factory = self.metadata.SessionLocal
-
-            backend = GmailConnectorBackend(
-                token_manager_db=backend_config["token_manager_db"],
-                user_email=backend_config.get("user_email"),
-                provider=backend_config.get("provider", "gmail"),
-                session_factory=gmail_session_factory,
-                max_message_per_label=backend_config.get("max_message_per_label", 2000),
-            )
-        else:
-            raise RuntimeError(f"Unsupported backend type: {backend_type}")
-
-        # Add mount to router
-        self.router.add_mount(
-            mount_point=mount_point, backend=backend, priority=priority, readonly=readonly
+        return self._mount_core_service.add_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            context=context,
         )
-
-        # Grant direct_owner permission to the user who created the mount
-        self._grant_mount_owner_permission(mount_point, context)
-
-        # Generate SKILL.md for connector backends
-        if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
-            self._generate_connector_skill(mount_point, backend_type, context)
-
-        return mount_point  # Return mount_point as the mount ID
 
     @rpc_expose(description="Remove backend mount")
     def remove_mount(
         self,
         mount_point: str,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
-        This removes the mount from the router and deletes the mount point directory.
-        Files inside the mount are NOT deleted - only the directory entry and permissions
-        for the mount point itself are cleaned up.
-
         Args:
-            mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
-            context: Operation context (automatically provided by RPC server)
+            mount_point: Virtual path of mount to remove
+            context: Operation context
 
         Returns:
-            Dictionary with removal details:
-            - removed: bool - Whether mount was removed
-            - directory_deleted: bool - Whether mount point directory was deleted
-            - permissions_cleaned: int - Number of permission tuples removed
-            - errors: list[str] - Any errors encountered
-
-        Examples:
-            >>> # Remove mount and clean up directory
-            >>> result = nx.remove_mount("/personal/alice")
-            >>> print(f"Removed: {result['removed']}, Dir deleted: {result['directory_deleted']}")
+            Dictionary with removal details
         """
-        result: dict[str, Any] = {
-            "removed": False,
-            "directory_deleted": False,
-            "permissions_cleaned": 0,
-            "errors": [],
-        }
-
-        # Check if mount exists and remove it
-        if not self.router.remove_mount(mount_point):
-            result["errors"].append(f"Mount not found: {mount_point}")
-            return result
-
-        result["removed"] = True
-        logger.info(f"Removed mount from router: {mount_point}")
-
-        # Delete the mount point directory (but not the files inside)
-        try:
-            if hasattr(self, "metadata") and hasattr(self.metadata, "delete"):
-                # Soft delete the directory entry from metadata
-                self.metadata.delete(mount_point)
-                result["directory_deleted"] = True
-                logger.info(f"Deleted mount point directory: {mount_point}")
-        except Exception as e:
-            error_msg = f"Failed to delete mount point directory {mount_point}: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
-
-        # Clean up ReBAC permissions for the mount point
-        try:
-            if hasattr(self, "hierarchy_manager") and hasattr(
-                self.hierarchy_manager, "remove_parent_tuples"
-            ):
-                tenant_id = get_tenant_id(context)
-                tuples_removed = self.hierarchy_manager.remove_parent_tuples(mount_point, tenant_id)
-                result["permissions_cleaned"] += tuples_removed
-                logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
-        except Exception as e:
-            error_msg = f"Failed to clean up parent tuples: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
-
-        # Remove direct_owner permission tuple for the mount point
-        try:
-            if hasattr(self, "rebac_delete_object_tuples"):
-                tenant_id = get_tenant_id(context)
-                deleted = self.rebac_delete_object_tuples(
-                    object=("file", mount_point), tenant_id=tenant_id
-                )
-                result["permissions_cleaned"] += deleted
-                logger.info(f"Removed {deleted} permission tuples for {mount_point}")
-        except Exception as e:
-            error_msg = f"Failed to delete permission tuples: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
-
-        if result["errors"]:
-            logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")
-        else:
-            logger.info(
-                f"Successfully removed mount {mount_point} "
-                f"(directory_deleted={result['directory_deleted']}, permissions_cleaned={result['permissions_cleaned']})"
-            )
-
-        return result
+        return self._mount_core_service.remove_mount(
+            mount_point=mount_point,
+            context=context,
+        )
 
     @rpc_expose(description="List available connector types")
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
-        """List all available connector types that can be used with add_mount().
+        """List all available connector types.
 
         Args:
-            category: Optional filter by category (storage, api, oauth, database)
+            category: Optional filter by category
 
         Returns:
-            List of connector info dictionaries, each containing:
-                - name: Connector identifier (str)
-                - description: Human-readable description (str)
-                - category: Category for grouping (str)
-                - requires: List of optional dependencies (list[str])
-                - user_scoped: Whether connector requires per-user OAuth (bool)
+            List of connector info dictionaries
         """
-        from nexus.backends.registry import ConnectorRegistry
-
-        if category:
-            connectors = ConnectorRegistry.list_by_category(category)
-        else:
-            connectors = ConnectorRegistry.list_all()
-
-        return [
-            {
-                "name": c.name,
-                "description": c.description,
-                "category": c.category,
-                "requires": c.requires,
-                "user_scoped": c.user_scoped,
-            }
-            for c in connectors
-        ]
+        return self._mount_core_service.list_connectors(category)
 
     @rpc_expose(description="List all backend mounts")
-    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
-        """List all active backend mounts that the user has permission to access.
-
-        Automatically filters mounts based on the user's permissions. Only mounts
-        where the user has read access (viewer or direct_owner) are returned.
+    def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
+        """List all active backend mounts.
 
         Args:
-            context: Operation context (automatically provided by RPC server)
+            context: Operation context for permission filtering
 
         Returns:
-            List of mount info dictionaries, each containing:
-                - mount_point: Virtual path (str)
-                - priority: Mount priority (int)
-                - readonly: Read-only flag (bool)
-                - backend_type: Backend type name (str)
-
-        Examples:
-            >>> # List all mounts I have access to
-            >>> for mount in nx.list_mounts():
-            ...     print(f"{mount['mount_point']} (priority={mount['priority']})")
+            List of mount info dictionaries
         """
-        mounts = []
-
-        # Log context details for debugging
-        logger.info(f"[LIST_MOUNTS] Called with context: {context}")
-        if context:
-            logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
-            logger.info(f"[LIST_MOUNTS] Context attributes: {dir(context)}")
-            subject_type, subject_id = get_user_identity(context)
-            tenant_id = get_tenant_id(context)
-            logger.info(
-                f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, tenant={tenant_id}"
-            )
-
-        router_mounts = list(self.router.list_mounts())
-        logger.info(f"[LIST_MOUNTS] Total mounts in router: {len(router_mounts)}")
-        for mi in router_mounts:
-            logger.info(f"[LIST_MOUNTS] Router mount: {mi.mount_point}")
-
-        for mount_info in router_mounts:
-            # Filter by permission - only include mounts the user can access
-            mount_point = mount_info.mount_point
-            logger.info(f"[LIST_MOUNTS] Checking mount: {mount_point}")
-
-            # Check if user has permission to access this mount
-            has_permission = False
-            if context and hasattr(self, "rebac_check"):
-                try:
-                    subject_type, subject_id = get_user_identity(context)
-                    tenant_id = get_tenant_id(context)
-
-                    logger.info(
-                        f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
-                        f"on {mount_point} (tenant={tenant_id})"
-                    )
-
-                    # Admin users can see all mounts
-                    is_admin = getattr(context, "is_admin", False)
-                    if is_admin:
-                        has_permission = True
-                        logger.info(
-                            f"[LIST_MOUNTS] Admin user {subject_type}:{subject_id} - granting access to {mount_point}"
-                        )
-                    elif subject_id:
-                        # Check if user has read permission (includes owner, editor, viewer)
-                        # This will match anyone with direct_owner, direct_editor, or direct_viewer
-                        has_permission = self.rebac_check(
-                            subject=(subject_type, subject_id),
-                            permission="read",
-                            object=("file", mount_point),
-                            tenant_id=tenant_id,
-                        )
-                        logger.info(
-                            f"[LIST_MOUNTS] Permission check result for {subject_type}:{subject_id} "
-                            f"on {mount_point}: {has_permission}"
-                        )
-                    else:
-                        logger.warning(f"[LIST_MOUNTS] No subject_id in context for {mount_point}")
-                except Exception as e:
-                    # If permission check fails, exclude this mount for safety
-                    logger.error(
-                        f"[LIST_MOUNTS] Permission check failed for {mount_point}: {e}",
-                        exc_info=True,
-                    )
-                    has_permission = False
-            else:
-                # No context or no ReBAC - include all mounts (backward compatibility)
-                # This happens in local/testing scenarios without auth
-                logger.info(f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}")
-                has_permission = True
-
-            # Only include mounts the user has permission to access
-            if has_permission:
-                mounts.append(
-                    {
-                        "mount_point": mount_info.mount_point,
-                        "priority": mount_info.priority,
-                        "readonly": mount_info.readonly,
-                        "backend_type": type(mount_info.backend).__name__,
-                    }
-                )
-
-        return mounts
+        return self._mount_core_service.list_mounts(context)
 
     @rpc_expose(description="Get mount details")
     def get_mount(self, mount_point: str) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
         Args:
-            mount_point: Virtual path of mount (e.g., "/personal/alice")
+            mount_point: Virtual path of mount
 
         Returns:
-            Mount info dict if found, None otherwise. Dict contains:
-                - mount_point: Virtual path (str)
-                - priority: Mount priority (int)
-                - readonly: Read-only flag (bool)
-                - backend_type: Backend type name (str)
-
-        Examples:
-            >>> mount = nx.get_mount("/personal/alice")
-            >>> if mount:
-            ...     print(f"Priority: {mount['priority']}")
+            Mount info dict or None
         """
-        mount_info = self.router.get_mount(mount_point)
-        if mount_info:
-            return {
-                "mount_point": mount_info.mount_point,
-                "priority": mount_info.priority,
-                "readonly": mount_info.readonly,
-                "backend_type": type(mount_info.backend).__name__,
-            }
-        return None
+        return self._mount_core_service.get_mount(mount_point)
 
     @rpc_expose(description="Check if mount exists")
     def has_mount(self, mount_point: str) -> bool:
-        """Check if a mount exists at the given path.
+        """Check if a mount exists.
 
         Args:
-            mount_point: Virtual path to check (e.g., "/personal/alice")
+            mount_point: Virtual path to check
 
         Returns:
-            True if mount exists, False otherwise
-
-        Examples:
-            >>> if nx.has_mount("/personal/alice"):
-            ...     print("Alice's mount is active")
+            True if mount exists
         """
-        return self.router.has_mount(mount_point)
-
-    @rpc_expose(description="Save mount configuration to database")
-    def save_mount(
-        self,
-        mount_point: str,
-        backend_type: str,
-        backend_config: dict[str, Any],
-        priority: int = 0,
-        readonly: bool = False,
-        owner_user_id: str | None = None,
-        tenant_id: str | None = None,
-        description: str | None = None,
-        context: OperationContext | None = None,
-    ) -> str:
-        """Save a mount configuration to the database for persistence.
-
-        This allows mounts to survive server restarts. The mount must still be
-        activated using add_mount() - this only stores the configuration.
-
-        Automatically grants direct_owner permission to the user who saves the mount.
-
-        Args:
-            mount_point: Virtual path where backend is mounted
-            backend_type: Backend type - "local", "gcs", etc.
-            backend_config: Backend-specific configuration dict
-            priority: Mount priority (default: 0)
-            readonly: Whether mount is read-only (default: False)
-            owner_user_id: User who owns this mount (optional)
-            tenant_id: Tenant ID for multi-tenant isolation (optional)
-            description: Human-readable description (optional)
-            context: Operation context (automatically provided by RPC server)
-
-        Returns:
-            Mount ID (UUID string)
-
-        Raises:
-            ValueError: If mount already exists at mount_point
-            RuntimeError: If mount manager is not available
-
-        Examples:
-            >>> # Save personal Google Drive mount configuration
-            >>> mount_id = nx.save_mount(
-            ...     mount_point="/personal/alice",
-            ...     backend_type="google_drive",
-            ...     backend_config={"access_token": "ya29.xxx"},
-            ...     owner_user_id="google:alice123",
-            ...     tenant_id="acme",
-            ...     description="Alice's personal Google Drive"
-            ... )
-        """
-        if not hasattr(self, "mount_manager") or self.mount_manager is None:
-            raise RuntimeError(
-                "Mount manager not available. Ensure NexusFS is initialized with a database."
-            )
-
-        # Auto-populate owner_user_id and tenant_id from context if not provided
-        if owner_user_id is None and context:
-            subject_type, subject_id = get_user_identity(context)
-            if subject_id:
-                owner_user_id = f"{subject_type}:{subject_id}"
-                logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
-
-        if tenant_id is None and context:
-            tenant_id = get_tenant_id(context)
-            if tenant_id:
-                logger.info(f"[SAVE_MOUNT] Auto-populated tenant_id: {tenant_id}")
-
-        mount_id = self.mount_manager.save_mount(
-            mount_point=mount_point,
-            backend_type=backend_type,
-            backend_config=backend_config,
-            priority=priority,
-            readonly=readonly,
-            owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
-            description=description,
-        )
-
-        # Grant direct_owner permission to the user who saved the mount
-        self._grant_mount_owner_permission(mount_point, context)
-
-        # Generate SKILL.md for connector backends
-        if backend_type.endswith("_connector") or backend_type in ("google_drive", "gdrive"):
-            self._generate_connector_skill(mount_point, backend_type, context)
-
-        return mount_id
-
-    @rpc_expose(description="List saved mount configurations")
-    def list_saved_mounts(
-        self,
-        owner_user_id: str | None = None,
-        tenant_id: str | None = None,
-        context: OperationContext | None = None,
-    ) -> list[dict[str, Any]]:
-        """List mount configurations saved in the database.
-
-        Automatically filters by the current user's context (subject_id and tenant_id)
-        unless explicit filter parameters are provided. This ensures users can only
-        see their own mounts and mounts from their tenant.
-
-        Args:
-            owner_user_id: Filter by owner user ID (optional, defaults to current user)
-            tenant_id: Filter by tenant ID (optional, defaults to current tenant)
-            context: Operation context (automatically provided by RPC server)
-
-        Returns:
-            List of saved mount configurations owned by the user or in their tenant
-
-        Raises:
-            RuntimeError: If mount manager is not available
-
-        Examples:
-            >>> # List my saved mounts (automatically filtered)
-            >>> mounts = nx.list_saved_mounts()
-
-            >>> # List all mounts in my tenant
-            >>> tenant_mounts = nx.list_saved_mounts(owner_user_id=None)
-        """
-        if not hasattr(self, "mount_manager") or self.mount_manager is None:
-            raise RuntimeError(
-                "Mount manager not available. Ensure NexusFS is initialized with a database."
-            )
-
-        # Auto-populate filters from context if not explicitly provided
-        # This ensures users can only see their own mounts by default
-        if owner_user_id is None and context:
-            subject_type, subject_id = get_user_identity(context)
-            if subject_id:
-                owner_user_id = f"{subject_type}:{subject_id}"
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
-
-        if tenant_id is None and context:
-            tenant_id = get_tenant_id(context)
-            if tenant_id:
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {tenant_id}")
-
-        return self.mount_manager.list_mounts(owner_user_id=owner_user_id, tenant_id=tenant_id)
-
-    @rpc_expose(description="Load and activate saved mount")
-    def load_mount(self, mount_point: str) -> str:
-        """Load a saved mount configuration and activate it.
-
-        This retrieves the mount configuration from the database and activates it
-        by calling add_mount() internally.
-
-        Args:
-            mount_point: Virtual path of saved mount to load
-
-        Returns:
-            Mount ID if successfully loaded and activated
-
-        Raises:
-            ValueError: If mount not found in database
-            RuntimeError: If mount manager is not available
-
-        Examples:
-            >>> # Load Alice's saved mount
-            >>> nx.load_mount("/personal/alice")
-        """
-        if not hasattr(self, "mount_manager") or self.mount_manager is None:
-            raise RuntimeError(
-                "Mount manager not available. Ensure NexusFS is initialized with a database."
-            )
-
-        # Get mount config from database
-        mount_config = self.mount_manager.get_mount(mount_point)
-        if not mount_config:
-            raise ValueError(f"Mount not found in database: {mount_point}")
-
-        # Parse backend config from JSON (if it's a string)
-        import json
-
-        backend_config = mount_config["backend_config"]
-        if isinstance(backend_config, str):
-            backend_config = json.loads(backend_config)
-
-        # Normalize token_manager_db for OAuth-backed mounts (gdrive_connector, gmail_connector, x_connector)
-        # Use centralized database URL resolution
-        backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
-            try:
-                database_url = get_database_url(self)
-                backend_config["token_manager_db"] = database_url
-            except RuntimeError as e:
-                raise RuntimeError(f"Cannot load {backend_type} mount: {e}") from e
-
-        # Activate the mount
-        return self.add_mount(
-            mount_point=mount_config["mount_point"],
-            backend_type=mount_config["backend_type"],
-            backend_config=backend_config,
-            priority=mount_config["priority"],
-            readonly=bool(mount_config["readonly"]),
-        )
-
-    @rpc_expose(description="Delete saved mount configuration")
-    def delete_saved_mount(self, mount_point: str) -> bool:
-        """Delete a saved mount configuration from the database.
-
-        Note: This does NOT deactivate the mount if it's currently active.
-        Use remove_mount() to deactivate an active mount.
-
-        Args:
-            mount_point: Virtual path of mount to delete
-
-        Returns:
-            True if deleted, False if not found
-
-        Raises:
-            RuntimeError: If mount manager is not available
-
-        Examples:
-            >>> # Remove from database
-            >>> nx.delete_saved_mount("/personal/alice")
-            >>> # Also deactivate if currently mounted
-            >>> nx.remove_mount("/personal/alice")
-        """
-        if not hasattr(self, "mount_manager") or self.mount_manager is None:
-            raise RuntimeError(
-                "Mount manager not available. Ensure NexusFS is initialized with a database."
-            )
-
-        return self.mount_manager.remove_mount(mount_point)
-
-    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
-        """Load all saved mount configurations from database and activate them.
-
-        This method is called during NexusFS initialization to restore all
-        persisted mounts from the database. It retrieves all saved mount configs
-        via mount_manager.list_mounts() and activates each one.
-
-        Args:
-            auto_sync: If True, automatically sync connector backends after loading.
-                      If False (default), skip auto-sync for faster server startup.
-                      Users can manually call sync_mount() after server is up.
-
-        Returns:
-            Dictionary with loading results:
-                - loaded: Number of successfully loaded mounts
-                - synced: Number of connector mounts that were synced (only if auto_sync=True)
-                - failed: Number of mounts that failed to load
-                - errors: List of error messages for failed mounts
-
-        Note:
-            - mount_manager.list_mounts() returns SAVED mounts from database
-            - self.list_mounts() returns ACTIVE mounts from router
-            - This method loads saved mounts to make them active
-            - auto_sync=False (default) for faster server startup
-            - Call sync_mount() manually after startup for large connectors
-
-        Examples:
-            >>> # Fast startup (default) - no auto-sync
-            >>> result = nx.load_all_saved_mounts()
-            >>> print(f"Loaded {result['loaded']} mounts")
-
-            >>> # With auto-sync (slower startup)
-            >>> result = nx.load_all_saved_mounts(auto_sync=True)
-            >>> print(f"Loaded {result['loaded']} mounts, {result['synced']} synced")
-
-            >>> # Manual sync after startup
-            >>> result = nx.load_all_saved_mounts()  # Fast startup
-            >>> nx.sync_mount("/mnt/gcs")  # Sync when ready
-        """
-        if not hasattr(self, "mount_manager") or self.mount_manager is None:
-            logger.warning("Mount manager not available, skipping mount restoration")
-            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
-
-        # Get all saved mounts from database (NOT active mounts)
-        saved_mounts = self.mount_manager.list_mounts()
-
-        if not saved_mounts:
-            logger.info("No saved mounts found in database")
-            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
-
-        logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
-
-        loaded = 0
-        failed = 0
-        synced = 0
-        errors = []
-
-        for mount in saved_mounts:
-            mount_point = mount["mount_point"]
-            try:
-                logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
-
-                # Parse backend config from JSON (if it's a string)
-                import json
-
-                backend_config = mount["backend_config"]
-                if isinstance(backend_config, str):
-                    backend_config = json.loads(backend_config)
-
-                # Activate the mount using add_mount
-                self.add_mount(
-                    mount_point=mount_point,
-                    backend_type=mount["backend_type"],
-                    backend_config=backend_config,
-                    priority=mount["priority"],
-                    readonly=bool(mount["readonly"]),
-                )
-
-                loaded += 1
-                logger.info(f"✓ Successfully loaded mount: {mount_point}")
-
-                # Only auto-sync if explicitly requested (default: False for fast startup)
-                if auto_sync:
-                    backend_type = mount["backend_type"]
-                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
-                        try:
-                            logger.info(f"Auto-syncing connector mount: {mount_point}")
-                            # Create a minimal context from mount owner if available
-                            sync_context = None
-                            if mount.get("owner_user_id"):
-                                from nexus.core.permissions import OperationContext
-
-                                # Parse owner_user_id (format: "user:alice" or "agent:bot")
-                                owner_parts = mount["owner_user_id"].split(":", 1)
-                                if len(owner_parts) == 2:
-                                    subject_type, subject_id = owner_parts
-                                else:
-                                    subject_type, subject_id = "user", owner_parts[0]
-                                sync_context = OperationContext(
-                                    user=subject_id,
-                                    groups=[],
-                                    tenant_id=mount.get("tenant_id", "default"),
-                                    subject_type=subject_type,
-                                    subject_id=subject_id,
-                                )
-                                logger.info(
-                                    f"Using owner context for sync: {subject_type}:{subject_id}"
-                                )
-                            sync_result = self.sync_mount(
-                                mount_point, recursive=True, dry_run=False, context=sync_context
-                            )
-                            synced += 1
-                            logger.info(
-                                f"✓ Synced {mount_point}: "
-                                f"{sync_result['files_scanned']} scanned, "
-                                f"{sync_result['files_created']} created, "
-                                f"{sync_result['files_updated']} updated, "
-                                f"{sync_result['files_deleted']} deleted"
-                            )
-                        except Exception as sync_e:
-                            # Log sync error but don't fail the mount
-                            logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
-                else:
-                    # Skip auto-sync for faster startup
-                    backend_type = mount["backend_type"]
-                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
-                        logger.info(
-                            f"⏭️  Skipping auto-sync for {mount_point} (use sync_mount() to sync manually)"
-                        )
-
-            except Exception as e:
-                failed += 1
-                error_msg = f"Failed to load mount {mount_point}: {str(e)}"
-                errors.append(error_msg)
-                logger.error(error_msg)
-                # Continue loading other mounts even if one fails
-
-        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
-
-        return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
-
-    def _matches_patterns(
-        self, file_path: str, include_patterns: list[str] | None, exclude_patterns: list[str] | None
-    ) -> bool:
-        """Check if a file path matches include/exclude patterns.
-
-        Args:
-            file_path: Virtual file path to check
-            include_patterns: Glob patterns to include (None or empty means include all)
-            exclude_patterns: Glob patterns to exclude (None or empty means exclude none)
-
-        Returns:
-            True if file should be included, False otherwise
-        """
-        from nexus.core import glob_fast
-
-        # Check include patterns (if specified, file must match at least one)
-        if include_patterns and not glob_fast.glob_match(file_path, list(include_patterns)):
-            return False
-
-        # Check exclude patterns (if file matches any, exclude it)
-        return not (exclude_patterns and glob_fast.glob_match(file_path, list(exclude_patterns)))
+        return self._mount_core_service.has_mount(mount_point)
+
+    # =========================================================================
+    # Sync Operations
+    # =========================================================================
 
     @rpc_expose(description="Sync metadata from connector backend")
     def sync_mount(
@@ -1071,104 +225,29 @@ class NexusFSMountsMixin:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """Sync metadata and content from connector backend(s) to Nexus database.
-
-        For connector backends (like gcs_connector), this scans the external storage
-        and updates Nexus's metadata database with any files that were added externally
-        or existed before Nexus was configured. It also removes files from metadata
-        that no longer exist in the backend.
-
-        When sync_content=True (default), also populates the content_cache table
-        for fast grep/search operations without hitting the backend.
+        """Sync metadata and content from connector backend(s).
 
         Args:
-            mount_point: Virtual path of mount to sync (e.g., "/mnt/gcs_demo").
-                        If None, syncs ALL connector mounts.
-            path: Specific path within mount to sync (e.g., "/reports/2024/")
-                  If None, syncs entire mount. Supports file or directory granularity.
-            recursive: If True, sync all subdirectories recursively (default: True)
-            dry_run: If True, only report what would be synced without making changes (default: False)
-            sync_content: If True, also sync content to cache for grep/search (default: True)
-            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
-            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
-            generate_embeddings: If True, generate embeddings for semantic search (default: False)
-            context: Operation context containing user/subject information (automatically provided by RPC server)
-            progress_callback: Optional callback for progress updates (Issue #609).
-                              Called with (files_scanned: int, current_path: str).
-                              Used by async sync jobs to track progress.
+            mount_point: Mount to sync (None = all mounts)
+            path: Specific path within mount
+            recursive: Sync subdirectories recursively
+            dry_run: Report only, no changes
+            sync_content: Also sync content to cache
+            include_patterns: Glob patterns to include
+            exclude_patterns: Glob patterns to exclude
+            generate_embeddings: Generate embeddings
+            context: Operation context
+            progress_callback: Progress callback function
 
         Returns:
-            Dictionary with sync results:
-                - files_scanned: Number of files scanned in backend
-                - files_created: Number of new files added to database
-                - files_updated: Number of existing files updated
-                - files_deleted: Number of files deleted from database (no longer in backend)
-                - cache_synced: Number of files synced to content cache (if sync_content=True)
-                - cache_bytes: Total bytes synced to cache
-                - embeddings_generated: Number of embeddings generated (if generate_embeddings=True)
-                - errors: List of error messages (if any)
-
-        Raises:
-            ValueError: If mount_point doesn't exist
-            RuntimeError: If backend doesn't support listing (not a connector backend)
-
-        Examples:
-            >>> # Sync entire GCS connector mount (metadata + content)
-            >>> result = nx.sync_mount("/mnt/gcs_demo")
-            >>> print(f"Created {result['files_created']}, cached {result['cache_synced']}")
-
-            >>> # Sync specific directory
-            >>> result = nx.sync_mount("/mnt/gcs", path="/reports/2024/")
-
-            >>> # Sync single file
-            >>> result = nx.sync_mount("/mnt/gcs", path="/data/report.pdf")
-
-            >>> # Sync only Python files
-            >>> result = nx.sync_mount("/mnt/gcs", include_patterns=["*.py"])
-
-            >>> # Dry run to see what would be synced
-            >>> result = nx.sync_mount("/mnt/gcs_demo", dry_run=True)
-            >>> print(f"Would scan {result['files_scanned']} files")
-
-            >>> # Sync metadata only (no content cache)
-            >>> result = nx.sync_mount("/mnt/gcs", sync_content=False)
-
-            >>> # Sync ALL connector mounts
-            >>> result = nx.sync_mount()
-            >>> print(f"Synced {result['mounts_synced']} mounts")
+            Dictionary with sync statistics
         """
-        # STEP 1: If no mount_point specified, sync ALL connector mounts
-        if mount_point is None:
-            return self._sync_all_connector_mounts(
-                path=path,
-                recursive=recursive,
-                dry_run=dry_run,
-                sync_content=sync_content,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns,
-                generate_embeddings=generate_embeddings,
-                context=context,
-                progress_callback=progress_callback,
-            )
+        from nexus.services.sync_service import SyncContext
 
-        # Initialize statistics upfront for clearer data flow
-        stats: dict[str, int | list[str]] = {
-            "files_scanned": 0,
-            "files_created": 0,
-            "files_updated": 0,
-            "files_deleted": 0,
-            "cache_synced": 0,
-            "cache_bytes": 0,
-            "cache_skipped": 0,
-            "embeddings_generated": 0,
-            "errors": [],
-        }
-
-        # Create context object to reduce parameter passing
-        ctx = SyncMountContext(
+        ctx = SyncContext(
             mount_point=mount_point,
             path=path,
             recursive=recursive,
@@ -1181,674 +260,11 @@ class NexusFSMountsMixin:
             progress_callback=progress_callback,
         )
 
-        # STEP 2: Setup and validation
-        self._sync_mount_setup(ctx)
-
-        # STEP 3: Scan backend and sync metadata (using iterative directory traversal)
-        result = self._sync_mount_metadata(ctx, stats)
-        files_found_in_backend = result.files_found_in_backend
-
-        # STEP 4: Handle file deletions
-        self._sync_mount_deletions(ctx, files_found_in_backend, stats)
-
-        # STEP 5: Sync content to cache
-        self._sync_mount_content_cache(ctx, stats)
-
-        return stats
-
-    def _sync_all_connector_mounts(
-        self,
-        path: str | None,
-        recursive: bool,
-        dry_run: bool,
-        sync_content: bool,
-        include_patterns: list[str] | None,
-        exclude_patterns: list[str] | None,
-        generate_embeddings: bool,
-        context: Any,
-        progress_callback: ProgressCallback | None = None,
-    ) -> dict[str, Any]:
-        """Step 1: Sync all connector mounts when mount_point is None.
-
-        Args:
-            path: Specific path within mounts to sync
-            recursive: Whether to sync recursively
-            dry_run: Whether this is a dry run
-            sync_content: Whether to sync content to cache
-            include_patterns: Patterns to include
-            exclude_patterns: Patterns to exclude
-            generate_embeddings: Whether to generate embeddings
-            context: Operation context
-            progress_callback: Optional callback for progress updates
-
-        Returns:
-            Dictionary with aggregated sync statistics
-        """
-        logger.info("[SYNC_MOUNT] No mount_point specified, syncing all connector mounts")
-        all_mounts = self.list_mounts()
-
-        # Aggregate results from all mounts
-        total_stats: dict[str, Any] = {
-            "mounts_synced": 0,
-            "mounts_skipped": 0,
-            "files_scanned": 0,
-            "files_created": 0,
-            "files_updated": 0,
-            "files_deleted": 0,
-            "cache_synced": 0,
-            "cache_bytes": 0,
-            "embeddings_generated": 0,
-            "errors": [],
-        }
-
-        for mount_info in all_mounts:
-            mp = mount_info.get("mount_point", "")
-            backend_type = mount_info.get("backend_type", "")
-
-            # Only sync connector-style backends (those with list_dir support)
-            mount = self.router.get_mount(mp)
-            if not mount or not hasattr(mount.backend, "list_dir"):
-                logger.info(
-                    f"[SYNC_MOUNT] Skipping {mp} ({backend_type}) - not a connector backend"
-                )
-                total_stats["mounts_skipped"] += 1
-                continue
-
-            logger.info(f"[SYNC_MOUNT] Syncing mount: {mp}")
-            try:
-                result = self.sync_mount(
-                    mount_point=mp,
-                    path=path,
-                    recursive=recursive,
-                    dry_run=dry_run,
-                    sync_content=sync_content,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns,
-                    generate_embeddings=generate_embeddings,
-                    context=context,
-                    progress_callback=progress_callback,
-                )
-
-                # Aggregate stats
-                total_stats["mounts_synced"] += 1
-                total_stats["files_scanned"] += result.get("files_scanned", 0)
-                total_stats["files_created"] += result.get("files_created", 0)
-                total_stats["files_updated"] += result.get("files_updated", 0)
-                total_stats["files_deleted"] += result.get("files_deleted", 0)
-                total_stats["cache_synced"] += result.get("cache_synced", 0)
-                total_stats["cache_bytes"] += result.get("cache_bytes", 0)
-                total_stats["embeddings_generated"] += result.get("embeddings_generated", 0)
-
-                # Prefix errors with mount point
-                for error in result.get("errors", []):
-                    total_stats["errors"].append(f"[{mp}] {error}")
-
-            except Exception as e:
-                total_stats["errors"].append(f"[{mp}] Failed to sync: {e}")
-                logger.warning(f"[SYNC_MOUNT] Failed to sync {mp}: {e}")
-
-        logger.info(
-            f"[SYNC_MOUNT] All mounts sync complete: "
-            f"{total_stats['mounts_synced']} synced, "
-            f"{total_stats['mounts_skipped']} skipped"
-        )
-        return total_stats
-
-    def _sync_mount_setup(self, ctx: SyncMountContext) -> None:
-        """Step 2: Setup and validation for mount sync.
-
-        Extracts context information, checks hierarchy manager status,
-        validates mount exists, and ensures mount directory entry exists.
-        Populates ctx.backend, ctx.created_by, and ctx.has_hierarchy.
-
-        Args:
-            ctx: Sync mount context (modified in-place)
-
-        Raises:
-            ValueError: If mount not found
-            RuntimeError: If backend doesn't support list_dir
-        """
-        # Extract created_by from context
-        if (
-            ctx.context
-            and hasattr(ctx.context, "subject_type")
-            and hasattr(ctx.context, "subject_id")
-        ):
-            if ctx.context.subject_id:
-                subject_type = ctx.context.subject_type if ctx.context.subject_type else "user"
-                ctx.created_by = f"{subject_type}:{ctx.context.subject_id}"
-                logger.info(f"[SYNC_MOUNT] Using created_by from context: {ctx.created_by}")
-            else:
-                logger.warning("[SYNC_MOUNT] Context provided but subject_id is None")
-        else:
-            logger.warning("[SYNC_MOUNT] No context provided, created_by will be NULL")
-
-        # Check hierarchy manager status
-        ctx.has_hierarchy = hasattr(self, "_hierarchy_manager") and self._hierarchy_manager
-        enable_inheritance = (
-            self._hierarchy_manager.enable_inheritance  # type: ignore[attr-defined]
-            if ctx.has_hierarchy
-            else False
-        )
-        logger.info(
-            f"[SYNC_MOUNT] Starting sync for {ctx.mount_point}, "
-            f"hierarchy_manager={ctx.has_hierarchy}, "
-            f"enable_inheritance={enable_inheritance}"
-        )
-
-        # Get the mount
-        mount = self.router.get_mount(ctx.mount_point)
-        if not mount:
-            raise ValueError(f"Mount not found: {ctx.mount_point}")
-
-        ctx.backend = mount.backend
-        assert ctx.backend is not None, f"Backend for mount {ctx.mount_point} is None"
-        backend_name = type(ctx.backend).__name__
-
-        # Check if backend supports list_dir (connector-style backends)
-        if not hasattr(ctx.backend, "list_dir"):
-            raise RuntimeError(
-                f"Backend {backend_name} does not support metadata sync. "
-                f"Only connector-style backends (e.g., gcs_connector) can be synced."
-            )
-
-        # Ensure mount directory entry exists (backwards compatibility)
-        if hasattr(self, "mkdir"):
-            try:
-                self.mkdir(ctx.mount_point, parents=True, exist_ok=True, context=ctx.context)
-                logger.debug(f"[SYNC_MOUNT] Ensured directory entry exists for {ctx.mount_point}")
-            except Exception as e:
-                logger.warning(
-                    f"[SYNC_MOUNT] Failed to create directory entry for {ctx.mount_point}: {e}"
-                )
-
-    def _sync_mount_metadata(
-        self, ctx: SyncMountContext, stats: dict[str, int | list[str]]
-    ) -> MetadataSyncResult:
-        """Step 3: Scan backend and sync metadata using ITERATIVE directory traversal.
-
-        This method uses a deque-based BFS approach instead of recursion to avoid
-        stack overflow issues with deeply nested directories.
-
-        Applies include/exclude patterns to filter which files get added to metadata,
-        ensuring consistency with content cache filtering in Step 5.
-
-        Args:
-            ctx: Sync mount context
-            stats: Statistics dictionary to update
-
-        Returns:
-            MetadataSyncResult with stats and files found in backend
-        """
-        from collections import deque
-        from datetime import UTC, datetime
-        from typing import cast
-
-        from nexus.core.metadata import FileMetadata
-
-        # Track all files found in backend (for deletion detection)
-        files_found_in_backend: set[str] = set()
-
-        # Collect paths that need parent tuples (for batch processing)
-        paths_needing_tuples: list[str] = []
-        # Memory-efficient chunking: flush batch every N paths to avoid memory issues
-        PATHS_CHUNK_SIZE = 10000
-        total_tuples_created = 0
-
-        def flush_parent_tuples_batch() -> None:
-            """Flush accumulated paths and create parent tuples in batch."""
-            nonlocal paths_needing_tuples, total_tuples_created
-            if paths_needing_tuples and ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                try:
-                    tenant_id = get_tenant_id(ctx.context) if ctx.context else None
-                    logger.info(
-                        f"[SYNC_MOUNT] Flushing batch: creating parent tuples for "
-                        f"{len(paths_needing_tuples)} files (tenant_id={tenant_id})"
-                    )
-                    created = self._hierarchy_manager.ensure_parent_tuples_batch(  # type: ignore[attr-defined]
-                        paths_needing_tuples, tenant_id=tenant_id
-                    )
-                    total_tuples_created += created
-                    logger.info(
-                        f"[SYNC_MOUNT] Flushed batch: created {created} parent tuples "
-                        f"(total so far: {total_tuples_created})"
-                    )
-                    paths_needing_tuples.clear()
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to flush parent tuples batch: {type(e).__name__}: {e}",
-                        exc_info=True,
-                    )
-                    paths_needing_tuples.clear()
-
-        # Determine starting path for scan
-        if ctx.path:
-            # path can be relative to mount or absolute
-            if ctx.path.startswith(ctx.mount_point):
-                start_virtual_path = ctx.path
-                start_backend_path = ctx.path[len(ctx.mount_point) :].lstrip("/")
-            else:
-                start_virtual_path = f"{ctx.mount_point.rstrip('/')}/{ctx.path.lstrip('/')}"
-                start_backend_path = ctx.path.lstrip("/")
-
-            # Check if this is a single file (not a directory)
-            is_single_file = False
-            try:
-                entries = ctx.backend.list_dir(start_backend_path, context=ctx.context)  # type: ignore[union-attr]
-                if not entries:
-                    # Empty directory or file - check if path has extension
-                    import os.path as osp
-
-                    if osp.splitext(start_backend_path)[1]:
-                        is_single_file = True
-            except Exception:
-                # If list_dir fails, assume it's a file
-                is_single_file = True
-
-            if is_single_file:
-                # Single file sync - apply pattern filtering using helper
-                if not self._matches_patterns(
-                    start_virtual_path, ctx.include_patterns, ctx.exclude_patterns
-                ):
-                    logger.info(
-                        f"[SYNC_MOUNT] Skipping {start_virtual_path} - filtered by patterns"
-                    )
-                    return MetadataSyncResult(stats, files_found_in_backend)
-
-                # Process single file
-                logger.info(f"[SYNC_MOUNT] Syncing single file: {start_virtual_path}")
-                stats["files_scanned"] = 1
-                files_found_in_backend.add(start_virtual_path)
-
-                if not ctx.dry_run:
-                    existing_meta = self.metadata.get(start_virtual_path)  # type: ignore[attr-defined]
-
-                    if not existing_meta:
-                        try:
-                            now = datetime.now(UTC)
-                            import hashlib
-
-                            path_hash = hashlib.sha256(start_backend_path.encode()).hexdigest()
-
-                            # Get actual file size from backend
-                            file_size = 0
-                            try:
-                                if hasattr(ctx.backend, "get_content_size"):
-                                    from nexus.core.operation_context import OperationContext
-
-                                    size_context = OperationContext(backend_path=start_backend_path)
-                                    file_size = ctx.backend.get_content_size(  # type: ignore[union-attr]
-                                        path_hash, size_context
-                                    )
-                            except Exception:
-                                # If size retrieval fails, default to 0
-                                pass
-
-                            meta = FileMetadata(
-                                path=start_virtual_path,
-                                backend_name=ctx.backend.name,  # type: ignore[union-attr]
-                                physical_path=start_backend_path,
-                                size=file_size,
-                                etag=path_hash,
-                                created_at=now,
-                                modified_at=now,
-                                version=1,
-                                created_by=ctx.created_by,
-                            )
-                            self.metadata.put(meta)  # type: ignore[attr-defined]
-                            stats["files_created"] = 1
-
-                            # Collect path for batch parent tuple creation (done at end)
-                            if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                                paths_needing_tuples.append(start_virtual_path)
-                                # Flush batch if chunk size reached (memory-efficient)
-                                if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
-                                    flush_parent_tuples_batch()
-                        except Exception as e:
-                            error_msg = f"Failed to add {start_virtual_path}: {e}"
-                            cast(list[str], stats["errors"]).append(error_msg)
-                return MetadataSyncResult(stats, files_found_in_backend)
-        else:
-            # Start from mount point root
-            start_virtual_path = ctx.mount_point
-            start_backend_path = ""
-
-        # ITERATIVE directory scanning using BFS with deque
-        # Queue contains tuples of (virtual_path, backend_path)
-        queue: deque[tuple[str, str]] = deque([(start_virtual_path, start_backend_path)])
-
-        while queue:
-            virtual_path, backend_path = queue.popleft()
-
-            try:
-                # List entries in this directory
-                entries = ctx.backend.list_dir(backend_path, context=ctx.context)  # type: ignore[union-attr]
-
-                for entry_name in entries:
-                    is_dir = entry_name.endswith("/")
-                    entry_name = entry_name.rstrip("/")
-
-                    # Construct full virtual path
-                    if virtual_path == ctx.mount_point:
-                        entry_virtual_path = f"{ctx.mount_point}/{entry_name}"
-                    else:
-                        entry_virtual_path = f"{virtual_path}/{entry_name}"
-
-                    # Construct backend path
-                    if backend_path:
-                        entry_backend_path = f"{backend_path}/{entry_name}"
-                    else:
-                        entry_backend_path = entry_name
-
-                    if is_dir:
-                        # Create explicit directory marker in metadata
-                        if not ctx.dry_run:
-                            existing_meta = self.metadata.get(entry_virtual_path)  # type: ignore[attr-defined]
-                            if not existing_meta:
-                                try:
-                                    # Extract tenant_id from context or mount point path
-                                    tenant_id = get_tenant_id(ctx.context) if ctx.context else None
-                                    if not tenant_id and ctx.mount_point:
-                                        # Try to extract from mount point path like /tenant:TENANT_ID/...
-                                        import re
-
-                                        match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
-                                        if match:
-                                            tenant_id = match.group(1)
-
-                                    now = datetime.now(UTC)
-                                    import hashlib
-
-                                    path_hash = hashlib.sha256(
-                                        entry_backend_path.encode()
-                                    ).hexdigest()
-
-                                    # Create directory metadata entry
-                                    dir_meta = FileMetadata(
-                                        path=entry_virtual_path,
-                                        backend_name=ctx.backend.name,  # type: ignore[union-attr]
-                                        physical_path=entry_backend_path,
-                                        size=0,  # Directories have size 0
-                                        etag=path_hash,
-                                        mime_type="inode/directory",  # Mark as directory
-                                        created_at=now,
-                                        modified_at=now,
-                                        version=1,
-                                        created_by=ctx.created_by,
-                                        tenant_id=tenant_id,  # Set proper tenant_id for permission checks
-                                    )
-
-                                    # Save directory to database
-                                    self.metadata.put(dir_meta)  # type: ignore[attr-defined]
-
-                                    # Track directory as found in backend (prevents deletion in cleanup phase)
-                                    files_found_in_backend.add(entry_virtual_path)
-
-                                    # Collect path for batch parent tuple creation
-                                    if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                                        paths_needing_tuples.append(entry_virtual_path)
-                                        # Flush batch if chunk size reached
-                                        if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
-                                            flush_parent_tuples_batch()
-
-                                except Exception as e:
-                                    error_msg = f"Failed to create directory marker for {entry_virtual_path}: {e}"
-                                    cast(list[str], stats["errors"]).append(error_msg)
-                                    logger.warning(error_msg)
-
-                        # Track directory as found in backend even if it already existed
-                        files_found_in_backend.add(entry_virtual_path)
-
-                        # Add subdirectory to queue for BFS traversal
-                        if ctx.recursive:
-                            queue.append((entry_virtual_path, entry_backend_path))
-                    else:
-                        # Apply include/exclude patterns using helper
-                        if not self._matches_patterns(
-                            entry_virtual_path, ctx.include_patterns, ctx.exclude_patterns
-                        ):
-                            continue
-
-                        # Process file
-                        stats["files_scanned"] = stats["files_scanned"] + 1  # type: ignore[operator]
-
-                        # Call progress callback if provided (Issue #609)
-                        if ctx.progress_callback:
-                            try:
-                                ctx.progress_callback(
-                                    int(stats["files_scanned"]),  # type: ignore[arg-type]
-                                    entry_virtual_path,
-                                )
-                            except Exception as cb_error:
-                                # Re-raise cancellation, log other errors
-                                from nexus.core.sync_job_manager import SyncCancelled
-
-                                if isinstance(cb_error, SyncCancelled):
-                                    raise
-                                logger.warning(f"Progress callback error: {cb_error}")
-
-                        # Track this file as found in backend
-                        files_found_in_backend.add(entry_virtual_path)
-
-                        if ctx.dry_run:
-                            # Dry run: just count, don't modify database
-                            continue
-
-                        # Check if file already exists in metadata
-                        existing_meta = self.metadata.get(entry_virtual_path)  # type: ignore[attr-defined]
-
-                        if not existing_meta:
-                            # File doesn't exist in metadata - add it
-                            try:
-                                now = datetime.now(UTC)
-                                import hashlib
-
-                                path_hash = hashlib.sha256(entry_backend_path.encode()).hexdigest()
-
-                                # Get actual file size from backend
-                                file_size = 0
-                                try:
-                                    if hasattr(ctx.backend, "get_content_size"):
-                                        from nexus.core.operation_context import OperationContext
-
-                                        size_context = OperationContext(
-                                            backend_path=entry_backend_path
-                                        )
-                                        file_size = ctx.backend.get_content_size(  # type: ignore[union-attr]
-                                            path_hash, size_context
-                                        )
-                                except Exception:
-                                    # If size retrieval fails, default to 0
-                                    pass
-
-                                meta = FileMetadata(
-                                    path=entry_virtual_path,
-                                    backend_name=ctx.backend.name,  # type: ignore[union-attr]
-                                    physical_path=entry_backend_path,
-                                    size=file_size,
-                                    etag=path_hash,
-                                    created_at=now,
-                                    modified_at=now,
-                                    version=1,
-                                    created_by=ctx.created_by,
-                                )
-
-                                # Save to database
-                                self.metadata.put(meta)  # type: ignore[attr-defined]
-                                stats["files_created"] = stats["files_created"] + 1  # type: ignore[operator]
-
-                                # Collect path for batch parent tuple creation (done at end)
-                                if ctx.has_hierarchy and self._hierarchy_manager:  # type: ignore[attr-defined]
-                                    paths_needing_tuples.append(entry_virtual_path)
-                                    # Flush batch if chunk size reached (memory-efficient)
-                                    if len(paths_needing_tuples) >= PATHS_CHUNK_SIZE:
-                                        flush_parent_tuples_batch()
-
-                            except Exception as e:
-                                error_msg = f"Failed to add {entry_virtual_path}: {e}"
-                                cast(list[str], stats["errors"]).append(error_msg)
-
-            except Exception as e:
-                error_msg = f"Failed to scan {virtual_path}: {e}"
-                cast(list[str], stats["errors"]).append(error_msg)
-
-        # Flush any remaining paths that haven't been processed yet
-        if paths_needing_tuples:
-            flush_parent_tuples_batch()
-
-        # Log final parent tuple creation statistics
-        if total_tuples_created > 0:
-            logger.info(
-                f"[SYNC_MOUNT] Parent tuple creation complete: {total_tuples_created} tuples created total"
-            )
-
-        return MetadataSyncResult(stats, files_found_in_backend)
-
-    def _sync_mount_deletions(
-        self,
-        ctx: SyncMountContext,
-        files_found_in_backend: set[str],
-        stats: dict[str, int | list[str]],
-    ) -> None:
-        """Step 4: Handle file deletions - remove files no longer in backend.
-
-        Only performs deletion check when syncing from root (path=None),
-        not for partial syncs to avoid false positives.
-
-        Args:
-            ctx: Sync mount context
-            files_found_in_backend: Set of files found during metadata scan
-            stats: Statistics dictionary to update
-        """
-        from typing import cast
-
-        # Only check deletions if we synced from root (path=None)
-        if ctx.dry_run or ctx.path is not None:
-            return
-
-        try:
-            # Get list of other mount points to exclude from deletion check
-            other_mount_points = set()
-            try:
-                all_mounts = self.list_mounts()
-                for m in all_mounts:
-                    mp = m.get("mount_point", "")
-                    if mp and mp != ctx.mount_point and mp != "/":
-                        other_mount_points.add(mp)
-            except Exception:
-                pass
-
-            # List all files in metadata under this mount point
-            existing_metas = self.metadata.list(prefix=ctx.mount_point, recursive=True)  # type: ignore[attr-defined]
-            existing_files = [meta.path for meta in existing_metas]
-
-            for existing_path in existing_files:
-                # Skip the mount point itself
-                if existing_path == ctx.mount_point:
-                    continue
-
-                # Skip if it was found in the backend scan
-                if existing_path in files_found_in_backend:
-                    continue
-
-                # Skip if this file belongs to another mount
-                belongs_to_other_mount = any(
-                    existing_path.startswith(mp + "/") or existing_path == mp
-                    for mp in other_mount_points
-                )
-                if belongs_to_other_mount:
-                    continue
-
-                # Check if this is actually a file
-                try:
-                    meta = self.metadata.get(existing_path)  # type: ignore[attr-defined]
-                    if meta:
-                        # File exists in metadata but not in backend - delete it
-                        logger.info(
-                            f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
-                        )
-                        self.metadata.delete(existing_path)  # type: ignore[attr-defined]
-                        stats["files_deleted"] = stats["files_deleted"] + 1  # type: ignore[operator]
-                except Exception as e:
-                    error_msg = f"Failed to delete {existing_path}: {e}"
-                    cast(list[str], stats["errors"]).append(error_msg)
-                    logger.warning(error_msg)
-        except Exception as e:
-            error_msg = f"Failed to check for deletions: {e}"
-            cast(list[str], stats["errors"]).append(error_msg)
-            logger.warning(error_msg)
-
-    def _sync_mount_content_cache(
-        self,
-        ctx: SyncMountContext,
-        stats: dict[str, int | list[str]],
-    ) -> None:
-        """Step 5: Sync content to cache if requested.
-
-        Delegates to backend.sync() method (from CacheConnectorMixin) to
-        populate the content_cache table for fast grep/search operations.
-
-        Args:
-            ctx: Sync mount context
-            stats: Statistics dictionary to update
-        """
-        from typing import cast
-
-        if not ctx.sync_content or ctx.dry_run:
-            return
-
-        # Delegate to backend's sync() method if available (CacheConnectorMixin)
-        if not hasattr(ctx.backend, "sync"):
-            logger.info(
-                f"[SYNC_MOUNT] Backend {type(ctx.backend).__name__} does not support sync(), "
-                "skipping content cache population"
-            )
-            return
-
-        logger.info("[SYNC_MOUNT] Delegating to backend.sync() for cache population")
-        try:
-            from nexus.backends.cache_mixin import SyncResult as CacheSyncResult
-
-            # Determine path for cache sync (relative to mount)
-            cache_sync_path = None
-            if ctx.path:
-                if ctx.path.startswith(ctx.mount_point):
-                    cache_sync_path = ctx.path[len(ctx.mount_point) :].lstrip("/")
-                else:
-                    cache_sync_path = ctx.path.lstrip("/")
-
-            cache_result: CacheSyncResult = ctx.backend.sync(  # type: ignore[union-attr]
-                path=cache_sync_path,
-                mount_point=ctx.mount_point,
-                include_patterns=ctx.include_patterns,
-                exclude_patterns=ctx.exclude_patterns,
-                generate_embeddings=ctx.generate_embeddings,
-                context=ctx.context,
-            )
-
-            stats["cache_synced"] = cache_result.files_synced
-            stats["cache_skipped"] = cache_result.files_skipped
-            stats["cache_bytes"] = cache_result.bytes_synced
-            stats["embeddings_generated"] = cache_result.embeddings_generated
-
-            # Add any cache sync errors
-            if cache_result.errors:
-                for error in cache_result.errors:
-                    cast(list[str], stats["errors"]).append(f"[cache] {error}")
-
-            logger.info(
-                f"[SYNC_MOUNT] Content cache sync complete: "
-                f"synced={cache_result.files_synced}, "
-                f"bytes={cache_result.bytes_synced}, "
-                f"embeddings={cache_result.embeddings_generated}"
-            )
-        except Exception as e:
-            error_msg = f"Failed to sync content cache via backend.sync(): {e}"
-            cast(list[str], stats["errors"]).append(error_msg)
-            logger.warning(error_msg)
+        result = self._sync_service.sync_mount(ctx)
+        return result.to_dict()
 
     # =========================================================================
-    # Async Sync Methods (Issue #609)
+    # Async Sync Jobs
     # =========================================================================
 
     @rpc_expose(description="Start async sync job for a mount")
@@ -1862,44 +278,24 @@ class NexusFSMountsMixin:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: OperationContext | None = None,
+        context: "OperationContext | None" = None,
     ) -> dict[str, Any]:
-        """Start an async sync job for a mount point.
-
-        Unlike sync_mount() which blocks until completion, this method returns
-        immediately with a job_id that can be used to monitor progress.
+        """Start an async sync job for a mount.
 
         Args:
-            mount_point: Virtual path of mount to sync (required for async)
-            path: Specific path within mount to sync
-            recursive: If True, sync all subdirectories recursively
-            dry_run: If True, only report what would be synced
-            sync_content: If True, also sync content to cache
-            include_patterns: Glob patterns to include
-            exclude_patterns: Glob patterns to exclude
-            generate_embeddings: If True, generate embeddings
-            context: Operation context (automatically provided by RPC server)
+            mount_point: Mount to sync
+            path: Specific path within mount
+            recursive: Sync subdirectories
+            dry_run: Report only
+            sync_content: Sync content to cache
+            include_patterns: Patterns to include
+            exclude_patterns: Patterns to exclude
+            generate_embeddings: Generate embeddings
+            context: Operation context
 
         Returns:
-            Dictionary with job info:
-                - job_id: UUID of the sync job
-                - status: Initial status ("pending")
-                - mount_point: Mount being synced
-
-        Raises:
-            ValueError: If mount_point is None (required for async)
-
-        Example:
-            >>> result = nx.sync_mount_async("/mnt/gmail")
-            >>> job_id = result["job_id"]
-            >>> # Monitor progress
-            >>> status = nx.get_sync_job(job_id)
-            >>> print(f"Progress: {status['progress_pct']}%")
+            Dictionary with job_id and status
         """
-        import asyncio
-
-        from nexus.core.sync_job_manager import SyncJobManager
-
         if mount_point is None:
             raise ValueError("mount_point is required for async sync")
 
@@ -1908,8 +304,8 @@ class NexusFSMountsMixin:
         if context:
             user_id = getattr(context, "subject_id", None)
 
-        # Build sync params dict
-        sync_params = {
+        # Build params dict
+        params = {
             "path": path,
             "recursive": recursive,
             "dry_run": dry_run,
@@ -1919,44 +315,8 @@ class NexusFSMountsMixin:
             "generate_embeddings": generate_embeddings,
         }
 
-        # Create sync job manager
-        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
-
-        # Create job record
-        job_id = sync_manager.create_job(mount_point, sync_params, user_id)
-
-        # Schedule the job to start (non-blocking)
-        # Get or create event loop and schedule the task
-        # Issue #913: Wrap in error handler to prevent silent failures
-        from typing import cast
-
-        from nexus.core.nexus_fs import NexusFS
-
-        nexus_fs = cast(NexusFS, self)  # Self is NexusFS at runtime (mixin pattern)
-
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def _start_sync_job() -> None:
-                try:
-                    await sync_manager.start_job(job_id, nexus_fs)
-                except Exception as e:
-                    logger.error(f"Sync job {job_id} failed to start: {e}")
-
-            loop.create_task(_start_sync_job())
-        except RuntimeError:
-            # No running loop - create one for the task
-            # This handles the case when called from synchronous context
-            import threading
-
-            def run_async() -> None:
-                try:
-                    asyncio.run(sync_manager.start_job(job_id, nexus_fs))
-                except Exception as e:
-                    logger.error(f"Sync job {job_id} failed to start: {e}")
-
-            thread = threading.Thread(target=run_async, daemon=True)
-            thread.start()
+        job_id = self._sync_job_service.create_job(mount_point, params, user_id)
+        self._sync_job_service.start_job(job_id)
 
         return {
             "job_id": job_id,
@@ -1966,54 +326,27 @@ class NexusFSMountsMixin:
 
     @rpc_expose(description="Get sync job status and progress")
     def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
-        """Get the status and progress of a sync job.
+        """Get sync job status.
 
         Args:
-            job_id: UUID of the sync job
+            job_id: Job ID to look up
 
         Returns:
-            Job details dict or None if not found:
-                - id: Job UUID
-                - mount_point: Mount being synced
-                - status: pending, running, completed, failed, cancelled
-                - progress_pct: Progress percentage (0-100)
-                - progress_detail: Detailed progress info
-                - created_at, started_at, completed_at: Timestamps
-                - result: Final sync stats (if completed)
-                - error_message: Error details (if failed)
-
-        Example:
-            >>> job = nx.get_sync_job("abc123")
-            >>> if job:
-            ...     print(f"Status: {job['status']}, Progress: {job['progress_pct']}%")
+            Job details or None
         """
-        from nexus.core.sync_job_manager import SyncJobManager
-
-        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
-        return sync_manager.get_job(job_id)
+        return self._sync_job_service.get_job(job_id)
 
     @rpc_expose(description="Cancel a running sync job")
     def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
         """Cancel a running sync job.
 
         Args:
-            job_id: UUID of the sync job to cancel
+            job_id: Job ID to cancel
 
         Returns:
-            Dictionary with result:
-                - success: True if cancellation was requested
-                - job_id: The job ID
-                - message: Status message
-
-        Example:
-            >>> result = nx.cancel_sync_job("abc123")
-            >>> if result["success"]:
-            ...     print("Cancellation requested")
+            Dictionary with success status
         """
-        from nexus.core.sync_job_manager import SyncJobManager
-
-        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
-        success = sync_manager.cancel_job(job_id)
+        success = self._sync_job_service.cancel_job(job_id)
 
         if success:
             return {
@@ -2022,7 +355,7 @@ class NexusFSMountsMixin:
                 "message": "Cancellation requested",
             }
         else:
-            job = sync_manager.get_job(job_id)
+            job = self._sync_job_service.get_job(job_id)
             if not job:
                 return {
                     "success": False,
@@ -2046,20 +379,118 @@ class NexusFSMountsMixin:
         """List sync jobs with optional filters.
 
         Args:
-            mount_point: Filter by mount point
-            status: Filter by status (pending, running, completed, failed, cancelled)
-            limit: Maximum number of jobs to return (default: 50)
+            mount_point: Filter by mount
+            status: Filter by status
+            limit: Maximum jobs to return
 
         Returns:
-            List of job dicts, ordered by created_at descending
-
-        Example:
-            >>> # List all recent jobs
-            >>> jobs = nx.list_sync_jobs()
-            >>> # List running jobs for a specific mount
-            >>> jobs = nx.list_sync_jobs(mount_point="/mnt/gmail", status="running")
+            List of job dictionaries
         """
-        from nexus.core.sync_job_manager import SyncJobManager
+        return self._sync_job_service.list_jobs(
+            mount_point=mount_point,
+            status=status,
+            limit=limit,
+        )
 
-        sync_manager = SyncJobManager(self.metadata.SessionLocal)  # type: ignore[attr-defined]
-        return sync_manager.list_jobs(mount_point=mount_point, status=status, limit=limit)
+    # =========================================================================
+    # Persistence Operations
+    # =========================================================================
+
+    @rpc_expose(description="Save mount configuration to database")
+    def save_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        description: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """Save mount configuration to database.
+
+        Args:
+            mount_point: Virtual path
+            backend_type: Backend type
+            backend_config: Backend configuration
+            priority: Mount priority
+            readonly: Read-only flag
+            owner_user_id: Owner user ID
+            tenant_id: Tenant ID
+            description: Description
+            context: Operation context
+
+        Returns:
+            Mount ID
+        """
+        return self._mount_persist_service.save_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            description=description,
+            context=context,
+        )
+
+    @rpc_expose(description="List saved mount configurations")
+    def list_saved_mounts(
+        self,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        context: "OperationContext | None" = None,
+    ) -> list[dict[str, Any]]:
+        """List saved mount configurations.
+
+        Args:
+            owner_user_id: Filter by owner
+            tenant_id: Filter by tenant
+            context: Operation context
+
+        Returns:
+            List of saved mount configurations
+        """
+        return self._mount_persist_service.list_saved_mounts(
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            context=context,
+        )
+
+    @rpc_expose(description="Load and activate saved mount")
+    def load_mount(self, mount_point: str) -> str:
+        """Load saved mount configuration and activate it.
+
+        Args:
+            mount_point: Virtual path of saved mount
+
+        Returns:
+            Mount ID
+        """
+        return self._mount_persist_service.load_mount(mount_point)
+
+    @rpc_expose(description="Delete saved mount configuration")
+    def delete_saved_mount(self, mount_point: str) -> bool:
+        """Delete saved mount configuration.
+
+        Args:
+            mount_point: Virtual path
+
+        Returns:
+            True if deleted
+        """
+        return self._mount_persist_service.delete_saved_mount(mount_point)
+
+    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
+        """Load all saved mount configurations.
+
+        Args:
+            auto_sync: Auto-sync connector mounts
+
+        Returns:
+            Loading results dictionary
+        """
+        return self._mount_persist_service.load_all_mounts(auto_sync)

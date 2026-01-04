@@ -7353,6 +7353,199 @@ class NexusFS(  # type: ignore[misc]
             _context=_context,
         )
 
+    # =========================================================================
+    # MountService Delegation Methods
+    # =========================================================================
+
+    async def aadd_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Add a dynamic backend mount - delegates to MountService."""
+        return await self.mount_service.add_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            context=context,
+        )
+
+    async def aremove_mount(
+        self,
+        mount_point: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Remove a backend mount - delegates to MountService."""
+        return await self.mount_service.remove_mount(
+            mount_point=mount_point,
+            _context=_context,
+        )
+
+    async def alist_connectors(
+        self,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List available connector types - delegates to MountService."""
+        return await self.mount_service.list_connectors(category=category)
+
+    async def alist_mounts(
+        self,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all backend mounts - delegates to MountService."""
+        return await self.mount_service.list_mounts(_context=_context)
+
+    async def aget_mount(
+        self,
+        mount_point: str,
+    ) -> dict[str, Any] | None:
+        """Get mount details - delegates to MountService."""
+        return await self.mount_service.get_mount(mount_point=mount_point)
+
+    async def ahas_mount(
+        self,
+        mount_point: str,
+    ) -> bool:
+        """Check if mount exists - delegates to MountService."""
+        return await self.mount_service.has_mount(mount_point=mount_point)
+
+    async def asave_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        description: str | None = None,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Save mount configuration to database - delegates to MountService."""
+        return await self.mount_service.save_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            description=description,
+            context=context,
+        )
+
+    async def alist_saved_mounts(
+        self,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List saved mount configurations - delegates to MountService."""
+        return await self.mount_service.list_saved_mounts(
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            context=context,
+        )
+
+    async def aload_mount(
+        self,
+        mount_point: str,
+    ) -> str:
+        """Load and activate saved mount - delegates to MountService."""
+        return await self.mount_service.load_mount(mount_point=mount_point)
+
+    async def adelete_saved_mount(
+        self,
+        mount_point: str,
+    ) -> bool:
+        """Delete saved mount configuration - delegates to MountService."""
+        return await self.mount_service.delete_saved_mount(mount_point=mount_point)
+
+    async def async_mount(
+        self,
+        mount_point: str | None = None,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Sync metadata from connector backend - delegates to MountService."""
+        return await self.mount_service.sync_mount(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+            progress_callback=progress_callback,
+        )
+
+    async def async_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Start async sync job for a mount - delegates to MountService."""
+        return await self.mount_service.sync_mount_async(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+        )
+
+    async def aget_sync_job(
+        self,
+        job_id: str,
+    ) -> dict[str, Any] | None:
+        """Get sync job status and progress - delegates to MountService."""
+        return await self.mount_service.get_sync_job(job_id=job_id)
+
+    async def acancel_sync_job(
+        self,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Cancel a running sync job - delegates to MountService."""
+        return await self.mount_service.cancel_sync_job(job_id=job_id)
+
+    async def alist_sync_jobs(
+        self,
+        mount_point: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List sync jobs - delegates to MountService."""
+        return await self.mount_service.list_sync_jobs(
+            mount_point=mount_point,
+            status=status,
+            limit=limit,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

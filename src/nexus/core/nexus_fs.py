@@ -6653,6 +6653,157 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
+    # -------------------------------------------------------------------------
+    # LLMService Delegation Methods (4 methods)
+    # -------------------------------------------------------------------------
+
+    async def allm_read(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> str:
+        """Read document with LLM and return answer - delegates to LLMService.
+
+        Async version of llm_read() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search for context
+            search_mode: Search mode ("semantic" or "keyword")
+            provider: LLM provider override
+
+        Returns:
+            LLM's answer as string
+        """
+        return await self.llm_service.llm_read(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def allm_read_detailed(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Read document with LLM with detailed metadata - delegates to LLMService.
+
+        Async version of llm_read_detailed() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            DocumentReadResult with answer, context, and metadata
+        """
+        return await self.llm_service.llm_read_detailed(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def allm_read_stream(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Stream LLM response - delegates to LLMService.
+
+        Async version of llm_read_stream() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            AsyncIterator yielding response chunks
+        """
+        return self.llm_service.llm_read_stream(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    def acreate_llm_reader(
+        self,
+        provider: Any = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        max_context_tokens: int = 3000,
+    ) -> Any:
+        """Create an LLM document reader - delegates to LLMService.
+
+        Sync version but with 'a' prefix for consistency.
+
+        Args:
+            provider: LLM provider
+            model: Model name
+            api_key: API key override
+            system_prompt: System prompt for the LLM
+            max_context_tokens: Maximum context window tokens
+
+        Returns:
+            LLMDocumentReader instance
+        """
+        return self.llm_service.create_llm_reader(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

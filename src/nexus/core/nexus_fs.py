@@ -7100,6 +7100,259 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
+    # =========================================================================
+    # SkillService Delegation Methods
+    # =========================================================================
+
+    async def askills_create(
+        self,
+        name: str,
+        description: str,
+        template: str = "basic",
+        tier: str = "user",
+        author: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a new skill from template - delegates to SkillService."""
+        return await self.skill_service.skills_create(
+            name=name,
+            description=description,
+            template=template,
+            tier=tier,
+            author=author,
+            context=context,
+        )
+
+    async def askills_create_from_content(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        tier: str = "user",
+        author: str | None = None,
+        source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from custom content - delegates to SkillService."""
+        return await self.skill_service.skills_create_from_content(
+            name=name,
+            description=description,
+            content=content,
+            tier=tier,
+            author=author,
+            source_url=source_url,
+            metadata=metadata,
+            context=context,
+        )
+
+    async def askills_create_from_file(
+        self,
+        source: str,
+        file_data: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "agent",
+        use_ai: bool = False,
+        use_ocr: bool = False,
+        extract_tables: bool = False,
+        extract_images: bool = False,
+        _author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from file or URL - delegates to SkillService."""
+        return await self.skill_service.skills_create_from_file(
+            source=source,
+            file_data=file_data,
+            name=name,
+            description=description,
+            tier=tier,
+            use_ai=use_ai,
+            use_ocr=use_ocr,
+            extract_tables=extract_tables,
+            extract_images=extract_images,
+            _author=_author,
+            _context=_context,
+        )
+
+    async def askills_list(
+        self,
+        tier: str | None = None,
+        include_metadata: bool = True,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List all skills accessible to the user - delegates to SkillService."""
+        return await self.skill_service.skills_list(
+            tier=tier,
+            include_metadata=include_metadata,
+            context=context,
+        )
+
+    async def askills_info(
+        self,
+        skill_name: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get detailed skill information - delegates to SkillService."""
+        return await self.skill_service.skills_info(
+            skill_name=skill_name,
+            context=context,
+        )
+
+    async def askills_search(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int = 10,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Search skills by description or content - delegates to SkillService."""
+        return await self.skill_service.skills_search(
+            query=query,
+            tier=tier,
+            limit=limit,
+            _context=_context,
+        )
+
+    async def askills_fork(
+        self,
+        source_name: str,
+        target_name: str,
+        tier: str = "agent",
+        author: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Fork an existing skill - delegates to SkillService."""
+        return await self.skill_service.skills_fork(
+            source_name=source_name,
+            target_name=target_name,
+            tier=tier,
+            author=author,
+            context=context,
+        )
+
+    async def askills_publish(
+        self,
+        skill_name: str,
+        source_tier: str = "agent",
+        target_tier: str = "tenant",
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Publish skill to another tier - delegates to SkillService."""
+        return await self.skill_service.skills_publish(
+            skill_name=skill_name,
+            source_tier=source_tier,
+            target_tier=target_tier,
+            _context=_context,
+        )
+
+    async def askills_import(
+        self,
+        zip_data: str,
+        tier: str = "user",
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Import skill from ZIP package - delegates to SkillService."""
+        return await self.skill_service.skills_import(
+            zip_data=zip_data,
+            tier=tier,
+            allow_overwrite=allow_overwrite,
+            context=context,
+        )
+
+    async def askills_validate_zip(
+        self,
+        package_path: str,
+    ) -> dict[str, Any]:
+        """Validate skill package without importing - delegates to SkillService."""
+        return await self.skill_service.skills_validate_zip(
+            package_path=package_path,
+        )
+
+    async def askills_export(
+        self,
+        skill_name: str,
+        include_dependencies: bool = False,
+        format: str = "generic",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export skill to .skill package - delegates to SkillService."""
+        return await self.skill_service.skills_export(
+            skill_name=skill_name,
+            include_dependencies=include_dependencies,
+            format=format,
+            context=context,
+        )
+
+    async def askills_submit_approval(
+        self,
+        skill_name: str,
+        submitted_by: str,
+        reviewers: list[str] | None = None,
+        comments: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Submit a skill for approval - delegates to SkillService."""
+        return await self.skill_service.skills_submit_approval(
+            skill_name=skill_name,
+            submitted_by=submitted_by,
+            reviewers=reviewers,
+            comments=comments,
+            _context=_context,
+        )
+
+    async def askills_approve(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Approve a skill for publication - delegates to SkillService."""
+        return await self.skill_service.skills_approve(
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+            _context=_context,
+        )
+
+    async def askills_reject(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Reject a skill for publication - delegates to SkillService."""
+        return await self.skill_service.skills_reject(
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+            _context=_context,
+        )
+
+    async def askills_list_approvals(
+        self,
+        status: str | None = None,
+        skill_name: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill approval requests - delegates to SkillService."""
+        return await self.skill_service.skills_list_approvals(
+            status=status,
+            skill_name=skill_name,
+            _context=_context,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

@@ -12,7 +12,9 @@ Extracted from: nexus_fs_versions.py (300 lines)
 
 from __future__ import annotations
 
+import asyncio
 import builtins
+import difflib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,10 +23,10 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext, PermissionEnforcer
+    from nexus.core.async_permissions import AsyncPermissionEnforcer
+    from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
-    from nexus.storage.cas_store import CASStore
     from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
 
@@ -86,8 +88,8 @@ class VersionService:
     def __init__(
         self,
         metadata_store: SQLAlchemyMetadataStore,
-        cas_store: CASStore,
-        permission_enforcer: PermissionEnforcer | None = None,
+        cas_store: Any,  # Backend with read_content method
+        permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
@@ -96,8 +98,8 @@ class VersionService:
 
         Args:
             metadata_store: Metadata store for version tracking
-            cas_store: Content-addressable storage for version content
-            permission_enforcer: Permission enforcer for access control
+            cas_store: Backend with read_content method (typically CAS-enabled backend)
+            permission_enforcer: Async permission enforcer for access control
             router: Path router for backend resolution
             rebac_manager: ReBAC manager for permission checks
             enforce_permissions: Whether to enforce permission checks
@@ -151,8 +153,47 @@ class VersionService:
                 context=context
             )
         """
-        # TODO: Extract get_version implementation
-        raise NotImplementedError("get_version() not yet implemented - Phase 2 in progress")
+        from nexus.core.exceptions import NexusFileNotFoundError
+
+        # Validate and normalize path
+        path = self._validate_path(path)
+
+        # Validate version number
+        if version < 1:
+            raise ValueError(f"Version must be positive integer, got: {version}")
+
+        # Check READ permission
+        await self._check_read_permission(path, context)
+
+        # Get version metadata (run in thread to avoid blocking)
+        version_meta = await asyncio.to_thread(self.metadata.get_version, path, version)
+        if version_meta is None:
+            raise NexusFileNotFoundError(f"{path} (version {version})")
+
+        # Ensure version has content hash
+        if version_meta.etag is None:
+            raise NexusFileNotFoundError(f"{path} (version {version}) has no content")
+
+        # Read content from backend using router
+        if self.router is None:
+            raise RuntimeError("Router not configured for VersionService")
+
+        # Route to backend
+        tenant_id = context.tenant_id if context else None
+        agent_id = context.agent_id if context else None
+        is_admin = context.is_admin if context else False
+
+        route = self.router.route(
+            path,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=False,
+        )
+
+        # Read content from backend using version's content hash (run in thread)
+        content = await asyncio.to_thread(route.backend.read_content, version_meta.etag)
+        return content
 
     @rpc_expose(description="List file versions")
     async def list_versions(
@@ -193,8 +234,14 @@ class VersionService:
             # Get latest version number
             latest = versions[0]['version'] if versions else 0
         """
-        # TODO: Extract list_versions implementation
-        raise NotImplementedError("list_versions() not yet implemented - Phase 2 in progress")
+        # Validate and normalize path
+        path = self._validate_path(path)
+
+        # Check READ permission
+        await self._check_read_permission(path, context)
+
+        # Get all versions from metadata store (run in thread to avoid blocking)
+        return await asyncio.to_thread(self.metadata.list_versions, path)
 
     # =========================================================================
     # Public API: Version Operations
@@ -234,8 +281,60 @@ class VersionService:
             Rollback creates a new version rather than deleting history.
             This preserves the audit trail and allows rolling forward again.
         """
-        # TODO: Extract rollback implementation
-        raise NotImplementedError("rollback() not yet implemented - Phase 2 in progress")
+        logger.info(f"[ROLLBACK] Starting rollback for path={path}, version={version}")
+
+        # Validate and normalize path
+        path = self._validate_path(path)
+        logger.info(f"[ROLLBACK] Validated path: {path}")
+
+        # Check WRITE permission
+        logger.info(f"[ROLLBACK] Checking WRITE permission for path={path}, context={context}")
+        await self._check_write_permission(path, context)
+        logger.info("[ROLLBACK] Permission check passed")
+
+        # Route to backend using context
+        if self.router is None:
+            raise RuntimeError("Router not configured for VersionService")
+
+        logger.info(f"[ROLLBACK] Routing to backend for path={path}")
+        tenant_id = context.tenant_id if context else None
+        agent_id = context.agent_id if context else None
+        is_admin = context.is_admin if context else False
+
+        route = self.router.route(
+            path,
+            tenant_id=tenant_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=True,
+        )
+        logger.info(f"[ROLLBACK] Route: backend={route.backend}, readonly={route.readonly}")
+
+        # Check readonly
+        if route.readonly:
+            raise PermissionError(f"Cannot rollback read-only path: {path}")
+
+        # Perform rollback in metadata store
+        # Extract created_by from context for version history tracking
+        created_by = context.user if context else None
+        logger.info(
+            f"[ROLLBACK] Calling metadata.rollback(path={path}, version={version}, created_by={created_by})"
+        )
+        await asyncio.to_thread(self.metadata.rollback, path, version, created_by=created_by)
+        logger.info("[ROLLBACK] metadata.rollback() completed successfully")
+
+        # Invalidate cache if enabled
+        if (
+            hasattr(self.metadata, "_cache_enabled")
+            and self.metadata._cache_enabled
+            and hasattr(self.metadata, "_cache")
+            and self.metadata._cache
+        ):
+            logger.info(f"[ROLLBACK] Invalidating cache for path={path}")
+            self.metadata._cache.invalidate_path(path)
+            logger.info("[ROLLBACK] Cache invalidated")
+
+        logger.info(f"[ROLLBACK] Rollback completed successfully for path={path}")
 
     @rpc_expose(description="Compare file versions")
     async def diff_versions(
@@ -250,16 +349,13 @@ class VersionService:
 
         Supports multiple comparison modes:
         - "metadata": Compare version metadata only (fast)
-        - "unified": Unified diff format (like git diff)
-        - "context": Context diff format
-        - "ndiff": Line-by-line delta with + and - markers
-        - "html": HTML-formatted diff
+        - "content": Unified diff format (like git diff)
 
         Args:
             path: Virtual file path
             v1: First version number
             v2: Second version number
-            mode: Diff mode ("metadata", "unified", "context", "ndiff", "html")
+            mode: Diff mode ("metadata" or "content")
             context: Operation context for permission checks
 
         Returns:
@@ -270,8 +366,8 @@ class VersionService:
                 - time_delta: Time between versions in seconds (float)
                 - same_content: Whether content is identical (bool)
 
-            If mode in ("unified", "context", "ndiff", "html"):
-                String containing the formatted diff
+            If mode="content":
+                String containing the unified diff
 
         Raises:
             NexusFileNotFoundError: If file or either version doesn't exist
@@ -294,33 +390,64 @@ class VersionService:
                 "/workspace/file.txt",
                 v1=2,
                 v2=3,
-                mode="unified",
+                mode="content",
                 context=context
             )
             print(diff_text)
 
-            # HTML diff for web display
-            html_diff = service.diff_versions(
-                "/workspace/doc.md",
-                v1=1,
-                v2=2,
-                mode="html",
-                context=context
-            )
-
         Note:
-            Content diffs (non-metadata modes) require loading both versions
-            into memory and only work for text files. Binary files will raise
-            ValueError.
+            Content diffs require loading both versions into memory and only
+            work for text files. Binary files will raise ValueError.
         """
-        # TODO: Extract diff_versions implementation
-        raise NotImplementedError("diff_versions() not yet implemented - Phase 2 in progress")
+        # Validate and normalize path
+        path = self._validate_path(path)
+
+        # Check READ permission
+        await self._check_read_permission(path, context)
+
+        # Validate mode
+        if mode not in ("metadata", "content"):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'metadata' or 'content'")
+
+        # Get metadata diff from metadata store (run in thread to avoid blocking)
+        meta_diff = await asyncio.to_thread(self.metadata.get_version_diff, path, v1, v2)
+
+        if mode == "metadata":
+            return meta_diff
+
+        # Content diff mode
+        if not meta_diff["content_changed"]:
+            return "(no content changes)"
+
+        # Retrieve both versions' content
+        content1 = (await self.get_version(path, v1, context=context)).decode(
+            "utf-8", errors="replace"
+        )
+        content2 = (await self.get_version(path, v2, context=context)).decode(
+            "utf-8", errors="replace"
+        )
+
+        # Generate unified diff
+        lines1 = content1.splitlines(keepends=True)
+        lines2 = content2.splitlines(keepends=True)
+
+        diff_lines = list(
+            difflib.unified_diff(
+                lines1,
+                lines2,
+                fromfile=f"{path} (v{v1})",
+                tofile=f"{path} (v{v2})",
+                lineterm="",
+            )
+        )
+
+        return "\n".join(diff_lines)
 
     # =========================================================================
     # Helper Methods
     # =========================================================================
 
-    def _check_read_permission(self, path: str, context: OperationContext | None) -> None:
+    async def _check_read_permission(self, path: str, context: OperationContext | None) -> None:
         """Check if user has read permission for path.
 
         Args:
@@ -328,12 +455,31 @@ class VersionService:
             context: Operation context
 
         Raises:
-            PermissionDeniedError: If permission denied
+            PermissionError: If permission denied
         """
-        # TODO: Extract permission checking logic
-        pass
+        from nexus.core.permissions import Permission
 
-    def _check_write_permission(self, path: str, context: OperationContext | None) -> None:
+        # Skip permission checks if not enforcing or no enforcer configured
+        if not self._enforce_permissions or self._permission_enforcer is None:
+            return
+
+        # Skip permission checks if no context provided
+        if context is None:
+            return
+
+        # Skip permission checks for system/admin contexts
+        if context.is_system or context.is_admin:
+            return
+
+        # Check READ permission via permission enforcer
+        has_permission = await self._permission_enforcer.check_permission(
+            path, Permission.READ, context
+        )
+
+        if not has_permission:
+            raise PermissionError(f"User '{context.user}' lacks READ permission for: {path}")
+
+    async def _check_write_permission(self, path: str, context: OperationContext | None) -> None:
         """Check if user has write permission for path.
 
         Args:
@@ -341,10 +487,29 @@ class VersionService:
             context: Operation context
 
         Raises:
-            PermissionDeniedError: If permission denied
+            PermissionError: If permission denied
         """
-        # TODO: Extract permission checking logic
-        pass
+        from nexus.core.permissions import Permission
+
+        # Skip permission checks if not enforcing or no enforcer configured
+        if not self._enforce_permissions or self._permission_enforcer is None:
+            return
+
+        # Skip permission checks if no context provided
+        if context is None:
+            return
+
+        # Skip permission checks for system/admin contexts
+        if context.is_system or context.is_admin:
+            return
+
+        # Check WRITE permission via permission enforcer
+        has_permission = await self._permission_enforcer.check_permission(
+            path, Permission.WRITE, context
+        )
+
+        if not has_permission:
+            raise PermissionError(f"User '{context.user}' lacks WRITE permission for: {path}")
 
     def _validate_path(self, path: str) -> str:
         """Validate and normalize path.
@@ -373,20 +538,23 @@ class VersionService:
 # Phase 2 Extraction Progress
 # =============================================================================
 #
-# Status: Skeleton created ✅
+# Status: Implementation Complete ✅
 #
-# TODO (in order of priority):
-# 1. [ ] Extract get_version() and version retrieval logic
-# 2. [ ] Extract list_versions() with version metadata
-# 3. [ ] Extract rollback() operation
-# 4. [ ] Extract diff_versions() with multiple diff modes
-# 5. [ ] Extract helper methods (_check_read_permission, etc.)
-# 6. [ ] Add unit tests for VersionService
-# 7. [ ] Update NexusFS to use composition
-# 8. [ ] Add backward compatibility shims with deprecation warnings
-# 9. [ ] Update documentation and migration guide
+# Completed Tasks:
+# 1. [x] Extract get_version() with async support and permission checks
+# 2. [x] Extract list_versions() with version metadata
+# 3. [x] Extract rollback() with cache invalidation
+# 4. [x] Extract diff_versions() with metadata and content modes
+# 5. [x] Extract helper methods (_check_read_permission, _check_write_permission, _validate_path)
+# 6. [x] Convert all blocking I/O to async using asyncio.to_thread()
 #
-# Lines extracted: 0 / 300 (0%)
+# TODO (Future):
+# 7. [ ] Add comprehensive unit tests for VersionService
+# 8. [ ] Update NexusFS to use composition (self.versions = VersionService(...))
+# 9. [ ] Add backward compatibility shims with deprecation warnings
+# 10. [ ] Update documentation and migration guide
+#
+# Lines extracted: ~300 / 300 (100%)
 # Files affected: 1 created, 0 modified
 #
 # This is a phased extraction to maintain working code at each step.

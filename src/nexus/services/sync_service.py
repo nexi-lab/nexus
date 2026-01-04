@@ -171,8 +171,7 @@ class SyncService:
                 f"Only connector-style backends (e.g., gcs_connector) can be synced."
             )
 
-        # Ensure mount directory entry exists
-        self._gw.mkdir(ctx.mount_point, parents=True, exist_ok=True, context=ctx.context)
+        # Mount directory entry is created by add_mount() -> _setup_mount_point()
 
         return backend
 
@@ -447,6 +446,18 @@ class SyncService:
 
         if not existing_meta:
             try:
+                # Extract tenant_id from context or mount point path
+                tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+                if not tenant_id and ctx.mount_point:
+                    match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+                    if match:
+                        tenant_id = match.group(1)
+
+                if not tenant_id:
+                    raise ValueError(
+                        f"Cannot sync file {virtual_path}: tenant_id not found in context or mount point path"
+                    )
+
                 now = datetime.now(UTC)
                 path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
 
@@ -463,6 +474,7 @@ class SyncService:
                     modified_at=now,
                     version=1,
                     created_by=created_by,
+                    tenant_id=tenant_id,
                 )
 
                 self._gw.metadata_put(meta)
@@ -517,6 +529,11 @@ class SyncService:
                 match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
                 if match:
                     tenant_id = match.group(1)
+
+            if not tenant_id:
+                raise ValueError(
+                    f"Cannot sync directory {virtual_path}: tenant_id not found in context or mount point path"
+                )
 
             now = datetime.now(UTC)
             path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
@@ -797,6 +814,18 @@ class SyncService:
         existing_meta = self._gw.metadata_get(virtual_path)
         if not existing_meta:
             try:
+                # Extract tenant_id from context or mount point path
+                tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+                if not tenant_id and ctx.mount_point:
+                    match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+                    if match:
+                        tenant_id = match.group(1)
+
+                if not tenant_id:
+                    raise ValueError(
+                        f"Cannot sync file {virtual_path}: tenant_id not found in context or mount point path"
+                    )
+
                 now = datetime.now(UTC)
                 path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
                 file_size = self._get_file_size(backend, path_hash, backend_path, ctx)
@@ -811,6 +840,7 @@ class SyncService:
                     modified_at=now,
                     version=1,
                     created_by=created_by,
+                    tenant_id=tenant_id,
                 )
                 self._gw.metadata_put(meta)
                 result.files_created = 1

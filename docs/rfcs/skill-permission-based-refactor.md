@@ -202,7 +202,40 @@ skills_unshare("/acme/alice/skills/my-skill", "user:bob@example.com", context)
     → rebac_delete(user:bob, viewer, skill_path)
 ```
 
-### 3. Runner (Agent Using Skills)
+**Important:** Sharing controls *visibility*, not *usage*. Users must also *activate* a skill to use it.
+
+### 3. Activating Skills
+
+Sharing makes a skill visible. Activating makes it used by the agent.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Visibility (permissions)     │  Usage (active_skills)      │
+│───────────────────────────────│─────────────────────────────│
+│  skills_share()               │  skills_activate()          │
+│  skills_unshare()             │  skills_deactivate()        │
+│                               │  skills_discover() - browse │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Discovery & Activation Flow:**
+```python
+# Bob discovers available skills (ones he has permission to see)
+skills_discover(context, filter="public")
+    → Returns: [{"path": "/acme/alice/skills/code-review", ...}, ...]
+
+# Bob activates a skill for his agent
+skills_activate("/acme/alice/skills/code-review", context)
+    → Adds to Bob's active_skills config
+
+# Bob deactivates a skill
+skills_deactivate("/acme/alice/skills/code-review", context)
+    → Removes from active_skills
+```
+
+**Note:** Creator's own skills are auto-activated on creation.
+
+### 4. Runner (Agent Using Skills)
 
 **Agent Configuration (stored in `/<tenant>/<user>/agents/<agent_id>/config.yaml`):**
 ```yaml
@@ -293,6 +326,46 @@ def skills_unshare(
     context: OperationContext,
 ) -> dict:
     """Revoke skill access by removing permission."""
+
+@rpc_expose
+def skills_discover(
+    context: OperationContext,
+    filter: str = "all",  # "all" | "public" | "tenant" | "active"
+) -> dict:
+    """Discover skills user has permission to access.
+
+    Returns:
+        {
+            "skills": [
+                {
+                    "name": "code-review",
+                    "owner": "alice",
+                    "path": "/acme/alice/skills/code-review",
+                    "description": "...",
+                    "is_active": True
+                }
+            ],
+            "count": 25
+        }
+    """
+
+@rpc_expose
+def skills_activate(
+    skill_path: str,
+    context: OperationContext,
+) -> dict:
+    """Activate a skill for the user's agent.
+
+    Adds skill to user's active_skills config.
+    Requires read permission on the skill.
+    """
+
+@rpc_expose
+def skills_deactivate(
+    skill_path: str,
+    context: OperationContext,
+) -> dict:
+    """Deactivate a skill (remove from active_skills)."""
 
 @rpc_expose
 def skills_get_prompt_context(
@@ -396,8 +469,11 @@ skills_approve(approval_id)
 
 1. Add `skills_get_prompt_context()` to mixin
 2. Add `skills_load()` to mixin
-3. Add permission checks to SkillRegistry discovery
-4. Tests for permission-based filtering
+3. Add `skills_discover()` to mixin
+4. Add `skills_activate()` / `skills_deactivate()` to mixin
+5. Add permission checks to SkillRegistry discovery
+6. Auto-activate creator's skills on creation
+7. Tests for permission-based filtering
 
 ### Phase 2: Distributor APIs
 
@@ -426,7 +502,11 @@ skills_approve(approval_id)
 - [ ] `skill-creator` system skill exists and guides conversational building
 - [ ] Skills created via filesystem `write()` are private by default
 - [ ] Creator automatically gets owner permission on skill creation
-- [ ] `skills_get_prompt_context()` returns only permitted skills
+- [ ] Creator's skills are auto-activated on creation
+- [ ] `skills_discover()` returns skills user has permission to see
+- [ ] `skills_activate()` adds skill to user's active_skills
+- [ ] `skills_deactivate()` removes skill from active_skills
+- [ ] `skills_get_prompt_context()` returns only permitted AND active skills
 - [ ] `skills_load()` respects read permissions
 - [ ] `skills_share()` grants correct permissions
 - [ ] `skills_unshare()` revokes access correctly
@@ -489,10 +569,13 @@ A: No. Skills are files, so we use filesystem operations directly.
 ```
 Filesystem (existing)     |  Skill-specific (new)
 --------------------------|---------------------------
-write()  - create/update  |  skills_share()    - grant access
-read()   - read           |  skills_unshare()  - revoke access
-delete() - delete         |  skills_get_prompt_context() - discovery
-list()   - list           |  skills_load()     - formatted read
+write()  - create/update  |  skills_share()      - grant access
+read()   - read           |  skills_unshare()    - revoke access
+delete() - delete         |  skills_discover()   - browse available
+list()   - list           |  skills_activate()   - add to active
+                          |  skills_deactivate() - remove from active
+                          |  skills_get_prompt_context() - for agent
+                          |  skills_load()       - formatted read
 ```
 
 ### Draft State (Resolved)
@@ -505,6 +588,27 @@ A: No special draft state needed. "Draft" = private skill, "Published" = shared 
 - Creator can test immediately since they have access
 - "Publishing" is just sharing: `skills_share(path, "tenant")`
 - No separate draft folder, no TTL cleanup, no complexity
+
+### Visibility vs Activation (Resolved)
+
+**Q: If a skill is shared publicly, does everyone automatically use it?**
+
+A: No. Sharing controls *visibility*, activation controls *usage*.
+
+```
+Share (visibility)     →  User CAN see the skill
+Activate (usage)       →  User's agent WILL use the skill
+```
+
+**Why separate:**
+- Public skills shouldn't auto-clutter everyone's agent
+- Users choose which skills to activate (like installing an app)
+- Discovery → Evaluate → Activate flow
+
+**Behavior:**
+- Creator's own skills are auto-activated on creation
+- Shared skills require explicit `skills_activate()` by recipient
+- `skills_get_prompt_context()` returns skills that are both visible AND active
 
 ## Open Questions
 

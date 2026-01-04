@@ -8464,15 +8464,18 @@ class NexusFS(  # type: ignore[misc]
     def sync_mount(
         self,
         mount_point: str,
-        path: str = "/",
+        path: str | None = None,
         recursive: bool = True,
         force: bool = False,
         direction: str = "pull",
         dry_run: bool = False,
+        sync_content: bool = True,
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
         batch_size: int = 100,
         context: OperationContext | None = None,
+        progress_callback: Any = None,
     ) -> dict[str, Any]:
         """Sync metadata from connector backend."""
         # Reserved parameters for future use
@@ -8483,9 +8486,12 @@ class NexusFS(  # type: ignore[misc]
                 path=path,
                 recursive=recursive,
                 dry_run=dry_run,
+                sync_content=sync_content,
                 include_patterns=include_patterns,
                 exclude_patterns=exclude_patterns,
+                generate_embeddings=generate_embeddings,
                 context=context,
+                progress_callback=progress_callback,
             )
         )
 
@@ -8493,12 +8499,15 @@ class NexusFS(  # type: ignore[misc]
     def sync_mount_async(
         self,
         mount_point: str,
-        path: str = "/",
+        path: str | None = None,
         recursive: bool = True,
         force: bool = False,
         direction: str = "pull",
+        dry_run: bool = False,
+        sync_content: bool = True,
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
         batch_size: int = 100,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
@@ -8510,8 +8519,11 @@ class NexusFS(  # type: ignore[misc]
                 mount_point=mount_point,
                 path=path,
                 recursive=recursive,
+                dry_run=dry_run,
+                sync_content=sync_content,
                 include_patterns=include_patterns,
                 exclude_patterns=exclude_patterns,
+                generate_embeddings=generate_embeddings,
                 context=context,
             )
         )

@@ -53,7 +53,7 @@ class NexusFSGateway:
     - Session: session_factory property
     """
 
-    def __init__(self, fs: "NexusFS"):
+    def __init__(self, fs: NexusFS):
         """Initialize gateway with NexusFS instance.
 
         Args:
@@ -71,7 +71,7 @@ class NexusFSGateway:
         *,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Create directory at path.
 
@@ -91,7 +91,7 @@ class NexusFSGateway:
         path: str,
         content: bytes | str,
         *,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> None:
         """Write content to file.
 
@@ -111,7 +111,7 @@ class NexusFSGateway:
     # Metadata Operations
     # =========================================================================
 
-    def metadata_get(self, path: str) -> "FileMetadata | None":
+    def metadata_get(self, path: str) -> FileMetadata | None:
         """Get metadata for path.
 
         Args:
@@ -124,7 +124,7 @@ class NexusFSGateway:
             return self._fs.metadata.get(path)
         return None
 
-    def metadata_put(self, meta: "FileMetadata") -> None:
+    def metadata_put(self, meta: FileMetadata) -> None:
         """Store metadata.
 
         Args:
@@ -133,9 +133,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "put"):
             self._fs.metadata.put(meta)
 
-    def metadata_list(
-        self, prefix: str, recursive: bool = False
-    ) -> list["FileMetadata"]:
+    def metadata_list(self, prefix: str, recursive: bool = False) -> list[FileMetadata]:
         """List metadata entries under prefix.
 
         Args:
@@ -266,11 +264,14 @@ class NexusFSGateway:
         Returns:
             Number of tuples created
         """
-        if hasattr(self._fs, "_hierarchy_manager") and self._fs._hierarchy_manager:
-            if hasattr(self._fs._hierarchy_manager, "ensure_parent_tuples_batch"):
-                return self._fs._hierarchy_manager.ensure_parent_tuples_batch(
-                    paths, tenant_id=tenant_id
-                )
+        if (
+            hasattr(self._fs, "_hierarchy_manager")
+            and self._fs._hierarchy_manager
+            and hasattr(self._fs._hierarchy_manager, "ensure_parent_tuples_batch")
+        ):
+            return self._fs._hierarchy_manager.ensure_parent_tuples_batch(
+                paths, tenant_id=tenant_id
+            )
         return 0
 
     def remove_parent_tuples(
@@ -287,11 +288,12 @@ class NexusFSGateway:
         Returns:
             Number of tuples removed
         """
-        if hasattr(self._fs, "_hierarchy_manager") and self._fs._hierarchy_manager:
-            if hasattr(self._fs._hierarchy_manager, "remove_parent_tuples"):
-                return self._fs._hierarchy_manager.remove_parent_tuples(
-                    path, tenant_id=tenant_id
-                )
+        if (
+            hasattr(self._fs, "_hierarchy_manager")
+            and self._fs._hierarchy_manager
+            and hasattr(self._fs._hierarchy_manager, "remove_parent_tuples")
+        ):
+            return self._fs._hierarchy_manager.remove_parent_tuples(path, tenant_id=tenant_id)
         return 0
 
     # =========================================================================
@@ -299,7 +301,7 @@ class NexusFSGateway:
     # =========================================================================
 
     @property
-    def router(self) -> "PathRouter":
+    def router(self) -> PathRouter:
         """Get the path router.
 
         Returns:

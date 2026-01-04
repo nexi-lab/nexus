@@ -38,7 +38,7 @@ class SyncJobService:
     Jobs run in background threads with progress tracking.
     """
 
-    def __init__(self, gateway: "NexusFSGateway", sync_service: "SyncService"):
+    def __init__(self, gateway: NexusFSGateway, sync_service: SyncService):
         """Initialize sync job service.
 
         Args:

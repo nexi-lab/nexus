@@ -55,7 +55,7 @@ class SyncContext:
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
-    context: "OperationContext | None" = None
+    context: OperationContext | None = None
     progress_callback: ProgressCallback | None = None
 
 
@@ -95,7 +95,7 @@ class SyncService:
     # Memory-efficient chunking: flush batch every N paths
     PATHS_CHUNK_SIZE = 10000
 
-    def __init__(self, gateway: "NexusFSGateway"):
+    def __init__(self, gateway: NexusFSGateway):
         """Initialize sync service.
 
         Args:
@@ -256,7 +256,6 @@ class SyncService:
         Returns:
             Set of files found in backend
         """
-        from nexus.core.metadata import FileMetadata
 
         assert ctx.mount_point is not None
 
@@ -299,9 +298,7 @@ class SyncService:
 
         # Check if this is a single file sync
         if ctx.path:
-            is_single_file = self._check_single_file(
-                backend, start_backend_path, ctx.context
-            )
+            is_single_file = self._check_single_file(backend, start_backend_path, ctx.context)
             if is_single_file:
                 return self._sync_single_file(
                     ctx,
@@ -694,10 +691,10 @@ class SyncService:
             ctx.context
             and hasattr(ctx.context, "subject_type")
             and hasattr(ctx.context, "subject_id")
+            and ctx.context.subject_id
         ):
-            if ctx.context.subject_id:
-                subject_type = ctx.context.subject_type or "user"
-                return f"{subject_type}:{ctx.context.subject_id}"
+            subject_type = ctx.context.subject_type or "user"
+            return f"{subject_type}:{ctx.context.subject_id}"
         return None
 
     def _get_start_paths(self, ctx: SyncContext) -> tuple[str, str]:
@@ -744,11 +741,8 @@ class SyncService:
 
         try:
             entries = backend.list_dir(backend_path, context=context)
-            if not entries:
-                # Empty directory or file - check extension
-                if osp.splitext(backend_path)[1]:
-                    return True
-            return False
+            # Empty directory or file - check extension
+            return bool(not entries and osp.splitext(backend_path)[1])
         except Exception:
             return True
 
@@ -830,7 +824,7 @@ class SyncService:
         backend: Any,
         path_hash: str,
         backend_path: str,
-        ctx: SyncContext,
+        _ctx: SyncContext,
     ) -> int:
         """Get file size from backend.
 
@@ -838,7 +832,7 @@ class SyncService:
             backend: Backend instance
             path_hash: Hash of path
             backend_path: Backend path
-            ctx: SyncContext
+            _ctx: SyncContext (unused, kept for API consistency)
 
         Returns:
             File size in bytes, 0 if unavailable
@@ -866,13 +860,10 @@ class SyncService:
         from nexus.core import glob_fast
 
         # Check include patterns
-        if ctx.include_patterns:
-            if not glob_fast.glob_match(file_path, list(ctx.include_patterns)):
-                return False
+        if ctx.include_patterns and not glob_fast.glob_match(file_path, list(ctx.include_patterns)):
+            return False
 
         # Check exclude patterns
-        if ctx.exclude_patterns:
-            if glob_fast.glob_match(file_path, list(ctx.exclude_patterns)):
-                return False
-
-        return True
+        return not (
+            ctx.exclude_patterns and glob_fast.glob_match(file_path, list(ctx.exclude_patterns))
+        )

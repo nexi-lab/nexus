@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import OperationContext
     from nexus.services.mount_core_service import MountCoreService
-    from nexus.services.sync_service import SyncContext, SyncService
+    from nexus.services.sync_service import SyncService
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +50,9 @@ class MountPersistService:
 
     def __init__(
         self,
-        mount_manager: "MountManager | None",
-        mount_service: "MountCoreService",
-        sync_service: "SyncService | None" = None,
+        mount_manager: MountManager | None,
+        mount_service: MountCoreService,
+        sync_service: SyncService | None = None,
     ):
         """Initialize persist service.
 
@@ -86,7 +86,7 @@ class MountPersistService:
         owner_user_id: str | None = None,
         tenant_id: str | None = None,
         description: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Save mount configuration to database.
 
@@ -148,7 +148,7 @@ class MountPersistService:
     def load_mount(
         self,
         mount_point: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Load saved mount configuration and activate it.
 
@@ -238,10 +238,10 @@ class MountPersistService:
                 # Auto-sync if requested
                 if auto_sync and self._sync:
                     backend_type = mount["backend_type"]
-                    is_connector = (
-                        "connector" in backend_type.lower()
-                        or backend_type.lower() in ["gcs", "s3"]
-                    )
+                    is_connector = "connector" in backend_type.lower() or backend_type.lower() in [
+                        "gcs",
+                        "s3",
+                    ]
 
                     if is_connector:
                         try:
@@ -267,9 +267,7 @@ class MountPersistService:
                         except Exception as sync_e:
                             logger.warning(f"Failed to sync {mount_point}: {sync_e}")
                     else:
-                        logger.info(
-                            f"Skipping auto-sync for {mount_point} (not a connector)"
-                        )
+                        logger.info(f"Skipping auto-sync for {mount_point} (not a connector)")
 
             except Exception as e:
                 failed += 1
@@ -277,9 +275,7 @@ class MountPersistService:
                 errors.append(error_msg)
                 logger.error(error_msg)
 
-        logger.info(
-            f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed"
-        )
+        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
 
         return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
 
@@ -287,7 +283,7 @@ class MountPersistService:
         self,
         owner_user_id: str | None = None,
         tenant_id: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations.
 

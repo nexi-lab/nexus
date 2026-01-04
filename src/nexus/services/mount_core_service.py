@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
+from nexus.core.context_utils import get_tenant_id, get_user_identity
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -49,7 +49,7 @@ class MountCoreService:
     - No async wrappers
     """
 
-    def __init__(self, gateway: "NexusFSGateway"):
+    def __init__(self, gateway: NexusFSGateway):
         """Initialize mount core service.
 
         Args:
@@ -68,7 +68,7 @@ class MountCoreService:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount.
 
@@ -90,13 +90,15 @@ class MountCoreService:
         config = backend_config.copy()
 
         # Auto-inject token_manager_db for OAuth backends
-        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
-            if "token_manager_db" not in config:
-                try:
-                    database_url = self._gw.get_database_url()
-                    config["token_manager_db"] = database_url
-                except RuntimeError as e:
-                    raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
+        if (
+            backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
+            and "token_manager_db" not in config
+        ):
+            try:
+                database_url = self._gw.get_database_url()
+                config["token_manager_db"] = database_url
+            except RuntimeError as e:
+                raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
 
         # Create backend instance
         backend = self._create_backend(backend_type, config)
@@ -117,7 +119,7 @@ class MountCoreService:
     def remove_mount(
         self,
         mount_point: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Remove a backend mount.
 
@@ -179,9 +181,7 @@ class MountCoreService:
             logger.warning(error_msg)
 
         if result["errors"]:
-            logger.warning(
-                f"Mount removed with {len(result['errors'])} errors: {result['errors']}"
-            )
+            logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")
         else:
             logger.info(
                 f"Successfully removed mount {mount_point} "
@@ -193,7 +193,7 @@ class MountCoreService:
 
     def list_mounts(
         self,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List all active mounts with permission filtering.
 
@@ -393,7 +393,7 @@ class MountCoreService:
         self,
         mount_point: str,
         backend_type: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> None:
         """Setup mount point with directory, permissions, and skill.
 
@@ -421,7 +421,7 @@ class MountCoreService:
     def _grant_owner_permission(
         self,
         mount_point: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> None:
         """Grant direct_owner permission to mount creator.
 
@@ -459,7 +459,7 @@ class MountCoreService:
         self,
         mount_point: str,
         backend_type: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> bool:
         """Generate SKILL.md for connector mount.
 
@@ -514,7 +514,7 @@ class MountCoreService:
     def _check_mount_permission(
         self,
         mount_point: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> bool:
         """Check if user has permission to access mount.
 

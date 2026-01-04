@@ -20,15 +20,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from nexus.core.rpc_decorator import rpc_expose
-
 # Re-export context_utils functions for backward compatibility with tests
 # that patch nexus.core.nexus_fs_mounts.get_tenant_id, etc.
-from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
+from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
@@ -69,7 +67,7 @@ class SyncMountContext:
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
-    context: "OperationContext | None" = None
+    context: OperationContext | None = None
     # Additional fields for internal use
     backend: Any = None
     created_by: str | None = None
@@ -111,35 +109,35 @@ class NexusFSMountsMixin:
     # =========================================================================
 
     @cached_property
-    def _gateway(self) -> "NexusFSGateway":
+    def _gateway(self) -> NexusFSGateway:
         """Get or create NexusFSGateway."""
         from nexus.services.gateway import NexusFSGateway
 
         return NexusFSGateway(self)  # type: ignore[arg-type]
 
     @cached_property
-    def _mount_core_service(self) -> "MountCoreService":
+    def _mount_core_service(self) -> MountCoreService:
         """Get or create MountCoreService."""
         from nexus.services.mount_core_service import MountCoreService
 
         return MountCoreService(self._gateway)
 
     @cached_property
-    def _sync_service(self) -> "SyncService":
+    def _sync_service(self) -> SyncService:
         """Get or create SyncService."""
         from nexus.services.sync_service import SyncService
 
         return SyncService(self._gateway)
 
     @cached_property
-    def _sync_job_service(self) -> "SyncJobService":
+    def _sync_job_service(self) -> SyncJobService:
         """Get or create SyncJobService."""
         from nexus.services.sync_job_service import SyncJobService
 
         return SyncJobService(self._gateway, self._sync_service)
 
     @cached_property
-    def _mount_persist_service(self) -> "MountPersistService":
+    def _mount_persist_service(self) -> MountPersistService:
         """Get or create MountPersistService."""
         from nexus.services.mount_persist_service import MountPersistService
 
@@ -161,7 +159,7 @@ class NexusFSMountsMixin:
         backend_config: dict[str, Any],
         priority: int = 0,
         readonly: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Add a dynamic backend mount to the filesystem.
 
@@ -189,7 +187,7 @@ class NexusFSMountsMixin:
     def remove_mount(
         self,
         mount_point: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
@@ -218,7 +216,7 @@ class NexusFSMountsMixin:
         return self._mount_core_service.list_connectors(category)
 
     @rpc_expose(description="List all backend mounts")
-    def list_mounts(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
+    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts.
 
         Args:
@@ -268,7 +266,7 @@ class NexusFSMountsMixin:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         progress_callback: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s).
@@ -321,7 +319,7 @@ class NexusFSMountsMixin:
         include_patterns: list[str] | None = None,
         exclude_patterns: list[str] | None = None,
         generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Start an async sync job for a mount.
 
@@ -450,7 +448,7 @@ class NexusFSMountsMixin:
         owner_user_id: str | None = None,
         tenant_id: str | None = None,
         description: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> str:
         """Save mount configuration to database.
 
@@ -485,7 +483,7 @@ class NexusFSMountsMixin:
         self,
         owner_user_id: str | None = None,
         tenant_id: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations.
 
@@ -572,7 +570,7 @@ class NexusFSMountsMixin:
     def _grant_mount_owner_permission(
         self,
         mount_point: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> None:
         """Grant direct_owner permission to mount creator.
 

@@ -6213,6 +6213,130 @@ class NexusFS(  # type: ignore[misc]
         created = self.metadata.backfill_directory_index(prefix=prefix, tenant_id=tenant_id)
         return {"entries_created": created, "prefix": prefix}
 
+    # =========================================================================
+    # Phase 2.2: Service Delegation Methods
+    # =========================================================================
+    # These methods delegate to independent service instances for better
+    # separation of concerns, testability, and maintainability.
+    # Eventually, the mixin methods will be removed in favor of these.
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # VersionService Delegation Methods (4 methods)
+    # -------------------------------------------------------------------------
+
+    # Note: These async methods use "a" prefix following Python async conventions.
+    # The sync mixin methods (get_version, list_versions, etc.) remain for backward
+    # compatibility and will be removed in Phase 2.3.
+
+    async def aget_version(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Get a specific version of a file - delegates to VersionService.
+
+        Async version of get_version() using the service layer.
+
+        Retrieves the content for a specific version from CAS using the
+        version's content hash.
+
+        Args:
+            path: Virtual file path
+            version: Version number to retrieve
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            File content as bytes for the specified version
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return await self.version_service.get_version(path, version, context)
+
+    async def alist_versions(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all versions of a file - delegates to VersionService.
+
+        Async version of list_versions() using the service layer.
+
+        Returns version history with metadata for each version.
+
+        Args:
+            path: Virtual file path
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            List of version info dicts ordered by version number (newest first)
+
+        Raises:
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return await self.version_service.list_versions(path, context)
+
+    async def arollback(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Rollback file to a previous version - delegates to VersionService.
+
+        Async version of rollback() using the service layer.
+
+        Updates the file to point to an older version's content from CAS.
+        Creates a new version entry marking this as a rollback.
+
+        Args:
+            path: Virtual file path
+            version: Version number to rollback to
+            context: Optional operation context for permission checks
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have write permission
+        """
+        return await self.version_service.rollback(path, version, context)
+
+    async def adiff_versions(
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file - delegates to VersionService.
+
+        Async version of diff_versions() using the service layer.
+
+        Args:
+            path: Virtual file path
+            v1: First version number
+            v2: Second version number
+            mode: Diff mode - "metadata" (default) or "content"
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            For "metadata" mode: Dict with metadata differences
+            For "content" mode: Unified diff string
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            ValueError: If mode is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return await self.version_service.diff_versions(path, v1, v2, mode, context)
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

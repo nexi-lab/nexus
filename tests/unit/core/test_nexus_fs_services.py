@@ -71,3 +71,27 @@ class TestNexusFSServiceComposition:
         # SearchService should have metadata and permission_enforcer
         assert fs.search_service.metadata == fs.metadata
         assert fs.search_service._permission_enforcer == fs._permission_enforcer
+
+    def test_version_service_delegation(self, tmp_path: Path):
+        """Test that VersionService delegation methods work correctly."""
+        backend_path = tmp_path / "storage"
+        backend_path.mkdir()
+        db_path = tmp_path / "metadata.db"
+
+        backend = LocalBackend(str(backend_path))
+        fs = NexusFS(backend=backend, db_path=str(db_path), enforce_permissions=False)
+
+        # Verify async VersionService delegation methods exist with "a" prefix
+        # These coexist with sync mixin methods during Phase 2 migration
+        assert hasattr(fs, "aget_version")
+        assert hasattr(fs, "alist_versions")
+        assert hasattr(fs, "arollback")
+        assert hasattr(fs, "adiff_versions")
+
+        # Verify they're callable and async
+        import inspect
+
+        assert inspect.iscoroutinefunction(fs.aget_version)
+        assert inspect.iscoroutinefunction(fs.alist_versions)
+        assert inspect.iscoroutinefunction(fs.arollback)
+        assert inspect.iscoroutinefunction(fs.adiff_versions)

@@ -81,17 +81,34 @@ class TestNexusFSServiceComposition:
         backend = LocalBackend(str(backend_path))
         fs = NexusFS(backend=backend, db_path=str(db_path), enforce_permissions=False)
 
-        # Verify async VersionService delegation methods exist with "a" prefix
-        # These coexist with sync mixin methods during Phase 2 migration
+        # Verify sync methods exist (with @rpc_expose, wrap async methods)
+        assert hasattr(fs, "get_version")
+        assert hasattr(fs, "list_versions")
+        assert hasattr(fs, "rollback")
+        assert hasattr(fs, "diff_versions")
+
+        # Verify async delegation methods exist (with "a" prefix)
         assert hasattr(fs, "aget_version")
         assert hasattr(fs, "alist_versions")
         assert hasattr(fs, "arollback")
         assert hasattr(fs, "adiff_versions")
 
-        # Verify they're callable and async
+        # Verify async methods are coroutine functions
         import inspect
 
         assert inspect.iscoroutinefunction(fs.aget_version)
         assert inspect.iscoroutinefunction(fs.alist_versions)
         assert inspect.iscoroutinefunction(fs.arollback)
         assert inspect.iscoroutinefunction(fs.adiff_versions)
+
+        # Verify sync methods are NOT coroutine functions (they wrap async)
+        assert not inspect.iscoroutinefunction(fs.get_version)
+        assert not inspect.iscoroutinefunction(fs.list_versions)
+        assert not inspect.iscoroutinefunction(fs.rollback)
+        assert not inspect.iscoroutinefunction(fs.diff_versions)
+
+        # Verify sync methods have @rpc_expose decorator
+        assert hasattr(fs.get_version, "_rpc_exposed")
+        assert hasattr(fs.list_versions, "_rpc_exposed")
+        assert hasattr(fs.rollback, "_rpc_exposed")
+        assert hasattr(fs.diff_versions, "_rpc_exposed")

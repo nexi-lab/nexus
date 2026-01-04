@@ -37,7 +37,8 @@ from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
-from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
+
+# NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
@@ -61,7 +62,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSReBACMixin,
-    NexusFSVersionsMixin,
+    # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
     NexusFSMountsMixin,
     NexusFSOAuthMixin,
     NexusFSSkillsMixin,
@@ -6223,11 +6224,9 @@ class NexusFS(  # type: ignore[misc]
 
     # -------------------------------------------------------------------------
     # VersionService Delegation Methods (4 methods)
+    # Replaces NexusFSVersionsMixin (Phase 2.3)
+    # Sync methods wrap async methods for backward compatibility
     # -------------------------------------------------------------------------
-
-    # Note: These async methods use "a" prefix following Python async conventions.
-    # The sync mixin methods (get_version, list_versions, etc.) remain for backward
-    # compatibility and will be removed in Phase 2.3.
 
     async def aget_version(
         self,
@@ -6235,9 +6234,17 @@ class NexusFS(  # type: ignore[misc]
         version: int,
         context: OperationContext | None = None,
     ) -> bytes:
-        """Get a specific version of a file - delegates to VersionService.
+        """Async version of get_version. Delegates to VersionService."""
+        return await self.version_service.get_version(path, version, context)
 
-        Async version of get_version() using the service layer.
+    @rpc_expose(description="Get specific file version")
+    def get_version(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Get a specific version of a file.
 
         Retrieves the content for a specific version from CAS using the
         version's content hash.
@@ -6255,16 +6262,27 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have READ permission
         """
-        return await self.version_service.get_version(path, version, context)
+        import asyncio
+
+        return asyncio.get_event_loop().run_until_complete(
+            self.aget_version(path, version, context)
+        )
 
     async def alist_versions(
         self,
         path: str,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
-        """List all versions of a file - delegates to VersionService.
+        """Async version of list_versions. Delegates to VersionService."""
+        return await self.version_service.list_versions(path, context)
 
-        Async version of list_versions() using the service layer.
+    @rpc_expose(description="List file versions")
+    def list_versions(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all versions of a file.
 
         Returns version history with metadata for each version.
 
@@ -6279,7 +6297,9 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have READ permission
         """
-        return await self.version_service.list_versions(path, context)
+        import asyncio
+
+        return asyncio.get_event_loop().run_until_complete(self.alist_versions(path, context))
 
     async def arollback(
         self,
@@ -6287,9 +6307,17 @@ class NexusFS(  # type: ignore[misc]
         version: int,
         context: OperationContext | None = None,
     ) -> None:
-        """Rollback file to a previous version - delegates to VersionService.
+        """Async version of rollback. Delegates to VersionService."""
+        return await self.version_service.rollback(path, version, context)
 
-        Async version of rollback() using the service layer.
+    @rpc_expose(description="Rollback file to previous version")
+    def rollback(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Rollback file to a previous version.
 
         Updates the file to point to an older version's content from CAS.
         Creates a new version entry marking this as a rollback.
@@ -6304,7 +6332,9 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have write permission
         """
-        return await self.version_service.rollback(path, version, context)
+        import asyncio
+
+        return asyncio.get_event_loop().run_until_complete(self.arollback(path, version, context))
 
     async def adiff_versions(
         self,
@@ -6314,9 +6344,19 @@ class NexusFS(  # type: ignore[misc]
         mode: str = "metadata",
         context: OperationContext | None = None,
     ) -> dict[str, Any] | str:
-        """Compare two versions of a file - delegates to VersionService.
+        """Async version of diff_versions. Delegates to VersionService."""
+        return await self.version_service.diff_versions(path, v1, v2, mode, context)
 
-        Async version of diff_versions() using the service layer.
+    @rpc_expose(description="Compare file versions")
+    def diff_versions(
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file.
 
         Args:
             path: Virtual file path
@@ -6335,7 +6375,11 @@ class NexusFS(  # type: ignore[misc]
             ValueError: If mode is invalid
             PermissionError: If user doesn't have READ permission
         """
-        return await self.version_service.diff_versions(path, v1, v2, mode, context)
+        import asyncio
+
+        return asyncio.get_event_loop().run_until_complete(
+            self.adiff_versions(path, v1, v2, mode, context)
+        )
 
     # -------------------------------------------------------------------------
     # ReBACService Delegation Methods (12 core methods)

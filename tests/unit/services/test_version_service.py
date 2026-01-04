@@ -65,9 +65,9 @@ class TestVersionServiceGetVersion:
         )
 
     @pytest.mark.asyncio
-    async def test_get_version_not_implemented(self, service, operation_context):
-        """Test that get_version raises NotImplementedError (skeleton stage)."""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    async def test_get_version_requires_router(self, service, operation_context):
+        """Test that get_version requires router to be configured."""
+        with pytest.raises(RuntimeError, match="Router not configured"):
             await service.get_version(
                 path="/test.txt",
                 version=1,
@@ -165,13 +165,23 @@ class TestVersionServiceListVersions:
         )
 
     @pytest.mark.asyncio
-    async def test_list_versions_not_implemented(self, service, operation_context):
-        """Test that list_versions raises NotImplementedError (skeleton stage)."""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
-            await service.list_versions(
-                path="/test.txt",
-                context=operation_context,
-            )
+    async def test_list_versions_calls_metadata_store(self, service, operation_context):
+        """Test that list_versions delegates to metadata store."""
+        # Arrange - mock the metadata store to return versions
+        service.metadata.list_versions.return_value = [
+            {"version": 2, "created_at": "2026-01-02", "size": 2000},
+            {"version": 1, "created_at": "2026-01-01", "size": 1000},
+        ]
+
+        # Act
+        result = await service.list_versions(
+            path="/test.txt",
+            context=operation_context,
+        )
+
+        # Assert
+        assert isinstance(result, list)
+        service.metadata.list_versions.assert_called_once_with("/test.txt")
 
     # ========================================================================
     # Future Tests
@@ -241,9 +251,9 @@ class TestVersionServiceRollback:
         )
 
     @pytest.mark.asyncio
-    async def test_rollback_not_implemented(self, service, operation_context):
-        """Test that rollback raises NotImplementedError (skeleton stage)."""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    async def test_rollback_requires_router(self, service, operation_context):
+        """Test that rollback requires router to be configured."""
+        with pytest.raises(RuntimeError, match="Router not configured"):
             await service.rollback(
                 path="/test.txt",
                 version=2,
@@ -330,16 +340,27 @@ class TestVersionServiceDiffVersions:
         )
 
     @pytest.mark.asyncio
-    async def test_diff_versions_not_implemented(self, service, operation_context):
-        """Test that diff_versions raises NotImplementedError (skeleton stage)."""
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
-            await service.diff_versions(
-                path="/test.txt",
-                v1=1,
-                v2=2,
-                mode="metadata",
-                context=operation_context,
-            )
+    async def test_diff_versions_calls_metadata_store(self, service, operation_context):
+        """Test that diff_versions delegates to metadata store."""
+        # Arrange - mock the metadata store to return diff
+        service.metadata.get_version_diff.return_value = {
+            "content_changed": False,
+            "size_v1": 1000,
+            "size_v2": 2000,
+        }
+
+        # Act
+        result = await service.diff_versions(
+            path="/test.txt",
+            v1=1,
+            v2=2,
+            mode="metadata",
+            context=operation_context,
+        )
+
+        # Assert
+        assert isinstance(result, dict)
+        service.metadata.get_version_diff.assert_called_once_with("/test.txt", 1, 2)
 
     # ========================================================================
     # Future Tests

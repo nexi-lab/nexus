@@ -216,7 +216,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Phase 2 Service Composition - Async delegation methods (Issue #988)
         # These are internal async methods that delegate to services. The original
         # sync mixin methods (without "a" prefix) already have @rpc_expose decorators.
-        # These will be removed when mixins are deprecated in Phase 2.3.
         # VersionService delegation (4 methods)
         "aget_version",  # Delegates to version_service.get_version()
         "alist_versions",  # Delegates to version_service.list_versions()

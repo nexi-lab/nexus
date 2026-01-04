@@ -318,13 +318,14 @@ class TestSyncMountIntegration:
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
-        # Create operation context
+        # Create operation context (with admin to bypass permission check on sync)
         op_context = OperationContext(
             user="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
             tenant_id="test_tenant",
+            is_admin=True,
         )
 
         # Sync with context

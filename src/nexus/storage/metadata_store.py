@@ -2648,6 +2648,68 @@ class SQLAlchemyMetadataStore(MetadataStore):
             or_(*conditions),
         ).delete(synchronize_session=False)
 
+    def delete_directory_entries_recursive(
+        self,
+        path: str,
+        _tenant_id: str | None = None,
+    ) -> int:
+        """Delete all directory entries under a path (recursive).
+
+        Removes both file and directory entries under the given path,
+        plus the entry for the path itself. Used for mount point cleanup.
+
+        Args:
+            path: Virtual path to clean up (includes tenant prefix)
+            _tenant_id: Reserved for API compatibility (path contains tenant info)
+
+        Returns:
+            Number of entries deleted
+        """
+        path = path.rstrip("/")
+        prefix = path + "/"
+
+        with self.SessionLocal() as session:
+            # Note: Path already contains tenant info (e.g., /tenant:multifi.ai/...)
+            # so we can match by path pattern. Also match tenant_id if provided,
+            # but fall back to path-only matching for entries with mismatched tenant_id.
+
+            # Delete all entries with parent_path starting with prefix
+            # (all descendants)
+            deleted = (
+                session.query(DirectoryEntryModel)
+                .filter(
+                    DirectoryEntryModel.parent_path.like(prefix + "%"),
+                )
+                .delete(synchronize_session=False)
+            )
+
+            # Delete all entries where parent_path equals the path
+            # (direct children)
+            deleted += (
+                session.query(DirectoryEntryModel)
+                .filter(
+                    DirectoryEntryModel.parent_path == prefix,
+                )
+                .delete(synchronize_session=False)
+            )
+
+            # Delete the entry for the path itself
+            parts = path.strip("/").split("/")
+            if parts and parts != [""]:
+                parent_path = "/" if len(parts) == 1 else "/" + "/".join(parts[:-1]) + "/"
+                entry_name = parts[-1]
+                deleted += (
+                    session.query(DirectoryEntryModel)
+                    .filter(
+                        DirectoryEntryModel.parent_path == parent_path,
+                        DirectoryEntryModel.entry_name == entry_name,
+                    )
+                    .delete(synchronize_session=False)
+                )
+
+            session.commit()
+            return deleted
+
     def _rename_in_directory_index(
         self,
         session: Any,

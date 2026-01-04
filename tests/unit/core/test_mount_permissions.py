@@ -87,7 +87,17 @@ class TestListMountsPermissionFiltering:
         mount_data_dir2 = temp_dir / "mount2"
         mount_data_dir2.mkdir()
 
-        # Create context for user Alice
+        # Create context for user Alice (with admin to create mount)
+        context_alice_admin = OperationContext(
+            user="alice@example.com",
+            groups=[],
+            tenant_id="tenant1",
+            subject_type="user",
+            subject_id="alice@example.com",
+            is_admin=True,
+        )
+
+        # Create context for user Alice (non-admin for list_mounts test)
         context_alice = OperationContext(
             user="alice@example.com",
             groups=[],
@@ -102,10 +112,20 @@ class TestListMountsPermissionFiltering:
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir1)},
             priority=10,
-            context=context_alice,
+            context=context_alice_admin,
         )
 
-        # Create context for user Bob
+        # Create context for user Bob (with admin to create mount)
+        context_bob_admin = OperationContext(
+            user="bob@example.com",
+            groups=[],
+            tenant_id="tenant1",
+            subject_type="user",
+            subject_id="bob@example.com",
+            is_admin=True,
+        )
+
+        # Create context for user Bob (non-admin for list_mounts test)
         context_bob = OperationContext(
             user="bob@example.com",
             groups=[],
@@ -120,7 +140,7 @@ class TestListMountsPermissionFiltering:
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir2)},
             priority=10,
-            context=context_bob,
+            context=context_bob_admin,
         )
 
         # When Alice calls list_mounts, she should only see her mount
@@ -149,21 +169,23 @@ class TestListMountsPermissionFiltering:
         mount_data_dir = temp_dir / "shared"
         mount_data_dir.mkdir()
 
-        context_alice = OperationContext(
+        # Admin context for mount creation
+        context_alice_admin = OperationContext(
             user="alice@example.com",
             groups=[],
             tenant_id="tenant1",
             subject_type="user",
             subject_id="alice@example.com",
+            is_admin=True,
         )
 
-        # Alice creates a shared mount
+        # Alice creates a shared mount (using admin to bypass parent permission check)
         nx_with_permissions.add_mount(
             mount_point="/mnt/shared",
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
             priority=10,
-            context=context_alice,
+            context=context_alice_admin,
         )
 
         context_bob = OperationContext(
@@ -194,6 +216,17 @@ class TestListMountsPermissionFiltering:
         mount_data_dir = temp_dir / "mount_data"
         mount_data_dir.mkdir()
 
+        # Admin context for mount creation
+        context_alice_admin = OperationContext(
+            user="alice@example.com",
+            groups=[],
+            tenant_id="tenant1",
+            subject_type="user",
+            subject_id="alice@example.com",
+            is_admin=True,
+        )
+
+        # Non-admin context for list_mounts test
         context_alice = OperationContext(
             user="alice@example.com",
             groups=[],
@@ -207,7 +240,7 @@ class TestListMountsPermissionFiltering:
             backend_type="local",
             backend_config={"data_dir": str(mount_data_dir)},
             priority=10,
-            context=context_alice,
+            context=context_alice_admin,
         )
 
         # Mock rebac_check to raise an exception
@@ -414,6 +447,17 @@ class TestCrossTenantIsolation:
         mount_dir1 = temp_dir / "tenant1"
         mount_dir1.mkdir()
 
+        # Admin context for mount creation
+        context_tenant1_admin = OperationContext(
+            user="alice@example.com",
+            groups=[],
+            tenant_id="tenant1",
+            subject_type="user",
+            subject_id="alice@example.com",
+            is_admin=True,
+        )
+
+        # Non-admin context for list tests
         context_tenant1 = OperationContext(
             user="alice@example.com",
             groups=[],
@@ -427,7 +471,7 @@ class TestCrossTenantIsolation:
             backend_type="local",
             backend_config={"data_dir": str(mount_dir1)},
             priority=10,
-            context=context_tenant1,
+            context=context_tenant1_admin,
         )
 
         # Save mount for tenant1
@@ -443,6 +487,17 @@ class TestCrossTenantIsolation:
         mount_dir2 = temp_dir / "tenant2"
         mount_dir2.mkdir()
 
+        # Admin context for mount creation
+        context_tenant2_admin = OperationContext(
+            user="bob@example.com",
+            groups=[],
+            tenant_id="tenant2",
+            subject_type="user",
+            subject_id="bob@example.com",
+            is_admin=True,
+        )
+
+        # Non-admin context for list tests
         context_tenant2 = OperationContext(
             user="bob@example.com",
             groups=[],
@@ -456,7 +511,7 @@ class TestCrossTenantIsolation:
             backend_type="local",
             backend_config={"data_dir": str(mount_dir2)},
             priority=10,
-            context=context_tenant2,
+            context=context_tenant2_admin,
         )
 
         # Save mount for tenant2

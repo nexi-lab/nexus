@@ -32,13 +32,54 @@ Skills have three parts:
 
 **Skills have one canonical location. Visibility is controlled by permissions.**
 
+### Path Structure: Tenant/User-First
+
+We use **tenant/user-first** paths (not resource-first):
+
+```
+# ✅ Tenant/User-First (chosen)
+/<tenant>/<user>/skills/<skill_name>/
+/<tenant>/<user>/agents/<agent_id>/
+/<tenant>/<user>/mounts/<mount_name>/
+
+# ❌ Resource-First (rejected)
+/skills/<tenant>/<user>/<skill_name>/
+/agents/<tenant>/<user>/<agent_id>/
+```
+
+**Why tenant/user-first:**
+- All user resources in one place (like Unix home dirs)
+- Natural permission inheritance: grant access to `/acme/alice/` → inherits to all resources
+- Easy tenant isolation: `/acme/` contains everything for tenant
+- User-centric operations: delete user = delete `/acme/alice/`
+
+**Full namespace structure:**
+```
+/acme/                              # Tenant
+  alice/                            # User namespace
+    skills/
+      code-review/                  # Alice's skill
+      testing/
+    agents/
+      code-assistant/
+  bob/
+    skills/
+      code-review/                  # Bob's skill (no collision)
+  .system/                          # Tenant-wide system resources
+    skills/
+      default-review/
+/system/                            # Global system resources
+  skills/
+    builtin-helpers/
+```
+
 ### Skill Identity
 
 **The full path is the unique identifier, not just the skill name.**
 
 ```
-/tenant:acme/user:alice/skill/code-review/  ← Alice's code-review skill
-/tenant:acme/user:bob/skill/code-review/    ← Bob's code-review skill (different skill!)
+/acme/alice/skills/code-review/  ← Alice's code-review skill
+/acme/bob/skills/code-review/    ← Bob's code-review skill (different skill!)
 ```
 
 This means:
@@ -47,8 +88,8 @@ This means:
 - Display shows owner info to distinguish same-named skills
 
 ```
-Skill location: /tenant:acme/user:alice/skill/my-skill/
-                           (single source of truth)
+Skill location: /acme/alice/skills/my-skill/
+                    (single source of truth)
 
 Visibility = Permissions:
 ┌─────────────────────────────────────────────────────────────┐
@@ -76,7 +117,7 @@ User creates skill
     ↓
 skills_create(name, description, template)
     ↓
-Skill created at: /tenant:{tid}/user:{uid}/skill/{name}/
+Skill created at: /<tenant>/<user>/skills/<name>/
     ↓
 Creator automatically gets owner permission
 ```
@@ -86,7 +127,7 @@ Creator automatically gets owner permission
 **Old Flow (Copy-Based):**
 ```
 skills_publish(skill, target="tenant")
-    → Copies to /tenant:acme/skill/my-skill/
+    → Copies to /acme/.system/skills/my-skill/
 ```
 
 **New Flow (Permission-Based):**
@@ -119,13 +160,13 @@ skills_unshare("my-skill", "user:bob@example.com", context)
 
 ### 3. Runner (Agent Using Skills)
 
-**Agent Configuration (stored in `/agents/{agent_id}/config.yaml`):**
+**Agent Configuration (stored in `/<tenant>/<user>/agents/<agent_id>/config.yaml`):**
 ```yaml
 # Agent config uses full paths to avoid ambiguity
 active_skills:
-  - "/tenant:acme/user:alice/skill/code-review"    # Alice's version
-  - "/tenant:acme/user:bob/skill/code-review"      # Bob's version (different!)
-  - "/tenant:acme/user:alice/skill/testing"
+  - "/acme/alice/skills/code-review"    # Alice's version
+  - "/acme/bob/skills/code-review"      # Bob's version (different!)
+  - "/acme/alice/skills/testing"
 ```
 
 **Phase 1: System Prompt Injection**
@@ -208,7 +249,7 @@ def skills_get_prompt_context(
                     "name": "code-review",
                     "owner": "alice",           # Owner for disambiguation
                     "description": "...",
-                    "path": "/tenant:acme/user:alice/skill/code-review"
+                    "path": "/acme/alice/skills/code-review"
                 }
             ],
             "count": 12,
@@ -224,7 +265,7 @@ def skills_load(
     """Load full skill content on-demand.
 
     Args:
-        skill_path: Full path like "/tenant:acme/user:alice/skill/code-review"
+        skill_path: Full path like "/acme/alice/skills/code-review"
 
     Checks read permission before returning content.
 
@@ -232,7 +273,7 @@ def skills_load(
         {
             "name": "code-review",
             "owner": "alice",
-            "path": "/tenant:acme/user:alice/skill/code-review",
+            "path": "/acme/alice/skills/code-review",
             "metadata": {...},
             "content": "# Full SKILL.md markdown...",
             "scripts": ["/path/to/script.py"],
@@ -326,7 +367,7 @@ skills_approve(approval_id)
 
 A: Full path is the unique identifier, not the skill name. This is similar to how two GitHub users can have repos with the same name.
 
-- Agent configs use full paths: `/tenant:acme/user:alice/skill/code-review`
+- Agent configs use full paths: `/acme/alice/skills/code-review`
 - API responses include `owner` field for display disambiguation
 - No collision because paths are different
 
@@ -342,11 +383,20 @@ A: Full path is the unique identifier, not the skill name. This is similar to ho
 </available_skills>
 ```
 
+### System Skills (Resolved)
+
+**Q: Where do system/built-in skills live?**
+
+A: Two levels of system skills:
+- **Tenant-wide**: `/<tenant>/.system/skills/` - shared across all users in tenant
+- **Global**: `/system/skills/` - built-in skills available to all tenants
+
+Both use the same permission model. Global skills have `role:public` viewer permission by default.
+
 ## Open Questions
 
-1. **System skills**: Should system skills remain in `/skills/system/` or also use permission-based visibility?
-2. **Skill discovery performance**: How to efficiently discover all skills a user has permission to read?
-3. **Permission inheritance**: Should skill subdirectories (scripts/, references/) inherit parent permissions?
+1. **Skill discovery performance**: How to efficiently discover all skills a user has permission to read?
+2. **Permission inheritance**: Should skill subdirectories (scripts/, references/) inherit parent permissions?
 
 ## References
 

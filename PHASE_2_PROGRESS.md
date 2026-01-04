@@ -36,8 +36,8 @@ class NexusFS:
 | 2.3: Consolidate ReBAC Managers | ✅ Complete | 3 days | P1 HIGH |
 | 2.4: Extract Mount Service | ✅ Skeleton Complete | 2 weeks | P1 HIGH |
 | 2.5: Extract Version Service | ✅ Skeleton Complete | 1 week | P2 MEDIUM |
-| 2.6: Extract OAuth Service | ⏸️ Not Started | 2 weeks | P2 MEDIUM |
-| 2.7: Extract Skill Service | ⏸️ Not Started | 1 week | P2 MEDIUM |
+| 2.6: Extract OAuth Service | ✅ Skeleton Complete | 2 weeks | P2 MEDIUM |
+| 2.7: Extract Skill Service | ✅ Skeleton Complete | 1 week | P2 MEDIUM |
 | 2.8: Extract MCP Service | ✅ Skeleton Complete | 3 days | P3 LOW |
 | 2.9: Extract LLM Service | ✅ Skeleton Complete | 3 days | P3 LOW |
 | 2.10: Slim Down NexusFS Core | ⏸️ Not Started | 2 weeks | P1 HIGH |
@@ -284,25 +284,47 @@ AsyncReBACManager (parallel async implementation - 1,211 lines)
 - ✅ Task 2.3: ReBAC consolidation complete (EnhancedReBACManager canonical)
 - ✅ Task 2.4: MountService skeleton created (656 lines, 0% extracted)
 - ✅ Task 2.5: VersionService skeleton created (368 lines, 0% extracted)
+- ✅ Task 2.6: OAuthService skeleton created (615 lines, 0% extracted)
+- ✅ Task 2.7: SkillService skeleton created (780 lines, 0% extracted)
 - ✅ Task 2.8: MCPService skeleton created (331 lines, 0% extracted)
 - ✅ Task 2.9: LLMService skeleton created (343 lines, 0% extracted)
 
-**Status: 7 of 9 Service Skeletons Complete** 🎯
+**Status: ALL 9 Service Skeletons Complete!** 🎉✅
 
-Services created: SearchService, ReBACService, MountService, VersionService, MCPService, LLMService
+**Total Service Layer:**
+- **4,258 lines** of service skeleton code
+- **90+ RPC-exposed methods** across 9 services
+- **0% implementation extracted** (all methods raise NotImplementedError)
 
-**Deferred to Next Session:**
-- Task 2.6: OAuthService (1,116 lines, 7+ methods) - Complex OAuth provider integration
-- Task 2.7: SkillService (874 lines, 15 methods) - Skill lifecycle management
+**Services Created:**
+1. SearchService (505 lines, 10+ methods) - File search, glob, grep, semantic search
+2. ReBACService (660 lines, 27+ methods) - Permission management, sharing, consent
+3. MountService (656 lines, 15 methods) - Backend mounting, persistence, sync
+4. VersionService (368 lines, 4 methods) - Version management, rollback, diff
+5. MCPService (331 lines, 5 methods) - MCP server lifecycle management
+6. LLMService (343 lines, 4 methods) - LLM document reading with citations
+7. OAuthService (615 lines, 7 methods) - OAuth credential management with PKCE
+8. SkillService (780 lines, 15 methods) - Skill lifecycle and governance
 
 **Ready to Start:**
-1. **Option A:** Complete remaining 2 skeletons (OAuth + Skill services)
-2. **Option B:** Begin implementation extraction for existing 7 services
-3. **Option C:** Start Task 2.10: Slim down NexusFS core to use services
+1. **Option A:** Begin implementation extraction for high-priority services
+   - Start with SearchService or ReBACService (most complex)
+   - Or start with smaller services (MCPService, LLMService, VersionService)
+2. **Option B:** Start Task 2.10: Slim down NexusFS core to use composition
+   - Wire up service instances in NexusFS.__init__
+   - Add backward compatibility shims
+3. **Option C:** Add unit tests for service skeletons
+   - Test initialization and dependency injection
+   - Mock tests for method signatures
 
-**Recommendation:** Next session should either:
-- Complete OAuth + Skill skeletons for full service layer (2-3 hours)
-- OR start implementation extraction for high-priority services (SearchService, ReBACService, MountService)
+**Recommendation for Next Session:**
+Begin implementation extraction for 1-2 smaller services (VersionService, MCPService, or LLMService) to establish extraction patterns before tackling larger services. This will:
+- Validate the service architecture
+- Establish testing patterns
+- Create extraction templates for remaining services
+- Build confidence before extracting complex services
+
+Alternatively, start Task 2.10 to wire up services in NexusFS and validate the composition pattern works end-to-end before extracting all implementations.
 
 ---
 

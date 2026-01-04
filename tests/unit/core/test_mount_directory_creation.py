@@ -145,32 +145,37 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
 
 
 def test_sync_mount_ensures_directory_exists(nx_with_mount):
-    """Test that sync_mount creates directory entry if missing (backwards compatibility)."""
+    """Test that sync_mount creates directory entry if missing."""
     nx, tmpdir = nx_with_mount
 
-    # Create a local backend for the mount
+    # Create a local backend directory for the mount
     mount_dir = Path(tmpdir) / "mount_data"
     mount_dir.mkdir()
     (mount_dir / "test.txt").write_text("test content")
 
-    from nexus.backends.local import LocalBackend
+    from nexus.core.permissions import OperationContext
 
-    mount_backend = LocalBackend(root_path=str(mount_dir))
+    # Create context with tenant_id and admin access for the test user
+    ctx = OperationContext(user="test-user", groups=[], tenant_id="test", is_admin=True)
 
-    # Add mount WITHOUT creating directory (simulating old behavior)
-    nx.router.add_mount("/old/mount", mount_backend, priority=0, readonly=False)
-
-    # At this point, the directory may or may not exist (depends on implementation)
-    # The key test is that sync_mount ensures it exists
+    # Use add_mount API which properly grants permissions
+    mount_point = nx.add_mount(
+        mount_point="/tenant:test/old/mount",
+        backend_type="local",
+        backend_config={"data_dir": str(mount_dir)},
+        priority=0,
+        readonly=False,
+        context=ctx,
+    )
 
     # Sync mount (should ensure directory exists)
-    result = nx.sync_mount("/old/mount")
+    result = nx.sync_mount(mount_point, context=ctx)
 
     # Verify directory exists after sync
-    assert nx.metadata.exists("/old")
-    assert nx.metadata.exists("/old/mount")
+    assert nx.metadata.exists("/tenant:test/old")
+    assert nx.metadata.exists("/tenant:test/old/mount")
 
-    # Sync result should be returned (files_scanned may be 0 if backend is empty)
+    # Sync result should be returned
     assert "files_scanned" in result
 
 

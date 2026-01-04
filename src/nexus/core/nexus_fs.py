@@ -43,6 +43,16 @@ from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
+
+# Phase 2: Service imports - Independent, testable services extracted from mixins
+from nexus.services.llm_service import LLMService
+from nexus.services.mcp_service import MCPService
+from nexus.services.mount_service import MountService
+from nexus.services.oauth_service import OAuthService
+from nexus.services.rebac_service import ReBACService
+from nexus.services.search_service import SearchService
+from nexus.services.skill_service import SkillService
+from nexus.services.version_service import VersionService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -457,6 +467,55 @@ class NexusFS(  # type: ignore[misc]
 
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to load saved mounts during initialization: {e}")
+
+        # Phase 2: Service Composition - Extract from mixins into services
+        # These services are independent, testable, and follow single-responsibility principle
+        # All services use async-first architecture with asyncio.to_thread() for blocking operations
+
+        # VersionService: File versioning operations (4 methods)
+        self.version_service = VersionService(
+            metadata_store=self.metadata,
+            cas_store=self.backend,  # For CAS operations
+            router=self.router,
+            enforce_permissions=self._enforce_permissions,
+        )
+
+        # ReBACService: Permission and access control operations (12 core + 15 advanced methods)
+        self.rebac_service = ReBACService(
+            rebac_manager=self._rebac_manager,
+            enforce_permissions=self._enforce_permissions,
+            enable_audit_logging=True,  # Production default
+        )
+
+        # MountService: Dynamic backend mounting operations (17 methods)
+        self.mount_service = MountService(
+            router=self.router,
+            mount_manager=self.mount_manager,  # Persistent storage
+            nexus_fs=self,  # Required for sync operations
+        )
+
+        # MCPService: Model Context Protocol operations (5 methods)
+        self.mcp_service = MCPService(nexus_fs=self)
+
+        # LLMService: LLM integration operations (4 methods)
+        self.llm_service = LLMService(nexus_fs=self)
+
+        # OAuthService: OAuth authentication operations (7 methods)
+        # Lazy initialization of oauth_factory and token_manager happens in service
+        self.oauth_service = OAuthService(
+            oauth_factory=None,  # Lazy init from config
+            token_manager=None,  # Lazy init from db_path
+        )
+
+        # SkillService: Skill management operations (16 methods)
+        self.skill_service = SkillService(nexus_fs=self)
+
+        # SearchService: Search operations - semantic (4) + basic (3, deferred to Phase 2.2)
+        self.search_service = SearchService(
+            metadata_store=self.metadata,
+            permission_enforcer=self._permission_enforcer,
+            enforce_permissions=self._enforce_permissions,
+        )
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         # This enables O(1) permission checks for FUSE path resolution

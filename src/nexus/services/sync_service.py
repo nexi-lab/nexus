@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_tenant_id
+from nexus.core.context_utils import get_tenant_id, get_user_identity
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -115,6 +115,7 @@ class SyncService:
             SyncResult with statistics
 
         Raises:
+            PermissionError: If user lacks read permission on mount
             ValueError: If mount_point doesn't exist
             RuntimeError: If backend doesn't support listing
         """
@@ -122,18 +123,22 @@ class SyncService:
         if ctx.mount_point is None:
             return self._sync_all_mounts(ctx)
 
+        # Step 2: Check permission before syncing
+        if not self._check_permission(ctx.mount_point, "read", ctx.context):
+            raise PermissionError(f"Cannot sync mount {ctx.mount_point}: no read permission")
+
         result = SyncResult()
 
-        # Step 2: Validate mount and get backend
+        # Step 3: Validate mount and get backend
         backend = self._validate_mount(ctx)
 
-        # Step 3: Sync metadata (BFS traversal)
+        # Step 4: Sync metadata (BFS traversal)
         files_found = self._sync_metadata(ctx, backend, result)
 
-        # Step 4: Handle deletions
+        # Step 5: Handle deletions
         self._sync_deletions(ctx, files_found, result)
 
-        # Step 5: Sync content cache
+        # Step 6: Sync content cache
         self._sync_content(ctx, backend, result)
 
         return result
@@ -868,3 +873,45 @@ class SyncService:
         return not (
             ctx.exclude_patterns and glob_fast.glob_match(file_path, list(ctx.exclude_patterns))
         )
+
+    def _check_permission(
+        self,
+        path: str,
+        permission: str,
+        context: OperationContext | None,
+    ) -> bool:
+        """Check if user has permission on path.
+
+        Args:
+            path: Virtual path to check
+            permission: Permission to check ("read", "write")
+            context: Operation context
+
+        Returns:
+            True if user has permission
+        """
+        if not context:
+            # No context = allow (backward compatibility)
+            return True
+
+        try:
+            # Admin users bypass permission checks
+            is_admin = getattr(context, "is_admin", False)
+            if is_admin:
+                return True
+
+            subject_type, subject_id = get_user_identity(context)
+            if not subject_id:
+                return False
+
+            tenant_id = get_tenant_id(context)
+
+            return self._gw.rebac_check(
+                subject=(subject_type, subject_id),
+                permission=permission,
+                object=("file", path),
+                tenant_id=tenant_id,
+            )
+        except Exception as e:
+            logger.error(f"Permission check failed for {path}: {e}")
+            return False

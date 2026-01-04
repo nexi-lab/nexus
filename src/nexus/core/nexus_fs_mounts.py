@@ -228,16 +228,21 @@ class NexusFSMountsMixin:
         return self._mount_core_service.list_mounts(context)
 
     @rpc_expose(description="Get mount details")
-    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+    def get_mount(
+        self,
+        mount_point: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
         Args:
             mount_point: Virtual path of mount
+            context: Operation context for permissions
 
         Returns:
             Mount info dict or None
         """
-        return self._mount_core_service.get_mount(mount_point)
+        return self._mount_core_service.get_mount(mount_point, context)
 
     @rpc_expose(description="Check if mount exists")
     def has_mount(self, mount_point: str) -> bool:

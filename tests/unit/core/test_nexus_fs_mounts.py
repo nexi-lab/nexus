@@ -234,12 +234,14 @@ class TestAddMount:
         mount_data_dir = temp_dir / "perm_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing permission grant, not check)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         nx_with_permissions.add_mount(
@@ -526,11 +528,13 @@ class TestSyncMount:
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
+        # Use admin context to bypass permission check (testing sync functionality)
         context = OperationContext(
             user="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         result = nx.sync_mount("/mnt/context", context=context)
@@ -651,12 +655,14 @@ class TestMountContextUtilsIntegration:
         mount_data_dir = temp_dir / "context_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing context_utils usage)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         # Patch in mount_core_service where the functions are actually imported
@@ -685,12 +691,14 @@ class TestMountContextUtilsIntegration:
         mount_data_dir = temp_dir / "remove_context_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing remove functionality)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         # Add mount first

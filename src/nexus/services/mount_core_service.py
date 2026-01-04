@@ -84,8 +84,18 @@ class MountCoreService:
             Mount ID (mount_point)
 
         Raises:
+            PermissionError: If user lacks write permission on parent path
             RuntimeError: If backend type is not supported
         """
+        import os.path as osp
+
+        # Check permission: user must have write access to parent directory
+        parent_path = osp.dirname(mount_point.rstrip("/")) or "/"
+        if not self._check_permission(parent_path, "write", context):
+            raise PermissionError(
+                f"Cannot create mount at {mount_point}: no write permission on {parent_path}"
+            )
+
         # Make a mutable copy of config
         config = backend_config.copy()
 
@@ -129,7 +139,14 @@ class MountCoreService:
 
         Returns:
             Dictionary with removal details
+
+        Raises:
+            PermissionError: If user lacks write permission on mount
         """
+        # Check permission: user must have write access to mount point
+        if not self._check_permission(mount_point, "write", context):
+            raise PermissionError(f"Cannot remove mount {mount_point}: no write permission")
+
         result: dict[str, Any] = {
             "removed": False,
             "directory_deleted": False,
@@ -226,15 +243,24 @@ class MountCoreService:
 
         return mounts
 
-    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+    def get_mount(
+        self,
+        mount_point: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
         Args:
             mount_point: Virtual path of mount
+            context: Operation context for permissions
 
         Returns:
-            Mount info dict or None if not found
+            Mount info dict or None if not found or no permission
         """
+        # Check permission: user must have read access
+        if not self._check_permission(mount_point, "read", context):
+            return None
+
         mount_info = self._gw.router.get_mount(mount_point)
         if mount_info:
             return {
@@ -511,15 +537,17 @@ class MountCoreService:
             logger.warning(f"Failed to generate skill for {backend_type}: {e}")
             return False
 
-    def _check_mount_permission(
+    def _check_permission(
         self,
-        mount_point: str,
+        path: str,
+        permission: str,
         context: OperationContext | None,
     ) -> bool:
-        """Check if user has permission to access mount.
+        """Check if user has permission on path.
 
         Args:
-            mount_point: Virtual path
+            path: Virtual path to check
+            permission: Permission to check ("read", "write", "owner")
             context: Operation context
 
         Returns:
@@ -530,7 +558,7 @@ class MountCoreService:
             return True
 
         try:
-            # Admin users can see all mounts
+            # Admin users bypass permission checks
             is_admin = getattr(context, "is_admin", False)
             if is_admin:
                 return True
@@ -543,10 +571,26 @@ class MountCoreService:
 
             return self._gw.rebac_check(
                 subject=(subject_type, subject_id),
-                permission="read",
-                object=("file", mount_point),
+                permission=permission,
+                object=("file", path),
                 tenant_id=tenant_id,
             )
         except Exception as e:
-            logger.error(f"Permission check failed for {mount_point}: {e}")
+            logger.error(f"Permission check failed for {path}: {e}")
             return False
+
+    def _check_mount_permission(
+        self,
+        mount_point: str,
+        context: OperationContext | None,
+    ) -> bool:
+        """Check if user has read permission on mount.
+
+        Args:
+            mount_point: Virtual path
+            context: Operation context
+
+        Returns:
+            True if user has permission
+        """
+        return self._check_permission(mount_point, "read", context)

@@ -86,7 +86,7 @@ class MCPService:
     # =========================================================================
 
     @rpc_expose(description="List MCP server mounts")
-    def mcp_list_mounts(
+    async def mcp_list_mounts(
         self,
         tier: str | None = None,
         include_unmounted: bool = True,
@@ -131,7 +131,7 @@ class MCPService:
         raise NotImplementedError("mcp_list_mounts() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List tools from MCP mount")
-    def mcp_list_tools(
+    async def mcp_list_tools(
         self,
         name: str,
         context: OperationContext | None = None,
@@ -168,7 +168,7 @@ class MCPService:
         raise NotImplementedError("mcp_list_tools() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Mount MCP server")
-    def mcp_mount(
+    async def mcp_mount(
         self,
         name: str,
         transport: str | None = None,
@@ -245,7 +245,7 @@ class MCPService:
         raise NotImplementedError("mcp_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Unmount MCP server")
-    def mcp_unmount(
+    async def mcp_unmount(
         self,
         name: str,
         context: OperationContext | None = None,
@@ -286,7 +286,7 @@ class MCPService:
         raise NotImplementedError("mcp_unmount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Sync tools from MCP server")
-    def mcp_sync(
+    async def mcp_sync(
         self,
         name: str,
         context: OperationContext | None = None,

@@ -104,7 +104,7 @@ class ReBACService:
     # =========================================================================
 
     @rpc_expose(description="Create ReBAC relationship tuple")
-    def rebac_create(
+    async def rebac_create(
         self,
         subject: tuple[str, str],
         relation: str,
@@ -151,7 +151,7 @@ class ReBACService:
         raise NotImplementedError("rebac_create() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Check ReBAC permission")
-    def rebac_check(
+    async def rebac_check(
         self,
         subject: tuple[str, str],
         permission: str,
@@ -192,7 +192,7 @@ class ReBACService:
         raise NotImplementedError("rebac_check() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
-    def rebac_expand(
+    async def rebac_expand(
         self,
         permission: str,
         object: tuple[str, str],
@@ -222,7 +222,7 @@ class ReBACService:
         raise NotImplementedError("rebac_expand() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Explain ReBAC permission check")
-    def rebac_explain(
+    async def rebac_explain(
         self,
         subject: tuple[str, str],
         permission: str,
@@ -260,7 +260,7 @@ class ReBACService:
         raise NotImplementedError("rebac_explain() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Batch ReBAC permission checks")
-    def rebac_check_batch(
+    async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         tenant_id: str | None = None,
@@ -287,7 +287,7 @@ class ReBACService:
         raise NotImplementedError("rebac_check_batch() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
-    def rebac_delete(self, tuple_id: str) -> bool:
+    async def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple by ID.
 
         Args:
@@ -304,7 +304,7 @@ class ReBACService:
         raise NotImplementedError("rebac_delete() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List ReBAC relationship tuples")
-    def rebac_list_tuples(
+    async def rebac_list_tuples(
         self,
         subject: tuple[str, str] | None = None,
         relation: str | None = None,
@@ -363,7 +363,7 @@ class ReBACService:
         raise NotImplementedError("set_rebac_option() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Get ReBAC configuration option")
-    def get_rebac_option(self, key: str) -> Any:
+    async def get_rebac_option(self, key: str) -> Any:
         """Get a ReBAC configuration option.
 
         Args:
@@ -376,7 +376,7 @@ class ReBACService:
         raise NotImplementedError("get_rebac_option() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Register ReBAC namespace schema")
-    def register_namespace(self, namespace: dict[str, Any]) -> None:
+    async def register_namespace(self, namespace: dict[str, Any]) -> None:
         """Register a namespace schema for ReBAC.
 
         Defines object types and their permission relationships.
@@ -388,7 +388,7 @@ class ReBACService:
         raise NotImplementedError("register_namespace() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Get ReBAC namespace schema")
-    def get_namespace(self, object_type: str) -> dict[str, Any] | None:
+    async def get_namespace(self, object_type: str) -> dict[str, Any] | None:
         """Get namespace schema for an object type.
 
         Args:
@@ -401,19 +401,19 @@ class ReBACService:
         raise NotImplementedError("get_namespace() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Create or update ReBAC namespace")
-    def namespace_create(self, object_type: str, config: dict[str, Any]) -> None:
+    async def namespace_create(self, object_type: str, config: dict[str, Any]) -> None:
         """Create or update a namespace configuration."""
         # TODO: Extract namespace_create implementation
         raise NotImplementedError("namespace_create() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List all ReBAC namespaces")
-    def namespace_list(self) -> list[dict[str, Any]]:
+    async def namespace_list(self) -> list[dict[str, Any]]:
         """List all registered namespace configurations."""
         # TODO: Extract namespace_list implementation
         raise NotImplementedError("namespace_list() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Delete ReBAC namespace")
-    def namespace_delete(self, object_type: str) -> bool:
+    async def namespace_delete(self, object_type: str) -> bool:
         """Delete a namespace configuration."""
         # TODO: Extract namespace_delete implementation
         raise NotImplementedError("namespace_delete() not yet implemented - Phase 2 in progress")
@@ -423,7 +423,7 @@ class ReBACService:
     # =========================================================================
 
     @rpc_expose(description="Expand ReBAC permissions with privacy filtering")
-    def rebac_expand_with_privacy(
+    async def rebac_expand_with_privacy(
         self,
         permission: str,
         object: tuple[str, str],
@@ -441,7 +441,7 @@ class ReBACService:
         )
 
     @rpc_expose(description="Grant consent for discovery")
-    def grant_consent(
+    async def grant_consent(
         self,
         from_subject: tuple[str, str],
         to_subject: tuple[str, str],
@@ -452,19 +452,21 @@ class ReBACService:
         raise NotImplementedError("grant_consent() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Revoke consent")
-    def revoke_consent(self, from_subject: tuple[str, str], to_subject: tuple[str, str]) -> bool:
+    async def revoke_consent(
+        self, from_subject: tuple[str, str], to_subject: tuple[str, str]
+    ) -> bool:
         """Revoke previously granted consent."""
         # TODO: Extract revoke_consent implementation
         raise NotImplementedError("revoke_consent() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Make resource publicly discoverable")
-    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
+    async def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
         """Make a resource publicly discoverable."""
         # TODO: Extract make_public implementation
         raise NotImplementedError("make_public() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Make resource private")
-    def make_private(self, resource: tuple[str, str]) -> bool:
+    async def make_private(self, resource: tuple[str, str]) -> bool:
         """Remove public discoverability from a resource."""
         # TODO: Extract make_private implementation
         raise NotImplementedError("make_private() not yet implemented - Phase 2 in progress")
@@ -474,7 +476,7 @@ class ReBACService:
     # =========================================================================
 
     @rpc_expose(description="Share a resource with a specific user (same or different tenant)")
-    def share_with_user(
+    async def share_with_user(
         self,
         resource: tuple[str, str],
         target_user: str,
@@ -507,7 +509,7 @@ class ReBACService:
         raise NotImplementedError("share_with_user() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Share a resource with a group (all members get access)")
-    def share_with_group(
+    async def share_with_group(
         self,
         resource: tuple[str, str],
         target_group: str,
@@ -520,7 +522,7 @@ class ReBACService:
         raise NotImplementedError("share_with_group() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Revoke a share by resource and user")
-    def revoke_share(
+    async def revoke_share(
         self,
         resource: tuple[str, str],
         target_user: str,
@@ -531,13 +533,13 @@ class ReBACService:
         raise NotImplementedError("revoke_share() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Revoke a share by share ID")
-    def revoke_share_by_id(self, share_id: str) -> bool:
+    async def revoke_share_by_id(self, share_id: str) -> bool:
         """Revoke a share using its ID (tuple_id)."""
         # TODO: Extract revoke_share_by_id implementation
         raise NotImplementedError("revoke_share_by_id() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List shares I've created (outgoing)")
-    def list_outgoing_shares(
+    async def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
         context: Any = None,
@@ -549,7 +551,7 @@ class ReBACService:
         )
 
     @rpc_expose(description="List shares I've received (incoming)")
-    def list_incoming_shares(
+    async def list_incoming_shares(
         self,
         user_id: str,
         tenant_id: str | None = None,
@@ -565,7 +567,7 @@ class ReBACService:
     # =========================================================================
 
     @rpc_expose(description="Get dynamic viewer configuration for a file")
-    def get_dynamic_viewer_config(
+    async def get_dynamic_viewer_config(
         self,
         subject: tuple[str, str],
         file_path: str,
@@ -578,7 +580,7 @@ class ReBACService:
         )
 
     @rpc_expose(description="Apply dynamic viewer filter to CSV data")
-    def apply_dynamic_viewer_filter(
+    async def apply_dynamic_viewer_filter(
         self,
         data: str,
         columns_allowed: list[str],
@@ -591,7 +593,7 @@ class ReBACService:
         )
 
     @rpc_expose(description="Read file with dynamic viewer permissions applied")
-    def read_with_dynamic_viewer(
+    async def read_with_dynamic_viewer(
         self,
         file_path: str,
         subject: tuple[str, str],

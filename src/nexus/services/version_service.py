@@ -116,7 +116,7 @@ class VersionService:
     # =========================================================================
 
     @rpc_expose(description="Get specific file version")
-    def get_version(
+    async def get_version(
         self,
         path: str,
         version: int,
@@ -155,7 +155,7 @@ class VersionService:
         raise NotImplementedError("get_version() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List file versions")
-    def list_versions(
+    async def list_versions(
         self,
         path: str,
         context: OperationContext | None = None,
@@ -201,7 +201,7 @@ class VersionService:
     # =========================================================================
 
     @rpc_expose(description="Rollback file to previous version")
-    def rollback(
+    async def rollback(
         self,
         path: str,
         version: int,
@@ -238,7 +238,7 @@ class VersionService:
         raise NotImplementedError("rollback() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Compare file versions")
-    def diff_versions(
+    async def diff_versions(
         self,
         path: str,
         v1: int,

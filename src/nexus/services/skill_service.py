@@ -110,7 +110,7 @@ class SkillService:
     # =========================================================================
 
     @rpc_expose(description="Create a new skill from template")
-    def skills_create(
+    async def skills_create(
         self,
         name: str,
         description: str,
@@ -158,7 +158,7 @@ class SkillService:
         raise NotImplementedError("skills_create() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Create a skill from web content")
-    def skills_create_from_content(
+    async def skills_create_from_content(
         self,
         name: str,
         description: str,
@@ -220,7 +220,7 @@ class SkillService:
         )
 
     @rpc_expose(description="Create skill from file or URL (auto-detects type)")
-    def skills_create_from_file(
+    async def skills_create_from_file(
         self,
         source: str,
         file_data: str | None = None,
@@ -304,7 +304,7 @@ class SkillService:
     # =========================================================================
 
     @rpc_expose(description="List all skills")
-    def skills_list(
+    async def skills_list(
         self,
         tier: str | None = None,
         include_metadata: bool = True,
@@ -339,7 +339,7 @@ class SkillService:
         raise NotImplementedError("skills_list() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Get detailed skill information")
-    def skills_info(
+    async def skills_info(
         self,
         skill_path: str,
         context: OperationContext | None = None,
@@ -374,7 +374,7 @@ class SkillService:
         raise NotImplementedError("skills_info() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Search skills by description")
-    def skills_search(
+    async def skills_search(
         self,
         query: str,
         tier: str | None = None,
@@ -417,7 +417,7 @@ class SkillService:
     # =========================================================================
 
     @rpc_expose(description="Fork an existing skill")
-    def skills_fork(
+    async def skills_fork(
         self,
         source_path: str,
         new_name: str,
@@ -458,7 +458,7 @@ class SkillService:
         raise NotImplementedError("skills_fork() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Publish skill to another tier")
-    def skills_publish(
+    async def skills_publish(
         self,
         skill_path: str,
         target_tier: str,
@@ -496,7 +496,7 @@ class SkillService:
     # =========================================================================
 
     @rpc_expose(description="Import skill from .zip/.skill package")
-    def skills_import(
+    async def skills_import(
         self,
         package_path: str,
         tier: str = "user",
@@ -542,7 +542,7 @@ class SkillService:
         raise NotImplementedError("skills_import() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Validate skill ZIP package without importing")
-    def skills_validate_zip(
+    async def skills_validate_zip(
         self,
         package_path: str,
     ) -> dict[str, Any]:
@@ -573,7 +573,7 @@ class SkillService:
         raise NotImplementedError("skills_validate_zip() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Export skill to .skill package")
-    def skills_export(
+    async def skills_export(
         self,
         skill_path: str,
         output_path: str | None = None,
@@ -615,7 +615,7 @@ class SkillService:
     # =========================================================================
 
     @rpc_expose(description="Submit skill for approval")
-    def skills_submit_approval(
+    async def skills_submit_approval(
         self,
         skill_path: str,
         target_tier: str,
@@ -652,7 +652,7 @@ class SkillService:
         )
 
     @rpc_expose(description="Approve a skill")
-    def skills_approve(
+    async def skills_approve(
         self,
         request_id: str,
         notes: str | None = None,
@@ -686,7 +686,7 @@ class SkillService:
         raise NotImplementedError("skills_approve() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Reject a skill")
-    def skills_reject(
+    async def skills_reject(
         self,
         request_id: str,
         reason: str,
@@ -719,7 +719,7 @@ class SkillService:
         raise NotImplementedError("skills_reject() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List approval requests")
-    def skills_list_approvals(
+    async def skills_list_approvals(
         self,
         status: str | None = None,
         context: OperationContext | None = None,

@@ -109,7 +109,7 @@ class OAuthService:
     # =========================================================================
 
     @rpc_expose(description="List all available OAuth providers")
-    def oauth_list_providers(
+    async def oauth_list_providers(
         self,
         context: OperationContext | None = None,
     ) -> builtins.list[dict[str, Any]]:
@@ -152,7 +152,7 @@ class OAuthService:
     # =========================================================================
 
     @rpc_expose(description="Get OAuth authorization URL for any provider")
-    def oauth_get_auth_url(
+    async def oauth_get_auth_url(
         self,
         provider: str,
         redirect_uri: str = "http://localhost:3000/oauth/callback",

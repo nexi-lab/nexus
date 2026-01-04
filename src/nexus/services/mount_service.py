@@ -100,7 +100,7 @@ class MountService:
     # =========================================================================
 
     @rpc_expose(description="Add dynamic backend mount")
-    def add_mount(
+    async def add_mount(
         self,
         mount_point: str,
         backend_type: str,
@@ -151,7 +151,7 @@ class MountService:
         raise NotImplementedError("add_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Remove backend mount")
-    def remove_mount(
+    async def remove_mount(
         self,
         mount_point: str,
         context: OperationContext | None = None,
@@ -179,7 +179,7 @@ class MountService:
         raise NotImplementedError("remove_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List available connector types")
-    def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
+    async def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
         """List all available connector types that can be used with add_mount().
 
         Args:
@@ -205,7 +205,7 @@ class MountService:
         raise NotImplementedError("list_connectors() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List all backend mounts")
-    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
+    async def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts that the user has permission to access.
 
         Automatically filters mounts based on the user's permissions. Only mounts
@@ -235,7 +235,7 @@ class MountService:
         raise NotImplementedError("list_mounts() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Get mount details")
-    def get_mount(
+    async def get_mount(
         self, mount_point: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Get detailed information about a specific mount.
@@ -255,7 +255,7 @@ class MountService:
         raise NotImplementedError("get_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Check if mount exists")
-    def mount_exists(self, mount_point: str, context: OperationContext | None = None) -> bool:
+    async def mount_exists(self, mount_point: str, context: OperationContext | None = None) -> bool:
         """Check if a mount exists at the given path.
 
         Args:
@@ -276,7 +276,7 @@ class MountService:
     # =========================================================================
 
     @rpc_expose(description="Save mount configuration to database")
-    def save_mount(
+    async def save_mount(
         self,
         mount_point: str,
         name: str | None = None,
@@ -317,7 +317,9 @@ class MountService:
         raise NotImplementedError("save_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List saved mount configurations")
-    def list_saved_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
+    async def list_saved_mounts(
+        self, context: OperationContext | None = None
+    ) -> list[dict[str, Any]]:
         """List all saved mount configurations accessible to the user.
 
         Returns:
@@ -340,7 +342,7 @@ class MountService:
         raise NotImplementedError("list_saved_mounts() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Load and activate saved mount")
-    def load_mount(self, saved_mount_id: str, context: OperationContext | None = None) -> str:
+    async def load_mount(self, saved_mount_id: str, context: OperationContext | None = None) -> str:
         """Load and activate a previously saved mount configuration.
 
         Args:
@@ -366,7 +368,7 @@ class MountService:
         raise NotImplementedError("load_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Delete saved mount configuration")
-    def delete_saved_mount(
+    async def delete_saved_mount(
         self, saved_mount_id: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """Delete a saved mount configuration from database.
@@ -393,7 +395,7 @@ class MountService:
     # =========================================================================
 
     @rpc_expose(description="Sync metadata from connector backend")
-    def sync_mount(
+    async def sync_mount(
         self,
         mount_point: str | None = None,
         path: str | None = None,
@@ -409,12 +411,13 @@ class MountService:
         """Sync metadata and content from connector backend(s) to Nexus database.
 
         For connector-based backends (GDrive, Notion, GitHub, etc.), this method:
-        1. Lists all files/resources from the backend
-        2. Creates metadata entries in Nexus database
-        3. Optionally syncs content to local cache
-        4. Optionally generates embeddings for semantic search
+        1. Lists all files/resources from the backend (async network calls)
+        2. Creates metadata entries in Nexus database (async DB writes)
+        3. Optionally syncs content to local cache (async file I/O)
+        4. Optionally generates embeddings for semantic search (async)
 
-        This is a BLOCKING operation. For long-running syncs, use sync_mount_async().
+        This is an ASYNC operation that doesn't block the event loop.
+        For very long-running syncs with progress tracking, use sync_mount_async().
 
         Args:
             mount_point: Specific mount to sync (None = sync all mounts)
@@ -466,7 +469,7 @@ class MountService:
         raise NotImplementedError("sync_mount() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Start async sync job for a mount")
-    def sync_mount_async(
+    async def sync_mount_async(
         self,
         mount_point: str,
         path: str | None = None,
@@ -521,7 +524,7 @@ class MountService:
         raise NotImplementedError("sync_mount_async() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Get sync job status and progress")
-    def get_sync_status(self, job_id: str) -> dict[str, Any]:
+    async def get_sync_status(self, job_id: str) -> dict[str, Any]:
         """Get status and progress of a sync job.
 
         Args:
@@ -547,7 +550,9 @@ class MountService:
         raise NotImplementedError("get_sync_status() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Cancel a running sync job")
-    def cancel_sync(self, job_id: str, context: OperationContext | None = None) -> dict[str, Any]:
+    async def cancel_sync(
+        self, job_id: str, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """Cancel a running sync job.
 
         Args:
@@ -572,7 +577,7 @@ class MountService:
         raise NotImplementedError("cancel_sync() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="List sync jobs")
-    def list_sync_jobs(
+    async def list_sync_jobs(
         self,
         mount_point: str | None = None,
         status: str | None = None,

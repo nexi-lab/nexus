@@ -85,6 +85,7 @@ class ReBACService:
         rebac_manager: EnhancedReBACManager,
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
+        permission_enforcer: Any = None,
     ):
         """Initialize ReBAC service.
 
@@ -92,10 +93,12 @@ class ReBACService:
             rebac_manager: Enhanced ReBAC manager for relationship storage
             enforce_permissions: Whether to enforce permission checks
             enable_audit_logging: Whether to log permission grants/denials
+            permission_enforcer: Permission enforcer for file-based permission checks
         """
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._enable_audit_logging = enable_audit_logging
+        self._permission_enforcer = permission_enforcer
 
         logger.info("[ReBACService] Initialized with audit_logging=%s", enable_audit_logging)
 
@@ -170,6 +173,10 @@ class ReBACService:
             - Requires "execute" permission on the resource to grant permissions
             - Logged for audit trail
         """
+        # SECURITY: Check execute permission before allowing permission management
+        # Only owners (those with execute permission) can grant/manage permissions on resources
+        # Must be done before the sync inner function since it's an async operation
+        await self._check_share_permission(resource=object, context=context)
 
         def _create_sync() -> str:
             """Synchronous implementation for thread pool execution."""
@@ -194,10 +201,6 @@ class ReBACService:
                     effective_tenant_id = context.get("tenant")
                 elif hasattr(context, "tenant_id"):
                     effective_tenant_id = context.tenant_id
-
-            # SECURITY: Check execute permission before allowing permission management
-            # Only owners (those with execute permission) can grant/manage permissions on resources
-            self._check_share_permission(resource=object, context=context)
 
             # Validate column_config for dynamic_viewer relation
             conditions = None
@@ -1204,7 +1207,7 @@ class ReBACService:
 
         return None
 
-    def _check_share_permission(
+    async def _check_share_permission(
         self,
         resource: tuple[str, str],
         context: Any,
@@ -1224,7 +1227,7 @@ class ReBACService:
             PermissionError: If caller lacks required permission to manage the resource
 
         Examples:
-            >>> self._check_share_permission(
+            >>> await self._check_share_permission(
             ...     resource=("file", "/path/doc.txt"),
             ...     context=operation_context
             ... )
@@ -1270,7 +1273,7 @@ class ReBACService:
             # For non-file resources, we need to check ReBAC permissions
             # This ensures groups, workspaces, and other resources are also protected
             # Check if user has ownership (execute permission) via ReBAC
-            has_permission = self.rebac_check(
+            has_permission = await self.rebac_check(
                 subject=self._get_subject_from_context(context) or ("user", op_context.user),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,

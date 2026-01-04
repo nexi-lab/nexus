@@ -359,6 +359,12 @@ module = "nexus.search.embeddings"
 # Provider wrapper class has complex inheritance
 disable_error_code = ["override"]
 
+[[tool.mypy.overrides]]
+module = "nexus.core.nexus_fs"
+# Phase 2.3: Sync wrappers use _run_async() which returns Any
+# Many sync wrappers with explicit return types trigger no-any-return
+disable_error_code = ["no-any-return"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

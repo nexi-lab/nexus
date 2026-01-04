@@ -30,14 +30,15 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
-from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
-from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
-from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
-from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
-from nexus.core.nexus_fs_search import NexusFSSearchMixin
-from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
 
+# NexusFSLLMMixin removed - replaced by LLMService delegation (Phase 2.3)
+# NexusFSMCPMixin removed - replaced by MCPService delegation (Phase 2.3)
+# NexusFSMountsMixin removed - replaced by MountService delegation (Phase 2.3)
+# NexusFSOAuthMixin removed - replaced by OAuthService delegation (Phase 2.3)
+# NexusFSReBACMixin removed - replaced by ReBACService delegation (Phase 2.3)
+from nexus.core.nexus_fs_search import NexusFSSearchMixin
+
+# NexusFSSkillsMixin removed - replaced by SkillService delegation (Phase 2.3)
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
@@ -61,13 +62,13 @@ from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
     NexusFSSearchMixin,
-    NexusFSReBACMixin,
+    # NexusFSReBACMixin removed - replaced by ReBACService delegation (Phase 2.3)
     # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
-    NexusFSMountsMixin,
-    NexusFSOAuthMixin,
-    NexusFSSkillsMixin,
-    NexusFSMCPMixin,
-    NexusFSLLMMixin,
+    # NexusFSMountsMixin removed - replaced by MountService delegation (Phase 2.3)
+    # NexusFSOAuthMixin removed - replaced by OAuthService delegation (Phase 2.3)
+    # NexusFSSkillsMixin removed - replaced by SkillService delegation (Phase 2.3)
+    # NexusFSMCPMixin removed - replaced by MCPService delegation (Phase 2.3)
+    # NexusFSLLMMixin removed - replaced by LLMService delegation (Phase 2.3)
     NexusFilesystem,
 ):
     """
@@ -486,6 +487,7 @@ class NexusFS(  # type: ignore[misc]
             rebac_manager=self._rebac_manager,
             enforce_permissions=self._enforce_permissions,
             enable_audit_logging=True,  # Production default
+            permission_enforcer=self._permission_enforcer,
         )
 
         # MountService: Dynamic backend mounting operations (17 methods)
@@ -5347,8 +5349,8 @@ class NexusFS(  # type: ignore[misc]
                 result = self.skills_import(
                     zip_data=zip_base64,
                     tier="personal",  # User's personal skills
-                    allow_overwrite=False,  # Allow overwrite during provisioning
-                    context=context,
+                    overwrite=False,  # Allow overwrite during provisioning
+                    _context=context,
                 )
 
                 skill_paths.extend(result.get("skill_paths", []))
@@ -5708,6 +5710,575 @@ class NexusFS(  # type: ignore[misc]
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
                 config=config,  # Pass config for Docker provider
             )
+
+    # =========================================================================
+    # Internal helper methods (migrated from mixins in Phase 2.3)
+    # =========================================================================
+
+    def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
+        """Extract subject from operation context.
+
+        Args:
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+
+        Returns:
+            Subject tuple (type, id) or None if not found
+        """
+        if not context:
+            return None
+
+        # Handle dict format (used by RPC server and tests)
+        if isinstance(context, dict):
+            subject = context.get("subject")
+            if subject and isinstance(subject, tuple) and len(subject) == 2:
+                return (str(subject[0]), str(subject[1]))
+
+            # Construct from subject_type + subject_id
+            subject_type = context.get("subject_type", "user")
+            subject_id = context.get("subject_id") or context.get("user")
+            if subject_id:
+                return (subject_type, subject_id)
+
+            return None
+
+        # Handle OperationContext format - use get_subject() method
+        if hasattr(context, "get_subject") and callable(context.get_subject):
+            result = context.get_subject()
+            if result is not None:
+                return (str(result[0]), str(result[1]))
+            return None
+
+        # Fallback: construct from attributes
+        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+            subject_type = getattr(context, "subject_type", "user")
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            if subject_id:
+                return (subject_type, subject_id)
+
+        # Last resort: use user field
+        if hasattr(context, "user") and context.user:
+            return ("user", context.user)
+
+        return None
+
+    def _check_share_permission(
+        self,
+        resource: tuple[str, str],
+        context: Any,
+        required_permission: str = "execute",
+    ) -> None:
+        """Check if caller has permission to share/manage a resource.
+
+        This helper centralizes the permission check logic used by rebac_create,
+        share_with_user, and share_with_group to prevent code duplication.
+
+        Args:
+            resource: Resource tuple (object_type, object_id)
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            required_permission: Permission level required (default: "execute" for ownership)
+
+        Raises:
+            PermissionError: If caller lacks required permission to manage the resource
+        """
+        if not context:
+            return
+
+        # Extract OperationContext from context parameter
+        op_context: OperationContext | None = None
+        if isinstance(context, OperationContext):
+            op_context = context
+        elif isinstance(context, dict):
+            # Create OperationContext from dict
+            op_context = OperationContext(
+                user=context.get("user", "unknown"),
+                groups=context.get("groups", []),
+                tenant_id=context.get("tenant_id"),
+                is_admin=context.get("is_admin", False),
+                is_system=context.get("is_system", False),
+            )
+
+        # Skip permission check for admin and system contexts
+        if not op_context or not self._enforce_permissions:
+            return
+        if op_context.is_admin or op_context.is_system:
+            return
+
+        # Check if caller has required permission on the resource
+        # Map string permission to Permission enum
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
+        perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
+
+        # For file resources, use the path directly
+        if resource[0] == "file":
+            resource_path = resource[1]
+        else:
+            # For non-file resources, we need to check ReBAC permissions
+            # This ensures groups, workspaces, and other resources are also protected
+            # Check if user has ownership (execute permission) via ReBAC
+            has_permission = self.rebac_check(
+                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                permission="owner",  # Only owners can manage permissions
+                object=resource,
+                context=context,
+            )
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"permission to manage {resource[0]} '{resource[1]}'"
+                )
+            return
+
+        # Use permission enforcer to check permission for file resources
+        if hasattr(self, "_permission_enforcer"):
+            has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+
+            # If user is not owner, check if they are tenant admin
+            if not has_permission:
+                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
+                tenant_id = None
+                if resource_path.startswith("/tenant:"):
+                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                    if parts:
+                        tenant_id = parts[0]
+
+                # Check if user is tenant admin for this resource's tenant
+                if tenant_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_tenant_admin
+
+                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
+                        # Tenant admin can share resources in their tenant
+                        return
+
+                # Neither owner nor tenant admin - deny
+                perm_name = required_permission.upper()
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"permission to manage permissions on '{resource_path}'. "
+                    f"Only owners or tenant admins can share resources."
+                )
+
+    @rpc_expose(description="Share a resource with a specific user")
+    def share_with_user(
+        self,
+        resource: tuple[str, str],
+        user_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        user_tenant_id: str | None = None,
+        expires_at: Any | None = None,
+        context: Any = None,
+    ) -> str:
+        """Share a resource with a specific user, regardless of tenant.
+
+        This enables cross-tenant sharing - users from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            user_id: User to share with (e.g., "bob@partner-company.com")
+            relation: Permission level - "viewer" (read) or "editor" (read/write)
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
+        """
+        from datetime import datetime
+
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # SECURITY: Check execute permission before allowing permission management
+        self._check_share_permission(resource=resource, context=context)
+
+        # Map user-facing relation to internal tuple relation
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use shared-* relations which are allowed to cross tenant boundaries
+        return self._rebac_manager.rebac_write(
+            subject=("user", user_id),
+            relation=tuple_relation,
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=user_tenant_id,
+            expires_at=expires_dt,
+        )
+
+    @rpc_expose(description="Share a resource with a group (all members get access)")
+    def share_with_group(
+        self,
+        resource: tuple[str, str],
+        group_id: str,
+        relation: str = "viewer",
+        tenant_id: str | None = None,
+        group_tenant_id: str | None = None,
+        expires_at: Any | None = None,
+        context: Any = None,
+    ) -> str:
+        """Share a resource with a group (all members get access).
+
+        Uses userset-as-subject pattern: ("group", group_id, "member")
+        All members of the group will have the specified permission level.
+
+        This enables cross-tenant sharing - groups from different organizations
+        can be granted access to specific resources.
+
+        Args:
+            resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
+            group_id: Group to share with (e.g., "developers")
+            relation: Permission level - "viewer" (read), "editor" (read/write), or "owner"
+            tenant_id: Resource owner's tenant ID (defaults to current tenant)
+            group_tenant_id: Recipient group's tenant ID (for cross-tenant shares)
+            expires_at: Optional expiration datetime for the share
+            context: Operation context (automatically provided by RPC server)
+
+        Returns:
+            Share ID (tuple_id) that can be used to revoke the share
+
+        Raises:
+            RuntimeError: If ReBAC is not available
+            ValueError: If relation is not "viewer", "editor", or "owner"
+            PermissionError: If caller does not have execute permission (owner) on the resource
+        """
+        from datetime import datetime
+
+        if not hasattr(self, "_rebac_manager"):
+            raise RuntimeError(
+                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+            )
+
+        # SECURITY: Check execute permission before allowing permission management
+        self._check_share_permission(resource=resource, context=context)
+
+        # Map user-facing relation to internal tuple relation
+        relation_map = {
+            "viewer": "shared-viewer",
+            "editor": "shared-editor",
+            "owner": "shared-owner",
+        }
+        if relation not in relation_map:
+            raise ValueError(f"relation must be 'viewer', 'editor', or 'owner', got '{relation}'")
+
+        tuple_relation = relation_map[relation]
+
+        # Parse expires_at if it's a string (from RPC)
+        expires_dt = None
+        if expires_at is not None:
+            if isinstance(expires_at, str):
+                expires_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            else:
+                expires_dt = expires_at
+
+        # Use userset-as-subject pattern: ("group", group_id, "member")
+        return self._rebac_manager.rebac_write(
+            subject=("group", group_id, "member"),  # Userset-as-subject pattern
+            relation=tuple_relation,
+            object=resource,
+            tenant_id=tenant_id,
+            subject_tenant_id=group_tenant_id,
+            expires_at=expires_dt,
+        )
+
+    def _map_provider_name(self, provider: str) -> str:
+        """Map user-facing provider name to config provider name.
+
+        Args:
+            provider: User-facing provider name (e.g., "google", "microsoft")
+
+        Returns:
+            Config provider name (e.g., "google-drive", "microsoft-onedrive")
+        """
+        provider_name_map = {
+            "google": "google-drive",  # Default to drive for user convenience
+            "twitter": "x",
+            "x": "x",
+            "microsoft": "microsoft-onedrive",
+            "microsoft-onedrive": "microsoft-onedrive",
+        }
+        return provider_name_map.get(provider, provider)
+
+    def _grant_mount_owner_permission(
+        self, mount_point: str, context: OperationContext | None
+    ) -> None:
+        """Grant direct_owner permission to the user who created the mount.
+
+        This helper function is called after successfully creating a mount to
+        automatically grant the creator full access to the mounted backend.
+        It also creates a directory entry for the mount point.
+
+        Args:
+            mount_point: The virtual path of the mount
+            context: Operation context containing user/subject information
+        """
+        import logging
+
+        from nexus.core.context_utils import get_tenant_id, get_user_identity
+
+        logger = logging.getLogger(__name__)
+        logger.info(f"Setting up mount point: {mount_point}")
+
+        # Create directory entry for the mount point
+        try:
+            if hasattr(self, "mkdir"):
+                self.mkdir(mount_point, parents=True, exist_ok=True, context=context)
+                logger.info(f"Created directory entry for mount point: {mount_point}")
+            else:
+                logger.warning(
+                    "[MOUNT-DIR] mkdir method not available, skipping directory creation"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if directory creation fails
+            logger.warning(f"Failed to create directory entry for mount {mount_point}: {e}")
+
+        # Grant direct_owner permission
+        if not context:
+            logger.warning("[MOUNT-PERM] Skipping permission grant - no context")
+            return
+
+        try:
+            # Get tenant and subject info from context
+            tenant_id = get_tenant_id(context)
+            subject_type, subject_id = get_user_identity(context)
+
+            # Check if we got a valid subject_id
+            if not subject_id:
+                logger.warning("[MOUNT-PERM] Skipping permission grant - no subject_id in context")
+                return
+
+            # Create permission tuple using rebac_create method
+            if hasattr(self, "rebac_create") and subject_id:
+                tuple_id = self.rebac_create(
+                    subject=(subject_type, subject_id),
+                    relation="direct_owner",
+                    object=("file", mount_point),
+                    tenant_id=tenant_id,
+                )
+
+                logger.info(
+                    f"Granted direct_owner permission to {subject_type}:{context.subject_id} "
+                    f"for mount {mount_point} (tenant={tenant_id}, tuple_id={tuple_id})"
+                )
+            else:
+                logger.warning(
+                    "[MOUNT-PERM] rebac_create method not available, skipping permission grant"
+                )
+        except Exception as e:
+            # Log but don't fail the mount operation if permission grant fails
+            logger.warning(f"Failed to grant direct_owner permission for mount {mount_point}: {e}")
+
+    def load_all_saved_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
+        """Load all saved mount configurations from database and activate them.
+
+        This method is called during NexusFS initialization to restore all
+        persisted mounts from the database. It retrieves all saved mount configs
+        via mount_manager.list_mounts() and activates each one.
+
+        Args:
+            auto_sync: If True, automatically sync connector backends after loading.
+                      If False (default), skip auto-sync for faster server startup.
+                      Users can manually call sync_mount() after server is up.
+
+        Returns:
+            Dictionary with loading results:
+                - loaded: Number of successfully loaded mounts
+                - synced: Number of connector mounts that were synced (only if auto_sync=True)
+                - failed: Number of mounts that failed to load
+                - errors: List of error messages for failed mounts
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not hasattr(self, "mount_manager") or self.mount_manager is None:
+            logger.warning("Mount manager not available, skipping mount restoration")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        # Get all saved mounts from database (NOT active mounts)
+        saved_mounts = self.mount_manager.list_mounts()
+
+        if not saved_mounts:
+            logger.info("No saved mounts found in database")
+            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+
+        logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
+
+        loaded = 0
+        failed = 0
+        synced = 0
+        errors: list[str] = []
+
+        for mount in saved_mounts:
+            mount_point = mount["mount_point"]
+            try:
+                logger.info(f"Loading mount: {mount_point} ({mount['backend_type']})")
+
+                # Parse backend config from JSON (if it's a string)
+                backend_config = mount["backend_config"]
+                if isinstance(backend_config, str):
+                    backend_config = json.loads(backend_config)
+
+                # Activate the mount using add_mount
+                self.add_mount(
+                    mount_point=mount_point,
+                    backend_type=mount["backend_type"],
+                    backend_config=backend_config,
+                    priority=mount["priority"],
+                    readonly=bool(mount["readonly"]),
+                )
+
+                loaded += 1
+                logger.info(f"Successfully loaded mount: {mount_point}")
+
+                # Only auto-sync if explicitly requested (default: False for fast startup)
+                if auto_sync:
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                        try:
+                            logger.info(f"Auto-syncing connector mount: {mount_point}")
+                            # Create a minimal context from mount owner if available
+                            sync_context = None
+                            if mount.get("owner_user_id"):
+                                # Parse owner_user_id (format: "user:alice" or "agent:bot")
+                                owner_parts = mount["owner_user_id"].split(":", 1)
+                                if len(owner_parts) == 2:
+                                    subject_type, subject_id = owner_parts
+                                else:
+                                    subject_type, subject_id = "user", owner_parts[0]
+                                sync_context = OperationContext(
+                                    user=subject_id,
+                                    groups=[],
+                                    tenant_id=mount.get("tenant_id", "default"),
+                                    subject_type=subject_type,
+                                    subject_id=subject_id,
+                                )
+                                logger.info(
+                                    f"Using owner context for sync: {subject_type}:{subject_id}"
+                                )
+                            sync_result = self.sync_mount(
+                                mount_point, recursive=True, dry_run=False, context=sync_context
+                            )
+                            synced += 1
+                            logger.info(
+                                f"Synced {mount_point}: "
+                                f"{sync_result['files_scanned']} scanned, "
+                                f"{sync_result['files_created']} created, "
+                                f"{sync_result['files_updated']} updated, "
+                                f"{sync_result['files_deleted']} deleted"
+                            )
+                        except Exception as sync_e:
+                            # Log sync error but don't fail the mount
+                            logger.warning(f"Failed to sync {mount_point}: {str(sync_e)}")
+                else:
+                    # Skip auto-sync for faster startup
+                    backend_type = mount["backend_type"]
+                    if "connector" in backend_type.lower() or backend_type.lower() in ["gcs", "s3"]:
+                        logger.info(
+                            f"Skipping auto-sync for {mount_point} (use sync_mount() to sync manually)"
+                        )
+
+            except Exception as e:
+                failed += 1
+                error_msg = f"Failed to load mount {mount_point}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                # Continue loading other mounts even if one fails
+
+        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
+
+        return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
+
+    def _matches_patterns(
+        self, file_path: str, include_patterns: list[str] | None, exclude_patterns: list[str] | None
+    ) -> bool:
+        """Check if a file path matches include/exclude patterns.
+
+        Args:
+            file_path: Virtual file path to check
+            include_patterns: Glob patterns to include (None or empty means include all)
+            exclude_patterns: Glob patterns to exclude (None or empty means exclude none)
+
+        Returns:
+            True if file should be included, False otherwise
+        """
+        from nexus.core import glob_fast
+
+        # Check include patterns (if specified, file must match at least one)
+        if include_patterns and not glob_fast.glob_match(file_path, list(include_patterns)):
+            return False
+
+        # Check exclude patterns (if file matches any, exclude it)
+        return not (exclude_patterns and glob_fast.glob_match(file_path, list(exclude_patterns)))
+
+    def _get_skill_registry(self) -> Any:
+        """Get or create SkillRegistry instance.
+
+        Returns:
+            SkillRegistry instance
+        """
+        from nexus.skills import SkillRegistry
+
+        return SkillRegistry(cast(NexusFilesystem, self))
+
+    def _get_skill_manager(self) -> Any:
+        """Get or create SkillManager instance.
+
+        Returns:
+            SkillManager instance
+        """
+        from nexus.skills import SkillManager
+
+        registry = self._get_skill_registry()
+        return SkillManager(cast(NexusFilesystem, self), registry)
+
+    def _get_skill_governance(self) -> Any:
+        """Get or create SkillGovernance instance.
+
+        Returns:
+            SkillGovernance instance
+        """
+        from nexus.skills import SkillGovernance
+
+        # Get database connection if available
+        db_conn = None
+        if (
+            hasattr(self, "metadata_store")
+            and self.metadata_store
+            and hasattr(self.metadata_store, "session")
+        ):
+            from nexus.cli.commands.skills import SQLAlchemyDatabaseConnection
+
+            db_conn = SQLAlchemyDatabaseConnection(self.metadata_store.session)
+
+        return SkillGovernance(db_connection=db_conn)
 
     @staticmethod
     def _get_event_loop() -> asyncio.AbstractEventLoop:
@@ -6582,6 +7153,142 @@ class NexusFS(  # type: ignore[misc]
         """
         return await self.rebac_service.get_namespace(object_type=object_type)
 
+    # Sync wrapper methods with @rpc_expose for ReBAC (Phase 2.3)
+    @rpc_expose(description="Create ReBAC relationship tuple")
+    def rebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+        tenant_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a relationship tuple."""
+        return NexusFS._run_async(
+            self.arebac_create(
+                subject=subject,
+                relation=relation,
+                object=object,
+                expires_at=expires_at,
+                tenant_id=tenant_id,
+                context=context,
+                column_config=column_config,
+            )
+        )
+
+    @rpc_expose(description="Check ReBAC permission")
+    def rebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if a subject has a permission on an object."""
+        return NexusFS._run_async(
+            self.arebac_check(
+                subject=subject,
+                permission=permission,
+                object=object,
+                context=context,
+                tenant_id=tenant_id,
+            )
+        )
+
+    @rpc_expose(description="Expand ReBAC permissions")
+    def rebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        tenant_id: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """Expand permissions to find all subjects with the permission."""
+        _ = context  # Reserved for future use
+        return NexusFS._run_async(
+            self.arebac_expand(
+                permission=permission,
+                object=object,
+                tenant_id=tenant_id,
+            )
+        )
+
+    @rpc_expose(description="Explain ReBAC permission check")
+    def rebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain how a permission check was evaluated."""
+        return NexusFS._run_async(
+            self.arebac_explain(
+                subject=subject,
+                permission=permission,
+                object=object,
+                context=context,
+                tenant_id=tenant_id,
+            )
+        )
+
+    @rpc_expose(description="Batch ReBAC permission checks")
+    def rebac_check_batch(
+        self,
+        checks: list[dict[str, Any]],
+        context: Any = None,
+    ) -> list[bool]:
+        """Perform multiple permission checks in batch."""
+        _ = context  # Reserved for future use
+        # Convert dict format to tuple format expected by async method
+        tuple_checks: list[tuple[tuple[str, str], str, tuple[str, str]]] = [
+            (
+                (c["subject_type"], c["subject_id"]),
+                c["permission"],
+                (c["object_type"], c["object_id"]),
+            )
+            for c in checks
+        ]
+        return NexusFS._run_async(self.arebac_check_batch(checks=tuple_checks))
+
+    @rpc_expose(description="Delete ReBAC relationship tuple")
+    def rebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple by ID."""
+        return NexusFS._run_async(self.arebac_delete(tuple_id=tuple_id))
+
+    @rpc_expose(description="List ReBAC relationship tuples")
+    def rebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        tenant_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List relationship tuples matching criteria."""
+        return NexusFS._run_async(
+            self.arebac_list_tuples(
+                subject=subject,
+                relation=relation,
+                object=object,
+                relation_in=relation_in,
+                tenant_id=tenant_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    @rpc_expose(description="Get ReBAC namespace schema")
+    def get_namespace(self, object_type: str) -> dict[str, Any] | None:
+        """Get namespace schema for an object type."""
+        return NexusFS._run_async(self.aget_namespace(object_type=object_type))
+
     # -------------------------------------------------------------------------
     # MCPService Delegation Methods (5 methods)
     # -------------------------------------------------------------------------
@@ -6687,6 +7394,123 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=context,
         )
+
+    # Sync wrapper methods with @rpc_expose for MCP (Phase 2.3)
+    @rpc_expose(description="List MCP server mounts")
+    def mcp_list_mounts(
+        self,
+        tier: str | None = None,
+        include_unmounted: bool = True,
+        _context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List MCP server mounts.
+
+        Args:
+            tier: Filter by tier (user/tenant/system)
+            include_unmounted: Include unmounted configurations
+            _context: Operation context
+
+        Returns:
+            List of MCP mount info dictionaries
+        """
+        # Reserved parameters for future use
+        _ = (tier, include_unmounted)
+        return NexusFS._run_async(self.amcp_list_mounts(context=_context))
+
+    @rpc_expose(description="List tools from MCP mount")
+    def mcp_list_tools(
+        self,
+        name: str,
+        _context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List tools from a specific MCP mount.
+
+        Args:
+            name: MCP mount name
+            _context: Operation context
+
+        Returns:
+            List of tool info dictionaries
+        """
+        return NexusFS._run_async(self.amcp_list_tools(name=name, context=_context))
+
+    @rpc_expose(description="Mount MCP server")
+    def mcp_mount(
+        self,
+        name: str,
+        transport: str | None = None,
+        command: str | None = None,
+        url: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        tier: str = "system",
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Mount an MCP server.
+
+        Args:
+            name: Mount name
+            transport: Transport type (stdio/sse/klavis)
+            command: Command to run MCP server
+            url: URL of remote MCP server
+            args: Command arguments
+            env: Environment variables
+            headers: HTTP headers
+            description: Mount description
+            tier: Target tier
+            _context: Operation context
+
+        Returns:
+            Dict with mount info
+        """
+        # Reserved parameters for future use
+        _ = (transport, headers, description, tier)
+        return NexusFS._run_async(
+            self.amcp_mount(
+                name=name,
+                command=command,
+                url=url,
+                args=args,
+                env=env,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="Unmount MCP server")
+    def mcp_unmount(
+        self,
+        name: str,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Unmount an MCP server.
+
+        Args:
+            name: MCP mount name
+            _context: Operation context
+
+        Returns:
+            Dict with unmount result
+        """
+        return NexusFS._run_async(self.amcp_unmount(name=name, context=_context))
+
+    @rpc_expose(description="Sync tools from MCP server")
+    def mcp_sync(
+        self,
+        name: str,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Sync/refresh tools from an MCP server.
+
+        Args:
+            name: MCP mount name
+            _context: Operation context
+
+        Returns:
+            Dict with sync result
+        """
+        return NexusFS._run_async(self.amcp_sync(name=name, context=_context))
 
     # -------------------------------------------------------------------------
     # LLMService Delegation Methods (4 methods)
@@ -6832,6 +7656,156 @@ class NexusFS(  # type: ignore[misc]
             LLMDocumentReader instance
         """
         return self.llm_service.create_llm_reader(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
+
+    # Sync wrapper methods with @rpc_expose (Phase 2.3)
+    @rpc_expose(description="Read document with LLM and return answer")
+    def llm_read(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> str:
+        """Read document with LLM and return answer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search for context
+            search_mode: Search mode ("semantic" or "keyword")
+            provider: LLM provider override
+
+        Returns:
+            LLM's answer as string
+        """
+        return NexusFS._run_async(
+            self.allm_read(
+                path=path,
+                prompt=prompt,
+                model=model,
+                max_tokens=max_tokens,
+                api_key=api_key,
+                use_search=use_search,
+                search_mode=search_mode,
+                provider=provider,
+            )
+        )
+
+    @rpc_expose(description="Read document with LLM and return detailed result")
+    def llm_read_detailed(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Read document with LLM with detailed metadata.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            DocumentReadResult with answer, context, and metadata
+        """
+        return NexusFS._run_async(
+            self.allm_read_detailed(
+                path=path,
+                prompt=prompt,
+                model=model,
+                max_tokens=max_tokens,
+                api_key=api_key,
+                use_search=use_search,
+                search_mode=search_mode,
+                provider=provider,
+            )
+        )
+
+    @rpc_expose(description="Stream document reading response")
+    def llm_read_stream(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Stream LLM response.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            AsyncIterator yielding response chunks
+        """
+        # Note: This returns the async iterator directly since streaming
+        # requires async iteration by the caller
+        return self.allm_read_stream(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    @rpc_expose(description="Create an LLM document reader for advanced usage")
+    def create_llm_reader(
+        self,
+        provider: Any = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        max_context_tokens: int = 3000,
+    ) -> Any:
+        """Create an LLM document reader for advanced usage.
+
+        Args:
+            provider: LLM provider
+            model: Model name
+            api_key: API key override
+            system_prompt: System prompt for the LLM
+            max_context_tokens: Maximum context window tokens
+
+        Returns:
+            LLMDocumentReader instance
+        """
+        return self.acreate_llm_reader(
             provider=provider,
             model=model,
             api_key=api_key,
@@ -7085,6 +8059,145 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
             user_email=user_email,
             context=context,
+        )
+
+    # Sync wrapper methods with @rpc_expose for OAuth (Phase 2.3)
+    @rpc_expose(description="List OAuth providers")
+    def oauth_list_providers(
+        self,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all available OAuth providers.
+
+        Args:
+            _context: Operation context
+
+        Returns:
+            List of provider info dictionaries
+        """
+        return NexusFS._run_async(self.aoauth_list_providers(_context=_context))
+
+    @rpc_expose(description="Get OAuth authorization URL")
+    def oauth_get_auth_url(
+        self,
+        provider: str,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL.
+
+        Args:
+            provider: OAuth provider name
+            redirect_uri: Redirect URI after auth
+            scopes: Requested OAuth scopes
+
+        Returns:
+            Dict with auth URL and state
+        """
+        return NexusFS._run_async(
+            self.aoauth_get_auth_url(
+                provider=provider,
+                redirect_uri=redirect_uri,
+                scopes=scopes,
+            )
+        )
+
+    @rpc_expose(description="Exchange OAuth code for tokens")
+    def oauth_exchange_code(
+        self,
+        provider: str,
+        code: str,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        state: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Exchange authorization code for tokens.
+
+        Args:
+            provider: OAuth provider name
+            code: Authorization code
+            redirect_uri: Redirect URI used in auth
+            state: State parameter
+            _context: Operation context
+
+        Returns:
+            Dict with token info
+        """
+        return NexusFS._run_async(
+            self.aoauth_exchange_code(
+                provider=provider,
+                code=code,
+                redirect_uri=redirect_uri,
+                state=state,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="List OAuth credentials")
+    def oauth_list_credentials(
+        self,
+        provider: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List stored OAuth credentials.
+
+        Args:
+            provider: Filter by provider name
+            _context: Operation context
+
+        Returns:
+            List of credential info dictionaries
+        """
+        return NexusFS._run_async(self.aoauth_list_credentials(provider=provider, context=_context))
+
+    @rpc_expose(description="Revoke OAuth credential")
+    def oauth_revoke_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Revoke OAuth credential.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email to revoke
+            context: Operation context
+
+        Returns:
+            Dict with revocation result
+        """
+        return NexusFS._run_async(
+            self.aoauth_revoke_credential(
+                provider=provider,
+                user_email=user_email,
+                context=context,
+            )
+        )
+
+    @rpc_expose(description="Test OAuth credential")
+    def oauth_test_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Test OAuth credential validity.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email to test
+            context: Operation context
+
+        Returns:
+            Dict with test result
+        """
+        return NexusFS._run_async(
+            self.aoauth_test_credential(
+                provider=provider,
+                user_email=user_email,
+                context=context,
+            )
         )
 
     async def amcp_connect(
@@ -7388,6 +8501,239 @@ class NexusFS(  # type: ignore[misc]
             _context=_context,
         )
 
+    # Sync wrapper methods with @rpc_expose for Skills (Phase 2.3)
+    @rpc_expose(description="Create a new skill from template")
+    def skills_create(
+        self,
+        name: str,
+        description: str = "",
+        tier: str = "user",
+        template: str = "basic",
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Create a new skill from template."""
+        return NexusFS._run_async(
+            self.askills_create(
+                name=name,
+                description=description,
+                tier=tier,
+                template=template,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="Create skill from web content")
+    def skills_create_from_content(
+        self,
+        name: str,
+        content: str,
+        description: str = "",
+        tier: str = "user",
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Create a skill from web content."""
+        return NexusFS._run_async(
+            self.askills_create_from_content(
+                name=name,
+                content=content,
+                description=description,
+                tier=tier,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="Create skill from file or URL")
+    def skills_create_from_file(
+        self,
+        source: str,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "user",
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Create skill from file or URL."""
+        return NexusFS._run_async(
+            self.askills_create_from_file(
+                source=source,
+                name=name,
+                description=description,
+                tier=tier,
+                _context=_context,
+            )
+        )
+
+    @rpc_expose(description="List all skills")
+    def skills_list(
+        self,
+        tier: str | None = None,
+        _context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List all skills."""
+        return NexusFS._run_async(self.askills_list(tier=tier, context=_context))
+
+    @rpc_expose(description="Get detailed skill information")
+    def skills_info(
+        self,
+        skill_name: str,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Get detailed skill information."""
+        return NexusFS._run_async(self.askills_info(skill_name=skill_name, context=_context))
+
+    @rpc_expose(description="Search skills by description")
+    def skills_search(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int = 10,
+        _context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Search skills by description."""
+        return NexusFS._run_async(
+            self.askills_search(query=query, tier=tier, limit=limit, _context=_context)
+        )
+
+    @rpc_expose(description="Fork an existing skill")
+    def skills_fork(
+        self,
+        source_name: str,
+        new_name: str,
+        tier: str = "user",
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Fork an existing skill."""
+        return NexusFS._run_async(
+            self.askills_fork(
+                source_name=source_name,
+                target_name=new_name,
+                tier=tier,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="Publish skill to another tier")
+    def skills_publish(
+        self,
+        skill_name: str,
+        target_tier: str,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Publish skill to another tier."""
+        return NexusFS._run_async(
+            self.askills_publish(skill_name=skill_name, target_tier=target_tier, _context=_context)
+        )
+
+    @rpc_expose(description="Import skill from .zip/.skill package")
+    def skills_import(
+        self,
+        zip_data: str,
+        tier: str = "user",
+        overwrite: bool = False,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Import skill from .zip/.skill package."""
+        return NexusFS._run_async(
+            self.askills_import(
+                zip_data=zip_data, tier=tier, allow_overwrite=overwrite, context=_context
+            )
+        )
+
+    @rpc_expose(description="Validate skill ZIP package")
+    def skills_validate_zip(
+        self,
+        zip_data: str,
+    ) -> dict[str, Any]:
+        """Validate skill ZIP package without importing."""
+        return NexusFS._run_async(self.askills_validate_zip(package_path=zip_data))
+
+    @rpc_expose(description="Export skill to .skill package")
+    def skills_export(
+        self,
+        skill_name: str,
+        include_history: bool = False,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Export skill to .skill package."""
+        return NexusFS._run_async(
+            self.askills_export(
+                skill_name=skill_name,
+                include_dependencies=include_history,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="Submit skill for approval")
+    def skills_submit_approval(
+        self,
+        skill_name: str,
+        submitted_by: str,
+        reviewers: list[str] | None = None,
+        comments: str | None = None,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Submit skill for approval."""
+        return NexusFS._run_async(
+            self.askills_submit_approval(
+                skill_name=skill_name,
+                submitted_by=submitted_by,
+                reviewers=reviewers,
+                comments=comments,
+                _context=_context,
+            )
+        )
+
+    @rpc_expose(description="Approve a skill")
+    def skills_approve(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Approve a skill."""
+        return NexusFS._run_async(
+            self.askills_approve(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                _context=_context,
+            )
+        )
+
+    @rpc_expose(description="Reject a skill")
+    def skills_reject(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        _context: Any = None,
+    ) -> dict[str, Any]:
+        """Reject a skill."""
+        return NexusFS._run_async(
+            self.askills_reject(
+                approval_id=approval_id,
+                reviewed_by=reviewed_by,
+                reviewer_type=reviewer_type,
+                comments=comments,
+                _context=_context,
+            )
+        )
+
+    @rpc_expose(description="List approval requests")
+    def skills_list_approvals(
+        self,
+        status: str | None = None,
+        skill_name: str | None = None,
+        _context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List skill approval requests."""
+        return NexusFS._run_async(
+            self.askills_list_approvals(status=status, skill_name=skill_name, _context=_context)
+        )
+
     # =========================================================================
     # MountService Delegation Methods
     # =========================================================================
@@ -7579,6 +8925,199 @@ class NexusFS(  # type: ignore[misc]
             mount_point=mount_point,
             status=status,
             limit=limit,
+        )
+
+    # Sync wrapper methods with @rpc_expose for Mounts (Phase 2.3)
+    @rpc_expose(description="Add dynamic backend mount")
+    def add_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Add a dynamic backend mount."""
+        return NexusFS._run_async(
+            self.aadd_mount(
+                mount_point=mount_point,
+                backend_type=backend_type,
+                backend_config=backend_config,
+                priority=priority,
+                readonly=readonly,
+                context=context,
+            )
+        )
+
+    @rpc_expose(description="Remove backend mount")
+    def remove_mount(
+        self,
+        mount_point: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Remove a backend mount."""
+        return NexusFS._run_async(self.aremove_mount(mount_point=mount_point, _context=_context))
+
+    @rpc_expose(description="List available connector types")
+    def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
+        """List all available connector types."""
+        return NexusFS._run_async(self.alist_connectors(category=category))
+
+    @rpc_expose(description="List all backend mounts")
+    def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
+        """List all active backend mounts."""
+        return NexusFS._run_async(self.alist_mounts(_context=context))
+
+    @rpc_expose(description="Get mount details")
+    def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+        """Get details about a specific mount."""
+        return NexusFS._run_async(self.aget_mount(mount_point=mount_point))
+
+    @rpc_expose(description="Check if mount exists")
+    def has_mount(self, mount_point: str) -> bool:
+        """Check if a mount exists at the given path."""
+        return NexusFS._run_async(self.ahas_mount(mount_point=mount_point))
+
+    @rpc_expose(description="Save mount configuration to database")
+    def save_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        description: str | None = None,
+        priority: int = 0,
+        readonly: bool = False,
+        auto_mount: bool = True,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> str:
+        """Save mount configuration to database."""
+        _ = auto_mount  # Reserved for future use
+        return NexusFS._run_async(
+            self.asave_mount(
+                mount_point=mount_point,
+                backend_type=backend_type,
+                backend_config=backend_config,
+                description=description,
+                priority=priority,
+                readonly=readonly,
+                owner_user_id=owner_user_id,
+                tenant_id=tenant_id,
+                context=_context,
+            )
+        )
+
+    @rpc_expose(description="List saved mount configurations")
+    def list_saved_mounts(
+        self,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List saved mount configurations from the database."""
+        return NexusFS._run_async(
+            self.alist_saved_mounts(owner_user_id=owner_user_id, tenant_id=tenant_id)
+        )
+
+    @rpc_expose(description="Load and activate saved mount")
+    def load_mount(self, mount_point: str) -> str:
+        """Load a saved mount configuration and activate it."""
+        return NexusFS._run_async(self.aload_mount(mount_point=mount_point))
+
+    @rpc_expose(description="Delete saved mount configuration")
+    def delete_saved_mount(self, mount_point: str) -> bool:
+        """Delete a saved mount configuration from the database."""
+        return NexusFS._run_async(self.adelete_saved_mount(mount_point=mount_point))
+
+    @rpc_expose(description="Sync metadata from connector backend")
+    def sync_mount(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        force: bool = False,
+        direction: str = "pull",
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        batch_size: int = 100,
+        context: OperationContext | None = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Sync metadata from connector backend."""
+        # Reserved parameters for future use
+        _ = (force, direction, batch_size)
+        return NexusFS._run_async(
+            self.async_mount(
+                mount_point=mount_point,
+                path=path,
+                recursive=recursive,
+                dry_run=dry_run,
+                sync_content=sync_content,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                generate_embeddings=generate_embeddings,
+                context=context,
+                progress_callback=progress_callback,
+            )
+        )
+
+    @rpc_expose(description="Start async sync job for a mount")
+    def sync_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        force: bool = False,
+        direction: str = "pull",
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        batch_size: int = 100,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Start async sync job for a mount."""
+        # Reserved parameters for future use
+        _ = (force, direction, batch_size)
+        return NexusFS._run_async(
+            self.async_mount_async(
+                mount_point=mount_point,
+                path=path,
+                recursive=recursive,
+                dry_run=dry_run,
+                sync_content=sync_content,
+                include_patterns=include_patterns,
+                exclude_patterns=exclude_patterns,
+                generate_embeddings=generate_embeddings,
+                context=context,
+            )
+        )
+
+    @rpc_expose(description="Get sync job status and progress")
+    def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
+        """Get the status and progress of a sync job."""
+        return NexusFS._run_async(self.aget_sync_job(job_id=job_id))
+
+    @rpc_expose(description="Cancel a running sync job")
+    def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
+        """Cancel a running sync job."""
+        return NexusFS._run_async(self.acancel_sync_job(job_id=job_id))
+
+    @rpc_expose(description="List sync jobs")
+    def list_sync_jobs(
+        self,
+        mount_point: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List sync jobs."""
+        return NexusFS._run_async(
+            self.alist_sync_jobs(mount_point=mount_point, status=status, limit=limit)
         )
 
     # =========================================================================

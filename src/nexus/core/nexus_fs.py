@@ -7546,6 +7546,61 @@ class NexusFS(  # type: ignore[misc]
             limit=limit,
         )
 
+    # =========================================================================
+    # SearchService Delegation Methods (Semantic Search)
+    # =========================================================================
+
+    async def asemantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+    ) -> list[dict[str, Any]]:
+        """Search documents using natural language queries - delegates to SearchService."""
+        return await self.search_service.semantic_search(
+            query=query,
+            path=path,
+            limit=limit,
+            filters=filters,
+            search_mode=search_mode,
+        )
+
+    async def asemantic_search_index(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+    ) -> dict[str, int]:
+        """Index documents for semantic search - delegates to SearchService."""
+        return await self.search_service.semantic_search_index(
+            path=path,
+            recursive=recursive,
+        )
+
+    async def asemantic_search_stats(self) -> dict[str, Any]:
+        """Get semantic search indexing statistics - delegates to SearchService."""
+        return await self.search_service.semantic_search_stats()
+
+    async def ainitialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+        async_mode: bool = True,
+    ) -> None:
+        """Initialize semantic search engine - delegates to SearchService."""
+        return await self.search_service.initialize_semantic_search(
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
+            chunk_size=chunk_size,
+            chunk_strategy=chunk_strategy,
+            async_mode=async_mode,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

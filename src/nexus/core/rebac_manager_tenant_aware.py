@@ -92,7 +92,7 @@ class TenantAwareReBACManager(ReBACManager):
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Optional for backward compatibility (defaults to "default")
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         subject_tenant_id: str | None = None,  # Optional: override subject tenant
         object_tenant_id: str | None = None,  # Optional: override object tenant
     ) -> str:
@@ -152,9 +152,10 @@ class TenantAwareReBACManager(ReBACManager):
                 object_tenant_id=object_tenant_id,
             )
 
-        # Default tenant_id for backward compatibility
+        # Issue #773: tenant_id is now required, but we keep a safe default
+        # for backward compatibility with existing code paths
         if not tenant_id:
-            tenant_id = "default"
+            tenant_id = "default"  # Fallback kept for safety during transition
 
         # Default subject/object tenant to main tenant_id
         subject_tenant_id = subject_tenant_id or tenant_id
@@ -336,7 +337,7 @@ class TenantAwareReBACManager(ReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Optional for backward compatibility (defaults to "default")
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
     ) -> bool:
         """Check if subject has permission on object (tenant-scoped).
 
@@ -363,9 +364,10 @@ class TenantAwareReBACManager(ReBACManager):
             # Call the base ReBACManager.rebac_check (without tenant_id)
             return ReBACManager.rebac_check(self, subject, permission, object, context)
 
-        # Default tenant_id for backward compatibility
+        # Issue #773: tenant_id is now required, but we keep a safe default
+        # for backward compatibility with existing code paths
         if not tenant_id:
-            tenant_id = "default"
+            tenant_id = "default"  # Fallback kept for safety during transition
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -396,7 +398,7 @@ class TenantAwareReBACManager(ReBACManager):
         self,
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Optional for backward compatibility (defaults to "default")
+        tenant_id: str = "default",  # Issue #773: Required for multi-tenant isolation
     ) -> list[tuple[str, str]]:
         """Find all subjects with permission on object (tenant-scoped).
 
@@ -421,9 +423,10 @@ class TenantAwareReBACManager(ReBACManager):
             # Call the base ReBACManager.rebac_expand (without tenant_id)
             return ReBACManager.rebac_expand(self, permission, object)
 
-        # Default tenant_id for backward compatibility
+        # Issue #773: tenant_id is now required, but we keep a safe default
+        # for backward compatibility with existing code paths
         if not tenant_id:
-            tenant_id = "default"
+            tenant_id = "default"  # Fallback kept for safety during transition
 
         object_entity = Entity(object[0], object[1])
         subjects: set[tuple[str, str]] = set()

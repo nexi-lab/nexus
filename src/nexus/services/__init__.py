@@ -8,10 +8,14 @@ Services:
 - ReBACService: Relationship-Based Access Control and permission management
 - MountService: Dynamic backend mounting, persistence, and sync operations
 - VersionService: File version management, rollback, and diff operations
+- MCPService: Model Context Protocol server management
+- LLMService: LLM-powered document reading with citations
 
 Phase 2: Core Refactoring (Issue #988)
 """
 
+from nexus.services.llm_service import LLMService
+from nexus.services.mcp_service import MCPService
 from nexus.services.mount_service import MountService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
@@ -22,4 +26,6 @@ __all__ = [
     "ReBACService",
     "MountService",
     "VersionService",
+    "MCPService",
+    "LLMService",
 ]

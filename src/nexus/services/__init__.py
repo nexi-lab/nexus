@@ -7,6 +7,7 @@ Services:
 - SearchService: File search, glob, grep, and semantic search operations
 - ReBACService: Relationship-Based Access Control and permission management
 - MountService: Dynamic backend mounting, persistence, and sync operations
+- VersionService: File version management, rollback, and diff operations
 
 Phase 2: Core Refactoring (Issue #988)
 """
@@ -14,9 +15,11 @@ Phase 2: Core Refactoring (Issue #988)
 from nexus.services.mount_service import MountService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
+from nexus.services.version_service import VersionService
 
 __all__ = [
     "SearchService",
     "ReBACService",
     "MountService",
+    "VersionService",
 ]

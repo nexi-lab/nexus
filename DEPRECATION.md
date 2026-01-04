@@ -1,7 +1,7 @@
 # Deprecated Features & Migration Guide
 
-**Last Updated:** 2026-01-02
-**Related:** Phase 1 - Task 1.4 (Issue #987)
+**Last Updated:** 2026-01-03
+**Related:** Phase 1 - Task 1.4 (Issue #987), Phase 2 - Task 2.3 (Issue #988)
 
 ---
 
@@ -196,6 +196,91 @@ Use ReBAC for all permissions.
 **Files Affected:**
 - [nexus/core/permissions.py:205](nexus/src/nexus/core/permissions.py#L205)
 - [nexus/core/memory_permission_enforcer.py:41](nexus/src/nexus/core/memory_permission_enforcer.py#L41)
+
+---
+
+### 1.4 Direct ReBACManager Instantiation (🟡 Soft Deprecated)
+
+**Status:** Soft deprecated - shows warning
+**Deprecated In:** Phase 2 (v0.6.0)
+**Removal Planned:** v0.8.0
+**Replacement:** Use `EnhancedReBACManager` for production code
+
+**Related:** Phase 2 Task 2.3, Issue #988, [REBAC_CONSOLIDATION_ANALYSIS.md](REBAC_CONSOLIDATION_ANALYSIS.md)
+
+```python
+# ❌ DEPRECATED: Direct ReBACManager instantiation
+from nexus.core.rebac_manager import ReBACManager
+
+manager = ReBACManager(engine)  # ⚠️  Missing P0 fixes and optimizations
+
+# ✅ REPLACEMENT: Use EnhancedReBACManager
+from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+manager = EnhancedReBACManager(
+    engine,
+    enable_graph_limits=True,      # P0-5: DoS protection
+    enable_leopard=True,            # Leopard: O(1) group lookups
+    enable_tiger_cache=True,        # Tiger: Advanced caching
+    enforce_tenant_isolation=True  # P0-2: Tenant security
+)
+
+# Then use consistency levels for cache control (P0-1)
+result = manager.rebac_check(
+    subject=("user", "alice"),
+    permission="read",
+    object=("file", "/doc.txt"),
+    tenant_id="org_123",
+    consistency=ConsistencyLevel.STRONG  # Bypass cache for critical checks
+)
+```
+
+**Why Deprecated:**
+- **Missing P0 GA Fixes:** Base ReBACManager lacks production-ready features
+  - P0-1: No consistency levels or version tokens
+  - P0-2: No tenant isolation enforcement
+  - P0-5: No graph limits or DoS protection
+- **Performance:** Missing Leopard (O(1) group lookups) and Tiger cache
+- **Security:** No timeout protection or fan-out limits for pathological graphs
+- **Observability:** No CheckResult metadata (decision time, cache stats, traversal info)
+
+**What EnhancedReBACManager Adds:**
+1. **P0-1 Consistency Levels:** EVENTUAL/BOUNDED/STRONG cache control with version tokens
+2. **P0-2 Tenant Isolation:** Enforces same-tenant relationships, prevents cross-tenant traversal
+3. **P0-5 Graph Limits:** MAX_DEPTH=50, MAX_FAN_OUT=1000, 1s timeout, memory bounds
+4. **Leopard Optimization:** Pre-computed transitive group closure for instant group checks
+5. **Tiger Cache:** Advanced caching with iterator-based invalidation
+6. **Rich Metadata:** CheckResult with decision time, cache age, traversal stats, indeterminate flags
+
+**When Still Safe to Use:**
+- **Testing:** Test fixtures can use ReBACManager for simplicity
+- **Base Class:** ReBACManager remains the base for TenantAware and Enhanced
+- **Legacy Code:** Existing code continues to work (with deprecation warning)
+
+**Migration Path:**
+1. Replace `ReBACManager` imports with `EnhancedReBACManager`
+2. Enable P0 fixes in constructor (all default to True for safety)
+3. Update permission checks to use `ConsistencyLevel` for cache control
+4. Leverage `CheckResult` metadata for debugging and monitoring
+5. See [REBAC_CONSOLIDATION_ANALYSIS.md](REBAC_CONSOLIDATION_ANALYSIS.md) for details
+
+**Warning Message:**
+```
+DeprecationWarning: Direct instantiation of ReBACManager is deprecated.
+Use EnhancedReBACManager for production code (includes P0 fixes,
+Leopard optimization, Tiger cache, and graph limits).
+See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.
+```
+
+**Files Affected:**
+- [nexus/core/rebac_manager.py:96-106](nexus/src/nexus/core/rebac_manager.py#L96-L106) (deprecation warning)
+- [nexus/core/memory_api.py:67](nexus/src/nexus/core/memory_api.py#L67) (needs migration)
+- [nexus/core/memory_router.py:330](nexus/src/nexus/core/memory_router.py#L330) (needs migration)
+- [nexus/cli/commands/server.py:1051](nexus/src/nexus/cli/commands/server.py#L1051) (needs migration)
+
+**Production Code Already Using Enhanced:**
+- ✅ **NexusFS Core:** Uses EnhancedReBACManager (nexus_fs.py:273)
+- ✅ **FastAPI Server:** Uses AsyncReBACManager (needs P0 fixes ported)
 
 ---
 

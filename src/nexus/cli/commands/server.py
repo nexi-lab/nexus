@@ -1046,9 +1046,9 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.core.rebac_manager import ReBACManager
+                    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-                    rebac = ReBACManager(engine)
+                    rebac = EnhancedReBACManager(engine)
                     rebac.rebac_write(
                         subject=("user", admin_user),
                         relation="direct_owner",

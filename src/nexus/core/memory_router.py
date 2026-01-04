@@ -323,11 +323,11 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.core.rebac_manager import ReBACManager
+                from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
-                rebac = ReBACManager(bind)
+                rebac = EnhancedReBACManager(bind)
 
                 # Grant owner permission to the memory
                 rebac.rebac_write(

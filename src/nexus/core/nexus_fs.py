@@ -9,7 +9,7 @@ import json
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import select
 
@@ -37,12 +37,23 @@ from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
-from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
+
+# NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
+
+# Phase 2: Service imports - Independent, testable services extracted from mixins
+from nexus.services.llm_service import LLMService
+from nexus.services.mcp_service import MCPService
+from nexus.services.mount_service import MountService
+from nexus.services.oauth_service import OAuthService
+from nexus.services.rebac_service import ReBACService
+from nexus.services.search_service import SearchService
+from nexus.services.skill_service import SkillService
+from nexus.services.version_service import VersionService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 
@@ -51,7 +62,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSReBACMixin,
-    NexusFSVersionsMixin,
+    # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
     NexusFSMountsMixin,
     NexusFSOAuthMixin,
     NexusFSSkillsMixin,
@@ -457,6 +468,55 @@ class NexusFS(  # type: ignore[misc]
 
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to load saved mounts during initialization: {e}")
+
+        # Phase 2: Service Composition - Extract from mixins into services
+        # These services are independent, testable, and follow single-responsibility principle
+        # All services use async-first architecture with asyncio.to_thread() for blocking operations
+
+        # VersionService: File versioning operations (4 methods)
+        self.version_service = VersionService(
+            metadata_store=self.metadata,
+            cas_store=self.backend,  # For CAS operations
+            router=self.router,
+            enforce_permissions=self._enforce_permissions,
+        )
+
+        # ReBACService: Permission and access control operations (12 core + 15 advanced methods)
+        self.rebac_service = ReBACService(
+            rebac_manager=self._rebac_manager,
+            enforce_permissions=self._enforce_permissions,
+            enable_audit_logging=True,  # Production default
+        )
+
+        # MountService: Dynamic backend mounting operations (17 methods)
+        self.mount_service = MountService(
+            router=self.router,
+            mount_manager=self.mount_manager,  # Persistent storage
+            nexus_fs=self,  # Required for sync operations
+        )
+
+        # MCPService: Model Context Protocol operations (5 methods)
+        self.mcp_service = MCPService(nexus_fs=self)
+
+        # LLMService: LLM integration operations (4 methods)
+        self.llm_service = LLMService(nexus_fs=self)
+
+        # OAuthService: OAuth authentication operations (7 methods)
+        # Lazy initialization of oauth_factory and token_manager happens in service
+        self.oauth_service = OAuthService(
+            oauth_factory=None,  # Lazy init from config
+            token_manager=None,  # Lazy init from db_path
+        )
+
+        # SkillService: Skill management operations (16 methods)
+        self.skill_service = SkillService(nexus_fs=self)
+
+        # SearchService: Search operations - semantic (4) + basic (3, deferred to Phase 2.2)
+        self.search_service = SearchService(
+            metadata_store=self.metadata,
+            permission_enforcer=self._permission_enforcer,
+            enforce_permissions=self._enforce_permissions,
+        )
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         # This enables O(1) permission checks for FUSE path resolution
@@ -6153,6 +6213,1428 @@ class NexusFS(  # type: ignore[misc]
         # TODO: Add admin check when context is provided
         created = self.metadata.backfill_directory_index(prefix=prefix, tenant_id=tenant_id)
         return {"entries_created": created, "prefix": prefix}
+
+    # =========================================================================
+    # Phase 2.2: Service Delegation Methods
+    # =========================================================================
+    # These methods delegate to independent service instances for better
+    # separation of concerns, testability, and maintainability.
+    # Eventually, the mixin methods will be removed in favor of these.
+    # =========================================================================
+
+    # -------------------------------------------------------------------------
+    # VersionService Delegation Methods (4 methods)
+    # Replaces NexusFSVersionsMixin (Phase 2.3)
+    # Sync methods wrap async methods for backward compatibility
+    # -------------------------------------------------------------------------
+
+    async def aget_version(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Async version of get_version. Delegates to VersionService."""
+        return await self.version_service.get_version(path, version, context)
+
+    @rpc_expose(description="Get specific file version")
+    def get_version(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> bytes:
+        """Get a specific version of a file.
+
+        Retrieves the content for a specific version from CAS using the
+        version's content hash.
+
+        Args:
+            path: Virtual file path
+            version: Version number to retrieve
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            File content as bytes for the specified version
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return cast(bytes, NexusFS._run_async(self.aget_version(path, version, context)))
+
+    async def alist_versions(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """Async version of list_versions. Delegates to VersionService."""
+        return await self.version_service.list_versions(path, context)
+
+    @rpc_expose(description="List file versions")
+    def list_versions(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all versions of a file.
+
+        Returns version history with metadata for each version.
+
+        Args:
+            path: Virtual file path
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            List of version info dicts ordered by version number (newest first)
+
+        Raises:
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return cast(list[dict[str, Any]], NexusFS._run_async(self.alist_versions(path, context)))
+
+    async def arollback(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Async version of rollback. Delegates to VersionService."""
+        return await self.version_service.rollback(path, version, context)
+
+    @rpc_expose(description="Rollback file to previous version")
+    def rollback(
+        self,
+        path: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Rollback file to a previous version.
+
+        Updates the file to point to an older version's content from CAS.
+        Creates a new version entry marking this as a rollback.
+
+        Args:
+            path: Virtual file path
+            version: Version number to rollback to
+            context: Optional operation context for permission checks
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            PermissionError: If user doesn't have write permission
+        """
+        cast(None, NexusFS._run_async(self.arollback(path, version, context)))
+
+    async def adiff_versions(
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
+        """Async version of diff_versions. Delegates to VersionService."""
+        return await self.version_service.diff_versions(path, v1, v2, mode, context)
+
+    @rpc_expose(description="Compare file versions")
+    def diff_versions(
+        self,
+        path: str,
+        v1: int,
+        v2: int,
+        mode: str = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a file.
+
+        Args:
+            path: Virtual file path
+            v1: First version number
+            v2: Second version number
+            mode: Diff mode - "metadata" (default) or "content"
+            context: Operation context for permission checks (uses default if None)
+
+        Returns:
+            For "metadata" mode: Dict with metadata differences
+            For "content" mode: Unified diff string
+
+        Raises:
+            NexusFileNotFoundError: If file or version doesn't exist
+            InvalidPathError: If path is invalid
+            ValueError: If mode is invalid
+            PermissionError: If user doesn't have READ permission
+        """
+        return cast(
+            dict[str, Any] | str,
+            NexusFS._run_async(self.adiff_versions(path, v1, v2, mode, context)),
+        )
+
+    # -------------------------------------------------------------------------
+    # ReBACService Delegation Methods (12 core methods)
+    # -------------------------------------------------------------------------
+
+    async def arebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+        tenant_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a ReBAC relationship tuple - delegates to ReBACService.
+
+        Async version of rebac_create() using the service layer.
+
+        Args:
+            subject: Subject tuple (type, id) e.g., ("user", "alice")
+            relation: Relation name e.g., "owner", "can-read", "member"
+            object: Object tuple (type, id) e.g., ("file", "/doc.txt")
+            expires_at: Optional expiration datetime
+            tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context for permission checks
+            column_config: Optional column-level permissions for dynamic_viewer relation
+
+        Returns:
+            Tuple ID (UUID string)
+        """
+        return await self.rebac_service.rebac_create(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            tenant_id=tenant_id,
+            context=context,
+            column_config=column_config,
+        )
+
+    async def arebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if subject has permission on object - delegates to ReBACService.
+
+        Async version of rebac_check() using the service layer.
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice")
+            permission: Permission to check e.g., "read", "write", "owner"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            context: Optional ABAC context for condition evaluation
+            tenant_id: Tenant ID for multi-tenant isolation
+
+        Returns:
+            True if permission granted, False otherwise
+        """
+        return await self.rebac_service.rebac_check(
+            subject=subject,
+            permission=permission,
+            object=object,
+            context=context,
+            tenant_id=tenant_id,
+        )
+
+    async def arebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None = None,
+        limit: int = 100,
+    ) -> list[tuple[str, str]]:
+        """Find all subjects with permission on object - delegates to ReBACService.
+
+        Async version of rebac_expand() using the service layer.
+
+        Args:
+            permission: Permission to check e.g., "read", "write", "owner"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results
+
+        Returns:
+            List of subject tuples with the permission
+        """
+        return await self.rebac_service.rebac_expand(
+            permission=permission,
+            object=object,
+            _tenant_id=tenant_id,
+            _limit=limit,
+        )
+
+    async def arebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Explain why subject has/doesn't have permission - delegates to ReBACService.
+
+        Async version of rebac_explain() using the service layer.
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice")
+            permission: Permission to explain e.g., "read", "write"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context
+
+        Returns:
+            Explanation dictionary with result, reason, and paths
+        """
+        return await self.rebac_service.rebac_explain(
+            subject=subject,
+            permission=permission,
+            object=object,
+            tenant_id=tenant_id,
+            context=context,
+        )
+
+    async def arebac_check_batch(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        tenant_id: str | None = None,
+    ) -> list[bool]:
+        """Check multiple permissions in batch - delegates to ReBACService.
+
+        Async version of rebac_check_batch() using the service layer.
+
+        Args:
+            checks: List of (subject, permission, object) tuples
+            tenant_id: Tenant ID
+
+        Returns:
+            List of boolean results (same order as input)
+        """
+        return await self.rebac_service.rebac_check_batch(
+            checks=checks,
+            _tenant_id=tenant_id,
+        )
+
+    async def arebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple by ID - delegates to ReBACService.
+
+        Async version of rebac_delete() using the service layer.
+
+        Args:
+            tuple_id: UUID of tuple to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self.rebac_service.rebac_delete(tuple_id=tuple_id)
+
+    async def arebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        tenant_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List relationship tuples with filters - delegates to ReBACService.
+
+        Async version of rebac_list_tuples() using the service layer.
+
+        Args:
+            subject: Filter by subject (optional)
+            relation: Filter by relation (optional)
+            object: Filter by object (optional)
+            relation_in: Filter by multiple relations (optional)
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results
+            offset: Pagination offset
+
+        Returns:
+            List of tuple dictionaries
+        """
+        return await self.rebac_service.rebac_list_tuples(
+            subject=subject,
+            relation=relation,
+            object=object,
+            relation_in=relation_in,
+            _tenant_id=tenant_id,
+            _limit=limit,
+            _offset=offset,
+        )
+
+    async def aget_namespace(self, object_type: str) -> dict[str, Any] | None:
+        """Get namespace schema for object type - delegates to ReBACService.
+
+        Async version of get_namespace() using the service layer.
+
+        Args:
+            object_type: Type of object (e.g., "file", "folder")
+
+        Returns:
+            Namespace configuration dict or None if not found
+        """
+        return await self.rebac_service.get_namespace(object_type=object_type)
+
+    # -------------------------------------------------------------------------
+    # MCPService Delegation Methods (5 methods)
+    # -------------------------------------------------------------------------
+
+    async def amcp_list_mounts(self, context: Any = None) -> list[dict[str, Any]]:
+        """List all MCP mounts - delegates to MCPService.
+
+        Async version of mcp_list_mounts() using the service layer.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            List of MCP mount dictionaries
+        """
+        return await self.mcp_service.mcp_list_mounts(context=context)
+
+    async def amcp_list_tools(
+        self,
+        name: str,
+        context: Any = None,
+    ) -> list[dict[str, Any]]:
+        """List MCP tools from specific mount - delegates to MCPService.
+
+        Async version of mcp_list_tools() using the service layer.
+
+        Args:
+            name: Mount name to list tools from
+            context: Operation context
+
+        Returns:
+            List of tool dictionaries
+        """
+        return await self.mcp_service.mcp_list_tools(
+            name=name,
+            context=context,
+        )
+
+    async def amcp_mount(
+        self,
+        name: str,
+        command: str | None = None,
+        args: list[str] | None = None,
+        url: str | None = None,
+        env: dict[str, str] | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Mount an MCP server - delegates to MCPService.
+
+        Async version of mcp_mount() using the service layer.
+
+        Args:
+            name: Mount name
+            command: Command to run (for stdio transport)
+            args: Command arguments
+            url: Server URL (for SSE transport)
+            env: Environment variables
+            context: Operation context
+
+        Returns:
+            Mount information dictionary
+        """
+        return await self.mcp_service.mcp_mount(
+            name=name,
+            command=command,
+            args=args,
+            url=url,
+            env=env,
+            context=context,
+        )
+
+    async def amcp_unmount(self, name: str, context: Any = None) -> dict[str, Any]:
+        """Unmount an MCP server - delegates to MCPService.
+
+        Async version of mcp_unmount() using the service layer.
+
+        Args:
+            name: Mount name to unmount
+            context: Operation context
+
+        Returns:
+            Result dictionary with success status
+        """
+        return await self.mcp_service.mcp_unmount(name=name, _context=context)
+
+    async def amcp_sync(
+        self,
+        name: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Sync/refresh tools from MCP mount - delegates to MCPService.
+
+        Async version of mcp_sync() using the service layer.
+
+        Args:
+            name: MCP mount name
+            context: Operation context
+
+        Returns:
+            Sync result dictionary with tool statistics
+        """
+        return await self.mcp_service.mcp_sync(
+            name=name,
+            context=context,
+        )
+
+    # -------------------------------------------------------------------------
+    # LLMService Delegation Methods (4 methods)
+    # -------------------------------------------------------------------------
+
+    async def allm_read(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> str:
+        """Read document with LLM and return answer - delegates to LLMService.
+
+        Async version of llm_read() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search for context
+            search_mode: Search mode ("semantic" or "keyword")
+            provider: LLM provider override
+
+        Returns:
+            LLM's answer as string
+        """
+        return await self.llm_service.llm_read(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def allm_read_detailed(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Read document with LLM with detailed metadata - delegates to LLMService.
+
+        Async version of llm_read_detailed() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            DocumentReadResult with answer, context, and metadata
+        """
+        return await self.llm_service.llm_read_detailed(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def allm_read_stream(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Stream LLM response - delegates to LLMService.
+
+        Async version of llm_read_stream() using the service layer.
+
+        Args:
+            path: Document path to read
+            prompt: Question/prompt for the LLM
+            model: LLM model to use
+            max_tokens: Maximum response tokens
+            api_key: Optional API key override
+            use_search: Whether to use semantic search
+            search_mode: Search mode
+            provider: LLM provider override
+
+        Returns:
+            AsyncIterator yielding response chunks
+        """
+        return self.llm_service.llm_read_stream(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    def acreate_llm_reader(
+        self,
+        provider: Any = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        max_context_tokens: int = 3000,
+    ) -> Any:
+        """Create an LLM document reader - delegates to LLMService.
+
+        Sync version but with 'a' prefix for consistency.
+
+        Args:
+            provider: LLM provider
+            model: Model name
+            api_key: API key override
+            system_prompt: System prompt for the LLM
+            max_context_tokens: Maximum context window tokens
+
+        Returns:
+            LLMDocumentReader instance
+        """
+        return self.llm_service.create_llm_reader(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
+
+    # =========================================================================
+    # OAuthService Delegation Methods
+    # =========================================================================
+
+    async def aoauth_list_providers(
+        self,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all available OAuth providers - delegates to OAuthService.
+
+        Returns information about all configured OAuth providers including
+        their scopes, PKCE requirements, and display names.
+
+        Args:
+            _context: Operation context (optional)
+
+        Returns:
+            List of provider dictionaries containing:
+                - name: Provider identifier (e.g., "google-drive")
+                - display_name: Human-readable name
+                - scopes: List of OAuth scopes required
+                - requires_pkce: Whether provider requires PKCE
+                - icon_url: Optional URL to provider icon/logo
+                - metadata: Additional provider-specific metadata
+
+        Example:
+            ```python
+            # List all providers
+            providers = await fs.aoauth_list_providers()
+            for p in providers:
+                print(f"{p['display_name']}: {', '.join(p['scopes'])}")
+            ```
+        """
+        return await self.oauth_service.oauth_list_providers(_context=_context)
+
+    async def aoauth_get_auth_url(
+        self,
+        provider: str,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL - delegates to OAuthService.
+
+        Generates a state token and creates the OAuth authorization URL.
+        For providers requiring PKCE, also generates PKCE parameters.
+
+        Args:
+            provider: OAuth provider name (e.g., "google", "microsoft")
+            redirect_uri: OAuth redirect URI
+            scopes: Optional list of scopes to request
+
+        Returns:
+            Dictionary containing:
+                - url: Authorization URL to redirect user to
+                - state: CSRF state token
+                - pkce_data: PKCE parameters if provider requires it
+
+        Example:
+            ```python
+            # Get Google Drive auth URL
+            auth_data = await fs.aoauth_get_auth_url(
+                provider="google",
+                redirect_uri="http://localhost:3000/oauth/callback"
+            )
+            print(f"Visit: {auth_data['url']}")
+            ```
+        """
+        return await self.oauth_service.oauth_get_auth_url(
+            provider=provider,
+            redirect_uri=redirect_uri,
+            scopes=scopes,
+        )
+
+    async def aoauth_exchange_code(
+        self,
+        provider: str,
+        code: str,
+        user_email: str | None = None,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+        code_verifier: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Exchange OAuth authorization code for tokens - delegates to OAuthService.
+
+        After user authorizes access, exchange the authorization code for
+        access and refresh tokens.
+
+        Args:
+            provider: OAuth provider name
+            code: Authorization code from OAuth callback
+            user_email: User email for credential storage (optional)
+            state: CSRF state token from authorization request
+            redirect_uri: OAuth redirect URI
+            code_verifier: PKCE code verifier (required for PKCE providers)
+            context: Operation context for tenant isolation
+
+        Returns:
+            Dictionary containing:
+                - success: Whether exchange succeeded
+                - credential_id: Unique credential identifier
+                - user_email: User email address
+                - expires_at: Token expiration timestamp
+
+        Example:
+            ```python
+            # Exchange Google code
+            result = await fs.aoauth_exchange_code(
+                provider="google",
+                code="4/0AbCD...",
+                user_email="user@example.com"
+            )
+            print(f"Credential ID: {result['credential_id']}")
+            ```
+        """
+        return await self.oauth_service.oauth_exchange_code(
+            provider=provider,
+            code=code,
+            user_email=user_email,
+            state=state,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            context=context,
+        )
+
+    async def aoauth_list_credentials(
+        self,
+        provider: str | None = None,
+        include_revoked: bool = False,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all OAuth credentials - delegates to OAuthService.
+
+        Returns credentials accessible to the current user. Non-admin users
+        can only see their own credentials.
+
+        Args:
+            provider: Optional provider filter
+            include_revoked: Include revoked credentials (default: False)
+            context: Operation context for user/tenant identification
+
+        Returns:
+            List of credential dictionaries containing:
+                - credential_id: Unique identifier
+                - provider: OAuth provider name
+                - user_email: User email address
+                - scopes: List of granted scopes
+                - expires_at: Token expiration timestamp
+                - created_at: Creation timestamp
+                - last_used_at: Last usage timestamp
+                - revoked: Whether credential is revoked
+
+        Example:
+            ```python
+            # List all user's credentials
+            creds = await fs.aoauth_list_credentials(context=context)
+            for cred in creds:
+                print(f"{cred['provider']}: {cred['user_email']}")
+            ```
+        """
+        return await self.oauth_service.oauth_list_credentials(
+            provider=provider,
+            include_revoked=include_revoked,
+            context=context,
+        )
+
+    async def aoauth_revoke_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Revoke OAuth credential - delegates to OAuthService.
+
+        Marks a credential as revoked, preventing further use. Users can only
+        revoke their own credentials unless they are admin.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email address
+            context: Operation context for permission checking
+
+        Returns:
+            Dictionary containing:
+                - success: True if revoked successfully
+                - credential_id: Revoked credential ID (optional)
+
+        Example:
+            ```python
+            # Revoke a credential
+            result = await fs.aoauth_revoke_credential(
+                provider="google",
+                user_email="user@example.com",
+                context=context
+            )
+            if result["success"]:
+                print("Credential revoked")
+            ```
+        """
+        return await self.oauth_service.oauth_revoke_credential(
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
+
+    async def aoauth_test_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Test OAuth credential validity - delegates to OAuthService.
+
+        Attempts to get a valid token, refreshing if necessary. Users can only
+        test their own credentials unless they are admin.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email address
+            context: Operation context for permission checking
+
+        Returns:
+            Dictionary containing:
+                - valid: True if credential is valid
+                - refreshed: True if token was refreshed
+                - expires_at: Token expiration timestamp
+                - error: Error message if invalid
+
+        Example:
+            ```python
+            # Test a credential
+            result = await fs.aoauth_test_credential(
+                provider="google",
+                user_email="user@example.com",
+                context=context
+            )
+            if result["valid"]:
+                print(f"Valid until {result['expires_at']}")
+            else:
+                print(f"Invalid: {result['error']}")
+            ```
+        """
+        return await self.oauth_service.oauth_test_credential(
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
+
+    async def amcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Connect to MCP provider via Klavis - delegates to OAuthService.
+
+        Creates a Klavis MCP instance for the provider. If OAuth tokens are
+        stored for this provider, passes them to Klavis. Otherwise returns
+        OAuth URL for authentication.
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail")
+            redirect_url: OAuth redirect URL for OAuth flow
+            context: Operation context for user identification
+
+        Returns:
+            Dictionary containing:
+                - provider: Provider name
+                - oauth_url: URL to complete OAuth if not authenticated
+                - strata_url: MCP strata URL if authenticated
+                - is_authenticated: Whether user is authenticated
+                - tools: List of available MCP tools if authenticated
+                - skill_path: Path to generated SKILL.md
+
+        Example:
+            ```python
+            # Connect to Google Drive via Klavis
+            result = await fs.amcp_connect(
+                provider="google_drive",
+                redirect_url="http://localhost:3000/oauth/callback",
+                context=context
+            )
+
+            if result["is_authenticated"]:
+                print(f"MCP URL: {result['strata_url']}")
+                print(f"Available tools: {len(result['tools'])}")
+            else:
+                print(f"Authenticate at: {result['oauth_url']}")
+            ```
+        """
+        return await self.oauth_service.mcp_connect(
+            provider=provider,
+            redirect_url=redirect_url,
+            context=context,
+        )
+
+    # =========================================================================
+    # SkillService Delegation Methods
+    # =========================================================================
+
+    async def askills_create(
+        self,
+        name: str,
+        description: str,
+        template: str = "basic",
+        tier: str = "user",
+        author: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a new skill from template - delegates to SkillService."""
+        return await self.skill_service.skills_create(
+            name=name,
+            description=description,
+            template=template,
+            tier=tier,
+            author=author,
+            context=context,
+        )
+
+    async def askills_create_from_content(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        tier: str = "user",
+        author: str | None = None,
+        source_url: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from custom content - delegates to SkillService."""
+        return await self.skill_service.skills_create_from_content(
+            name=name,
+            description=description,
+            content=content,
+            tier=tier,
+            author=author,
+            source_url=source_url,
+            metadata=metadata,
+            context=context,
+        )
+
+    async def askills_create_from_file(
+        self,
+        source: str,
+        file_data: str | None = None,
+        name: str | None = None,
+        description: str | None = None,
+        tier: str = "agent",
+        use_ai: bool = False,
+        use_ocr: bool = False,
+        extract_tables: bool = False,
+        extract_images: bool = False,
+        _author: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Create a skill from file or URL - delegates to SkillService."""
+        return await self.skill_service.skills_create_from_file(
+            source=source,
+            file_data=file_data,
+            name=name,
+            description=description,
+            tier=tier,
+            use_ai=use_ai,
+            use_ocr=use_ocr,
+            extract_tables=extract_tables,
+            extract_images=extract_images,
+            _author=_author,
+            _context=_context,
+        )
+
+    async def askills_list(
+        self,
+        tier: str | None = None,
+        include_metadata: bool = True,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List all skills accessible to the user - delegates to SkillService."""
+        return await self.skill_service.skills_list(
+            tier=tier,
+            include_metadata=include_metadata,
+            context=context,
+        )
+
+    async def askills_info(
+        self,
+        skill_name: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get detailed skill information - delegates to SkillService."""
+        return await self.skill_service.skills_info(
+            skill_name=skill_name,
+            context=context,
+        )
+
+    async def askills_search(
+        self,
+        query: str,
+        tier: str | None = None,
+        limit: int = 10,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Search skills by description or content - delegates to SkillService."""
+        return await self.skill_service.skills_search(
+            query=query,
+            tier=tier,
+            limit=limit,
+            _context=_context,
+        )
+
+    async def askills_fork(
+        self,
+        source_name: str,
+        target_name: str,
+        tier: str = "agent",
+        author: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Fork an existing skill - delegates to SkillService."""
+        return await self.skill_service.skills_fork(
+            source_name=source_name,
+            target_name=target_name,
+            tier=tier,
+            author=author,
+            context=context,
+        )
+
+    async def askills_publish(
+        self,
+        skill_name: str,
+        source_tier: str = "agent",
+        target_tier: str = "tenant",
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Publish skill to another tier - delegates to SkillService."""
+        return await self.skill_service.skills_publish(
+            skill_name=skill_name,
+            source_tier=source_tier,
+            target_tier=target_tier,
+            _context=_context,
+        )
+
+    async def askills_import(
+        self,
+        zip_data: str,
+        tier: str = "user",
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Import skill from ZIP package - delegates to SkillService."""
+        return await self.skill_service.skills_import(
+            zip_data=zip_data,
+            tier=tier,
+            allow_overwrite=allow_overwrite,
+            context=context,
+        )
+
+    async def askills_validate_zip(
+        self,
+        package_path: str,
+    ) -> dict[str, Any]:
+        """Validate skill package without importing - delegates to SkillService."""
+        return await self.skill_service.skills_validate_zip(
+            package_path=package_path,
+        )
+
+    async def askills_export(
+        self,
+        skill_name: str,
+        include_dependencies: bool = False,
+        format: str = "generic",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export skill to .skill package - delegates to SkillService."""
+        return await self.skill_service.skills_export(
+            skill_name=skill_name,
+            include_dependencies=include_dependencies,
+            format=format,
+            context=context,
+        )
+
+    async def askills_submit_approval(
+        self,
+        skill_name: str,
+        submitted_by: str,
+        reviewers: list[str] | None = None,
+        comments: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Submit a skill for approval - delegates to SkillService."""
+        return await self.skill_service.skills_submit_approval(
+            skill_name=skill_name,
+            submitted_by=submitted_by,
+            reviewers=reviewers,
+            comments=comments,
+            _context=_context,
+        )
+
+    async def askills_approve(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Approve a skill for publication - delegates to SkillService."""
+        return await self.skill_service.skills_approve(
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+            _context=_context,
+        )
+
+    async def askills_reject(
+        self,
+        approval_id: str,
+        reviewed_by: str,
+        reviewer_type: str = "user",
+        comments: str | None = None,
+        tenant_id: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Reject a skill for publication - delegates to SkillService."""
+        return await self.skill_service.skills_reject(
+            approval_id=approval_id,
+            reviewed_by=reviewed_by,
+            reviewer_type=reviewer_type,
+            comments=comments,
+            tenant_id=tenant_id,
+            _context=_context,
+        )
+
+    async def askills_list_approvals(
+        self,
+        status: str | None = None,
+        skill_name: str | None = None,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skill approval requests - delegates to SkillService."""
+        return await self.skill_service.skills_list_approvals(
+            status=status,
+            skill_name=skill_name,
+            _context=_context,
+        )
+
+    # =========================================================================
+    # MountService Delegation Methods
+    # =========================================================================
+
+    async def aadd_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Add a dynamic backend mount - delegates to MountService."""
+        return await self.mount_service.add_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            context=context,
+        )
+
+    async def aremove_mount(
+        self,
+        mount_point: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Remove a backend mount - delegates to MountService."""
+        return await self.mount_service.remove_mount(
+            mount_point=mount_point,
+            _context=_context,
+        )
+
+    async def alist_connectors(
+        self,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List available connector types - delegates to MountService."""
+        return await self.mount_service.list_connectors(category=category)
+
+    async def alist_mounts(
+        self,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all backend mounts - delegates to MountService."""
+        return await self.mount_service.list_mounts(_context=_context)
+
+    async def aget_mount(
+        self,
+        mount_point: str,
+    ) -> dict[str, Any] | None:
+        """Get mount details - delegates to MountService."""
+        return await self.mount_service.get_mount(mount_point=mount_point)
+
+    async def ahas_mount(
+        self,
+        mount_point: str,
+    ) -> bool:
+        """Check if mount exists - delegates to MountService."""
+        return await self.mount_service.has_mount(mount_point=mount_point)
+
+    async def asave_mount(
+        self,
+        mount_point: str,
+        backend_type: str,
+        backend_config: dict[str, Any],
+        priority: int = 0,
+        readonly: bool = False,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        description: str | None = None,
+        context: OperationContext | None = None,
+    ) -> str:
+        """Save mount configuration to database - delegates to MountService."""
+        return await self.mount_service.save_mount(
+            mount_point=mount_point,
+            backend_type=backend_type,
+            backend_config=backend_config,
+            priority=priority,
+            readonly=readonly,
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            description=description,
+            context=context,
+        )
+
+    async def alist_saved_mounts(
+        self,
+        owner_user_id: str | None = None,
+        tenant_id: str | None = None,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List saved mount configurations - delegates to MountService."""
+        return await self.mount_service.list_saved_mounts(
+            owner_user_id=owner_user_id,
+            tenant_id=tenant_id,
+            context=context,
+        )
+
+    async def aload_mount(
+        self,
+        mount_point: str,
+    ) -> str:
+        """Load and activate saved mount - delegates to MountService."""
+        return await self.mount_service.load_mount(mount_point=mount_point)
+
+    async def adelete_saved_mount(
+        self,
+        mount_point: str,
+    ) -> bool:
+        """Delete saved mount configuration - delegates to MountService."""
+        return await self.mount_service.delete_saved_mount(mount_point=mount_point)
+
+    async def async_mount(
+        self,
+        mount_point: str | None = None,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+        progress_callback: Any = None,
+    ) -> dict[str, Any]:
+        """Sync metadata from connector backend - delegates to MountService."""
+        return await self.mount_service.sync_mount(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+            progress_callback=progress_callback,
+        )
+
+    async def async_mount_async(
+        self,
+        mount_point: str,
+        path: str | None = None,
+        recursive: bool = True,
+        dry_run: bool = False,
+        sync_content: bool = True,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+        generate_embeddings: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Start async sync job for a mount - delegates to MountService."""
+        return await self.mount_service.sync_mount_async(
+            mount_point=mount_point,
+            path=path,
+            recursive=recursive,
+            dry_run=dry_run,
+            sync_content=sync_content,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+            generate_embeddings=generate_embeddings,
+            context=context,
+        )
+
+    async def aget_sync_job(
+        self,
+        job_id: str,
+    ) -> dict[str, Any] | None:
+        """Get sync job status and progress - delegates to MountService."""
+        return await self.mount_service.get_sync_job(job_id=job_id)
+
+    async def acancel_sync_job(
+        self,
+        job_id: str,
+    ) -> dict[str, Any]:
+        """Cancel a running sync job - delegates to MountService."""
+        return await self.mount_service.cancel_sync_job(job_id=job_id)
+
+    async def alist_sync_jobs(
+        self,
+        mount_point: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List sync jobs - delegates to MountService."""
+        return await self.mount_service.list_sync_jobs(
+            mount_point=mount_point,
+            status=status,
+            limit=limit,
+        )
+
+    # =========================================================================
+    # SearchService Delegation Methods (Semantic Search)
+    # =========================================================================
+
+    async def asemantic_search(
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        filters: dict[str, Any] | None = None,
+        search_mode: str = "semantic",
+    ) -> list[dict[str, Any]]:
+        """Search documents using natural language queries - delegates to SearchService."""
+        return await self.search_service.semantic_search(
+            query=query,
+            path=path,
+            limit=limit,
+            filters=filters,
+            search_mode=search_mode,
+        )
+
+    async def asemantic_search_index(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+    ) -> dict[str, int]:
+        """Index documents for semantic search - delegates to SearchService."""
+        return await self.search_service.semantic_search_index(
+            path=path,
+            recursive=recursive,
+        )
+
+    async def asemantic_search_stats(self) -> dict[str, Any]:
+        """Get semantic search indexing statistics - delegates to SearchService."""
+        return await self.search_service.semantic_search_stats()
+
+    async def ainitialize_semantic_search(
+        self,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        api_key: str | None = None,
+        chunk_size: int = 1024,
+        chunk_strategy: str = "semantic",
+        async_mode: bool = True,
+    ) -> None:
+        """Initialize semantic search engine - delegates to SearchService."""
+        return await self.search_service.initialize_semantic_search(
+            embedding_provider=embedding_provider,
+            embedding_model=embedding_model,
+            api_key=api_key,
+            chunk_size=chunk_size,
+            chunk_strategy=chunk_strategy,
+            async_mode=async_mode,
+        )
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

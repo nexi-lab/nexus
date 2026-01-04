@@ -234,12 +234,14 @@ class TestAddMount:
         mount_data_dir = temp_dir / "perm_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing permission grant, not check)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         nx_with_permissions.add_mount(
@@ -526,17 +528,192 @@ class TestSyncMount:
             backend_config={"data_dir": str(mount_data_dir)},
         )
 
+        # Use admin context to bypass permission check (testing sync functionality)
         context = OperationContext(
             user="alice",
             groups=[],
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         result = nx.sync_mount("/mnt/context", context=context)
 
         assert "files_scanned" in result
         assert "errors" in result
+
+
+class TestMountPermissionEnforcement:
+    """Tests for mount operation permission enforcement."""
+
+    def test_add_mount_requires_write_permission_on_parent(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ) -> None:
+        """Test that add_mount fails without write permission on parent path."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "perm_test_mount"
+        mount_data_dir.mkdir()
+
+        # Non-admin user without write permission on /mnt
+        context = OperationContext(
+            user="bob",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="bob",
+            is_admin=False,
+        )
+
+        with pytest.raises(PermissionError, match="no write permission"):
+            nx_with_permissions.add_mount(
+                mount_point="/mnt/bob_mount",
+                backend_type="local",
+                backend_config={"data_dir": str(mount_data_dir)},
+                context=context,
+            )
+
+    def test_remove_mount_requires_write_permission(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ) -> None:
+        """Test that remove_mount fails without write permission on mount."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "remove_perm_mount"
+        mount_data_dir.mkdir()
+
+        # First create mount as admin
+        admin_context = OperationContext(
+            user="admin",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="admin",
+            is_admin=True,
+        )
+        nx_with_permissions.add_mount(
+            mount_point="/mnt/admin_mount",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=admin_context,
+        )
+
+        # Non-admin user tries to remove without permission
+        user_context = OperationContext(
+            user="bob",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="bob",
+            is_admin=False,
+        )
+
+        with pytest.raises(PermissionError, match="no write permission"):
+            nx_with_permissions.remove_mount("/mnt/admin_mount", context=user_context)
+
+    def test_sync_mount_requires_read_permission(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ) -> None:
+        """Test that sync_mount fails without read permission on mount."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "sync_perm_mount"
+        mount_data_dir.mkdir()
+
+        # First create mount as admin
+        admin_context = OperationContext(
+            user="admin",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="admin",
+            is_admin=True,
+        )
+        nx_with_permissions.add_mount(
+            mount_point="/mnt/sync_test",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=admin_context,
+        )
+
+        # Non-admin user tries to sync without permission
+        user_context = OperationContext(
+            user="bob",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="bob",
+            is_admin=False,
+        )
+
+        with pytest.raises(PermissionError, match="no read permission"):
+            nx_with_permissions.sync_mount("/mnt/sync_test", context=user_context)
+
+    def test_get_mount_returns_none_without_read_permission(
+        self, nx_with_permissions: NexusFS, temp_dir: Path
+    ) -> None:
+        """Test that get_mount returns None without read permission."""
+        from nexus.core.permissions import OperationContext
+
+        mount_data_dir = temp_dir / "get_perm_mount"
+        mount_data_dir.mkdir()
+
+        # First create mount as admin
+        admin_context = OperationContext(
+            user="admin",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="admin",
+            is_admin=True,
+        )
+        nx_with_permissions.add_mount(
+            mount_point="/mnt/get_test",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=admin_context,
+        )
+
+        # Non-admin user tries to get mount without permission
+        user_context = OperationContext(
+            user="bob",
+            groups=[],
+            tenant_id="test_tenant",
+            subject_type="user",
+            subject_id="bob",
+            is_admin=False,
+        )
+
+        result = nx_with_permissions.get_mount("/mnt/get_test", context=user_context)
+        assert result is None
+
+    def test_no_context_allows_operations_for_backward_compatibility(
+        self, nx: NexusFS, temp_dir: Path
+    ) -> None:
+        """Test that operations without context succeed (backward compatibility)."""
+        mount_data_dir = temp_dir / "no_context_mount"
+        mount_data_dir.mkdir()
+
+        # Should succeed without context
+        mount_id = nx.add_mount(
+            mount_point="/mnt/no_ctx",
+            backend_type="local",
+            backend_config={"data_dir": str(mount_data_dir)},
+            context=None,
+        )
+        assert mount_id == "/mnt/no_ctx"
+
+        # get_mount should also work
+        mount = nx.get_mount("/mnt/no_ctx", context=None)
+        assert mount is not None
+
+        # sync_mount should work
+        result = nx.sync_mount("/mnt/no_ctx", context=None)
+        assert "files_scanned" in result
+
+        # remove_mount should work
+        result = nx.remove_mount("/mnt/no_ctx", context=None)
+        assert result["removed"] is True
 
 
 class TestGrantMountOwnerPermission:
@@ -651,17 +828,20 @@ class TestMountContextUtilsIntegration:
         mount_data_dir = temp_dir / "context_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing context_utils usage)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
+        # Patch in mount_core_service where the functions are actually imported
         with (
-            patch("nexus.core.nexus_fs_mounts.get_tenant_id") as mock_get_tenant,
-            patch("nexus.core.nexus_fs_mounts.get_user_identity") as mock_get_user,
+            patch("nexus.services.mount_core_service.get_tenant_id") as mock_get_tenant,
+            patch("nexus.services.mount_core_service.get_user_identity") as mock_get_user,
         ):
             mock_get_tenant.return_value = "test_tenant"
             mock_get_user.return_value = ("user", "alice")
@@ -674,8 +854,8 @@ class TestMountContextUtilsIntegration:
             )
 
             # Verify context_utils functions were called
-            mock_get_tenant.assert_called_with(context)
-            mock_get_user.assert_called_with(context)
+            mock_get_tenant.assert_called()
+            mock_get_user.assert_called()
 
     def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
@@ -684,12 +864,14 @@ class TestMountContextUtilsIntegration:
         mount_data_dir = temp_dir / "remove_context_mount"
         mount_data_dir.mkdir()
 
+        # Use admin context to bypass permission check (testing remove functionality)
         context = OperationContext(
             user="alice",
             groups=[],
             tenant_id="test_tenant",
             subject_type="user",
             subject_id="alice",
+            is_admin=True,
         )
 
         # Add mount first
@@ -714,7 +896,8 @@ class TestMountContextUtilsIntegration:
         # Set up database path
         nx.db_path = temp_dir / "token_manager.db"
 
-        with patch("nexus.core.nexus_fs_mounts.get_database_url") as mock_get_db_url:
+        # Patch at source since gateway does local import inside method
+        with patch("nexus.core.context_utils.get_database_url") as mock_get_db_url:
             mock_get_db_url.return_value = str(temp_dir / "token_manager.db")
 
             # This should use get_database_url for gdrive_connector

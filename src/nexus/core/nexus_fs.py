@@ -6804,6 +6804,302 @@ class NexusFS(  # type: ignore[misc]
             max_context_tokens=max_context_tokens,
         )
 
+    # =========================================================================
+    # OAuthService Delegation Methods
+    # =========================================================================
+
+    async def aoauth_list_providers(
+        self,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all available OAuth providers - delegates to OAuthService.
+
+        Returns information about all configured OAuth providers including
+        their scopes, PKCE requirements, and display names.
+
+        Args:
+            _context: Operation context (optional)
+
+        Returns:
+            List of provider dictionaries containing:
+                - name: Provider identifier (e.g., "google-drive")
+                - display_name: Human-readable name
+                - scopes: List of OAuth scopes required
+                - requires_pkce: Whether provider requires PKCE
+                - icon_url: Optional URL to provider icon/logo
+                - metadata: Additional provider-specific metadata
+
+        Example:
+            ```python
+            # List all providers
+            providers = await fs.aoauth_list_providers()
+            for p in providers:
+                print(f"{p['display_name']}: {', '.join(p['scopes'])}")
+            ```
+        """
+        return await self.oauth_service.oauth_list_providers(_context=_context)
+
+    async def aoauth_get_auth_url(
+        self,
+        provider: str,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Get OAuth authorization URL - delegates to OAuthService.
+
+        Generates a state token and creates the OAuth authorization URL.
+        For providers requiring PKCE, also generates PKCE parameters.
+
+        Args:
+            provider: OAuth provider name (e.g., "google", "microsoft")
+            redirect_uri: OAuth redirect URI
+            scopes: Optional list of scopes to request
+
+        Returns:
+            Dictionary containing:
+                - url: Authorization URL to redirect user to
+                - state: CSRF state token
+                - pkce_data: PKCE parameters if provider requires it
+
+        Example:
+            ```python
+            # Get Google Drive auth URL
+            auth_data = await fs.aoauth_get_auth_url(
+                provider="google",
+                redirect_uri="http://localhost:3000/oauth/callback"
+            )
+            print(f"Visit: {auth_data['url']}")
+            ```
+        """
+        return await self.oauth_service.oauth_get_auth_url(
+            provider=provider,
+            redirect_uri=redirect_uri,
+            scopes=scopes,
+        )
+
+    async def aoauth_exchange_code(
+        self,
+        provider: str,
+        code: str,
+        user_email: str | None = None,
+        state: str | None = None,
+        redirect_uri: str | None = None,
+        code_verifier: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Exchange OAuth authorization code for tokens - delegates to OAuthService.
+
+        After user authorizes access, exchange the authorization code for
+        access and refresh tokens.
+
+        Args:
+            provider: OAuth provider name
+            code: Authorization code from OAuth callback
+            user_email: User email for credential storage (optional)
+            state: CSRF state token from authorization request
+            redirect_uri: OAuth redirect URI
+            code_verifier: PKCE code verifier (required for PKCE providers)
+            context: Operation context for tenant isolation
+
+        Returns:
+            Dictionary containing:
+                - success: Whether exchange succeeded
+                - credential_id: Unique credential identifier
+                - user_email: User email address
+                - expires_at: Token expiration timestamp
+
+        Example:
+            ```python
+            # Exchange Google code
+            result = await fs.aoauth_exchange_code(
+                provider="google",
+                code="4/0AbCD...",
+                user_email="user@example.com"
+            )
+            print(f"Credential ID: {result['credential_id']}")
+            ```
+        """
+        return await self.oauth_service.oauth_exchange_code(
+            provider=provider,
+            code=code,
+            user_email=user_email,
+            state=state,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier,
+            context=context,
+        )
+
+    async def aoauth_list_credentials(
+        self,
+        provider: str | None = None,
+        include_revoked: bool = False,
+        context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all OAuth credentials - delegates to OAuthService.
+
+        Returns credentials accessible to the current user. Non-admin users
+        can only see their own credentials.
+
+        Args:
+            provider: Optional provider filter
+            include_revoked: Include revoked credentials (default: False)
+            context: Operation context for user/tenant identification
+
+        Returns:
+            List of credential dictionaries containing:
+                - credential_id: Unique identifier
+                - provider: OAuth provider name
+                - user_email: User email address
+                - scopes: List of granted scopes
+                - expires_at: Token expiration timestamp
+                - created_at: Creation timestamp
+                - last_used_at: Last usage timestamp
+                - revoked: Whether credential is revoked
+
+        Example:
+            ```python
+            # List all user's credentials
+            creds = await fs.aoauth_list_credentials(context=context)
+            for cred in creds:
+                print(f"{cred['provider']}: {cred['user_email']}")
+            ```
+        """
+        return await self.oauth_service.oauth_list_credentials(
+            provider=provider,
+            include_revoked=include_revoked,
+            context=context,
+        )
+
+    async def aoauth_revoke_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Revoke OAuth credential - delegates to OAuthService.
+
+        Marks a credential as revoked, preventing further use. Users can only
+        revoke their own credentials unless they are admin.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email address
+            context: Operation context for permission checking
+
+        Returns:
+            Dictionary containing:
+                - success: True if revoked successfully
+                - credential_id: Revoked credential ID (optional)
+
+        Example:
+            ```python
+            # Revoke a credential
+            result = await fs.aoauth_revoke_credential(
+                provider="google",
+                user_email="user@example.com",
+                context=context
+            )
+            if result["success"]:
+                print("Credential revoked")
+            ```
+        """
+        return await self.oauth_service.oauth_revoke_credential(
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
+
+    async def aoauth_test_credential(
+        self,
+        provider: str,
+        user_email: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Test OAuth credential validity - delegates to OAuthService.
+
+        Attempts to get a valid token, refreshing if necessary. Users can only
+        test their own credentials unless they are admin.
+
+        Args:
+            provider: OAuth provider name
+            user_email: User email address
+            context: Operation context for permission checking
+
+        Returns:
+            Dictionary containing:
+                - valid: True if credential is valid
+                - refreshed: True if token was refreshed
+                - expires_at: Token expiration timestamp
+                - error: Error message if invalid
+
+        Example:
+            ```python
+            # Test a credential
+            result = await fs.aoauth_test_credential(
+                provider="google",
+                user_email="user@example.com",
+                context=context
+            )
+            if result["valid"]:
+                print(f"Valid until {result['expires_at']}")
+            else:
+                print(f"Invalid: {result['error']}")
+            ```
+        """
+        return await self.oauth_service.oauth_test_credential(
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
+
+    async def amcp_connect(
+        self,
+        provider: str,
+        redirect_url: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Connect to MCP provider via Klavis - delegates to OAuthService.
+
+        Creates a Klavis MCP instance for the provider. If OAuth tokens are
+        stored for this provider, passes them to Klavis. Otherwise returns
+        OAuth URL for authentication.
+
+        Args:
+            provider: MCP provider name (e.g., "google_drive", "gmail")
+            redirect_url: OAuth redirect URL for OAuth flow
+            context: Operation context for user identification
+
+        Returns:
+            Dictionary containing:
+                - provider: Provider name
+                - oauth_url: URL to complete OAuth if not authenticated
+                - strata_url: MCP strata URL if authenticated
+                - is_authenticated: Whether user is authenticated
+                - tools: List of available MCP tools if authenticated
+                - skill_path: Path to generated SKILL.md
+
+        Example:
+            ```python
+            # Connect to Google Drive via Klavis
+            result = await fs.amcp_connect(
+                provider="google_drive",
+                redirect_url="http://localhost:3000/oauth/callback",
+                context=context
+            )
+
+            if result["is_authenticated"]:
+                print(f"MCP URL: {result['strata_url']}")
+                print(f"Available tools: {len(result['tools'])}")
+            else:
+                print(f"Authenticate at: {result['oauth_url']}")
+            ```
+        """
+        return await self.oauth_service.mcp_connect(
+            provider=provider,
+            redirect_url=redirect_url,
+            context=context,
+        )
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

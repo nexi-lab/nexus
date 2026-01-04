@@ -9,7 +9,7 @@ import json
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from sqlalchemy import select
 
@@ -6262,11 +6262,7 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have READ permission
         """
-        import asyncio
-
-        return asyncio.get_event_loop().run_until_complete(
-            self.aget_version(path, version, context)
-        )
+        return cast(bytes, NexusFS._run_async(self.aget_version(path, version, context)))
 
     async def alist_versions(
         self,
@@ -6297,9 +6293,7 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have READ permission
         """
-        import asyncio
-
-        return asyncio.get_event_loop().run_until_complete(self.alist_versions(path, context))
+        return cast(list[dict[str, Any]], NexusFS._run_async(self.alist_versions(path, context)))
 
     async def arollback(
         self,
@@ -6332,9 +6326,7 @@ class NexusFS(  # type: ignore[misc]
             InvalidPathError: If path is invalid
             PermissionError: If user doesn't have write permission
         """
-        import asyncio
-
-        return asyncio.get_event_loop().run_until_complete(self.arollback(path, version, context))
+        cast(None, NexusFS._run_async(self.arollback(path, version, context)))
 
     async def adiff_versions(
         self,
@@ -6375,10 +6367,9 @@ class NexusFS(  # type: ignore[misc]
             ValueError: If mode is invalid
             PermissionError: If user doesn't have READ permission
         """
-        import asyncio
-
-        return asyncio.get_event_loop().run_until_complete(
-            self.adiff_versions(path, v1, v2, mode, context)
+        return cast(
+            dict[str, Any] | str,
+            NexusFS._run_async(self.adiff_versions(path, v1, v2, mode, context)),
         )
 
     # -------------------------------------------------------------------------

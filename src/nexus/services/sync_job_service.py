@@ -189,4 +189,7 @@ class SyncJobService:
             List of job dictionaries
         """
         manager = self._get_manager()
-        return manager.list_jobs(mount_point=mount_point, status=status, limit=limit)
+        result: list[dict[str, Any]] = manager.list_jobs(
+            mount_point=mount_point, status=status, limit=limit
+        )
+        return result

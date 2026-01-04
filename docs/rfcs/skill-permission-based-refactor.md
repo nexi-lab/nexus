@@ -144,12 +144,23 @@ Agent: [updates, saves] "Created with examples. Ready to use!"
 - Natural refinement loop
 - Still fast for simple cases (1 turn)
 
-**API (used by agent):**
+**Filesystem-native approach:**
+
+Skills are just files. The agent uses standard filesystem operations:
+
 ```python
-skills_create_from_content(name, description, content, context)
-# → Skill created at: /<tenant>/<user>/skills/<name>/
-# → Creator automatically gets owner permission
+# Agent writes SKILL.md directly using filesystem
+write("/<tenant>/<user>/skills/<name>/SKILL.md", content)
+
+# Skill is private by default (only creator has access)
+# No special API needed - permissions auto-granted to creator
 ```
+
+**No special create API needed** because:
+- Conversational flow means agent builds content iteratively
+- Agent already has filesystem access via `write()`
+- Permissions are granted automatically to file creator
+- Keeps skill operations filesystem-native
 
 **System skill:** `/system/skills/skill-creator/` guides agents on the conversational flow.
 
@@ -170,22 +181,24 @@ skills_share(skill, share_with="tenant")
 
 **Sharing Examples:**
 ```python
+skill_path = "/acme/alice/skills/my-skill"
+
 # Share with entire tenant
-skills_share("my-skill", "tenant", context)
+skills_share(skill_path, "tenant", context)
 
 # Share publicly (all users)
-skills_share("my-skill", "public", context)
+skills_share(skill_path, "public", context)
 
 # Share with specific user
-skills_share("my-skill", "user:bob@example.com", context)
+skills_share(skill_path, "user:bob@example.com", context)
 
 # Share with specific agent
-skills_share("my-skill", "agent:code-assistant", context)
+skills_share(skill_path, "agent:code-assistant", context)
 ```
 
 **Revoking Access:**
 ```python
-skills_unshare("my-skill", "user:bob@example.com", context)
+skills_unshare("/acme/alice/skills/my-skill", "user:bob@example.com", context)
     → rebac_delete(user:bob, viewer, skill_path)
 ```
 
@@ -233,19 +246,39 @@ Reads references via filesystem
 
 ## API Changes
 
-### New APIs
+### Filesystem Operations (Existing)
+
+Skills use standard filesystem operations for CRUD - no special skill APIs needed:
+
+```python
+# Create/Update skill
+write("/<tenant>/<user>/skills/<name>/SKILL.md", content)
+
+# Read skill
+read("/<tenant>/<user>/skills/<name>/SKILL.md")
+
+# Delete skill
+delete("/<tenant>/<user>/skills/<name>/")
+
+# List skills
+list("/<tenant>/<user>/skills/")
+```
+
+### New Skill-Specific APIs
+
+These APIs handle operations that go beyond basic filesystem CRUD:
 
 ```python
 @rpc_expose
 def skills_share(
-    skill_name: str,
+    skill_path: str,  # Full path like "/acme/alice/skills/code-review"
     share_with: str,  # "tenant" | "public" | "user:X" | "agent:X"
     context: OperationContext,
 ) -> dict:
     """Share skill by granting read permission.
 
     Args:
-        skill_name: Name of the skill to share
+        skill_path: Full path to the skill
         share_with: Target to share with
         context: Operation context (must be skill owner)
 
@@ -255,7 +288,7 @@ def skills_share(
 
 @rpc_expose
 def skills_unshare(
-    skill_name: str,
+    skill_path: str,
     unshare_from: str,
     context: OperationContext,
 ) -> dict:
@@ -328,12 +361,14 @@ def skills_load(
 Approval workflow remains, but the result is a permission grant:
 
 ```python
+skill_path = "/acme/alice/skills/my-skill"
+
 # Submit for approval (unchanged)
-skills_submit_approval("my-skill", target="tenant", reviewers=["admin@acme.com"])
+skills_submit_approval(skill_path, target="tenant", reviewers=["admin@acme.com"])
 
 # Reviewer approves
 skills_approve(approval_id)
-    → System calls: skills_share("my-skill", "tenant", system_context)
+    → System calls: skills_share(skill_path, "tenant", system_context)
     → Permission granted, no copy made
 ```
 
@@ -347,6 +382,8 @@ skills_approve(approval_id)
 | Revoke access | ❌ Delete copies | ✅ Remove permission |
 | Audit trail | ❌ Complex | ✅ Permission history |
 | Fine-grained sharing | ❌ Tier-only | ✅ Any subject |
+| API surface | ❌ Skill-specific CRUD | ✅ Filesystem-native |
+| Draft handling | ❌ Separate state | ✅ Private = draft |
 
 ## Implementation Plan
 
@@ -387,6 +424,8 @@ skills_approve(approval_id)
 ## Success Criteria
 
 - [ ] `skill-creator` system skill exists and guides conversational building
+- [ ] Skills created via filesystem `write()` are private by default
+- [ ] Creator automatically gets owner permission on skill creation
 - [ ] `skills_get_prompt_context()` returns only permitted skills
 - [ ] `skills_load()` respects read permissions
 - [ ] `skills_share()` grants correct permissions
@@ -432,6 +471,40 @@ Both use the same permission model. Global skills have `role:public` viewer perm
 
 **Required system skills:**
 - `/system/skills/skill-creator/` - Guides agents on conversational skill building
+
+### Filesystem-Native CRUD (Resolved)
+
+**Q: Do we need a `skills_create_from_content()` API?**
+
+A: No. Skills are files, so we use filesystem operations directly.
+
+**Reasoning:**
+- Skills are just SKILL.md files in the filesystem
+- Agent already has filesystem access via `write()`, `read()`, `delete()`
+- Conversational builder means agent iteratively builds content before final write
+- Permissions auto-granted to file creator (private by default)
+- Special APIs only needed for operations beyond CRUD: sharing, discovery, loading
+
+**API surface:**
+```
+Filesystem (existing)     |  Skill-specific (new)
+--------------------------|---------------------------
+write()  - create/update  |  skills_share()    - grant access
+read()   - read           |  skills_unshare()  - revoke access
+delete() - delete         |  skills_get_prompt_context() - discovery
+list()   - list           |  skills_load()     - formatted read
+```
+
+### Draft State (Resolved)
+
+**Q: How do we handle skill drafts for testing before publishing?**
+
+A: No special draft state needed. "Draft" = private skill, "Published" = shared skill.
+
+- New skills are private by default (only creator has access)
+- Creator can test immediately since they have access
+- "Publishing" is just sharing: `skills_share(path, "tenant")`
+- No separate draft folder, no TTL cleanup, no complexity
 
 ## Open Questions
 

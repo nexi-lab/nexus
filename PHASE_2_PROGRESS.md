@@ -276,6 +276,193 @@ AsyncReBACManager (parallel async implementation - 1,211 lines)
 
 ---
 
+## Async Architecture Decision ✅ COMPLETE
+
+**Status:** Complete
+**Date:** 2026-01-03
+**Decision:** All services will use async methods by default
+
+### Problem Statement
+
+All 9 service skeletons were created with sync method signatures (def method()).
+We needed to decide: Should services be async or sync?
+
+This decision affects:
+- FastAPI integration patterns
+- Thread pool exhaustion (Issue #932)
+- Critical blocking operations (MountService.sync_mount can block for hours)
+- Consistency across the service layer
+- Future-proofing for async operations
+
+### Analysis
+
+Comprehensive async analysis documented in: `/Users/jinjingzhou/.claude/plans/mossy-inventing-meadow.md`
+
+**Key Findings:**
+1. **Codebase is async-ready**: FastAPI, AsyncReBACManager, AsyncSemanticSearch all exist
+2. **Thread pool exhaustion risk**: Sync operations can exhaust thread pool (Issue #932)
+3. **Critical blocking operations**: MountService.sync_mount() can block for minutes/hours
+4. **Existing patterns**: SearchService and LLMService already 100% async
+5. **FastAPI support**: Server already handles both sync/async via `_auto_dispatch()` pattern
+
+**Codebase Async Maturity:**
+- ✅ FastAPI (async web framework)
+- ✅ AsyncReBACManager (1,211 lines) with Leopard + L1 cache
+- ✅ AsyncSemanticSearch with async vector DB operations
+- ✅ SearchService already 100% async
+- ✅ LLMService already 100% async
+
+**Trade-offs:**
+- **Benefit:** Eliminates thread pool exhaustion risk
+- **Benefit:** MountService.sync_mount() won't block event loop
+- **Benefit:** Consistent pattern across all services
+- **Cost:** AsyncReBACManager missing Tiger Cache (~5-10x speedup)
+- **Mitigation:** Can use hybrid approach with `asyncio.to_thread()` if needed
+
+### Decision Rationale
+
+**YES - Services should be async because:**
+
+1. **Critical Operations Require Async**
+   - MountService.sync_mount() can block for hours during metadata sync
+   - SearchService semantic search involves async vector DB operations
+   - MCP server operations are inherently async (network I/O)
+
+2. **Codebase Already Async**
+   - AsyncReBACManager exists and works (1,211 lines)
+   - SearchService already 100% async (reference pattern)
+   - FastAPI dispatcher handles both sync/async seamlessly
+
+3. **Eliminates Thread Pool Exhaustion**
+   - Issue #932: sync_mount() blocks threads
+   - Async eliminates this class of bugs entirely
+
+4. **Consistency**
+   - SearchService and LLMService already async
+   - All new services should follow same pattern
+
+5. **Future-Proof**
+   - Network operations (OAuth, MCP) benefit from async
+   - Database operations can leverage async connections
+
+### Implementation
+
+**Conversion Completed (2026-01-03):**
+
+Converted **73 methods** across 6 services from sync to async:
+
+| Service | Methods | Status |
+|---------|---------|--------|
+| MountService | 15 | ✅ Converted |
+| VersionService | 4 | ✅ Converted |
+| MCPService | 5 | ✅ Converted |
+| OAuthService | 7 | ✅ Converted |
+| SkillService | 15 | ✅ Converted |
+| ReBACService | 27 | ✅ Converted |
+| SearchService | 11 | ✅ Already async |
+| LLMService | 4 | ✅ Already async |
+
+**Total: 84+ async methods** across all 9 services
+
+**Changes Made:**
+- Converted all service methods from `def method()` → `async def method()`
+- Updated docstrings for critical async operations (e.g., sync_mount)
+- All services remain at skeleton stage (0% implementation extracted)
+- All methods still raise NotImplementedError
+
+### FastAPI Integration
+
+FastAPI server already handles both sync and async methods via `_auto_dispatch()`:
+
+```python
+# From fastapi_server.py
+async def _auto_dispatch(self, method, *args, **kwargs):
+    """Automatically dispatch to sync or async methods."""
+    if inspect.iscoroutinefunction(method):
+        return await method(*args, **kwargs)
+    else:
+        return await asyncio.to_thread(method, *args, **kwargs)
+```
+
+This means:
+- Async methods execute directly in event loop
+- Sync methods wrapped with `asyncio.to_thread()` automatically
+- No breaking changes to existing code
+
+### Tiger Cache Strategy
+
+**Current State:**
+- EnhancedReBACManager has Tiger Cache (~5-10x speedup)
+- AsyncReBACManager missing Tiger Cache
+
+**Options:**
+1. **Option A (Simple):** Use AsyncReBACManager without Tiger Cache
+   - Most services won't notice performance difference
+   - Clean async architecture
+
+2. **Option B (Hybrid):** Use asyncio.to_thread() for Tiger Cache when critical
+   ```python
+   class ReBACService:
+       def __init__(self, async_engine, sync_engine):
+           self._async_manager = AsyncReBACManager(async_engine)
+           self._enhanced_manager = EnhancedReBACManager(sync_engine, enable_tiger_cache=True)
+
+       async def rebac_check(self, ...):
+           if self._enhanced_manager._tiger_cache:
+               return await asyncio.to_thread(self._enhanced_manager.rebac_check, ...)
+           return await self._async_manager.rebac_check(...)
+   ```
+
+3. **Option C (Future):** Port Tiger Cache to AsyncReBACManager
+   - Estimated: 1-2 days work
+   - Best long-term solution
+
+**Decision:** Start with Option A (pure async), evaluate performance, consider hybrid if needed.
+
+### Benefits Achieved
+
+- ✅ **Consistent architecture:** All 84+ service methods are async
+- ✅ **Thread pool safety:** Eliminates Issue #932 risk
+- ✅ **Critical operations unblocked:** sync_mount() won't block event loop
+- ✅ **Future-proof:** Ready for async network/DB operations
+- ✅ **Clean patterns:** SearchService/LLMService establish reference patterns
+
+### Files Modified
+
+**Commit:** `cf360ea` - "refactor(services): Convert all service methods to async"
+
+**Services Converted:**
+- `src/nexus/services/mount_service.py` (15 methods)
+- `src/nexus/services/version_service.py` (4 methods)
+- `src/nexus/services/mcp_service.py` (5 methods)
+- `src/nexus/services/oauth_service.py` (7 methods)
+- `src/nexus/services/skill_service.py` (15 methods)
+- `src/nexus/services/rebac_service.py` (27 methods)
+
+**Already Async:**
+- `src/nexus/services/search_service.py` ✅
+- `src/nexus/services/llm_service.py` ✅
+
+### Acceptance Criteria
+
+- [x] Async analysis completed
+- [x] Decision documented with rationale
+- [x] All service methods converted to async (73 methods)
+- [x] Critical operation docstrings updated
+- [x] All pre-commit checks passing
+- [x] Changes committed with detailed message
+- [x] PHASE_2_PROGRESS.md updated
+
+### Next Steps
+
+**Implementation Extraction (Tasks 2.10+):**
+- Extract implementations using async patterns
+- Use AsyncReBACManager for ReBACService
+- Use async database operations where available
+- Follow SearchService/LLMService async patterns
+
+---
+
 ## Next Actions
 
 **Completed (2026-01-03):**

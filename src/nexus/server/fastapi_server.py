@@ -40,6 +40,9 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.core.exceptions import (
@@ -95,6 +98,67 @@ class WhoamiResponse(BaseModel):
     is_admin: bool = False
     inherit_permissions: bool = True  # v0.5.1: Whether agent inherits owner's permissions
     user: str | None = None
+
+
+# ============================================================================
+# Rate Limiting Configuration (Issue #780)
+# ============================================================================
+
+# Rate limit tiers (configurable via environment variables)
+RATE_LIMIT_ANONYMOUS = os.environ.get("NEXUS_RATE_LIMIT_ANONYMOUS", "60/minute")
+RATE_LIMIT_AUTHENTICATED = os.environ.get("NEXUS_RATE_LIMIT_AUTHENTICATED", "300/minute")
+RATE_LIMIT_PREMIUM = os.environ.get("NEXUS_RATE_LIMIT_PREMIUM", "1000/minute")
+
+
+def _get_rate_limit_key(request: Request) -> str:
+    """Extract rate limit key from request.
+
+    Priority:
+    1. Authenticated user from Bearer token (parsed from sk- format)
+    2. Agent ID from header
+    3. IP address for anonymous requests
+    """
+    # Try to extract identity from Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        # Parse sk-<tenant>_<user>_<id>_<random> format
+        if token.startswith("sk-"):
+            parts = token[3:].split("_")
+            if len(parts) >= 2:
+                tenant = parts[0] or "default"
+                user = parts[1] or "unknown"
+                return f"user:{tenant}:{user}"
+        # For other tokens, use hash as key
+        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
+
+    # Check for agent ID header
+    agent_id = request.headers.get("X-Agent-ID")
+    if agent_id:
+        return f"agent:{agent_id}"
+
+    # Fall back to IP address
+    return str(get_remote_address(request))
+
+
+def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Custom handler for rate limit exceeded errors."""
+    detail = getattr(exc, "detail", str(exc))
+    retry_after = getattr(exc, "retry_after", 60)
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "Rate limit exceeded",
+            "detail": str(detail),
+            "retry_after": retry_after,
+        },
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+# Global limiter instance (initialized in create_app)
+# Note: This is set before routes are registered, so it's never None when decorators run
+limiter: Limiter
 
 
 # ============================================================================
@@ -742,6 +806,36 @@ def create_app(
     # Only compress responses > 1000 bytes, compression level 6 (good balance)
     app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
+    # Initialize rate limiter (Issue #780)
+    global limiter
+    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_DISABLED", "").lower() not in (
+        "true",
+        "1",
+        "yes",
+    )
+    redis_url = os.environ.get("NEXUS_REDIS_URL") or os.environ.get("DRAGONFLY_URL")
+
+    limiter = Limiter(
+        key_func=_get_rate_limit_key,
+        default_limits=[RATE_LIMIT_AUTHENTICATED] if rate_limit_enabled else [],
+        storage_uri=redis_url,
+        strategy="fixed-window",
+        enabled=rate_limit_enabled,
+    )
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    if rate_limit_enabled:
+        storage_type = "Redis/Dragonfly" if redis_url else "in-memory"
+        logger.info(
+            f"Rate limiting enabled ({storage_type}) - "
+            f"Anonymous: {RATE_LIMIT_ANONYMOUS}, "
+            f"Authenticated: {RATE_LIMIT_AUTHENTICATED}, "
+            f"Premium: {RATE_LIMIT_PREMIUM}"
+        )
+    else:
+        logger.info("Rate limiting is DISABLED (NEXUS_RATE_LIMIT_DISABLED=true)")
+
     # Register routes
     _register_routes(app)
 
@@ -852,13 +946,15 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
-    # Health check
+    # Health check (exempt from rate limiting - must always be accessible)
     @app.get("/health", response_model=HealthResponse)
+    @limiter.exempt
     async def health_check() -> HealthResponse:
         return HealthResponse(status="healthy", service="nexus-rpc")
 
     # Extended health check with component status (Issue #951)
     @app.get("/health/detailed", tags=["health"])
+    @limiter.exempt
     async def health_check_detailed() -> dict[str, Any]:
         """Detailed health check including all components.
 
@@ -1420,8 +1516,10 @@ def _register_routes(app: FastAPI) -> None:
             logger.error(f"Stream error for /{path}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Stream error: {e}") from e
 
-    # Main RPC endpoint
+    # Main RPC endpoint (authenticated users get RATE_LIMIT_AUTHENTICATED)
+    # Rate limiting key is extracted from Bearer token to identify users
     @app.post("/api/nfs/{method}")
+    @limiter.limit(RATE_LIMIT_AUTHENTICATED)
     async def rpc_endpoint(
         method: str,
         request: Request,

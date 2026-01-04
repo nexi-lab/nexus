@@ -34,12 +34,12 @@ class NexusFS:
 | 2.1: Extract Search Service | ✅ Skeleton Complete | 2 weeks | P1 HIGH |
 | 2.2: Extract Permission Service | ✅ Skeleton Complete | 3 weeks | P1 HIGH |
 | 2.3: Consolidate ReBAC Managers | ✅ Complete | 3 days | P1 HIGH |
-| 2.4: Extract Mount Service | ⏸️ Not Started | 2 weeks | P1 HIGH |
-| 2.5: Extract Version Service | ⏸️ Not Started | 1 week | P2 MEDIUM |
+| 2.4: Extract Mount Service | ✅ Skeleton Complete | 2 weeks | P1 HIGH |
+| 2.5: Extract Version Service | ✅ Skeleton Complete | 1 week | P2 MEDIUM |
 | 2.6: Extract OAuth Service | ⏸️ Not Started | 2 weeks | P2 MEDIUM |
 | 2.7: Extract Skill Service | ⏸️ Not Started | 1 week | P2 MEDIUM |
-| 2.8: Extract MCP Service | ⏸️ Not Started | 3 days | P3 LOW |
-| 2.9: Extract LLM Service | ⏸️ Not Started | 3 days | P3 LOW |
+| 2.8: Extract MCP Service | ✅ Skeleton Complete | 3 days | P3 LOW |
+| 2.9: Extract LLM Service | ✅ Skeleton Complete | 3 days | P3 LOW |
 | 2.10: Slim Down NexusFS Core | ⏸️ Not Started | 2 weeks | P1 HIGH |
 | 2.11: Delete Mixin Files | ⏸️ Not Started | 1 week | P2 MEDIUM |
 
@@ -282,13 +282,27 @@ AsyncReBACManager (parallel async implementation - 1,211 lines)
 - ✅ Task 2.1: SearchService skeleton created (505 lines, 0% extracted)
 - ✅ Task 2.2: ReBACService skeleton created (660 lines, 0% extracted)
 - ✅ Task 2.3: ReBAC consolidation complete (EnhancedReBACManager canonical)
+- ✅ Task 2.4: MountService skeleton created (656 lines, 0% extracted)
+- ✅ Task 2.5: VersionService skeleton created (368 lines, 0% extracted)
+- ✅ Task 2.8: MCPService skeleton created (331 lines, 0% extracted)
+- ✅ Task 2.9: LLMService skeleton created (343 lines, 0% extracted)
+
+**Status: 7 of 9 Service Skeletons Complete** 🎯
+
+Services created: SearchService, ReBACService, MountService, VersionService, MCPService, LLMService
+
+**Deferred to Next Session:**
+- Task 2.6: OAuthService (1,116 lines, 7+ methods) - Complex OAuth provider integration
+- Task 2.7: SkillService (874 lines, 15 methods) - Skill lifecycle management
 
 **Ready to Start:**
-1. **Option A:** Continue with service skeletons (Task 2.4: Mount Service)
-2. **Option B:** Extract implementations for existing skeletons (Task 2.1/2.2)
+1. **Option A:** Complete remaining 2 skeletons (OAuth + Skill services)
+2. **Option B:** Begin implementation extraction for existing 7 services
 3. **Option C:** Start Task 2.10: Slim down NexusFS core to use services
 
-**Recommendation:** Continue with more service skeletons (Tasks 2.4-2.9) to establish full service layer architecture, then extract implementations and integrate with NexusFS in one coordinated effort.
+**Recommendation:** Next session should either:
+- Complete OAuth + Skill skeletons for full service layer (2-3 hours)
+- OR start implementation extraction for high-priority services (SearchService, ReBACService, MountService)
 
 ---
 

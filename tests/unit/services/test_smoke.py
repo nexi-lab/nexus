@@ -237,6 +237,92 @@ class TestSearchServiceSmoke:
 
 
 # =============================================================================
+# SkillService Smoke Tests
+# =============================================================================
+
+
+class TestSkillServiceSmoke:
+    """Smoke tests for SkillService."""
+
+    def test_skill_service_init(self):
+        """Test SkillService can be instantiated."""
+        from nexus.services.skill_service import SkillService
+
+        service = SkillService(nexus_fs=None)
+        assert service.nexus_fs is None
+
+    @pytest.mark.asyncio
+    async def test_skills_list_raises_without_nexus_fs(self):
+        """Test skills_list raises without nexus_fs."""
+        from nexus.services.skill_service import SkillService
+
+        service = SkillService(nexus_fs=None)
+
+        # Should raise RuntimeError without nexus_fs configured
+        with pytest.raises(RuntimeError, match="NexusFS not configured"):
+            await service.skills_list()
+
+
+# =============================================================================
+# MountService Smoke Tests
+# =============================================================================
+
+
+class TestMountServiceSmoke:
+    """Smoke tests for MountService."""
+
+    def test_mount_service_init(self, mock_router):
+        """Test MountService can be instantiated."""
+        from nexus.services.mount_service import MountService
+
+        service = MountService(router=mock_router)
+        assert service.router is mock_router
+
+    @pytest.mark.asyncio
+    async def test_list_mounts_basic(self, mock_router):
+        """Test list_mounts can be called."""
+        from nexus.services.mount_service import MountService
+
+        service = MountService(router=mock_router)
+
+        # Should return list (may be empty)
+        result = await service.list_mounts()
+        assert isinstance(result, list)
+
+
+# =============================================================================
+# ReBACService Smoke Tests
+# =============================================================================
+
+
+class TestReBACServiceSmoke:
+    """Smoke tests for ReBACService."""
+
+    def test_rebac_service_init(self):
+        """Test ReBACService can be instantiated."""
+        from nexus.services.rebac_service import ReBACService
+
+        service = ReBACService(rebac_manager=None, enforce_permissions=False)
+        assert service._rebac_manager is None
+        assert service._enforce_permissions is False
+
+    @pytest.mark.asyncio
+    async def test_rebac_check_without_manager(self):
+        """Test rebac_check raises without manager."""
+        from nexus.services.rebac_service import ReBACService
+
+        service = ReBACService(rebac_manager=None, enforce_permissions=False)
+
+        # Should raise RuntimeError without manager
+        with pytest.raises(RuntimeError, match="ReBAC manager is not available"):
+            await service.rebac_check(
+                subject=("user", "alice"),
+                permission="view",
+                object=("file", "/test.txt"),
+            )
+
+
+# =============================================================================
 # Integration Smoke Test
 # =============================================================================
 
@@ -248,8 +334,11 @@ class TestServiceIntegrationSmoke:
         """Test that all services can be instantiated together."""
         from nexus.services.llm_service import LLMService
         from nexus.services.mcp_service import MCPService
+        from nexus.services.mount_service import MountService
         from nexus.services.oauth_service import OAuthService
+        from nexus.services.rebac_service import ReBACService
         from nexus.services.search_service import SearchService
+        from nexus.services.skill_service import SkillService
         from nexus.services.version_service import VersionService
 
         # Create all services
@@ -262,6 +351,9 @@ class TestServiceIntegrationSmoke:
         llm_svc = LLMService(nexus_fs=None)
         oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
+        skill_svc = SkillService(nexus_fs=None)
+        mount_svc = MountService(router=mock_router)
+        rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 
         # Verify all instantiated
         assert version_svc is not None
@@ -269,6 +361,9 @@ class TestServiceIntegrationSmoke:
         assert llm_svc is not None
         assert oauth_svc is not None
         assert search_svc is not None
+        assert skill_svc is not None
+        assert mount_svc is not None
+        assert rebac_svc is not None
 
         # Verify they have expected attributes
         assert hasattr(version_svc, "list_versions")
@@ -276,3 +371,6 @@ class TestServiceIntegrationSmoke:
         assert hasattr(llm_svc, "llm_read")
         assert hasattr(oauth_svc, "oauth_list_providers")
         assert hasattr(search_svc, "semantic_search")
+        assert hasattr(skill_svc, "skills_list")
+        assert hasattr(mount_svc, "list_mounts")
+        assert hasattr(rebac_svc, "rebac_check")

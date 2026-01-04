@@ -321,8 +321,61 @@ class SearchService:
             ValueError: If semantic search is not initialized
             PermissionDeniedError: If user lacks read permission
         """
-        # TODO: Extract semantic_search implementation
-        raise NotImplementedError("semantic_search() not yet implemented - Phase 2 in progress")
+        # Check if either async or sync search is initialized
+        has_async = hasattr(self, "_async_search") and self._async_search is not None
+        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
+
+        if not has_async and not has_sync:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await search.initialize_semantic_search()"
+            )
+
+        # Use async search for non-blocking DB operations (high throughput)
+        if has_async:
+            assert self._async_search is not None  # Type guard for mypy
+            results = await self._async_search.search(
+                query=query,
+                limit=limit,
+                path_filter=path if path != "/" else None,
+                search_mode=search_mode,
+            )
+            return [
+                {
+                    "path": result.path,
+                    "chunk_index": result.chunk_index,
+                    "chunk_text": result.chunk_text,
+                    "score": result.score,
+                    "start_offset": result.start_offset,
+                    "end_offset": result.end_offset,
+                    "line_start": result.line_start,
+                    "line_end": result.line_end,
+                }
+                for result in results
+            ]
+
+        # Fallback to sync search (requires NexusFS integration)
+        if has_sync and self._semantic_search is not None:
+            sync_results = await self._semantic_search.search(
+                query=query, path=path, limit=limit, filters=filters, search_mode=search_mode
+            )
+
+            return [
+                {
+                    "path": result.path,
+                    "chunk_index": result.chunk_index,
+                    "chunk_text": result.chunk_text,
+                    "score": result.score,
+                    "start_offset": result.start_offset,
+                    "end_offset": result.end_offset,
+                    "line_start": result.line_start,
+                    "line_end": result.line_end,
+                }
+                for result in sync_results
+            ]
+
+        # Should not reach here due to initialization check above
+        raise ValueError("Semantic search not properly initialized")
 
     @rpc_expose(description="Index documents for semantic search")
     async def semantic_search_index(
@@ -350,10 +403,23 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # TODO: Extract semantic_search_index implementation
-        raise NotImplementedError(
-            "semantic_search_index() not yet implemented - Phase 2 in progress"
-        )
+        # Check if either async or sync search is initialized
+        has_async = hasattr(self, "_async_search") and self._async_search is not None
+        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
+
+        if not has_async and not has_sync:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await search.initialize_semantic_search()"
+            )
+
+        # Use async indexing for high throughput
+        if has_async:
+            assert self._async_search is not None  # Type guard for mypy
+            return await self._async_index_documents(path, recursive)
+
+        # Fallback to sync indexing (requires NexusFS integration)
+        raise NotImplementedError("Sync indexing requires NexusFS integration - use async mode")
 
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
@@ -371,10 +437,27 @@ class SearchService:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # TODO: Extract semantic_search_stats implementation
-        raise NotImplementedError(
-            "semantic_search_stats() not yet implemented - Phase 2 in progress"
-        )
+        # Check if either async or sync search is initialized
+        has_async = hasattr(self, "_async_search") and self._async_search is not None
+        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
+
+        if not has_async and not has_sync:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await search.initialize_semantic_search()"
+            )
+
+        # Prefer async search
+        if has_async:
+            assert self._async_search is not None  # Type guard for mypy
+            return await self._async_search.get_stats()
+
+        # Fallback to sync search
+        if has_sync and self._semantic_search is not None:
+            return await self._semantic_search.get_index_stats()
+
+        # Should not reach here
+        raise ValueError("Semantic search not properly initialized")
 
     @rpc_expose(description="Initialize semantic search engine")
     async def initialize_semantic_search(
@@ -404,9 +487,69 @@ class SearchService:
                 api_key=os.getenv("OPENAI_API_KEY")
             )
         """
-        # TODO: Extract initialize_semantic_search implementation
+        from nexus.search.chunking import ChunkStrategy
+
+        # Create embedding provider (optional)
+        emb_provider = None
+        if embedding_provider:
+            from nexus.search.embeddings import create_embedding_provider
+
+            emb_provider = create_embedding_provider(
+                provider=embedding_provider, model=embedding_model, api_key=api_key
+            )
+
+        # Map string to enum
+        strategy_map = {
+            "fixed": ChunkStrategy.FIXED,
+            "semantic": ChunkStrategy.SEMANTIC,
+            "overlapping": ChunkStrategy.OVERLAPPING,
+        }
+        chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
+
+        # Get database URL from metadata store
+        database_url = str(self.metadata.engine.url)
+
+        if async_mode:
+            # Use async search for high-throughput (non-blocking DB operations)
+            from nexus.search.async_search import AsyncSemanticSearch
+
+            self._async_search = AsyncSemanticSearch(
+                database_url=database_url,
+                embedding_provider=emb_provider,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strat,
+            )
+            await self._async_search.initialize()
+
+            # Note: In async mode, we use _async_search instead of _semantic_search
+            # _semantic_search remains None since it requires NexusFS instance
+            # All semantic search methods check _async_search first
+        else:
+            # Sync mode not supported in service extraction
+            raise NotImplementedError(
+                "Sync semantic search requires NexusFS integration. Use async_mode=True."
+            )
+
+    # =========================================================================
+    # Helper Methods: Semantic Search Indexing
+    # =========================================================================
+
+    async def _async_index_documents(self, _path: str, _recursive: bool) -> dict[str, int]:
+        """Index documents using async backend for high throughput.
+
+        Note: This implementation requires NexusFS for file reading.
+        In service extraction, this will need to be provided via dependency injection.
+
+        Args:
+            _path: Path to index (unused in stub)
+            _recursive: Index recursively (unused in stub)
+
+        Returns:
+            Dict mapping path to number of chunks
+        """
         raise NotImplementedError(
-            "initialize_semantic_search() not yet implemented - Phase 2 in progress"
+            "Document indexing requires NexusFS integration for file reading. "
+            "This will be implemented when NexusFS uses composition pattern."
         )
 
     # =========================================================================
@@ -459,11 +602,24 @@ class SearchService:
         Raises:
             PermissionDeniedError: If permission denied
         """
+        from nexus.core.permissions import OperationContext
+
         if not self._enforce_permissions or not self._permission_enforcer:
             return
 
         # Use default context if not provided (embedded mode)
         ctx = context if context is not None else self._default_context
+
+        # Ensure context is OperationContext
+        if not isinstance(ctx, OperationContext):
+            # Convert or use default
+            ctx = self._default_context
+
+        # If still no valid context, cannot check permissions
+        if ctx is None:
+            raise PermissionDeniedError(
+                f"Permission denied: {path} (no context available for permission check)"
+            )
 
         # Check permission using ReBAC
         # Signature: check(path, permission, context)

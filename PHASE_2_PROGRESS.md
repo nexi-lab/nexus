@@ -31,9 +31,9 @@ class NexusFS:
 
 | Task | Status | Est. Time | Priority |
 |------|--------|-----------|----------|
-| 2.1: Extract Search Service | 🔄 In Progress | 2 weeks | P1 HIGH |
-| 2.2: Extract Permission Service | ⏸️ Not Started | 3 weeks | P1 HIGH |
-| 2.3: Consolidate ReBAC Managers | ⏸️ Not Started | 3 weeks | P1 HIGH |
+| 2.1: Extract Search Service | ✅ Skeleton Complete | 2 weeks | P1 HIGH |
+| 2.2: Extract Permission Service | ✅ Skeleton Complete | 3 weeks | P1 HIGH |
+| 2.3: Consolidate ReBAC Managers | ✅ Complete | 3 days | P1 HIGH |
 | 2.4: Extract Mount Service | ⏸️ Not Started | 2 weeks | P1 HIGH |
 | 2.5: Extract Version Service | ⏸️ Not Started | 1 week | P2 MEDIUM |
 | 2.6: Extract OAuth Service | ⏸️ Not Started | 2 weeks | P2 MEDIUM |
@@ -161,12 +161,135 @@ _None yet - just starting_
 
 ---
 
-## Next Actions
+## Task 2.3: Consolidate ReBAC Manager Implementations ✅ COMPLETE
 
-1. Read and analyze `nexus_fs_search.py`
-2. Create service directory structure
-3. Begin SearchService extraction
+**Status:** Complete
+**Started:** 2026-01-03
+**Completed:** 2026-01-03
+**Actual Time:** 3 hours
+**Priority:** P1 HIGH
+
+### Problem Statement
+
+We had **4 competing ReBAC manager implementations** totaling ~11,109 lines:
+- `ReBACManager` - 4,498 lines (base implementation)
+- `EnhancedReBACManager` - 4,436 lines (GA-ready with P0 fixes)
+- `TenantAwareReBACManager` - 964 lines (tenant isolation layer)
+- `AsyncReBACManager` - 1,211 lines (async version)
+
+This created confusion, maintenance burden, and feature fragmentation.
+
+### Solution
+
+**Decision:** EnhancedReBACManager is the canonical implementation ✅
+
+**Rationale:**
+- Already used by NexusFS production code
+- Has all P0 fixes (consistency levels, tenant isolation, graph limits)
+- Includes Leopard (O(1) group lookups) and Tiger cache
+- Most complete feature set with DoS protection
+
+### Completed Work
+
+#### 1. Feature Comparison Matrix ✅
+- Created [REBAC_CONSOLIDATION_ANALYSIS.md](REBAC_CONSOLIDATION_ANALYSIS.md)
+- Analyzed all 4 implementations across 40+ features
+- Mapped production usage patterns
+- Documented missing features and migration paths
+
+#### 2. Deprecation Warnings ✅
+- Added deprecation warning to `ReBACManager.__init__()`
+  - Only warns on direct instantiation (not via subclasses)
+  - Provides clear migration guidance
+- Updated class docstring with deprecation notice
+- Added comprehensive DEPRECATION.md entry (Section 1.4)
+
+#### 3. Legacy Code Migration ✅
+Migrated 3 locations from ReBACManager → EnhancedReBACManager:
+- **Memory API** (memory_api.py:67) - Memory permission checks
+- **Memory Router** (memory_router.py:330) - Memory ownership tuples
+- **CLI Server** (server.py:1051) - Workspace ownership grants
+
+**Result:** All production code now uses EnhancedReBACManager!
+
+### Benefits Achieved
+
+- ✅ **Clear canonical choice:** EnhancedReBACManager for all new code
+- ✅ **Production-ready:** P0 fixes, Leopard, Tiger cache, graph limits
+- ✅ **Security:** Tenant isolation, DoS protection, timeout limits
+- ✅ **Performance:** O(1) group lookups, advanced caching
+- ✅ **Observability:** CheckResult metadata (decision time, cache stats)
+- ✅ **Documentation:** Migration guide for remaining legacy code
+
+### Architecture
+
+**Inheritance Hierarchy (Preserved):**
+```
+ReBACManager (base - 4,498 lines)
+├── TenantAwareReBACManager (+ tenant isolation - 964 lines)
+│   └── EnhancedReBACManager (+ P0 fixes + Leopard + Tiger - 4,436 lines)
+└── (legacy code with deprecation warnings)
+
+AsyncReBACManager (parallel async implementation - 1,211 lines)
+```
+
+### Files Created/Modified
+
+**Created:**
+- `REBAC_CONSOLIDATION_ANALYSIS.md` - Comprehensive analysis (325 lines)
+
+**Modified:**
+- `src/nexus/core/rebac_manager.py` - Added deprecation warnings
+- `DEPRECATION.md` - Added Section 1.4 with migration guide
+- `src/nexus/core/memory_api.py` - Migrated to EnhancedReBACManager
+- `src/nexus/core/memory_router.py` - Migrated to EnhancedReBACManager
+- `src/nexus/cli/commands/server.py` - Migrated to EnhancedReBACManager
+
+**Commits:**
+- `4418d44` - ReBAC consolidation analysis
+- `326d038` - Add deprecation warnings
+- `c2225be` - Migrate legacy code
+
+### Remaining Work
+
+**Future Tasks (Not Blocking):**
+- Port P0 fixes to AsyncReBACManager (Issue #988, separate task)
+- Consider renaming EnhancedReBACManager → ReBACManager in v0.8.0
+- Tests still use base ReBACManager (acceptable for simplicity)
+
+### Acceptance Criteria
+
+- [x] Feature comparison matrix created
+- [x] Canonical implementation chosen (EnhancedReBACManager)
+- [x] Deprecation warnings added to ReBACManager
+- [x] Legacy code migrated (3/3 locations)
+- [x] Documentation updated (DEPRECATION.md)
+- [x] All tests passing
+- [x] Analysis document created
+
+### Lessons Learned
+
+1. **Inheritance is OK:** The 3-level hierarchy (ReBACManager → TenantAware → Enhanced) provides clean separation of concerns
+2. **Deprecation > Breaking:** Soft deprecation warnings allow gradual migration
+3. **Feature matrices help:** Visual comparison of 40+ features clarified decision
+4. **Production usage guides decision:** NexusFS already using Enhanced made choice clear
 
 ---
 
-**Last Updated:** 2026-01-02
+## Next Actions
+
+**Completed (2026-01-03):**
+- ✅ Task 2.1: SearchService skeleton created (505 lines, 0% extracted)
+- ✅ Task 2.2: ReBACService skeleton created (660 lines, 0% extracted)
+- ✅ Task 2.3: ReBAC consolidation complete (EnhancedReBACManager canonical)
+
+**Ready to Start:**
+1. **Option A:** Continue with service skeletons (Task 2.4: Mount Service)
+2. **Option B:** Extract implementations for existing skeletons (Task 2.1/2.2)
+3. **Option C:** Start Task 2.10: Slim down NexusFS core to use services
+
+**Recommendation:** Continue with more service skeletons (Tasks 2.4-2.9) to establish full service layer architecture, then extract implementations and integrate with NexusFS in one coordinated effort.
+
+---
+
+**Last Updated:** 2026-01-03

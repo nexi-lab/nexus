@@ -141,16 +141,18 @@ def _get_rate_limit_key(request: Request) -> str:
     return str(get_remote_address(request))
 
 
-def _rate_limit_exceeded_handler(_request: Request, exc: RateLimitExceeded) -> JSONResponse:
+def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Custom handler for rate limit exceeded errors."""
+    detail = getattr(exc, "detail", str(exc))
+    retry_after = getattr(exc, "retry_after", 60)
     return JSONResponse(
         status_code=429,
         content={
             "error": "Rate limit exceeded",
-            "detail": str(exc.detail),
-            "retry_after": getattr(exc, "retry_after", 60),
+            "detail": str(detail),
+            "retry_after": retry_after,
         },
-        headers={"Retry-After": str(getattr(exc, "retry_after", 60))},
+        headers={"Retry-After": str(retry_after)},
     )
 
 
@@ -1487,24 +1489,10 @@ def _register_routes(app: FastAPI) -> None:
             logger.error(f"Stream error for /{path}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Stream error: {e}") from e
 
-    # Dynamic rate limit based on auth tier
-    def _get_rpc_rate_limit(request: Request) -> str:
-        """Get rate limit for RPC endpoint based on auth status."""
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return RATE_LIMIT_ANONYMOUS
-
-        # Check for admin/premium indicators in token
-        # For sk- tokens, check if it looks like an admin key
-        token = auth_header[7:]
-        if token.startswith("sk-") and "_admin_" in token:
-            return RATE_LIMIT_PREMIUM
-
-        return RATE_LIMIT_AUTHENTICATED
-
-    # Main RPC endpoint
+    # Main RPC endpoint (authenticated users get RATE_LIMIT_AUTHENTICATED)
+    # Rate limiting key is extracted from Bearer token to identify users
     @app.post("/api/nfs/{method}")
-    @limiter.limit(_get_rpc_rate_limit)
+    @limiter.limit(RATE_LIMIT_AUTHENTICATED)
     async def rpc_endpoint(
         method: str,
         request: Request,

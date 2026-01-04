@@ -32,6 +32,20 @@ Skills have three parts:
 
 **Skills have one canonical location. Visibility is controlled by permissions.**
 
+### Skill Identity
+
+**The full path is the unique identifier, not just the skill name.**
+
+```
+/tenant:acme/user:alice/skill/code-review/  ← Alice's code-review skill
+/tenant:acme/user:bob/skill/code-review/    ← Bob's code-review skill (different skill!)
+```
+
+This means:
+- Two users can create skills with the same name (no collision)
+- Agent configs reference skills by full path (unambiguous)
+- Display shows owner info to distinguish same-named skills
+
 ```
 Skill location: /tenant:acme/user:alice/skill/my-skill/
                            (single source of truth)
@@ -105,13 +119,22 @@ skills_unshare("my-skill", "user:bob@example.com", context)
 
 ### 3. Runner (Agent Using Skills)
 
+**Agent Configuration (stored in `/agents/{agent_id}/config.yaml`):**
+```yaml
+# Agent config uses full paths to avoid ambiguity
+active_skills:
+  - "/tenant:acme/user:alice/skill/code-review"    # Alice's version
+  - "/tenant:acme/user:bob/skill/code-review"      # Bob's version (different!)
+  - "/tenant:acme/user:alice/skill/testing"
+```
+
 **Phase 1: System Prompt Injection**
 ```
 Agent session starts
     ↓
 skills_get_prompt_context(context)
     ↓
-Returns only skills agent has read permission on
+Returns only skills agent has read permission on AND are in active_skills
     ↓
 Metadata injected into system prompt (~100 tokens/skill)
 ```
@@ -173,14 +196,20 @@ def skills_get_prompt_context(
 ) -> dict:
     """Get skills metadata for system prompt injection.
 
-    Returns only skills the caller has read permission on.
+    Returns only skills the caller has read permission on
+    AND are in the agent's active_skills config.
     Optimized for low token count (~100 tokens/skill).
 
     Returns:
         {
             "xml": "<available_skills>...</available_skills>",
             "skills": [
-                {"name": "...", "description": "...", "location": "..."}
+                {
+                    "name": "code-review",
+                    "owner": "alice",           # Owner for disambiguation
+                    "description": "...",
+                    "path": "/tenant:acme/user:alice/skill/code-review"
+                }
             ],
             "count": 12,
             "token_estimate": 1200
@@ -189,16 +218,21 @@ def skills_get_prompt_context(
 
 @rpc_expose
 def skills_load(
-    skill_name: str,
+    skill_path: str,  # Full path, not just name (avoids ambiguity)
     context: OperationContext,
 ) -> dict:
     """Load full skill content on-demand.
+
+    Args:
+        skill_path: Full path like "/tenant:acme/user:alice/skill/code-review"
 
     Checks read permission before returning content.
 
     Returns:
         {
             "name": "code-review",
+            "owner": "alice",
+            "path": "/tenant:acme/user:alice/skill/code-review",
             "metadata": {...},
             "content": "# Full SKILL.md markdown...",
             "scripts": ["/path/to/script.py"],
@@ -283,6 +317,30 @@ skills_approve(approval_id)
 - [ ] Progressive disclosure: metadata ~100 tokens, full content <5000 tokens
 - [ ] Backward compatible: existing APIs work during transition
 - [ ] All existing skill tests pass
+
+## Design Decisions
+
+### Naming Collisions (Resolved)
+
+**Q: What if two users create skills with the same name?**
+
+A: Full path is the unique identifier, not the skill name. This is similar to how two GitHub users can have repos with the same name.
+
+- Agent configs use full paths: `/tenant:acme/user:alice/skill/code-review`
+- API responses include `owner` field for display disambiguation
+- No collision because paths are different
+
+**Display example when user has access to both:**
+```xml
+<available_skills>
+  <skill name="code-review" owner="alice" path="...">
+    Code review guidelines for Python projects
+  </skill>
+  <skill name="code-review" owner="bob" path="...">
+    Security-focused code review checklist
+  </skill>
+</available_skills>
+```
 
 ## Open Questions
 

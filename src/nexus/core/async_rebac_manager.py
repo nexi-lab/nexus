@@ -289,7 +289,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         context: dict[str, Any] | None = None,
     ) -> bool:
         """Check permission asynchronously.
@@ -970,7 +970,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         subject_relation: str | None = None,
         conditions: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
@@ -1057,7 +1057,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
     ) -> bool:
         """Delete a relationship tuple (async).
 

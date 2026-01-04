@@ -1014,7 +1014,8 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            tenant_id=tenant_id,  # Issue #904: Store tenant_id for PREWHERE filtering
+            tenant_id=tenant_id
+            or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1218,7 +1219,8 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            tenant_id=tenant_id,  # Issue #904: Store tenant_id for PREWHERE filtering
+            tenant_id=tenant_id
+            or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -1644,7 +1646,8 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                tenant_id=tenant_id,  # Issue #904: Store tenant_id for PREWHERE filtering
+                tenant_id=tenant_id
+                or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 

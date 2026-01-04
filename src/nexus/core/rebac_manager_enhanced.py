@@ -282,7 +282,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> bool:
         """Check permission with explicit consistency level (P0-1).
@@ -542,7 +542,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> CheckResult:
         """Check permission with detailed result metadata (P0-1).
@@ -1234,9 +1234,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
-        subject_tenant_id: str | None = None,
-        object_tenant_id: str | None = None,
+        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
+        object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
     ) -> str:
         """Create a relationship tuple with cache invalidation.
 
@@ -1255,6 +1255,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             Tuple ID of created relationship
         """
+        # Issue #773: Default subject_tenant_id and object_tenant_id to tenant_id
+        effective_subject_tenant = subject_tenant_id if subject_tenant_id is not None else tenant_id
+        effective_object_tenant = object_tenant_id if object_tenant_id is not None else tenant_id
+
         # Call parent implementation
         result = super().rebac_write(
             subject=subject,
@@ -1263,8 +1267,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             expires_at=expires_at,
             conditions=conditions,
             tenant_id=tenant_id,
-            subject_tenant_id=subject_tenant_id,
-            object_tenant_id=object_tenant_id,
+            subject_tenant_id=effective_subject_tenant,
+            object_tenant_id=effective_object_tenant,
         )
 
         # Invalidate cache for affected tenants

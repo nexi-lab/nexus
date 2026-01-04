@@ -110,17 +110,48 @@ Visibility = Permissions:
 
 ## User Journeys
 
-### 1. Builder (No Changes)
+### 1. Builder (Conversational)
 
+Skill building is **conversational**, not a static API call. The agent uses the `skill-creator` system skill to guide the process.
+
+**Simple Case (1 interaction):**
 ```
-User creates skill
+User: "Create a skill for reviewing Python security"
     ↓
-skills_create(name, description, template)
+Agent: [drafts complete SKILL.md, saves]
     ↓
-Skill created at: /<tenant>/<user>/skills/<name>/
-    ↓
-Creator automatically gets owner permission
+"Created 'python-security-review' at /acme/alice/skills/python-security-review/. Ready to use!"
 ```
+
+**Complex Case (multiple interactions):**
+```
+User: "Create a skill for code review"
+    ↓
+Agent: "What aspects? Security, performance, style, or all?"
+    ↓
+User: "Security focused, with OWASP top 10"
+    ↓
+Agent: [drafts] "Here's a preview. Want changes?"
+    ↓
+User: "Add examples for each vulnerability"
+    ↓
+Agent: [updates, saves] "Created with examples. Ready to use!"
+```
+
+**Why conversational:**
+- Agent can clarify vague requests
+- User can preview before saving
+- Natural refinement loop
+- Still fast for simple cases (1 turn)
+
+**API (used by agent):**
+```python
+skills_create_from_content(name, description, content, context)
+# → Skill created at: /<tenant>/<user>/skills/<name>/
+# → Creator automatically gets owner permission
+```
+
+**System skill:** `/system/skills/skill-creator/` guides agents on the conversational flow.
 
 ### 2. Distributor (Permission-Based)
 
@@ -319,6 +350,11 @@ skills_approve(approval_id)
 
 ## Implementation Plan
 
+### Phase 0: System Skills
+
+1. Create `/system/skills/skill-creator/SKILL.md` - conversational skill building guide
+2. Ensure system skills have `role:public` viewer permission
+
 ### Phase 1: Runner APIs
 
 1. Add `skills_get_prompt_context()` to mixin
@@ -350,6 +386,7 @@ skills_approve(approval_id)
 
 ## Success Criteria
 
+- [ ] `skill-creator` system skill exists and guides conversational building
 - [ ] `skills_get_prompt_context()` returns only permitted skills
 - [ ] `skills_load()` respects read permissions
 - [ ] `skills_share()` grants correct permissions
@@ -392,6 +429,9 @@ A: Two levels of system skills:
 - **Global**: `/system/skills/` - built-in skills available to all tenants
 
 Both use the same permission model. Global skills have `role:public` viewer permission by default.
+
+**Required system skills:**
+- `/system/skills/skill-creator/` - Guides agents on conversational skill building
 
 ## Open Questions
 

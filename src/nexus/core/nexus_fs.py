@@ -6337,6 +6337,216 @@ class NexusFS(  # type: ignore[misc]
         """
         return await self.version_service.diff_versions(path, v1, v2, mode, context)
 
+    # -------------------------------------------------------------------------
+    # ReBACService Delegation Methods (12 core methods)
+    # -------------------------------------------------------------------------
+
+    async def arebac_create(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: Any = None,
+        tenant_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
+    ) -> str:
+        """Create a ReBAC relationship tuple - delegates to ReBACService.
+
+        Async version of rebac_create() using the service layer.
+
+        Args:
+            subject: Subject tuple (type, id) e.g., ("user", "alice")
+            relation: Relation name e.g., "owner", "can-read", "member"
+            object: Object tuple (type, id) e.g., ("file", "/doc.txt")
+            expires_at: Optional expiration datetime
+            tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context for permission checks
+            column_config: Optional column-level permissions for dynamic_viewer relation
+
+        Returns:
+            Tuple ID (UUID string)
+        """
+        return await self.rebac_service.rebac_create(
+            subject=subject,
+            relation=relation,
+            object=object,
+            expires_at=expires_at,
+            tenant_id=tenant_id,
+            context=context,
+            column_config=column_config,
+        )
+
+    async def arebac_check(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: Any = None,
+        tenant_id: str | None = None,
+    ) -> bool:
+        """Check if subject has permission on object - delegates to ReBACService.
+
+        Async version of rebac_check() using the service layer.
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice")
+            permission: Permission to check e.g., "read", "write", "owner"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            context: Optional ABAC context for condition evaluation
+            tenant_id: Tenant ID for multi-tenant isolation
+
+        Returns:
+            True if permission granted, False otherwise
+        """
+        return await self.rebac_service.rebac_check(
+            subject=subject,
+            permission=permission,
+            object=object,
+            context=context,
+            tenant_id=tenant_id,
+        )
+
+    async def arebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None = None,
+        limit: int = 100,
+    ) -> list[tuple[str, str]]:
+        """Find all subjects with permission on object - delegates to ReBACService.
+
+        Async version of rebac_expand() using the service layer.
+
+        Args:
+            permission: Permission to check e.g., "read", "write", "owner"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results
+
+        Returns:
+            List of subject tuples with the permission
+        """
+        return await self.rebac_service.rebac_expand(
+            permission=permission,
+            object=object,
+            _tenant_id=tenant_id,
+            _limit=limit,
+        )
+
+    async def arebac_explain(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        tenant_id: str | None = None,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Explain why subject has/doesn't have permission - delegates to ReBACService.
+
+        Async version of rebac_explain() using the service layer.
+
+        Args:
+            subject: Subject tuple e.g., ("user", "alice")
+            permission: Permission to explain e.g., "read", "write"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context
+
+        Returns:
+            Explanation dictionary with result, reason, and paths
+        """
+        return await self.rebac_service.rebac_explain(
+            subject=subject,
+            permission=permission,
+            object=object,
+            tenant_id=tenant_id,
+            context=context,
+        )
+
+    async def arebac_check_batch(
+        self,
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
+        tenant_id: str | None = None,
+    ) -> list[bool]:
+        """Check multiple permissions in batch - delegates to ReBACService.
+
+        Async version of rebac_check_batch() using the service layer.
+
+        Args:
+            checks: List of (subject, permission, object) tuples
+            tenant_id: Tenant ID
+
+        Returns:
+            List of boolean results (same order as input)
+        """
+        return await self.rebac_service.rebac_check_batch(
+            checks=checks,
+            _tenant_id=tenant_id,
+        )
+
+    async def arebac_delete(self, tuple_id: str) -> bool:
+        """Delete a relationship tuple by ID - delegates to ReBACService.
+
+        Async version of rebac_delete() using the service layer.
+
+        Args:
+            tuple_id: UUID of tuple to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return await self.rebac_service.rebac_delete(tuple_id=tuple_id)
+
+    async def arebac_list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        object: tuple[str, str] | None = None,
+        relation_in: list[str] | None = None,
+        tenant_id: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List relationship tuples with filters - delegates to ReBACService.
+
+        Async version of rebac_list_tuples() using the service layer.
+
+        Args:
+            subject: Filter by subject (optional)
+            relation: Filter by relation (optional)
+            object: Filter by object (optional)
+            relation_in: Filter by multiple relations (optional)
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results
+            offset: Pagination offset
+
+        Returns:
+            List of tuple dictionaries
+        """
+        return await self.rebac_service.rebac_list_tuples(
+            subject=subject,
+            relation=relation,
+            object=object,
+            relation_in=relation_in,
+            _tenant_id=tenant_id,
+            _limit=limit,
+            _offset=offset,
+        )
+
+    async def aget_namespace(self, object_type: str) -> dict[str, Any] | None:
+        """Get namespace schema for object type - delegates to ReBACService.
+
+        Async version of get_namespace() using the service layer.
+
+        Args:
+            object_type: Type of object (e.g., "file", "folder")
+
+        Returns:
+            Namespace configuration dict or None if not found
+        """
+        return await self.rebac_service.get_namespace(object_type=object_type)
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Stop Tiger Cache background worker first

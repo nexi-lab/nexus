@@ -171,8 +171,7 @@ class SyncService:
                 f"Only connector-style backends (e.g., gcs_connector) can be synced."
             )
 
-        # Ensure mount directory entry exists
-        self._gw.mkdir(ctx.mount_point, parents=True, exist_ok=True, context=ctx.context)
+        # Mount directory entry is created by add_mount() -> _setup_mount_point()
 
         return backend
 

@@ -60,16 +60,16 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.core.rebac_manager import ReBACManager
+        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"
-        self.rebac_manager = ReBACManager(bind)
+        self.rebac_manager = EnhancedReBACManager(bind)
 
         self.permission_enforcer = MemoryPermissionEnforcer(
             memory_router=self.memory_router,
             entity_registry=self.entity_registry,
-            rebac_manager=self.rebac_manager,  # type: ignore[arg-type]
+            rebac_manager=self.rebac_manager,
         )
 
         # Create operation context

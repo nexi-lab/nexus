@@ -43,12 +43,27 @@ logger = logging.getLogger(__name__)
 class ReBACManager:
     """Manager for ReBAC operations.
 
+    .. deprecated:: Phase 2
+        Direct instantiation of ReBACManager is deprecated.
+        Use :class:`EnhancedReBACManager` for production code, which includes:
+        - P0 fixes (consistency levels, tenant isolation, graph limits)
+        - Leopard optimization (O(1) group lookups)
+        - Tiger cache (advanced caching)
+        - DoS protection (timeouts, fan-out limits)
+
+        See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.
+
     Provides Zanzibar-style relationship-based access control with:
     - Direct tuple lookup
     - Recursive graph traversal
     - Permission expansion via namespace configs
     - Caching with TTL and invalidation
     - Cycle detection
+
+    Note:
+        This class serves as the base for TenantAwareReBACManager and
+        EnhancedReBACManager. Direct instantiation is supported for legacy
+        code and testing, but new code should use EnhancedReBACManager.
 
     Attributes:
         engine: SQLAlchemy database engine (supports SQLite and PostgreSQL)
@@ -90,6 +105,20 @@ class ReBACManager:
         self._last_cleanup_time: datetime | None = None
         self._namespaces_initialized = False  # Track if default namespaces were initialized
         self._tuple_version: int = 0  # Track tuple changes for Rust graph cache invalidation
+
+        # Deprecation warning for direct ReBACManager instantiation (Phase 2 Task 2.3)
+        # Only warn if instantiated directly (not via subclass inheritance)
+        if type(self).__name__ == "ReBACManager":
+            import warnings
+
+            warnings.warn(
+                "Direct instantiation of ReBACManager is deprecated. "
+                "Use EnhancedReBACManager for production code (includes P0 fixes, "
+                "Leopard optimization, Tiger cache, and graph limits). "
+                "See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         # Deprecation warning for old parameter (Issue #909)
         if l1_cache_quantization_interval > 0:

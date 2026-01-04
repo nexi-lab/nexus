@@ -109,46 +109,213 @@ class ReBACService:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        context: Any = None,
+        expires_at: datetime | None = None,
         tenant_id: str | None = None,
+        context: Any = None,
+        column_config: dict[str, Any] | None = None,
     ) -> str:
         """Create a ReBAC relationship tuple.
 
         Args:
             subject: Subject tuple (type, id) e.g., ("user", "alice")
-            relation: Relation name e.g., "owner", "can-read", "member"
+            relation: Relation name e.g., "owner", "can-read", "member", "dynamic_viewer"
             object: Object tuple (type, id) e.g., ("file", "/doc.txt")
-            context: Operation context for permission checks
+            expires_at: Optional expiration datetime for temporary relationships
             tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context for permission checks
+            column_config: Optional column-level permissions for dynamic_viewer relation.
+                          Only applies to CSV files. Structure:
+                          {
+                              "hidden_columns": ["password", "ssn"],
+                              "aggregations": {"age": "mean", "salary": "sum"},
+                              "visible_columns": ["name", "email"]
+                          }
 
         Returns:
             Tuple ID (UUID string)
 
         Raises:
-            PermissionDeniedError: If caller lacks permission to grant
-            ValueError: If tuple format is invalid
+            PermissionError: If caller lacks permission to grant
+            ValueError: If tuple format is invalid or column_config invalid
+            RuntimeError: If ReBAC manager not available
 
         Examples:
             # Grant ownership
-            id = rebac.rebac_create(
+            id = await rebac.rebac_create(
                 subject=("user", "alice"),
                 relation="owner",
                 object=("file", "/doc.txt")
             )
 
             # Add group membership
-            id = rebac.rebac_create(
+            id = await rebac.rebac_create(
                 subject=("user", "bob"),
                 relation="member",
                 object=("group", "developers")
+            )
+
+            # Dynamic viewer with column-level permissions for CSV
+            id = await rebac.rebac_create(
+                subject=("user", "alice"),
+                relation="dynamic_viewer",
+                object=("file", "/data/users.csv"),
+                column_config={
+                    "hidden_columns": ["password", "ssn"],
+                    "aggregations": {"age": "mean", "salary": "sum"},
+                    "visible_columns": ["name", "email"]
+                }
             )
 
         Security:
             - Requires "execute" permission on the resource to grant permissions
             - Logged for audit trail
         """
-        # TODO: Extract rebac_create implementation
-        raise NotImplementedError("rebac_create() not yet implemented - Phase 2 in progress")
+
+        def _create_sync() -> str:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Validate tuples (support 2-tuple and 3-tuple for subject to support userset-as-subject)
+            if not isinstance(subject, tuple) or len(subject) not in (2, 3):
+                raise ValueError(
+                    f"subject must be (type, id) or (type, id, relation) tuple, got {subject}"
+                )
+            if not isinstance(object, tuple) or len(object) != 2:
+                raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+            # Use tenant_id from context if not explicitly provided
+            effective_tenant_id = tenant_id
+            if effective_tenant_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_tenant_id = context.get("tenant")
+                elif hasattr(context, "tenant_id"):
+                    effective_tenant_id = context.tenant_id
+
+            # SECURITY: Check execute permission before allowing permission management
+            # Only owners (those with execute permission) can grant/manage permissions on resources
+            self._check_share_permission(resource=object, context=context)
+
+            # Validate column_config for dynamic_viewer relation
+            conditions = None
+            if relation == "dynamic_viewer":
+                # Check if object is a CSV file
+                if object[0] == "file" and not object[1].lower().endswith(".csv"):
+                    raise ValueError(
+                        f"dynamic_viewer relation only supports CSV files. "
+                        f"File '{object[1]}' does not have .csv extension."
+                    )
+
+                if column_config is None:
+                    raise ValueError(
+                        "column_config is required when relation is 'dynamic_viewer'. "
+                        "Provide configuration with hidden_columns, aggregations, "
+                        "and/or visible_columns."
+                    )
+
+                # Validate column_config structure
+                if not isinstance(column_config, dict):
+                    raise ValueError("column_config must be a dictionary")
+
+                # Get all column categories
+                hidden_columns = column_config.get("hidden_columns", [])
+                aggregations = column_config.get("aggregations", {})
+                visible_columns = column_config.get("visible_columns", [])
+
+                # Validate types
+                if not isinstance(hidden_columns, list):
+                    raise ValueError("column_config.hidden_columns must be a list")
+                if not isinstance(aggregations, dict):
+                    raise ValueError("column_config.aggregations must be a dictionary")
+                if not isinstance(visible_columns, list):
+                    raise ValueError("column_config.visible_columns must be a list")
+
+                # TODO: Add filesystem integration for CSV column validation
+                # This requires NexusFS dependency which will be added in composition phase
+                # For now, skip the CSV file column validation
+
+                # Check that a column only appears in one category
+                all_columns = set()
+                for col in hidden_columns:
+                    if col in all_columns:
+                        raise ValueError(
+                            f"Column '{col}' appears in multiple categories. "
+                            f"Each column can only be in hidden_columns, aggregations, "
+                            f"or visible_columns."
+                        )
+                    all_columns.add(col)
+
+                for col in aggregations:
+                    if col in all_columns:
+                        raise ValueError(
+                            f"Column '{col}' appears in multiple categories. "
+                            f"Each column can only be in hidden_columns, aggregations, "
+                            f"or visible_columns."
+                        )
+                    all_columns.add(col)
+
+                for col in visible_columns:
+                    if col in all_columns:
+                        raise ValueError(
+                            f"Column '{col}' appears in multiple categories. "
+                            f"Each column can only be in hidden_columns, aggregations, "
+                            f"or visible_columns."
+                        )
+                    all_columns.add(col)
+
+                # Validate aggregation operations
+                valid_ops = {"mean", "sum", "min", "max", "std", "median", "count"}
+                for col, op in aggregations.items():
+                    if not isinstance(op, str):
+                        raise ValueError(
+                            f"column_config.aggregations['{col}'] must be a string "
+                            f"(one of: {', '.join(valid_ops)}). Got: {type(op).__name__}"
+                        )
+                    if op not in valid_ops:
+                        raise ValueError(
+                            f"Invalid aggregation operation '{op}' for column '{col}'. "
+                            f"Valid operations: {', '.join(sorted(valid_ops))}"
+                        )
+
+                # Store column_config as conditions
+                conditions = {"type": "dynamic_viewer", "column_config": column_config}
+            elif column_config is not None:
+                # column_config provided but relation is not dynamic_viewer
+                raise ValueError(
+                    "column_config can only be provided when relation is 'dynamic_viewer'"
+                )
+
+            # Create relationship tuple
+            result = self._rebac_manager.rebac_write(
+                subject=subject,
+                relation=relation,
+                object=object,
+                expires_at=expires_at,
+                tenant_id=effective_tenant_id,
+                conditions=conditions,
+            )
+
+            # NOTE: Tiger Cache queue update is handled in EnhancedReBACManager.rebac_write()
+
+            if self._enable_audit_logging:
+                logger.info(
+                    "[ReBACService] Created tuple: %s -[%s]-> %s (tenant=%s, expires=%s)",
+                    subject,
+                    relation,
+                    object,
+                    effective_tenant_id,
+                    expires_at,
+                )
+
+            return result
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_create_sync)
 
     @rpc_expose(description="Check ReBAC permission")
     async def rebac_check(
@@ -156,70 +323,155 @@ class ReBACService:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
         context: Any = None,
+        tenant_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object.
 
-        Uses relationship graph traversal to determine access.
+        Uses relationship graph traversal to determine access, supporting both
+        direct relationships and inherited permissions through group membership.
+
+        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.).
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
-            permission: Permission to check e.g., "can-read", "can-write"
+            permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID for isolation
-            context: Operation context
+            context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
+            tenant_id: Tenant ID for multi-tenant isolation
 
         Returns:
             True if permission granted, False otherwise
 
+        Raises:
+            ValueError: If subject or object tuples are invalid
+            RuntimeError: If ReBAC manager not available
+
         Examples:
             # Check read access
-            can_read = rebac.rebac_check(
+            can_read = await rebac.rebac_check(
                 subject=("user", "alice"),
-                permission="can-read",
+                permission="read",
                 object=("file", "/doc.txt")
             )
 
             # Check ownership
-            is_owner = rebac.rebac_check(
+            is_owner = await rebac.rebac_check(
                 subject=("user", "bob"),
                 permission="owner",
                 object=("workspace", "/ws")
             )
+
+            # ABAC check with time window
+            can_read = await rebac.rebac_check(
+                subject=("user", "contractor"),
+                permission="read",
+                object=("file", "/sensitive.txt"),
+                context={"time": "14:30", "ip": "10.0.1.5"}
+            )
         """
-        # TODO: Extract rebac_check implementation
-        raise NotImplementedError("rebac_check() not yet implemented - Phase 2 in progress")
+
+        def _check_sync() -> bool:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Validate tuples
+            if not isinstance(subject, tuple) or len(subject) != 2:
+                raise ValueError(f"subject must be (type, id) tuple, got {subject}")
+            if not isinstance(object, tuple) or len(object) != 2:
+                raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+            # Use tenant_id from context if not explicitly provided
+            effective_tenant_id = tenant_id
+            if effective_tenant_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_tenant_id = context.get("tenant")
+                elif hasattr(context, "tenant_id"):
+                    effective_tenant_id = context.tenant_id
+
+            # Check permission with optional ABAC context
+            result = self._rebac_manager.rebac_check(
+                subject=subject,
+                permission=permission,
+                object=object,
+                context=context,
+                tenant_id=effective_tenant_id,
+            )
+
+            # TODO: Unix-like TRAVERSE behavior fallback
+            # If permission is "traverse" and object is a file path,
+            # check if user has READ on any descendant (deferred for now)
+            # This requires _has_descendant_access_for_traverse() helper
+
+            return result
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_check_sync)
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     async def rebac_expand(
         self,
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
-        limit: int = 100,
+        _tenant_id: str | None = None,
+        _limit: int = 100,
     ) -> list[tuple[str, str]]:
         """Find all subjects that have a permission on an object.
 
+        Uses recursive graph expansion to find both direct and inherited permissions.
+
         Args:
-            permission: Permission to check e.g., "can-read"
+            permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID
-            limit: Maximum results
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results (not currently enforced by manager)
 
         Returns:
             List of subject tuples with the permission
 
+        Raises:
+            ValueError: If object tuple is invalid
+            RuntimeError: If ReBAC manager not available
+
         Examples:
             # Find all users who can read a file
-            readers = rebac.rebac_expand(
-                permission="can-read",
+            readers = await rebac.rebac_expand(
+                permission="read",
                 object=("file", "/doc.txt")
             )
             # Returns: [("user", "alice"), ("user", "bob"), ...]
+
+            # Who owns this workspace?
+            owners = await rebac.rebac_expand(
+                permission="owner",
+                object=("workspace", "/workspace")
+            )
         """
-        # TODO: Extract rebac_expand implementation
-        raise NotImplementedError("rebac_expand() not yet implemented - Phase 2 in progress")
+
+        def _expand_sync() -> list[tuple[str, str]]:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Validate tuple
+            if not isinstance(object, tuple) or len(object) != 2:
+                raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+            # Expand permission
+            return self._rebac_manager.rebac_expand(permission=permission, object=object)
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_expand_sync)
 
     @rpc_expose(description="Explain ReBAC permission check")
     async def rebac_explain(
@@ -228,80 +480,195 @@ class ReBACService:
         permission: str,
         object: tuple[str, str],
         tenant_id: str | None = None,
+        context: Any = None,
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission.
 
-        Provides debugging information about permission derivation.
+        This debugging API traces through the permission graph to show exactly
+        why a permission check succeeded or failed.
 
         Args:
-            subject: Subject tuple
-            permission: Permission to explain
-            object: Object tuple
-            tenant_id: Tenant ID
+            subject: Subject tuple e.g., ("user", "alice")
+            permission: Permission to explain e.g., "read", "write", "owner"
+            object: Object tuple e.g., ("file", "/doc.txt")
+            tenant_id: Tenant ID for multi-tenant isolation
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Dictionary with:
-            - has_permission: bool
-            - explanation: str (human-readable)
-            - path: list[tuple] (relationship path)
-            - direct_tuples: list[dict] (direct relationships)
-            - derived_tuples: list[dict] (derived relationships)
+            - result: bool - whether permission is granted
+            - cached: bool - whether result came from cache
+            - reason: str - human-readable explanation
+            - paths: list[dict] - all checked paths through the graph
+            - successful_path: dict | None - the path that granted access (if any)
+
+        Raises:
+            ValueError: If subject or object tuples are invalid
+            RuntimeError: If ReBAC manager not available
 
         Examples:
-            # Debug permission denial
-            explanation = rebac.rebac_explain(
+            # Why does alice have read permission?
+            explanation = await rebac.rebac_explain(
                 subject=("user", "alice"),
-                permission="can-write",
-                object=("file", "/doc.txt")
+                permission="read",
+                object=("file", "/workspace/doc.txt")
             )
-            print(explanation["explanation"])
+            print(explanation["reason"])
+
+            # Why doesn't bob have write permission?
+            explanation = await rebac.rebac_explain(
+                subject=("user", "bob"),
+                permission="write",
+                object=("workspace", "/workspace")
+            )
+            print(explanation["result"])  # False
         """
-        # TODO: Extract rebac_explain implementation
-        raise NotImplementedError("rebac_explain() not yet implemented - Phase 2 in progress")
+
+        def _explain_sync() -> dict[str, Any]:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Validate tuples
+            if not isinstance(subject, tuple) or len(subject) != 2:
+                raise ValueError(f"subject must be (type, id) tuple, got {subject}")
+            if not isinstance(object, tuple) or len(object) != 2:
+                raise ValueError(f"object must be (type, id) tuple, got {object}")
+
+            # Use tenant_id from context if not explicitly provided
+            effective_tenant_id = tenant_id
+            if effective_tenant_id is None and context:
+                # Handle both dict and OperationContext
+                if isinstance(context, dict):
+                    effective_tenant_id = context.get("tenant")
+                elif hasattr(context, "tenant_id"):
+                    effective_tenant_id = context.tenant_id
+
+            # Get explanation from manager
+            return self._rebac_manager.rebac_explain(
+                subject=subject,
+                permission=permission,
+                object=object,
+                tenant_id=effective_tenant_id,
+            )
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_explain_sync)
 
     @rpc_expose(description="Batch ReBAC permission checks")
     async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str | None = None,
+        _tenant_id: str | None = None,
     ) -> list[bool]:
         """Check multiple permissions in a single call for efficiency.
 
+        Performs multiple permission checks with shared cache lookups and optimized
+        database queries. More efficient than individual checks.
+
         Args:
             checks: List of (subject, permission, object) tuples
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (currently unused by manager)
 
         Returns:
             List of boolean results (same order as input)
 
+        Raises:
+            ValueError: If any check tuple is invalid
+            RuntimeError: If ReBAC manager not available
+
         Examples:
             # Check multiple files at once
-            results = rebac.rebac_check_batch([
-                (("user", "alice"), "can-read", ("file", "/a.txt")),
-                (("user", "alice"), "can-read", ("file", "/b.txt")),
-                (("user", "alice"), "can-write", ("file", "/c.txt")),
+            results = await rebac.rebac_check_batch([
+                (("user", "alice"), "read", ("file", "/a.txt")),
+                (("user", "alice"), "read", ("file", "/b.txt")),
+                (("user", "alice"), "write", ("file", "/c.txt")),
             ])
             # Returns: [True, True, False]
+
+            # Check if user has multiple permissions on same object
+            results = await rebac.rebac_check_batch([
+                (("user", "alice"), "read", ("file", "/project")),
+                (("user", "alice"), "write", ("file", "/project")),
+                (("user", "alice"), "owner", ("file", "/project")),
+            ])
         """
-        # TODO: Extract rebac_check_batch implementation
-        raise NotImplementedError("rebac_check_batch() not yet implemented - Phase 2 in progress")
+
+        def _check_batch_sync() -> list[bool]:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Validate all checks
+            for i, check in enumerate(checks):
+                if not isinstance(check, tuple) or len(check) != 3:
+                    raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
+                subject, permission, obj = check
+                if not isinstance(subject, tuple) or len(subject) != 2:
+                    raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subject}")
+                if not isinstance(obj, tuple) or len(obj) != 2:
+                    raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
+
+            # Perform batch check with Rust acceleration
+            return self._rebac_manager.rebac_check_batch_fast(checks=checks)
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_check_batch_sync)
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     async def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple by ID.
 
         Args:
-            tuple_id: UUID of tuple to delete
+            tuple_id: UUID of tuple to delete (returned from rebac_create)
 
         Returns:
             True if deleted, False if not found
 
+        Raises:
+            RuntimeError: If ReBAC manager not available
+
+        Examples:
+            # Delete a relationship
+            tuple_id = await rebac.rebac_create(
+                subject=("user", "alice"),
+                relation="viewer",
+                object=("file", "/workspace/doc.txt")
+            )
+            success = await rebac.rebac_delete(tuple_id)
+
         Security:
-            - Requires permission on the resource
+            - Tiger Cache invalidation handled by manager
             - Logged for audit trail
         """
-        # TODO: Extract rebac_delete implementation
-        raise NotImplementedError("rebac_delete() not yet implemented - Phase 2 in progress")
+
+        def _delete_sync() -> bool:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Delete tuple - enhanced rebac_delete handles Tiger Cache invalidation
+            result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
+
+            if self._enable_audit_logging and result:
+                logger.info("[ReBACService] Deleted tuple: %s", tuple_id)
+
+            return result
+
+        # Run in thread pool since _rebac_manager operations may block
+        import asyncio
+
+        return await asyncio.to_thread(_delete_sync)
 
     @rpc_expose(description="List ReBAC relationship tuples")
     async def rebac_list_tuples(
@@ -309,43 +676,123 @@ class ReBACService:
         subject: tuple[str, str] | None = None,
         relation: str | None = None,
         object: tuple[str, str] | None = None,
-        tenant_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
+        relation_in: list[str] | None = None,
+        _tenant_id: str | None = None,
+        _limit: int = 100,
+        _offset: int = 0,
     ) -> list[dict[str, Any]]:
         """List relationship tuples with optional filters.
 
         Args:
             subject: Filter by subject (optional)
-            relation: Filter by relation (optional)
+            relation: Filter by relation (optional, mutually exclusive with relation_in)
             object: Filter by object (optional)
-            tenant_id: Tenant ID
-            limit: Maximum results
-            offset: Pagination offset
+            relation_in: Filter by multiple relations (optional, mutually exclusive with relation)
+            tenant_id: Tenant ID for multi-tenant isolation
+            limit: Maximum results (not currently enforced)
+            offset: Pagination offset (not currently enforced)
 
         Returns:
             List of tuple dicts with:
             - tuple_id: str
-            - subject: tuple[str, str]
+            - subject_type: str
+            - subject_id: str
             - relation: str
-            - object: tuple[str, str]
+            - object_type: str
+            - object_id: str
             - created_at: datetime
-            - tenant_id: str
+            - expires_at: datetime | None
+            - tenant_id: str | None
+
+        Raises:
+            RuntimeError: If ReBAC manager not available
 
         Examples:
             # List all permissions for a user
-            tuples = rebac.rebac_list_tuples(
+            tuples = await rebac.rebac_list_tuples(
                 subject=("user", "alice")
             )
 
             # List all owners of a file
-            tuples = rebac.rebac_list_tuples(
+            tuples = await rebac.rebac_list_tuples(
                 relation="owner",
                 object=("file", "/doc.txt")
             )
+
+            # List tuples with multiple relation types (efficient single query)
+            tuples = await rebac.rebac_list_tuples(
+                subject=("user", "alice"),
+                relation_in=["shared-viewer", "shared-editor", "shared-owner"]
+            )
         """
-        # TODO: Extract rebac_list_tuples implementation
-        raise NotImplementedError("rebac_list_tuples() not yet implemented - Phase 2 in progress")
+
+        def _list_tuples_sync() -> list[dict[str, Any]]:
+            """Synchronous implementation for thread pool execution."""
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+
+            # Build query dynamically with filters
+            conn = self._rebac_manager._get_connection()
+            try:
+                query = "SELECT * FROM rebac_tuples WHERE 1=1"
+                params: list = []
+
+                if subject:
+                    query += " AND subject_type = ? AND subject_id = ?"
+                    params.extend([subject[0], subject[1]])
+
+                if relation:
+                    query += " AND relation = ?"
+                    params.append(relation)
+                elif relation_in:
+                    # Support multiple relations in a single query (N+1 fix)
+                    placeholders = ", ".join("?" * len(relation_in))
+                    query += f" AND relation IN ({placeholders})"
+                    params.extend(relation_in)
+
+                if object:
+                    query += " AND object_type = ? AND object_id = ?"
+                    params.extend([object[0], object[1]])
+
+                # Fix SQL placeholders for PostgreSQL if needed
+                query = self._rebac_manager._fix_sql_placeholders(query)
+
+                cursor = self._rebac_manager._create_cursor(conn)
+                cursor.execute(query, params)
+
+                results = []
+                for row in cursor.fetchall():
+                    # Both SQLite and PostgreSQL return dict-like rows
+                    # Note: sqlite3.Row doesn't have .get() method, use try/except
+                    try:
+                        tenant_id_val = row["tenant_id"]
+                    except (KeyError, IndexError):
+                        tenant_id_val = None
+
+                    results.append(
+                        {
+                            "tuple_id": row["tuple_id"],
+                            "subject_type": row["subject_type"],
+                            "subject_id": row["subject_id"],
+                            "relation": row["relation"],
+                            "object_type": row["object_type"],
+                            "object_id": row["object_id"],
+                            "created_at": row["created_at"],
+                            "expires_at": row["expires_at"],
+                            "tenant_id": tenant_id_val,
+                        }
+                    )
+
+                return results
+            finally:
+                self._rebac_manager._close_connection(conn)
+
+        # Run in thread pool since database operations block
+        import asyncio
+
+        return await asyncio.to_thread(_list_tuples_sync)
 
     # =========================================================================
     # Public API: Configuration & Namespaces
@@ -355,37 +802,130 @@ class ReBACService:
     def set_rebac_option(self, key: str, value: Any) -> None:
         """Set a ReBAC configuration option.
 
+        Provides public access to ReBAC configuration without using internal APIs.
+
         Args:
-            key: Configuration key
+            key: Configuration key (e.g., "max_depth", "cache_ttl")
             value: Configuration value
+
+        Raises:
+            ValueError: If key is invalid or value has wrong type
+            RuntimeError: If ReBAC manager not available
+
+        Examples:
+            # Set maximum graph traversal depth
+            rebac.set_rebac_option("max_depth", 15)
+
+            # Set cache TTL
+            rebac.set_rebac_option("cache_ttl", 600)
         """
-        # TODO: Extract set_rebac_option implementation
-        raise NotImplementedError("set_rebac_option() not yet implemented - Phase 2 in progress")
+        if not self._rebac_manager:
+            raise RuntimeError(
+                "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+            )
+
+        if key == "max_depth":
+            if not isinstance(value, int) or value < 1:
+                raise ValueError("max_depth must be a positive integer")
+            self._rebac_manager.max_depth = value
+        elif key == "cache_ttl":
+            if not isinstance(value, int) or value < 0:
+                raise ValueError("cache_ttl must be a non-negative integer")
+            self._rebac_manager.cache_ttl_seconds = value
+        else:
+            raise ValueError(f"Unknown ReBAC option: {key}. Valid options: max_depth, cache_ttl")
 
     @rpc_expose(description="Get ReBAC configuration option")
-    async def get_rebac_option(self, key: str) -> Any:
+    def get_rebac_option(self, key: str) -> Any:
         """Get a ReBAC configuration option.
 
         Args:
-            key: Configuration key
+            key: Configuration key (e.g., "max_depth", "cache_ttl")
 
         Returns:
-            Configuration value
+            Current value of the configuration option
+
+        Raises:
+            ValueError: If key is invalid
+            RuntimeError: If ReBAC manager not available
+
+        Examples:
+            # Get current max depth
+            depth = rebac.get_rebac_option("max_depth")
+            print(f"Max traversal depth: {depth}")
         """
-        # TODO: Extract get_rebac_option implementation
-        raise NotImplementedError("get_rebac_option() not yet implemented - Phase 2 in progress")
+        if not self._rebac_manager:
+            raise RuntimeError(
+                "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+            )
+
+        if key == "max_depth":
+            return self._rebac_manager.max_depth
+        elif key == "cache_ttl":
+            return self._rebac_manager.cache_ttl_seconds
+        else:
+            raise ValueError(f"Unknown ReBAC option: {key}. Valid options: max_depth, cache_ttl")
 
     @rpc_expose(description="Register ReBAC namespace schema")
-    async def register_namespace(self, namespace: dict[str, Any]) -> None:
+    def register_namespace(self, namespace: dict[str, Any]) -> None:
         """Register a namespace schema for ReBAC.
 
-        Defines object types and their permission relationships.
+        Provides public API to register namespace configurations without using internal APIs.
+        Namespaces define the permission model for object types (e.g., files, workspaces).
 
         Args:
-            namespace: Namespace configuration dict
+            namespace: Namespace configuration dictionary with keys:
+                - object_type: Type of objects this namespace applies to
+                - config: Schema configuration (relations and permissions)
+                - namespace_id: Optional UUID (auto-generated if not provided)
+
+        Raises:
+            ValueError: If namespace configuration is invalid
+            RuntimeError: If ReBAC manager not available
+
+        Examples:
+            # Register file namespace with group inheritance
+            rebac.register_namespace({
+                "object_type": "file",
+                "config": {
+                    "relations": {
+                        "viewer": {},
+                        "editor": {}
+                    },
+                    "permissions": {
+                        "read": ["viewer", "editor"],
+                        "write": ["editor"]
+                    }
+                }
+            })
         """
-        # TODO: Extract register_namespace implementation
-        raise NotImplementedError("register_namespace() not yet implemented - Phase 2 in progress")
+        if not self._rebac_manager:
+            raise RuntimeError(
+                "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+            )
+
+        # Validate namespace structure
+        if not isinstance(namespace, dict):
+            raise ValueError("namespace must be a dictionary")
+        if "object_type" not in namespace:
+            raise ValueError("namespace must have 'object_type' key")
+        if "config" not in namespace:
+            raise ValueError("namespace must have 'config' key")
+
+        # Import dependencies
+        import uuid
+
+        from nexus.core.rebac import NamespaceConfig
+
+        # Create NamespaceConfig object
+        ns = NamespaceConfig(
+            namespace_id=namespace.get("namespace_id", str(uuid.uuid4())),
+            object_type=namespace["object_type"],
+            config=namespace["config"],
+        )
+
+        # Register via manager
+        self._rebac_manager.create_namespace(ns)
 
     @rpc_expose(description="Get ReBAC namespace schema")
     async def get_namespace(self, object_type: str) -> dict[str, Any] | None:
@@ -613,13 +1153,56 @@ class ReBACService:
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext or dict)
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
 
         Returns:
-            Subject tuple (type, id) or None
+            Subject tuple (type, id) or None if not found
+
+        Examples:
+            >>> context = {"subject": ("user", "alice")}
+            >>> self._get_subject_from_context(context)
+            ('user', 'alice')
+
+            >>> context = OperationContext(user="alice", groups=[])
+            >>> self._get_subject_from_context(context)
+            ('user', 'alice')
         """
-        # TODO: Extract _get_subject_from_context implementation
-        raise NotImplementedError("Helper methods not yet implemented")
+        if not context:
+            return None
+
+        # Handle dict format (used by RPC server and tests)
+        if isinstance(context, dict):
+            subject = context.get("subject")
+            if subject and isinstance(subject, tuple) and len(subject) == 2:
+                return (str(subject[0]), str(subject[1]))
+
+            # Construct from subject_type + subject_id
+            subject_type = context.get("subject_type", "user")
+            subject_id = context.get("subject_id") or context.get("user")
+            if subject_id:
+                return (subject_type, subject_id)
+
+            return None
+
+        # Handle OperationContext format - use get_subject() method
+        if hasattr(context, "get_subject") and callable(context.get_subject):
+            result = context.get_subject()
+            if result is not None:
+                return (str(result[0]), str(result[1]))
+            return None
+
+        # Fallback: construct from attributes
+        if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
+            subject_type = getattr(context, "subject_type", "user")
+            subject_id = getattr(context, "subject_id", None) or getattr(context, "user", None)
+            if subject_id:
+                return (subject_type, subject_id)
+
+        # Last resort: use user field
+        if hasattr(context, "user") and context.user:
+            return ("user", context.user)
+
+        return None
 
     def _check_share_permission(
         self,
@@ -627,9 +1210,107 @@ class ReBACService:
         context: Any,
         required_permission: str = "execute",
     ) -> None:
-        """Check if caller has permission to share/manage a resource."""
-        # TODO: Extract _check_share_permission implementation
-        raise NotImplementedError("Helper methods not yet implemented")
+        """Check if caller has permission to share/manage a resource.
+
+        This helper centralizes the permission check logic used by rebac_create,
+        share_with_user, and share_with_group to prevent code duplication.
+
+        Args:
+            resource: Resource tuple (object_type, object_id)
+            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            required_permission: Permission level required (default: "execute" for ownership)
+
+        Raises:
+            PermissionError: If caller lacks required permission to manage the resource
+
+        Examples:
+            >>> self._check_share_permission(
+            ...     resource=("file", "/path/doc.txt"),
+            ...     context=operation_context
+            ... )
+        """
+        if not context:
+            return
+
+        from nexus.core.permissions import OperationContext, Permission
+
+        # Extract OperationContext from context parameter
+        op_context: OperationContext | None = None
+        if isinstance(context, OperationContext):
+            op_context = context
+        elif isinstance(context, dict):
+            # Create OperationContext from dict
+            op_context = OperationContext(
+                user=context.get("user", "unknown"),
+                groups=context.get("groups", []),
+                tenant_id=context.get("tenant_id"),
+                is_admin=context.get("is_admin", False),
+                is_system=context.get("is_system", False),
+            )
+
+        # Skip permission check for admin and system contexts
+        if not op_context or not self._enforce_permissions:
+            return
+        if op_context.is_admin or op_context.is_system:
+            return
+
+        # Check if caller has required permission on the resource
+        # Map string permission to Permission enum
+        permission_map = {
+            "execute": Permission.EXECUTE,
+            "write": Permission.WRITE,
+            "read": Permission.READ,
+        }
+        perm_enum = permission_map.get(required_permission, Permission.EXECUTE)
+
+        # For file resources, use the path directly
+        if resource[0] == "file":
+            resource_path = resource[1]
+        else:
+            # For non-file resources, we need to check ReBAC permissions
+            # This ensures groups, workspaces, and other resources are also protected
+            # Check if user has ownership (execute permission) via ReBAC
+            has_permission = self.rebac_check(
+                subject=self._get_subject_from_context(context) or ("user", op_context.user),
+                permission="owner",  # Only owners can manage permissions
+                object=resource,
+                context=context,
+            )
+            if not has_permission:
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have owner "
+                    f"permission to manage {resource[0]} '{resource[1]}'"
+                )
+            return
+
+        # Use permission enforcer to check permission for file resources
+        if hasattr(self, "_permission_enforcer"):
+            has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
+
+            # If user is not owner, check if they are tenant admin
+            if not has_permission:
+                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
+                tenant_id = None
+                if resource_path.startswith("/tenant:"):
+                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                    if parts:
+                        tenant_id = parts[0]
+
+                # Check if user is tenant admin for this resource's tenant
+                if tenant_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_tenant_admin
+
+                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
+                        # Tenant admin can share resources in their tenant
+                        return
+
+                # Neither owner nor tenant admin - deny
+                perm_name = required_permission.upper()
+                raise PermissionError(
+                    f"Access denied: User '{op_context.user}' does not have {perm_name} "
+                    f"permission to manage permissions on '{resource_path}'. "
+                    f"Only owners or tenant admins can share resources."
+                )
 
 
 # =============================================================================

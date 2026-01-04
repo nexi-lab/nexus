@@ -20,11 +20,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from nexus.core.rpc_decorator import rpc_expose
+
+# Re-export context_utils functions for backward compatibility with tests
+# that patch nexus.core.nexus_fs_mounts.get_tenant_id, etc.
+from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
@@ -41,6 +45,45 @@ logger = logging.getLogger(__name__)
 
 # Type alias for progress callback (backward compatibility)
 ProgressCallback = Callable[[int, str], None]
+
+
+# =============================================================================
+# Backward Compatibility Types
+# =============================================================================
+# These types are re-exported for backward compatibility with existing code.
+# New code should import from nexus.services.sync_service directly.
+
+
+@dataclass
+class SyncMountContext:
+    """Context object for sync_mount operations (backward compatibility).
+
+    New code should use: from nexus.services.sync_service import SyncContext
+    """
+
+    mount_point: str | None
+    path: str | None = None
+    recursive: bool = True
+    dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
+    context: "OperationContext | None" = None
+    # Additional fields for internal use
+    backend: Any = None
+    created_by: str | None = None
+    has_hierarchy: bool = False
+
+
+class MetadataSyncResult(NamedTuple):
+    """Result of metadata sync operation (backward compatibility).
+
+    New code should use: from nexus.services.sync_service import SyncResult
+    """
+
+    stats: dict[str, Any]
+    files_found_in_backend: set[str]
 
 
 class NexusFSMountsMixin:
@@ -494,3 +537,49 @@ class NexusFSMountsMixin:
             Loading results dictionary
         """
         return self._mount_persist_service.load_all_mounts(auto_sync)
+
+    # =========================================================================
+    # Backward Compatibility Methods
+    # =========================================================================
+
+    def _matches_patterns(
+        self,
+        file_path: str,
+        include_patterns: list[str] | None,
+        exclude_patterns: list[str] | None,
+    ) -> bool:
+        """Check if file path matches include/exclude patterns.
+
+        Backward compatibility wrapper - delegates to SyncService.
+
+        Args:
+            file_path: Virtual file path
+            include_patterns: Glob patterns to include
+            exclude_patterns: Glob patterns to exclude
+
+        Returns:
+            True if file should be included
+        """
+        from nexus.services.sync_service import SyncContext
+
+        ctx = SyncContext(
+            mount_point=None,
+            include_patterns=include_patterns,
+            exclude_patterns=exclude_patterns,
+        )
+        return self._sync_service._matches_patterns(file_path, ctx)
+
+    def _grant_mount_owner_permission(
+        self,
+        mount_point: str,
+        context: "OperationContext | None",
+    ) -> None:
+        """Grant direct_owner permission to mount creator.
+
+        Backward compatibility wrapper - delegates to MountCoreService.
+
+        Args:
+            mount_point: Virtual path of mount
+            context: Operation context
+        """
+        self._mount_core_service._grant_owner_permission(mount_point, context)

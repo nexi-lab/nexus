@@ -150,10 +150,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "list"):
             result = self._fs.list(path, context=context)
             # Handle PaginatedResult vs raw list
-            if hasattr(result, "items"):
-                items = result.items
-            else:
-                items = result
+            items = result.items if hasattr(result, "items") else result
             # Convert to list of strings
             return [str(item) for item in items]
         return []

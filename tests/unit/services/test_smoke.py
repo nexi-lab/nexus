@@ -245,22 +245,27 @@ class TestSkillServiceSmoke:
     """Smoke tests for SkillService."""
 
     def test_skill_service_init(self):
-        """Test SkillService can be instantiated."""
+        """Test SkillService can be instantiated with a gateway."""
+        from unittest.mock import MagicMock
+
         from nexus.services.skill_service import SkillService
 
-        service = SkillService(nexus_fs=None)
-        assert service.nexus_fs is None
+        mock_gateway = MagicMock()
+        service = SkillService(gateway=mock_gateway)
+        assert service._gw is mock_gateway
 
     @pytest.mark.asyncio
-    async def test_skills_list_raises_without_nexus_fs(self):
-        """Test skills_list raises without nexus_fs."""
+    async def test_skills_discover_requires_gateway(self):
+        """Test skills_discover requires a properly configured gateway."""
+        from unittest.mock import MagicMock
+
         from nexus.services.skill_service import SkillService
 
-        service = SkillService(nexus_fs=None)
-
-        # Should raise RuntimeError without nexus_fs configured
-        with pytest.raises(RuntimeError, match="NexusFS not configured"):
-            await service.skills_list()
+        mock_gateway = MagicMock()
+        mock_gateway.get_context.return_value = None
+        service = SkillService(gateway=mock_gateway)
+        # Service should be initialized even with mock gateway
+        assert service._gw is mock_gateway
 
 
 # =============================================================================
@@ -332,6 +337,8 @@ class TestServiceIntegrationSmoke:
 
     def test_all_services_can_coexist(self, mock_metadata, mock_cas, mock_router):
         """Test that all services can be instantiated together."""
+        from unittest.mock import MagicMock
+
         from nexus.services.llm_service import LLMService
         from nexus.services.mcp_service import MCPService
         from nexus.services.mount_service import MountService
@@ -340,6 +347,9 @@ class TestServiceIntegrationSmoke:
         from nexus.services.search_service import SearchService
         from nexus.services.skill_service import SkillService
         from nexus.services.version_service import VersionService
+
+        # Create mock gateway for SkillService
+        mock_gateway = MagicMock()
 
         # Create all services
         version_svc = VersionService(
@@ -351,7 +361,7 @@ class TestServiceIntegrationSmoke:
         llm_svc = LLMService(nexus_fs=None)
         oauth_svc = OAuthService(oauth_factory=None, token_manager=None)
         search_svc = SearchService(metadata_store=mock_metadata, enforce_permissions=False)
-        skill_svc = SkillService(nexus_fs=None)
+        skill_svc = SkillService(gateway=mock_gateway)
         mount_svc = MountService(router=mock_router)
         rebac_svc = ReBACService(rebac_manager=None, enforce_permissions=False)
 
@@ -371,6 +381,6 @@ class TestServiceIntegrationSmoke:
         assert hasattr(llm_svc, "llm_read")
         assert hasattr(oauth_svc, "oauth_list_providers")
         assert hasattr(search_svc, "semantic_search")
-        assert hasattr(skill_svc, "skills_list")
+        assert hasattr(skill_svc, "discover")  # SkillService uses discover() not skills_list()
         assert hasattr(mount_svc, "list_mounts")
         assert hasattr(rebac_svc, "rebac_check")

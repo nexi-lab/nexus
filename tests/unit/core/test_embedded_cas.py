@@ -74,7 +74,7 @@ def test_cas_automatic_deduplication(embedded_cas: NexusFS) -> None:
     assert meta1.physical_path == meta2.physical_path  # Same physical location
 
     # Verify ref count is 2 in CAS backend
-    assert embedded_cas.backend.get_ref_count(meta1.etag).unwrap() == 2
+    assert embedded_cas.backend.get_ref_count(meta1.etag) == 2
 
 
 def test_cas_delete_with_ref_counting(embedded_cas: NexusFS) -> None:
@@ -89,7 +89,7 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS) -> None:
     content_hash = meta1.etag
 
     # Initial ref count should be 2
-    assert embedded_cas.backend.get_ref_count(content_hash).unwrap() == 2
+    assert embedded_cas.backend.get_ref_count(content_hash) == 2
 
     # Delete first file
     embedded_cas.delete("/shared1.txt")
@@ -101,14 +101,14 @@ def test_cas_delete_with_ref_counting(embedded_cas: NexusFS) -> None:
     assert embedded_cas.exists("/shared2.txt")
 
     # Content should still exist in CAS with ref count 1
-    assert embedded_cas.backend.content_exists(content_hash).unwrap()
-    assert embedded_cas.backend.get_ref_count(content_hash).unwrap() == 1
+    assert embedded_cas.backend.content_exists(content_hash)
+    assert embedded_cas.backend.get_ref_count(content_hash) == 1
 
     # Delete second file
     embedded_cas.delete("/shared2.txt")
 
     # Content should now be deleted from CAS
-    assert not embedded_cas.backend.content_exists(content_hash).unwrap()
+    assert not embedded_cas.backend.content_exists(content_hash)
 
 
 def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
@@ -127,7 +127,7 @@ def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
     hash1 = meta1.etag
 
     # Verify ref count
-    assert embedded_cas.backend.get_ref_count(hash1).unwrap() == 1
+    assert embedded_cas.backend.get_ref_count(hash1) == 1
 
     # Update with new content
     embedded_cas.write("/test.txt", content2)
@@ -139,11 +139,11 @@ def test_cas_update_file_content(embedded_cas: NexusFS) -> None:
 
     # With version tracking (v0.3.5), old content is PRESERVED
     # so previous versions can be accessed
-    assert embedded_cas.backend.content_exists(hash1).unwrap()  # Old content still exists
+    assert embedded_cas.backend.content_exists(hash1)  # Old content still exists
 
     # New content should also exist
-    assert embedded_cas.backend.content_exists(hash2).unwrap()
-    assert embedded_cas.backend.get_ref_count(hash2).unwrap() == 1
+    assert embedded_cas.backend.content_exists(hash2)
+    assert embedded_cas.backend.get_ref_count(hash2) == 1
 
 
 def test_cas_storage_efficiency(embedded_cas: NexusFS) -> None:
@@ -163,10 +163,10 @@ def test_cas_storage_efficiency(embedded_cas: NexusFS) -> None:
     content_hash = meta.etag
 
     # Ref count should be 10
-    assert embedded_cas.backend.get_ref_count(content_hash).unwrap() == 10
+    assert embedded_cas.backend.get_ref_count(content_hash) == 10
 
     # Content should only be stored once
-    assert embedded_cas.backend.get_content_size(content_hash).unwrap() == 1000
+    assert embedded_cas.backend.get_content_size(content_hash) == 1000
 
 
 def test_cas_different_content_different_hashes(embedded_cas: NexusFS) -> None:
@@ -256,14 +256,14 @@ def test_cas_concurrent_deduplication(embedded_cas: NexusFS) -> None:
     content_hash = meta.etag
 
     # Ref count should be 20
-    assert embedded_cas.backend.get_ref_count(content_hash).unwrap() == 20
+    assert embedded_cas.backend.get_ref_count(content_hash) == 20
 
     # Delete all files
     for path in paths:
         embedded_cas.delete(path)
 
     # Content should be completely deleted
-    assert not embedded_cas.backend.content_exists(content_hash).unwrap()
+    assert not embedded_cas.backend.content_exists(content_hash)
 
 
 def test_cas_update_preserves_timestamps(embedded_cas: NexusFS) -> None:

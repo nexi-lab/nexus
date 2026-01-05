@@ -157,7 +157,7 @@ class TestWriteContentWithoutVersioning:
         # Mock the put_object response
         s3_connector_backend.client.put_object.return_value = {}
 
-        result = s3_connector_backend.write_content(test_content, context=context).unwrap()
+        result = s3_connector_backend.write_content(test_content, context=context)
 
         # Should return SHA-256 hash (64 chars)
         assert len(result) == 64
@@ -174,7 +174,7 @@ class TestWriteContentWithoutVersioning:
     def test_write_content_without_context(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test write_content fails without context."""
         with pytest.raises(ValueError) as exc_info:
-            s3_connector_backend.write_content(b"test").unwrap()
+            s3_connector_backend.write_content(b"test")
 
         assert "backend_path" in str(exc_info.value)
 
@@ -185,7 +185,7 @@ class TestWriteContentWithoutVersioning:
         context = OperationContext(user="test_user", groups=[])
 
         with pytest.raises(ValueError) as exc_info:
-            s3_connector_backend.write_content(b"test", context=context).unwrap()
+            s3_connector_backend.write_content(b"test", context=context)
 
         assert "backend_path" in str(exc_info.value)
 
@@ -240,7 +240,7 @@ class TestReadContentWithoutVersioning:
         s3_connector_backend.client.get_object.return_value = {"Body": mock_body}
 
         # Pass any hash - should be ignored
-        result = s3_connector_backend.read_content("any_hash_value", context=context).unwrap()
+        result = s3_connector_backend.read_content("any_hash_value", context=context)
 
         assert result == test_content
         # Should read from backend_path, not hash
@@ -258,7 +258,7 @@ class TestReadContentWithoutVersioning:
         )
 
         with pytest.raises(NexusFileNotFoundError):
-            s3_connector_backend.read_content("any_hash", context=context).unwrap()
+            s3_connector_backend.read_content("any_hash", context=context)
 
 
 class TestReadContentWithVersioning:
@@ -335,7 +335,7 @@ class TestDeleteContent:
         s3_connector_backend.client.head_object.return_value = {}
         s3_connector_backend.client.delete_object.return_value = {}
 
-        s3_connector_backend.delete_content("any_hash", context=context).unwrap()
+        s3_connector_backend.delete_content("any_hash", context=context)
 
         # Should check existence then delete
         s3_connector_backend.client.head_object.assert_called_once()
@@ -351,7 +351,7 @@ class TestDeleteContent:
         )
 
         with pytest.raises(NexusFileNotFoundError):
-            s3_connector_backend.delete_content("any_hash", context=context).unwrap()
+            s3_connector_backend.delete_content("any_hash", context=context)
 
 
 class TestDirectoryOperations:
@@ -366,7 +366,7 @@ class TestDirectoryOperations:
         )
         s3_connector_backend.client.put_object.return_value = {}
 
-        s3_connector_backend.mkdir("newdir", parents=True, exist_ok=True).unwrap()
+        s3_connector_backend.mkdir("newdir", parents=True, exist_ok=True)
 
         # Should create directory marker with trailing slash
         s3_connector_backend.client.put_object.assert_called_once()
@@ -380,14 +380,14 @@ class TestDirectoryOperations:
         s3_connector_backend.client.head_object.return_value = {}
 
         with pytest.raises(FileExistsError):
-            s3_connector_backend.mkdir("existingdir", exist_ok=False).unwrap()
+            s3_connector_backend.mkdir("existingdir", exist_ok=False)
 
     def test_is_directory_with_marker(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test is_directory returns True when marker exists."""
         # Mock head_object to indicate marker exists
         s3_connector_backend.client.head_object.return_value = {}
 
-        result = s3_connector_backend.is_directory("mydir").unwrap()
+        result = s3_connector_backend.is_directory("mydir")
 
         assert result is True
 
@@ -403,7 +403,7 @@ class TestDirectoryOperations:
             "Contents": [{"Key": "test-prefix/mydir/file.txt"}]
         }
 
-        result = s3_connector_backend.is_directory("mydir").unwrap()
+        result = s3_connector_backend.is_directory("mydir")
 
         assert result is True
 
@@ -478,7 +478,7 @@ class TestContentExists:
         context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
         s3_connector_backend.client.head_object.return_value = {}
 
-        result = s3_connector_backend.content_exists("any_hash", context=context).unwrap()
+        result = s3_connector_backend.content_exists("any_hash", context=context)
 
         assert result is True
 
@@ -490,7 +490,7 @@ class TestContentExists:
             error_response, "HeadObject"
         )
 
-        result = s3_connector_backend.content_exists("any_hash", context=context).unwrap()
+        result = s3_connector_backend.content_exists("any_hash", context=context)
 
         assert result is False
 
@@ -503,7 +503,7 @@ class TestGetContentSize:
         context = OperationContext(user="test_user", groups=[], backend_path="file.txt")
         s3_connector_backend.client.head_object.return_value = {"ContentLength": 1024}
 
-        result = s3_connector_backend.get_content_size("any_hash", context=context).unwrap()
+        result = s3_connector_backend.get_content_size("any_hash", context=context)
 
         assert result == 1024
 
@@ -516,7 +516,7 @@ class TestGetContentSize:
         )
 
         with pytest.raises(NexusFileNotFoundError):
-            s3_connector_backend.get_content_size("any_hash", context=context).unwrap()
+            s3_connector_backend.get_content_size("any_hash", context=context)
 
 
 class TestRefCount:
@@ -524,6 +524,6 @@ class TestRefCount:
 
     def test_get_ref_count_always_one(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test ref count always returns 1 (no deduplication)."""
-        result = s3_connector_backend.get_ref_count("any_hash").unwrap()
+        result = s3_connector_backend.get_ref_count("any_hash")
 
         assert result == 1

@@ -243,7 +243,7 @@ class TestPhase5BackwardCompatibility:
 
         # Store with restrictive permissions (owner only - 0o600)
         memory_router = MemoryViewRouter(session, entity_registry)
-        content_hash = backend.write_content(b"Private to agent1").unwrap()
+        content_hash = backend.write_content(b"Private to agent1")
         memory = memory_router.create_memory(
             content_hash=content_hash,
             tenant_id="acme",

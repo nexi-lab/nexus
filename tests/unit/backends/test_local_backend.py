@@ -34,14 +34,14 @@ def test_backend_name(temp_backend):
 def test_write_and_read_content(temp_backend):
     """Test writing and reading content."""
     content = b"Hello, World!"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Verify hash is correct (using BLAKE3)
     expected_hash = hash_content(content)
     assert content_hash == expected_hash
 
     # Read content back
-    retrieved = temp_backend.read_content(content_hash).unwrap()
+    retrieved = temp_backend.read_content(content_hash)
     assert retrieved == content
 
 
@@ -49,13 +49,13 @@ def test_write_duplicate_content(temp_backend):
     """Test writing duplicate content returns same hash."""
     content = b"Duplicate test content"
 
-    hash1 = temp_backend.write_content(content).unwrap()
-    hash2 = temp_backend.write_content(content).unwrap()
+    hash1 = temp_backend.write_content(content)
+    hash2 = temp_backend.write_content(content)
 
     assert hash1 == hash2
 
     # Verify content can be read
-    retrieved = temp_backend.read_content(hash1).unwrap()
+    retrieved = temp_backend.read_content(hash1)
     assert retrieved == content
 
 
@@ -64,24 +64,24 @@ def test_read_nonexistent_content(temp_backend):
     fake_hash = "a" * 64
 
     with pytest.raises(NexusFileNotFoundError):
-        temp_backend.read_content(fake_hash).unwrap()
+        temp_backend.read_content(fake_hash)
 
 
 def test_delete_content(temp_backend):
     """Test deleting content."""
     content = b"Content to delete"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Verify content exists
-    retrieved = temp_backend.read_content(content_hash).unwrap()
+    retrieved = temp_backend.read_content(content_hash)
     assert retrieved == content
 
     # Delete content
-    temp_backend.delete_content(content_hash).unwrap()
+    temp_backend.delete_content(content_hash)
 
     # Verify content is deleted
     with pytest.raises(NexusFileNotFoundError):
-        temp_backend.read_content(content_hash).unwrap()
+        temp_backend.read_content(content_hash)
 
 
 def test_delete_nonexistent_content(temp_backend):
@@ -92,18 +92,18 @@ def test_delete_nonexistent_content(temp_backend):
 
     # Should raise or handle gracefully (implementation dependent)
     with suppress(NexusFileNotFoundError):  # Expected behavior
-        temp_backend.delete_content(fake_hash).unwrap()
+        temp_backend.delete_content(fake_hash)
 
 
 def test_exists_content(temp_backend):
     """Test checking if content exists."""
     content = b"Existence test"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
-    assert temp_backend.content_exists(content_hash).unwrap() is True
+    assert temp_backend.content_exists(content_hash) is True
 
     fake_hash = "c" * 64
-    assert temp_backend.content_exists(fake_hash).unwrap() is False
+    assert temp_backend.content_exists(fake_hash) is False
 
 
 def test_hash_to_path(temp_backend):
@@ -136,14 +136,14 @@ def test_compute_hash(temp_backend):
 def test_write_empty_content(temp_backend):
     """Test writing empty content."""
     content = b""
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Verify hash is correct for empty content (using BLAKE3)
     expected_hash = hash_content(b"")
     assert content_hash == expected_hash
 
     # Read it back
-    retrieved = temp_backend.read_content(content_hash).unwrap()
+    retrieved = temp_backend.read_content(content_hash)
     assert retrieved == b""
 
 
@@ -151,10 +151,10 @@ def test_write_large_content(temp_backend):
     """Test writing large content."""
     # 10 MB of data
     content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Verify it can be read back
-    retrieved = temp_backend.read_content(content_hash).unwrap()
+    retrieved = temp_backend.read_content(content_hash)
     assert len(retrieved) == len(content)
     assert retrieved == content
 
@@ -162,9 +162,9 @@ def test_write_large_content(temp_backend):
 def test_get_content_size(temp_backend):
     """Test getting content size."""
     content = b"Test content for size"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
-    size = temp_backend.get_content_size(content_hash).unwrap()
+    size = temp_backend.get_content_size(content_hash)
     assert size == len(content)
 
 
@@ -173,9 +173,9 @@ def test_content_deduplication(temp_backend):
     content = b"Deduplicate me!"
 
     # Write same content multiple times
-    hash1 = temp_backend.write_content(content).unwrap()
-    hash2 = temp_backend.write_content(content).unwrap()
-    hash3 = temp_backend.write_content(content).unwrap()
+    hash1 = temp_backend.write_content(content)
+    hash2 = temp_backend.write_content(content)
+    hash3 = temp_backend.write_content(content)
 
     # All hashes should be identical
     assert hash1 == hash2 == hash3
@@ -185,14 +185,14 @@ def test_content_deduplication(temp_backend):
     assert content_path.exists()
 
     # Read should still work
-    retrieved = temp_backend.read_content(hash1).unwrap()
+    retrieved = temp_backend.read_content(hash1)
     assert retrieved == content
 
 
 def test_directory_creation(temp_backend):
     """Test creating directories."""
     dir_path = "/test/nested/directory"
-    temp_backend.mkdir(dir_path, parents=True).unwrap()
+    temp_backend.mkdir(dir_path, parents=True)
 
     # Check that directory was created
     physical_path = temp_backend.dir_root / dir_path.lstrip("/")
@@ -203,18 +203,18 @@ def test_directory_creation(temp_backend):
 def test_directory_creation_existing(temp_backend):
     """Test creating directory that already exists."""
     dir_path = "/test/existing"
-    temp_backend.mkdir(dir_path, parents=True, exist_ok=True).unwrap()
+    temp_backend.mkdir(dir_path, parents=True, exist_ok=True)
 
     # Create again - should not raise
-    temp_backend.mkdir(dir_path, exist_ok=True).unwrap()
+    temp_backend.mkdir(dir_path, exist_ok=True)
 
 
 def test_is_directory(temp_backend):
     """Test checking if path is a directory."""
     dir_path = "/test/directory"
-    temp_backend.mkdir(dir_path, parents=True).unwrap()
+    temp_backend.mkdir(dir_path, parents=True)
 
-    assert temp_backend.is_directory(dir_path).unwrap() is True
+    assert temp_backend.is_directory(dir_path) is True
 
 
 def test_backend_error_on_invalid_root():
@@ -232,9 +232,9 @@ def test_binary_content(temp_backend):
     """Test handling of binary content."""
     # Binary data with all byte values
     content = bytes(range(256))
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
-    retrieved = temp_backend.read_content(content_hash).unwrap()
+    retrieved = temp_backend.read_content(content_hash)
     assert retrieved == content
 
 
@@ -243,7 +243,7 @@ def test_unicode_directory_names(temp_backend):
     dir_path = "/test/unicode_测试_тест"
 
     try:
-        temp_backend.mkdir(dir_path).unwrap()
+        temp_backend.mkdir(dir_path)
         physical_path = temp_backend.dir_root / dir_path.lstrip("/")
         assert physical_path.exists()
     except Exception:
@@ -260,19 +260,19 @@ def test_multiple_backends_same_root(tmp_path):
 
     # Write with first backend
     content = b"Shared content"
-    hash1 = backend1.write_content(content).unwrap()
+    hash1 = backend1.write_content(content)
 
     # Read with second backend
-    retrieved = backend2.read_content(hash1).unwrap()
+    retrieved = backend2.read_content(hash1)
     assert retrieved == content
 
 
 def test_list_directory(temp_backend):
     """Test listing directory contents."""
     # Create a directory structure
-    temp_backend.mkdir("/test", parents=True, exist_ok=True).unwrap()
-    temp_backend.mkdir("/test/sub1", exist_ok=True).unwrap()
-    temp_backend.mkdir("/test/sub2", exist_ok=True).unwrap()
+    temp_backend.mkdir("/test", parents=True, exist_ok=True)
+    temp_backend.mkdir("/test/sub1", exist_ok=True)
+    temp_backend.mkdir("/test/sub2", exist_ok=True)
 
     items = temp_backend.list_dir("/test")
 
@@ -288,9 +288,9 @@ def test_batch_read_content_basic(temp_backend):
     content2 = b"Content 2"
     content3 = b"Content 3"
 
-    hash1 = temp_backend.write_content(content1).unwrap()
-    hash2 = temp_backend.write_content(content2).unwrap()
-    hash3 = temp_backend.write_content(content3).unwrap()
+    hash1 = temp_backend.write_content(content1)
+    hash2 = temp_backend.write_content(content2)
+    hash3 = temp_backend.write_content(content3)
 
     # Batch read all content
     result = temp_backend.batch_read_content([hash1, hash2, hash3])
@@ -305,7 +305,7 @@ def test_batch_read_content_missing_hashes(temp_backend):
     """Test batch read with some missing content hashes."""
     # Write one content item
     content1 = b"Content 1"
-    hash1 = temp_backend.write_content(content1).unwrap()
+    hash1 = temp_backend.write_content(content1)
 
     # Create fake hashes that don't exist
     fake_hash1 = "0" * 64
@@ -329,7 +329,7 @@ def test_batch_read_content_empty_list(temp_backend):
 def test_batch_read_content_deduplication(temp_backend):
     """Test that batch read handles duplicate hashes correctly."""
     content = b"Duplicate content"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Request same hash multiple times
     result = temp_backend.batch_read_content([content_hash, content_hash, content_hash])
@@ -349,8 +349,8 @@ def test_batch_read_content_with_cache(tmp_path):
     # Write content
     content1 = b"Cached content 1"
     content2 = b"Cached content 2"
-    hash1 = backend.write_content(content1).unwrap()
-    hash2 = backend.write_content(content2).unwrap()
+    hash1 = backend.write_content(content1)
+    hash2 = backend.write_content(content2)
 
     # First batch read (populates cache)
     result1 = backend.batch_read_content([hash1, hash2])
@@ -381,7 +381,7 @@ def test_batch_read_content_parallel(tmp_path):
 
     # Write multiple files
     contents = [f"Content for file {i}".encode() for i in range(10)]
-    hashes = [backend.write_content(content).unwrap() for content in contents]
+    hashes = [backend.write_content(content) for content in contents]
 
     # Batch read all files (will use parallel reads since cache is disabled)
     result = backend.batch_read_content(hashes)
@@ -404,7 +404,7 @@ def test_batch_read_content_parallel_performance(tmp_path):
 
     # Write 20 files
     contents = [f"Content for performance test file {i}".encode() for i in range(20)]
-    hashes = [backend.write_content(content).unwrap() for content in contents]
+    hashes = [backend.write_content(content) for content in contents]
 
     # Time batch read (should be parallel)
     start = time.time()
@@ -427,7 +427,7 @@ def test_batch_read_content_single_file_no_threadpool(tmp_path):
     backend.content_cache = None
 
     content = b"Single file content"
-    content_hash = backend.write_content(content).unwrap()
+    content_hash = backend.write_content(content)
 
     # Batch read with single file
     result = backend.batch_read_content([content_hash])
@@ -459,7 +459,7 @@ def test_batch_read_respects_worker_limit(tmp_path):
 
     # Write 10 files
     contents = [f"Content {i}".encode() for i in range(10)]
-    hashes = [backend.write_content(c).unwrap() for c in contents]
+    hashes = [backend.write_content(c) for c in contents]
 
     # Batch read should work correctly even with limited workers
     result = backend.batch_read_content(hashes)
@@ -472,7 +472,7 @@ def test_batch_read_respects_worker_limit(tmp_path):
 def test_stream_content_small_file(temp_backend):
     """Test streaming a small file."""
     content = b"Small file content for streaming test"
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Stream content
     chunks = list(temp_backend.stream_content(content_hash, chunk_size=10))
@@ -489,7 +489,7 @@ def test_stream_content_large_file(temp_backend):
     """Test streaming a large file in chunks."""
     # Create 1MB test file
     content = b"X" * (1024 * 1024)
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     # Stream in 64KB chunks
     chunk_size = 64 * 1024
@@ -507,7 +507,7 @@ def test_stream_content_exact_chunk_boundary(temp_backend):
     """Test streaming when file size is exact multiple of chunk size."""
     chunk_size = 100
     content = b"A" * (chunk_size * 5)  # Exactly 5 chunks
-    content_hash = temp_backend.write_content(content).unwrap()
+    content_hash = temp_backend.write_content(content)
 
     chunks = list(temp_backend.stream_content(content_hash, chunk_size=chunk_size))
 
@@ -528,7 +528,7 @@ def test_stream_content_memory_efficient(temp_backend):
     """Test that streaming doesn't load entire file into memory."""
     # Create 10MB file
     large_content = b"X" * (10 * 1024 * 1024)
-    content_hash = temp_backend.write_content(large_content).unwrap()
+    content_hash = temp_backend.write_content(large_content)
 
     # Stream it - should not cause memory spike
     total_bytes = 0

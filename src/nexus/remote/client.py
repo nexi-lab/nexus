@@ -4145,9 +4145,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Raises:
             RemoteFilesystemError: If context retrieval fails
         """
-        result = self._call_rpc(
-            "get_agent_context", {"agent_id": agent_id, "api_key": api_key}
-        )
+        result = self._call_rpc("get_agent_context", {"agent_id": agent_id, "api_key": api_key})
         return result  # type: ignore[no-any-return]
 
     def delete_agent(self, agent_id: str) -> bool:

@@ -470,9 +470,7 @@ class AgentService:
 
         # Update capabilities in ReBAC if changed
         if capabilities is not None:
-            self._update_capabilities(
-                agent_id, user_id, tenant_id, old_capabilities, capabilities
-            )
+            self._update_capabilities(agent_id, user_id, tenant_id, old_capabilities, capabilities)
 
         return self.get(agent_id, user_id, tenant_id) or {}
 
@@ -572,10 +570,12 @@ class AgentService:
         # Full SkillService integration would load actual skill content
         skill_contexts = []
         for skill in capabilities.skills:
-            skill_contexts.append({
-                "name": skill.get("name", ""),
-                "relation": skill.get("relation", "viewer"),
-            })
+            skill_contexts.append(
+                {
+                    "name": skill.get("name", ""),
+                    "relation": skill.get("relation", "viewer"),
+                }
+            )
 
         return AgentContext(
             agent_id=agent_id,

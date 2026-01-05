@@ -46,9 +46,12 @@ class NexusFSSkillsMixin:
     def _get_skill_service(self) -> SkillService:
         """Get or create SkillService instance."""
         if self._skill_service is None:
+            from typing import Any, cast
+
             from nexus.services.gateway import NexusFSGateway
 
-            gateway = NexusFSGateway(self)
+            # At runtime, self is a NexusFS instance (which inherits this mixin)
+            gateway = NexusFSGateway(cast(Any, self))
             self._skill_service = SkillService(gateway=gateway)
         return self._skill_service
 
@@ -64,11 +67,7 @@ class NexusFSSkillsMixin:
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Grant read permission on a skill.
-            self._skill_service = SkillService(
-                nexus_fs=self,
-                rebac_manager=getattr(self, "_rebac", None),
-                cache=SkillCache(max_size=500, ttl_seconds=300),
-            )
+
         Args:
             skill_path: Path to the skill (e.g., /tenant:acme/user:alice/skill/code-review/)
             share_with: Target to share with:
@@ -272,11 +271,13 @@ class NexusFSSkillsMixin:
 
         # Resolve skill_path from skill_name if needed
         if not skill_path and skill_name:
+            if context is None:
+                raise ValidationError("context is required")
             # Search for skill by name in user's skills
             user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
             skill_path = f"{user_skill_dir}{skill_name}/"
             # Also check if it exists in subscribed skills
-            if not self.exists(skill_path, context=context):
+            if not service._gw.exists(skill_path, context=context):
                 # Try to find in all discoverable skills
                 skills = service.discover(context, filter="all")
                 for s in skills:
@@ -287,6 +288,8 @@ class NexusFSSkillsMixin:
         if not skill_path:
             raise ValidationError("Either skill_path or skill_name must be provided")
 
+        if context is None:
+            raise ValidationError("context is required")
         service._assert_can_read(skill_path, context)
 
         # Ensure path ends with /
@@ -298,7 +301,7 @@ class NexusFSSkillsMixin:
 
         def collect_files(dir_path: str, _prefix: str = "") -> None:
             try:
-                items = self.list(dir_path, context=context)
+                items = service._gw.list(dir_path, context=context)
                 for item in items:
                     item_str = str(item)
                     if item_str.startswith(dir_path):
@@ -312,7 +315,7 @@ class NexusFSSkillsMixin:
 
                     # Check if it's a file by trying to read it
                     try:
-                        content = self.read(full_path, context=context)
+                        content = service._gw.read(full_path, context=context)
                         if isinstance(content, str):
                             content = content.encode("utf-8")
                         files_to_export.append((rel_path, content))
@@ -349,7 +352,7 @@ class NexusFSSkillsMixin:
 
         if output_path:
             # Write to file using filesystem
-            self.write(output_path, zip_bytes, context=context)
+            service._gw.write(output_path, zip_bytes, context=context)
             return {
                 "success": True,
                 "path": output_path,
@@ -410,7 +413,7 @@ class NexusFSSkillsMixin:
 
         # Get ZIP data
         if source_path:
-            raw_zip_data = self.read(source_path, context=context)
+            raw_zip_data = service._gw.read(source_path, context=context)
             if isinstance(raw_zip_data, str):
                 raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:
@@ -431,6 +434,8 @@ class NexusFSSkillsMixin:
                 manifest = {}
 
             # Always import to user's skill directory
+            if context is None:
+                raise ValidationError("context is required")
             base_path = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
 
             # Detect ZIP structure: flat (SKILL.md at root) or nested (skill-name/SKILL.md)
@@ -464,7 +469,7 @@ class NexusFSSkillsMixin:
 
             # Check if skill exists and allow_overwrite
             skill_md_path = f"{target_path}SKILL.md"
-            if self.exists(skill_md_path, context=context) and not allow_overwrite:
+            if service._gw.exists(skill_md_path, context=context) and not allow_overwrite:
                 raise ValidationError(
                     f"Skill already exists at {target_path}. Set allow_overwrite=true to overwrite."
                 )
@@ -487,7 +492,7 @@ class NexusFSSkillsMixin:
 
                 if rel_path and not rel_path.endswith("/"):  # Skip empty paths and folder entries
                     file_path = f"{target_path}{rel_path}"
-                    self.write(file_path, content, context=context)
+                    service._gw.write(file_path, content, context=context)
                     files_imported.append(file_path)
 
         # Return format expected by frontend
@@ -530,7 +535,7 @@ class NexusFSSkillsMixin:
 
         # Get ZIP data
         if source_path:
-            raw_zip_data = self.read(source_path, context=context)
+            raw_zip_data = service._gw.read(source_path, context=context)
             if isinstance(raw_zip_data, str):
                 raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:

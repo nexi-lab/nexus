@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
 from nexus.skills.types import PromptContext, SkillContent, SkillInfo
@@ -103,7 +103,7 @@ class SkillService:
         self,
         skill_path: str,
         share_with: str,
-        context: OperationContext,
+        context: OperationContext | None,
     ) -> str:
         """Grant read permission on a skill to users, groups, or make public.
 
@@ -128,6 +128,7 @@ class SkillService:
             PermissionDeniedError: If caller doesn't own the skill
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
         self._assert_skill_owner(skill_path, context)
 
         # Parse share_with and build subject tuple
@@ -140,7 +141,7 @@ class SkillService:
         # for permission inheritance to work correctly.
         normalized_path = skill_path.rstrip("/")
         tuple_id = self._gw._fs.rebac_create(
-            subject=share_subject,
+            subject=cast(Any, share_subject),  # 3-tuple for userset-as-subject
             relation="direct_viewer",
             object=("file", normalized_path),
             context=context,
@@ -153,7 +154,7 @@ class SkillService:
         self,
         skill_path: str,
         unshare_from: str,
-        context: OperationContext,
+        context: OperationContext | None,
     ) -> bool:
         """Revoke read permission on a skill from a user, group, or public.
 
@@ -172,6 +173,7 @@ class SkillService:
             PermissionDeniedError: If caller doesn't own the skill
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
         self._assert_skill_owner(skill_path, context)
 
         # Parse target and find matching tuple
@@ -207,7 +209,7 @@ class SkillService:
 
     def discover(
         self,
-        context: OperationContext,
+        context: OperationContext | None,
         filter: str = "all",
     ) -> list[SkillInfo]:
         """Discover skills the user has permission to see.
@@ -229,6 +231,7 @@ class SkillService:
             List of SkillInfo objects
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
         logger.info(
             f"[discover] START filter={filter}, context.user_id={context.user_id}, context.tenant_id={context.tenant_id}"
         )
@@ -336,7 +339,9 @@ class SkillService:
         logger.info(f"[discover] Found {len(skill_paths)} skill paths: {skill_paths[:5]}")
 
         # Filter by permission and build results
-        subject = ("user", context.user_id)
+        # user_id is validated by _validate_context
+        assert context.user_id is not None
+        subject: tuple[str, str] = ("user", context.user_id)
         results = []
 
         for path in skill_paths:
@@ -388,7 +393,7 @@ class SkillService:
     def subscribe(
         self,
         skill_path: str,
-        context: OperationContext,
+        context: OperationContext | None,
     ) -> bool:
         """Subscribe to a skill, adding it to the user's library.
 
@@ -405,6 +410,7 @@ class SkillService:
             PermissionDeniedError: If user doesn't have read permission
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
         self._assert_can_read(skill_path, context)
 
         subscriptions = self._load_subscriptions(context)
@@ -420,7 +426,7 @@ class SkillService:
     def unsubscribe(
         self,
         skill_path: str,
-        context: OperationContext,
+        context: OperationContext | None,
     ) -> bool:
         """Unsubscribe from a skill, removing it from the user's library.
 
@@ -432,6 +438,7 @@ class SkillService:
             True if unsubscribed, False if was not subscribed
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
 
         subscriptions = self._load_subscriptions(context)
 
@@ -449,7 +456,7 @@ class SkillService:
 
     def get_prompt_context(
         self,
-        context: OperationContext,
+        context: OperationContext | None,
         max_skills: int = 50,
     ) -> PromptContext:
         """Get skill metadata formatted for system prompt injection.
@@ -466,6 +473,7 @@ class SkillService:
             PromptContext with XML-formatted skill list and metadata
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
 
         subscribed_skills = self._load_subscriptions(context)
 
@@ -506,7 +514,7 @@ class SkillService:
     def load(
         self,
         skill_path: str,
-        context: OperationContext,
+        context: OperationContext | None,
     ) -> SkillContent:
         """Load full skill content on-demand.
 
@@ -525,6 +533,7 @@ class SkillService:
             ValidationError: If skill cannot be loaded
         """
         self._validate_context(context)
+        assert context is not None  # Validated by _validate_context
         self._assert_can_read(skill_path, context)
 
         skill_md_path = f"{skill_path}SKILL.md"
@@ -591,6 +600,8 @@ class SkillService:
         rebac = self._get_rebac()
         # Check ownership on SKILL.md file (where ownership tuples exist)
         skill_md_path = f"{skill_path.rstrip('/')}/SKILL.md"
+        # user_id is validated by caller via _validate_context
+        assert context.user_id is not None
         has_ownership = rebac.rebac_check(
             subject=("user", context.user_id),
             permission="execute",
@@ -629,6 +640,8 @@ class SkillService:
         skill_md_path = f"{skill_path.rstrip('/')}/SKILL.md"
 
         # Check direct user permission on SKILL.md
+        # user_id is validated by caller via _validate_context
+        assert context.user_id is not None
         has_direct_read = rebac.rebac_check(
             subject=("user", context.user_id),
             permission="read",
@@ -673,6 +686,8 @@ class SkillService:
         if share_with == "public":
             return ("role", "public")
         elif share_with == "tenant":
+            # tenant_id is validated by caller via _validate_context
+            assert context.tenant_id is not None
             return ("tenant", context.tenant_id, "member")
         elif share_with.startswith("group:"):
             group_name = share_with[6:]
@@ -716,7 +731,8 @@ class SkillService:
             if content:
                 data = yaml.safe_load(content)
                 if data:
-                    return data.get("subscribed_skills", [])
+                    result: list[str] = data.get("subscribed_skills", [])
+                    return result
         except Exception:
             pass  # File doesn't exist or invalid
 
@@ -921,6 +937,8 @@ class SkillService:
 
         try:
             # Query rebac_list_tuples for direct_viewer tuples where user is the subject
+            # user_id is validated by caller
+            assert context.user_id is not None
             tuples = self._gw._fs.rebac_list_tuples(
                 subject=("user", context.user_id),
                 relation="direct_viewer",

@@ -117,11 +117,36 @@ user_id: alice
 description: Analyzes data for insights
 created_at: 2024-01-05T10:30:00Z
 
-# === Runtime Configuration ===
-metadata:
+# === Runtime Platform Configuration ===
+runtime:
+  # Platform type: langgraph | openai-assistants | anthropic | bedrock | custom
   platform: langgraph
+
+  # Platform-specific endpoint
   endpoint_url: http://localhost:2024
-  agent_id: agent
+
+  # Agent/Assistant ID on the platform
+  # - LangGraph: graph name or assistant ID
+  # - OpenAI: assistant_id (asst_xxx)
+  # - Anthropic: model name
+  assistant_id: agent
+
+  # Authentication for the platform (optional - can use environment variables)
+  auth:
+    type: api_key              # api_key | oauth | none
+    env_var: LANGGRAPH_API_KEY # Environment variable containing the key
+    # Or inline (not recommended for production):
+    # api_key: sk-...
+
+  # Platform-specific options
+  options:
+    # LangGraph options
+    thread_id_prefix: "nexus-"
+    checkpoint: true
+
+    # OpenAI options (if platform: openai-assistants)
+    # model: gpt-4-turbo
+    # temperature: 0.7
 
 # === Role Prompt (System Prompt) ===
 role_prompt: |
@@ -154,8 +179,68 @@ capabilities:
     - path: /workspace/analysis
       relation: editor
 
-# === Optional: API Key ===
+# === Nexus API Key (for agent to call back to Nexus) ===
 api_key: sk-...  # Only if generate_api_key=True
+```
+
+### Supported Platforms
+
+| Platform | `platform` value | `assistant_id` | Notes |
+|----------|------------------|----------------|-------|
+| LangGraph | `langgraph` | Graph name | Self-hosted or LangGraph Cloud |
+| OpenAI Assistants | `openai-assistants` | `asst_xxx` | OpenAI Assistants API |
+| Anthropic | `anthropic` | Model name | Direct Claude API |
+| Amazon Bedrock | `bedrock` | Model ARN | AWS Bedrock agents |
+| Custom | `custom` | Any | Custom HTTP endpoint |
+
+### Platform Configuration Examples
+
+**LangGraph (self-hosted):**
+```yaml
+runtime:
+  platform: langgraph
+  endpoint_url: http://localhost:2024
+  assistant_id: data-analyst
+  auth:
+    type: none  # Local deployment
+```
+
+**LangGraph Cloud:**
+```yaml
+runtime:
+  platform: langgraph
+  endpoint_url: https://api.langgraph.cloud
+  assistant_id: my-assistant-id
+  auth:
+    type: api_key
+    env_var: LANGGRAPH_API_KEY
+```
+
+**OpenAI Assistants:**
+```yaml
+runtime:
+  platform: openai-assistants
+  endpoint_url: https://api.openai.com/v1
+  assistant_id: asst_abc123
+  auth:
+    type: api_key
+    env_var: OPENAI_API_KEY
+  options:
+    model: gpt-4-turbo
+```
+
+**Custom HTTP Agent:**
+```yaml
+runtime:
+  platform: custom
+  endpoint_url: https://my-agent.example.com/api
+  assistant_id: my-agent
+  auth:
+    type: api_key
+    env_var: MY_AGENT_API_KEY
+  options:
+    timeout: 30
+    retry_count: 3
 ```
 
 ### Capability Sync to ReBAC
@@ -237,11 +322,23 @@ def get_context(
     """Load agent's full runtime context.
 
     Returns everything an agent needs to start:
+    - Runtime platform configuration
     - Role prompt for system message
     - Skill prompts for tool descriptions
     - List of accessible resources
     """
     config = self._read_config(agent_id, user_id, tenant_id)
+
+    # Parse runtime configuration
+    runtime_config = config.get("runtime", {})
+    runtime = AgentRuntime(
+        platform=runtime_config.get("platform", "langgraph"),
+        endpoint_url=runtime_config.get("endpoint_url", "http://localhost:2024"),
+        assistant_id=runtime_config.get("assistant_id", "agent"),
+        auth_type=runtime_config.get("auth", {}).get("type", "none"),
+        auth_env_var=runtime_config.get("auth", {}).get("env_var"),
+        options=runtime_config.get("options", {}),
+    )
 
     # Load skill prompt contexts
     skill_contexts = []
@@ -257,9 +354,9 @@ def get_context(
         agent_id=agent_id,
         name=config.get("name"),
         role_prompt=config.get("role_prompt"),
+        runtime=runtime,
         skills=skill_contexts,
         resources=config.get("capabilities", {}).get("resources", []),
-        metadata=config.get("metadata", {}),
     )
 ```
 
@@ -267,14 +364,25 @@ def get_context(
 
 ```python
 @dataclass
+class AgentRuntime:
+    """Agent runtime/platform configuration."""
+    platform: str                      # langgraph, openai-assistants, anthropic, etc.
+    endpoint_url: str                  # Platform API endpoint
+    assistant_id: str                  # ID on the platform
+    auth_type: str                     # api_key, oauth, none
+    auth_env_var: str | None           # Environment variable for auth
+    options: dict                      # Platform-specific options
+
+
+@dataclass
 class AgentContext:
     """Runtime context for an agent."""
     agent_id: str
     name: str
     role_prompt: str | None
-    skills: list[SkillPromptContext]  # From skill_service.get_prompt_context()
+    runtime: AgentRuntime              # Platform configuration
+    skills: list[SkillPromptContext]   # From skill_service.get_prompt_context()
     resources: list[dict]              # Declared resource access
-    metadata: dict                     # Platform config (endpoint_url, etc.)
 
     def build_system_prompt(self) -> str:
         """Build complete system prompt with role and skill descriptions."""
@@ -289,6 +397,16 @@ class AgentContext:
                 parts.append(f"### {skill.name}\n{skill.description}\n")
 
         return "\n".join(parts)
+
+    def get_platform_client(self) -> Any:
+        """Get configured client for the agent's platform."""
+        if self.runtime.platform == "langgraph":
+            from langgraph_sdk import get_client
+            return get_client(url=self.runtime.endpoint_url)
+        elif self.runtime.platform == "openai-assistants":
+            from openai import OpenAI
+            return OpenAI()
+        # ... other platforms
 ```
 
 ### RPC API Addition

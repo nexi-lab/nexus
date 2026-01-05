@@ -9,7 +9,11 @@
 
 ## Summary
 
-Extract agent management from the monolithic `NexusFS` class into a dedicated `AgentService` following the Gateway pattern established in the Mount and Skill service refactoring. This eliminates dual data storage by using `config.yaml` as the single source of truth for agent metadata while retaining `EntityRegistry` solely for agent→user relationship tracking (required for permission inheritance).
+Extract agent management from the monolithic `NexusFS` class into a dedicated `AgentService` following the Gateway pattern established in the Mount and Skill service refactoring. This RFC covers:
+
+1. **Service Extraction**: Move ~750 lines from `nexus_fs.py` into a dedicated `AgentService`
+2. **Single Source of Truth**: Use `config.yaml` for all agent metadata; `EntityRegistry` only stores agent→user relationship for permission inheritance
+3. **Agent Capabilities**: Define how agents declare and access role prompts, skills, and resources through a declarative config.yaml that syncs to ReBAC
 
 ---
 
@@ -81,6 +85,236 @@ metadata:
   endpoint_url: http://localhost:2024
   agent_id: agent
 api_key: sk-...  # optional
+```
+
+---
+
+## Agent Capabilities Design
+
+Agents need three types of capabilities:
+
+| Capability | Purpose | Storage |
+|------------|---------|---------|
+| **Role Prompt** | System prompt / persona | config.yaml |
+| **Skill Access** | Which skills agent can use | config.yaml (declares) → ReBAC (enforces) |
+| **Resource Access** | Which resources agent can read/write | config.yaml (declares) → ReBAC (enforces) |
+
+### Design Principle
+
+**config.yaml declares intent, ReBAC enforces access.**
+
+- config.yaml is the declarative source: "this agent should have these capabilities"
+- On registration/update, capabilities are synced to ReBAC tuples
+- At runtime, ReBAC enforces all permission checks
+
+### config.yaml Schema (Proposed)
+
+```yaml
+# === Identity ===
+agent_id: alice,DataAnalyst
+name: Data Analyst
+user_id: alice
+description: Analyzes data for insights
+created_at: 2024-01-05T10:30:00Z
+
+# === Runtime Configuration ===
+metadata:
+  platform: langgraph
+  endpoint_url: http://localhost:2024
+  agent_id: agent
+
+# === Role Prompt (System Prompt) ===
+role_prompt: |
+  You are a data analyst specializing in business intelligence.
+  You help users understand their data through visualization and analysis.
+
+  Guidelines:
+  - Always explain your methodology
+  - Cite data sources when making claims
+  - Suggest follow-up analyses when appropriate
+
+# === Declared Capabilities ===
+# These are synced to ReBAC on register/update
+capabilities:
+  # Skills this agent can use (relative to user's skill folder)
+  skills:
+    - name: data-viz
+      relation: viewer        # Can use the skill
+    - name: query-builder
+      relation: viewer
+    - name: report-generator
+      relation: editor        # Can also modify this skill
+
+  # Resources this agent can access (relative to user base path)
+  resources:
+    - path: /resource/datasets
+      relation: viewer        # Read-only
+    - path: /resource/reports
+      relation: editor        # Read-write
+    - path: /workspace/analysis
+      relation: editor
+
+# === Optional: API Key ===
+api_key: sk-...  # Only if generate_api_key=True
+```
+
+### Capability Sync to ReBAC
+
+On `register_agent()` or `update_agent()`, the service syncs capabilities to ReBAC:
+
+```python
+def _sync_capabilities(
+    self,
+    agent_id: str,
+    user_id: str,
+    tenant_id: str,
+    capabilities: dict,
+) -> None:
+    """Sync declared capabilities to ReBAC tuples."""
+    user_base = f"/tenant:{tenant_id}/user:{user_id}"
+
+    # Sync skill access
+    for skill in capabilities.get("skills", []):
+        skill_path = f"{user_base}/skill/{skill['name']}"
+        self._gw.rebac_create(
+            subject=("agent", agent_id),
+            relation=skill.get("relation", "viewer"),
+            object=("file", skill_path),
+            tenant_id=tenant_id,
+        )
+
+    # Sync resource access
+    for resource in capabilities.get("resources", []):
+        resource_path = f"{user_base}{resource['path']}"
+        self._gw.rebac_create(
+            subject=("agent", agent_id),
+            relation=resource.get("relation", "viewer"),
+            object=("file", resource_path),
+            tenant_id=tenant_id,
+        )
+```
+
+### Capability Revocation on Update
+
+When capabilities are removed from config.yaml, we need to revoke ReBAC tuples:
+
+```python
+def _update_capabilities(
+    self,
+    agent_id: str,
+    old_capabilities: dict,
+    new_capabilities: dict,
+    ...
+) -> None:
+    """Update capabilities: add new, remove old."""
+    old_skills = {s["name"] for s in old_capabilities.get("skills", [])}
+    new_skills = {s["name"] for s in new_capabilities.get("skills", [])}
+
+    # Revoke removed skills
+    for skill_name in old_skills - new_skills:
+        self._gw.rebac_delete(
+            subject=("agent", agent_id),
+            object=("file", f"{user_base}/skill/{skill_name}"),
+            tenant_id=tenant_id,
+        )
+
+    # Grant new skills
+    for skill_name in new_skills - old_skills:
+        # ... create tuple
+```
+
+### Manifesting Capabilities at Runtime
+
+New method to load everything an agent needs:
+
+```python
+def get_context(
+    self,
+    agent_id: str,
+    user_id: str,
+    tenant_id: str,
+) -> AgentContext:
+    """Load agent's full runtime context.
+
+    Returns everything an agent needs to start:
+    - Role prompt for system message
+    - Skill prompts for tool descriptions
+    - List of accessible resources
+    """
+    config = self._read_config(agent_id, user_id, tenant_id)
+
+    # Load skill prompt contexts
+    skill_contexts = []
+    for skill in config.get("capabilities", {}).get("skills", []):
+        skill_path = f"/tenant:{tenant_id}/user:{user_id}/skill/{skill['name']}"
+        try:
+            ctx = self._skill_service.get_prompt_context(skill_path)
+            skill_contexts.append(ctx)
+        except PermissionError:
+            pass  # Skip inaccessible skills
+
+    return AgentContext(
+        agent_id=agent_id,
+        name=config.get("name"),
+        role_prompt=config.get("role_prompt"),
+        skills=skill_contexts,
+        resources=config.get("capabilities", {}).get("resources", []),
+        metadata=config.get("metadata", {}),
+    )
+```
+
+### AgentContext Dataclass
+
+```python
+@dataclass
+class AgentContext:
+    """Runtime context for an agent."""
+    agent_id: str
+    name: str
+    role_prompt: str | None
+    skills: list[SkillPromptContext]  # From skill_service.get_prompt_context()
+    resources: list[dict]              # Declared resource access
+    metadata: dict                     # Platform config (endpoint_url, etc.)
+
+    def build_system_prompt(self) -> str:
+        """Build complete system prompt with role and skill descriptions."""
+        parts = []
+
+        if self.role_prompt:
+            parts.append(self.role_prompt)
+
+        if self.skills:
+            parts.append("\n## Available Skills\n")
+            for skill in self.skills:
+                parts.append(f"### {skill.name}\n{skill.description}\n")
+
+        return "\n".join(parts)
+```
+
+### RPC API Addition
+
+New endpoint to get agent runtime context:
+
+```python
+@rpc_expose(description="Get agent runtime context")
+def get_agent_context(
+    self,
+    agent_id: str,
+    context: dict | None = None,
+) -> dict:
+    """Get agent's full runtime context (v0.6.0).
+
+    Returns:
+        AgentContext as dict with role_prompt, skills, resources
+    """
+    user_id = self._extract_user_id(context)
+    tenant_id = self._extract_tenant_id(context) or "default"
+
+    return asdict(self._agent_service.get_context(
+        agent_id=agent_id,
+        user_id=user_id,
+        tenant_id=tenant_id,
+    ))
 ```
 
 ---
@@ -210,6 +444,36 @@ class AgentService:
         tenant_id: str,
     ) -> str:
         """Generate API key for agent."""
+        ...
+
+    # ===== Capabilities Methods =====
+
+    def get_context(
+        self,
+        agent_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> AgentContext:
+        """Load agent's full runtime context."""
+        ...
+
+    def _sync_capabilities(
+        self,
+        agent_id: str,
+        user_id: str,
+        tenant_id: str,
+        capabilities: dict,
+    ) -> None:
+        """Sync declared capabilities to ReBAC tuples."""
+        ...
+
+    def _revoke_capabilities(
+        self,
+        agent_id: str,
+        user_id: str,
+        tenant_id: str,
+    ) -> None:
+        """Revoke all capability ReBAC tuples for agent."""
         ...
 ```
 
@@ -342,17 +606,38 @@ This works because we keep EntityRegistry for the relationship, just remove the 
 
 ## API Compatibility
 
-### RPC API (No Changes)
+### RPC API
 
-All existing RPC methods remain unchanged:
+Existing methods remain unchanged, with one new addition:
 
 ```python
-# These method signatures stay the same
+# Existing methods (unchanged signatures)
 register_agent(agent_id, name, description, generate_api_key, metadata, context)
 update_agent(agent_id, name, description, metadata, context)
 list_agents(context)
 get_agent(agent_id, context)
 delete_agent(agent_id, context)
+
+# New method (v0.6.0)
+get_agent_context(agent_id, context)  # Returns AgentContext with role_prompt, skills, resources
+```
+
+### register_agent Enhancement
+
+`register_agent` gains new optional parameters:
+
+```python
+register_agent(
+    agent_id: str,
+    name: str,
+    description: str | None = None,
+    generate_api_key: bool = False,
+    metadata: dict | None = None,
+    # New in v0.6.0:
+    role_prompt: str | None = None,
+    capabilities: dict | None = None,  # {"skills": [...], "resources": [...]}
+    context: dict | None = None,
+) -> dict
 ```
 
 ### Internal API Changes
@@ -380,6 +665,8 @@ nx.register_agent(...)
 ### Key Test Cases
 
 ```python
+# === Core CRUD Tests ===
+
 def test_register_agent_creates_config_yaml():
     """config.yaml should be created with all metadata."""
 
@@ -394,6 +681,36 @@ def test_list_agents_uses_glob():
 
 def test_permission_inheritance_still_works():
     """Agent should inherit permissions from owner user."""
+
+# === Capability Tests ===
+
+def test_register_with_capabilities_creates_rebac_tuples():
+    """Declared capabilities should create ReBAC tuples."""
+    agent = register_agent(
+        agent_id="alice,Analyst",
+        capabilities={
+            "skills": [{"name": "data-viz", "relation": "viewer"}],
+            "resources": [{"path": "/resource/data", "relation": "viewer"}],
+        }
+    )
+    # Verify ReBAC tuples exist
+    assert rebac_check(("agent", "alice,Analyst"), "viewer", skill_path)
+    assert rebac_check(("agent", "alice,Analyst"), "viewer", resource_path)
+
+def test_update_capabilities_revokes_removed_skills():
+    """Removing a skill from capabilities should revoke ReBAC tuple."""
+
+def test_get_context_returns_role_prompt_and_skills():
+    """get_context() should return full runtime context."""
+    ctx = get_agent_context("alice,Analyst")
+    assert ctx["role_prompt"] == "You are a data analyst..."
+    assert len(ctx["skills"]) == 2
+
+def test_get_context_loads_skill_prompts():
+    """get_context() should load SkillPromptContext for each skill."""
+
+def test_delete_agent_revokes_all_capabilities():
+    """Deleting agent should revoke all capability ReBAC tuples."""
 ```
 
 ---

@@ -63,6 +63,11 @@ def test_all_rpc_methods_have_remote_implementations():
     If this test fails, it means a method was added with @rpc_expose but
     the corresponding client method was not added to RemoteNexusFS.
     """
+    # Methods that are exposed via @rpc_expose but intentionally don't have
+    # remote client implementations yet.
+    # Note: Most skills methods were added in PR #1012
+    PENDING_REMOTE_IMPLEMENTATION: set[str] = set()  # All skills methods now have implementations!
+
     # Get all exposed RPC methods from core
     exposed_methods = get_rpc_exposed_methods(NexusFS)
 
@@ -72,6 +77,9 @@ def test_all_rpc_methods_have_remote_implementations():
     # Check which exposed methods are missing from remote
     missing_in_remote = []
     for rpc_name, method in exposed_methods.items():
+        # Skip methods that are pending remote implementation
+        if rpc_name in PENDING_REMOTE_IMPLEMENTATION:
+            continue
         if rpc_name not in remote_methods:
             # Get the actual method name in case RPC name differs
             actual_name = method.__name__

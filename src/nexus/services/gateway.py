@@ -24,6 +24,7 @@ Example:
 
 from __future__ import annotations
 
+import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -107,6 +108,72 @@ class NexusFSGateway:
         else:
             logger.warning(f"[Gateway] write not available, skipping: {path}")
 
+    def read(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> bytes | str:
+        """Read content from file.
+
+        Args:
+            path: Virtual path for file
+            context: Operation context for permissions
+
+        Returns:
+            File content as bytes or str
+        """
+        if hasattr(self._fs, "read"):
+            result = self._fs.read(path, context=context)
+            # Normalize to bytes or str
+            if isinstance(result, (bytes, str)):
+                return result
+            # Handle dict results (parsed content) by returning empty bytes
+            return b""
+        raise RuntimeError(f"[Gateway] read not available for: {path}")
+
+    def list(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> builtins.list[str]:
+        """List directory contents.
+
+        Args:
+            path: Virtual path for directory
+            context: Operation context for permissions
+
+        Returns:
+            List of paths in directory
+        """
+        if hasattr(self._fs, "list"):
+            result = self._fs.list(path, context=context)
+            # Handle PaginatedResult vs raw list
+            items = result.items if hasattr(result, "items") else result
+            # Convert to list of strings
+            return [str(item) for item in items]
+        return []
+
+    def exists(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> bool:
+        """Check if path exists.
+
+        Args:
+            path: Virtual path to check
+            context: Operation context for permissions
+
+        Returns:
+            True if path exists, False otherwise
+        """
+        if hasattr(self._fs, "exists"):
+            return self._fs.exists(path, context=context)
+        return False
+
     # =========================================================================
     # Metadata Operations
     # =========================================================================
@@ -133,7 +200,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "put"):
             self._fs.metadata.put(meta)
 
-    def metadata_list(self, prefix: str, recursive: bool = False) -> list[FileMetadata]:
+    def metadata_list(self, prefix: str, recursive: bool = False) -> builtins.list[FileMetadata]:
         """List metadata entries under prefix.
 
         Args:
@@ -156,7 +223,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "delete"):
             self._fs.metadata.delete(path)
 
-    def metadata_delete_batch(self, paths: list[str]) -> None:
+    def metadata_delete_batch(self, paths: builtins.list[str]) -> None:
         """Delete metadata for multiple paths in a single transaction.
 
         Args:
@@ -281,7 +348,7 @@ class NexusFSGateway:
 
     def ensure_parent_tuples_batch(
         self,
-        paths: list[str],
+        paths: builtins.list[str],
         tenant_id: str | None = None,
     ) -> int:
         """Create parent tuples for paths in batch.
@@ -374,7 +441,7 @@ class NexusFSGateway:
     # Mount Listing (for sync_all_mounts)
     # =========================================================================
 
-    def list_mounts(self) -> list[dict[str, Any]]:
+    def list_mounts(self) -> builtins.list[dict[str, Any]]:
         """List all active mounts.
 
         Returns:

@@ -566,12 +566,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             logger = logging.getLogger(__name__)
 
+            # Public role checks are tenant-agnostic, so skip warning
+            is_public_check = subject[0] == "role" and subject[1] == "public"
+
             # Check if we're in production mode (via env var or config)
             is_production = (
                 os.getenv("NEXUS_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
             )
 
-            if is_production:
+            if is_production and not is_public_check:
                 # SECURITY: In production, missing tenant_id is a critical error
                 logger.error("rebac_check called without tenant_id in production - REJECTING")
                 raise ValueError(
@@ -579,7 +582,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     "Missing tenant_id can lead to cross-tenant data leaks. "
                     "Set NEXUS_ENV=development to allow defaulting for local testing."
                 )
-            else:
+            elif not is_public_check:
                 # Development/test: Allow defaulting but log stack trace for debugging
                 import traceback
 
@@ -587,7 +590,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     f"rebac_check called without tenant_id, defaulting to 'default'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
                 )
-                tenant_id = "default"
+            tenant_id = "default"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])

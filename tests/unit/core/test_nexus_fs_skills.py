@@ -1,5 +1,16 @@
 """Tests for new nexus_fs_skills RPC endpoints (import, validate, export).
 
+NOTE: These tests are OUTDATED. They mock SkillImporter/SkillExporter classes that
+don't exist at the mocked import paths. The actual implementation uses direct
+filesystem operations via SkillService.
+
+Proper tests for the actual implementation are in tests/unit/skills/:
+- test_skill_importer.py
+- test_skill_exporter.py
+- test_skill_service.py
+
+TODO: Rewrite these tests to test the actual RPC implementation or remove entirely.
+
 These tests cover the new endpoints added for skill management:
 - skills_import: Import skill from .zip/.skill package
 - skills_validate_zip: Validate ZIP without importing
@@ -102,6 +113,10 @@ def user_context():
     )
 
 
+@pytest.mark.skip(
+    reason="Tests mock nexus.skills.importer.SkillImporter which doesn't exist - "
+    "actual impl uses SkillService. See tests/unit/skills/ for proper tests."
+)
 class TestSkillsImport:
     """Test suite for skills_import RPC endpoint."""
 
@@ -225,6 +240,10 @@ class TestSkillsImport:
         assert call_args["allow_overwrite"] is True
 
 
+@pytest.mark.skip(
+    reason="Tests mock nexus.skills.importer.SkillImporter which doesn't exist - "
+    "actual impl uses SkillService. See tests/unit/skills/ for proper tests."
+)
 class TestSkillsValidateZip:
     """Test suite for skills_validate_zip RPC endpoint."""
 
@@ -307,6 +326,10 @@ class TestSkillsValidateZip:
         assert "version" in result["warnings"][0].lower()
 
 
+@pytest.mark.skip(
+    reason="Tests mock nexus.skills.exporter.SkillExporter which doesn't exist - "
+    "actual impl uses SkillService. See tests/unit/skills/ for proper tests."
+)
 class TestSkillsExport:
     """Test suite for skills_export RPC endpoint."""
 

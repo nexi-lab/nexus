@@ -1557,6 +1557,12 @@ class NexusFS(  # type: ignore[misc]
         with contextlib.suppress(Exception):
             self.metadata.delete(path)
 
+        # Clean up sparse directory index entries (Issue: rmdir not cleaning directory index)
+        # This removes entries from DirectoryEntryModel used by non-recursive list()
+        if hasattr(self.metadata, "delete_directory_entries_recursive"):
+            with contextlib.suppress(Exception):
+                self.metadata.delete_directory_entries_recursive(path)
+
     def _has_descendant_access(
         self,
         path: str,

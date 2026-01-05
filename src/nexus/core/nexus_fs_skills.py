@@ -241,15 +241,21 @@ class NexusFSSkillsMixin:
     @rpc_expose(description="Export a skill as a .skill (ZIP) package")
     def skills_export(
         self,
-        skill_path: str,
+        skill_path: str | None = None,
+        skill_name: str | None = None,
         output_path: str | None = None,
+        format: str = "generic",
+        _include_dependencies: bool = False,  # TODO: Implement dependency inclusion
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Export a skill to .skill (ZIP) format.
 
         Args:
-            skill_path: Path to the skill to export
+            skill_path: Full path to the skill to export
+            skill_name: Name of the skill (will search in user's skills)
             output_path: Optional path to write .skill file. If None, returns bytes.
+            format: Export format ('generic' or 'claude')
+            include_dependencies: Whether to include dependent skills
             context: Operation context with user_id and tenant_id
 
         Returns:
@@ -263,6 +269,24 @@ class NexusFSSkillsMixin:
 
         service = self._get_skill_service()
         service._validate_context(context)
+
+        # Resolve skill_path from skill_name if needed
+        if not skill_path and skill_name:
+            # Search for skill by name in user's skills
+            user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            skill_path = f"{user_skill_dir}{skill_name}/"
+            # Also check if it exists in subscribed skills
+            if not self.exists(skill_path, context=context):
+                # Try to find in all discoverable skills
+                skills = service.discover(context, filter="all")
+                for s in skills:
+                    if s.name == skill_name:
+                        skill_path = s.path
+                        break
+
+        if not skill_path:
+            raise ValidationError("Either skill_path or skill_name must be provided")
+
         service._assert_can_read(skill_path, context)
 
         # Ensure path ends with /
@@ -272,7 +296,7 @@ class NexusFSSkillsMixin:
         # Collect files from skill directory
         files_to_export: list[tuple[str, bytes]] = []
 
-        def collect_files(dir_path: str, prefix: str = "") -> None:
+        def collect_files(dir_path: str, _prefix: str = "") -> None:
             try:
                 items = self.list(dir_path, context=context)
                 for item in items:
@@ -320,16 +344,28 @@ class NexusFSSkillsMixin:
 
         zip_bytes = zip_buffer.getvalue()
 
+        # Extract skill name from path
+        skill_name_from_path = skill_path.rstrip("/").split("/")[-1]
+
         if output_path:
             # Write to file using filesystem
             self.write(output_path, zip_bytes, context=context)
-            return {"success": True, "path": output_path, "size": len(zip_bytes)}
-        else:
-            # Return base64 encoded bytes
             return {
                 "success": True,
-                "bytes": base64.b64encode(zip_bytes).decode("ascii"),
-                "size": len(zip_bytes),
+                "path": output_path,
+                "size_bytes": len(zip_bytes),
+                "skill_name": skill_name_from_path,
+                "format": format,
+            }
+        else:
+            # Return base64 encoded bytes (frontend expects zip_data)
+            return {
+                "success": True,
+                "zip_data": base64.b64encode(zip_bytes).decode("ascii"),
+                "size_bytes": len(zip_bytes),
+                "skill_name": skill_name_from_path,
+                "format": format,
+                "filename": f"{skill_name_from_path}.skill",
             }
 
     @rpc_expose(description="Import a skill from a .skill (ZIP) package")
@@ -337,19 +373,27 @@ class NexusFSSkillsMixin:
         self,
         source_path: str | None = None,
         zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,  # Alias for zip_bytes (frontend uses this name)
         target_path: str | None = None,
+        allow_overwrite: bool = False,
         context: OperationContext | None = None,
+        _tier: str | None = None,  # Legacy parameter (ignored)
     ) -> dict[str, Any]:
         """Import a skill from .skill (ZIP) format.
 
+        Skills are always imported to the user's skill directory:
+        /tenant:{tenant_id}/user:{user_id}/skill/{skill_name}/
+
         Args:
-            source_path: Path to .skill file to import (either this or zip_bytes)
+            source_path: Path to .skill file to import (either this or zip_bytes/zip_data)
             zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
-            target_path: Target path for the skill. If None, uses manifest path.
+            zip_data: Alias for zip_bytes (base64 encoded string)
+            target_path: Target path for the skill. If None, uses user's skill directory.
+            allow_overwrite: Whether to overwrite existing skill
             context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with success, skill_path, files_imported
+            Dict with imported_skills, skill_paths
         """
         import base64
         import io
@@ -360,21 +404,22 @@ class NexusFSSkillsMixin:
         service = self._get_skill_service()
         service._validate_context(context)
 
+        # Use zip_data as alias for zip_bytes
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
         # Get ZIP data
         if source_path:
-            zip_data = self.read(source_path, context=context)
-            if isinstance(zip_data, str):
-                zip_data = zip_data.encode("utf-8")
+            raw_zip_data = self.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:
-            if isinstance(zip_bytes, str):
-                zip_data = base64.b64decode(zip_bytes)
-            else:
-                zip_data = zip_bytes
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
         else:
-            raise ValidationError("Either source_path or zip_bytes required")
+            raise ValidationError("Either source_path or zip_data required")
 
         # Extract ZIP
-        zip_buffer = io.BytesIO(zip_data)
+        zip_buffer = io.BytesIO(raw_zip_data)
         files_imported: list[str] = []
 
         with zipfile.ZipFile(zip_buffer, mode="r") as zf:
@@ -385,30 +430,70 @@ class NexusFSSkillsMixin:
             except Exception:
                 manifest = {}
 
-            # Determine target path
+            # Always import to user's skill directory
+            base_path = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+
+            # Detect ZIP structure: flat (SKILL.md at root) or nested (skill-name/SKILL.md)
+            file_list = zf.namelist()
+            nested_skill_folder = None
+            for name in file_list:
+                if name.endswith("SKILL.md") and "/" in name:
+                    # e.g., "my-skill/SKILL.md" -> "my-skill"
+                    nested_skill_folder = name.split("/")[0]
+                    break
+
+            # Determine skill name from manifest, ZIP structure, or error
+            skill_name = None
             if not target_path:
-                target_path = manifest.get(
-                    "skill_path",
-                    f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/imported/",
-                )
+                manifest_skill_path = manifest.get("skill_path", "")
+                if manifest_skill_path:
+                    # Extract skill name from manifest path
+                    skill_name = manifest_skill_path.rstrip("/").split("/")[-1]
+                elif nested_skill_folder:
+                    # Use folder name from ZIP structure
+                    skill_name = nested_skill_folder
+                else:
+                    raise ValidationError(
+                        "Cannot determine skill name. ZIP must contain SKILL.md in a named folder or have a manifest with skill_path."
+                    )
+
+                target_path = f"{base_path}{skill_name}/"
 
             if not target_path.endswith("/"):
                 target_path += "/"
 
-            # Extract files
-            for name in zf.namelist():
+            # Check if skill exists and allow_overwrite
+            skill_md_path = f"{target_path}SKILL.md"
+            if self.exists(skill_md_path, context=context) and not allow_overwrite:
+                raise ValidationError(
+                    f"Skill already exists at {target_path}. Set allow_overwrite=true to overwrite."
+                )
+
+            # Extract skill name for response
+            skill_name = target_path.rstrip("/").split("/")[-1]
+
+            # Extract files, stripping the nested folder if present
+            for name in file_list:
                 if name == "manifest.json":
                     continue
 
                 content = zf.read(name)
-                file_path = f"{target_path}{name}"
-                self.write(file_path, content, context=context)
-                files_imported.append(file_path)
 
+                if nested_skill_folder and name.startswith(nested_skill_folder + "/"):
+                    # Strip the nested folder since target_path already includes skill name
+                    rel_path = name[len(nested_skill_folder) + 1 :]
+                else:
+                    rel_path = name
+
+                if rel_path and not rel_path.endswith("/"):  # Skip empty paths and folder entries
+                    file_path = f"{target_path}{rel_path}"
+                    self.write(file_path, content, context=context)
+                    files_imported.append(file_path)
+
+        # Return format expected by frontend
         return {
-            "success": True,
-            "skill_path": target_path,
-            "files_imported": files_imported,
+            "imported_skills": [skill_name],
+            "skill_paths": [target_path],
         }
 
     @rpc_expose(description="Validate a .skill (ZIP) package")
@@ -416,6 +501,7 @@ class NexusFSSkillsMixin:
         self,
         source_path: str | None = None,
         zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,  # Alias for zip_bytes (frontend uses this name)
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Validate a .skill (ZIP) package without importing it.
@@ -423,10 +509,11 @@ class NexusFSSkillsMixin:
         Args:
             source_path: Path to .skill file to validate
             zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
+            zip_data: Alias for zip_bytes (base64 encoded string)
             context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with valid, manifest, files, errors
+            Dict with valid, skills_found, errors, warnings
         """
         import base64
         import io
@@ -437,26 +524,27 @@ class NexusFSSkillsMixin:
         service = self._get_skill_service()
         service._validate_context(context)
 
+        # Use zip_data as alias for zip_bytes
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
         # Get ZIP data
         if source_path:
-            zip_data = self.read(source_path, context=context)
-            if isinstance(zip_data, str):
-                zip_data = zip_data.encode("utf-8")
+            raw_zip_data = self.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
         elif zip_bytes:
-            if isinstance(zip_bytes, str):
-                zip_data = base64.b64decode(zip_bytes)
-            else:
-                zip_data = zip_bytes
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
         else:
-            raise ValidationError("Either source_path or zip_bytes required")
+            raise ValidationError("Either source_path or zip_data required")
 
         errors: list[str] = []
-        manifest: dict[str, Any] = {}
-        files: list[str] = []
+        warnings: list[str] = []
+        skills_found: list[str] = []
         has_skill_md = False
 
         try:
-            zip_buffer = io.BytesIO(zip_data)
+            zip_buffer = io.BytesIO(raw_zip_data)
             with zipfile.ZipFile(zip_buffer, mode="r") as zf:
                 files = zf.namelist()
 
@@ -465,15 +553,27 @@ class NexusFSSkillsMixin:
                     try:
                         manifest_data = zf.read("manifest.json")
                         manifest = json.loads(manifest_data.decode("utf-8"))
+                        # Extract skill name from manifest
+                        skill_path = manifest.get("skill_path", "")
+                        if skill_path:
+                            skill_name = skill_path.rstrip("/").split("/")[-1]
+                            skills_found.append(skill_name)
                     except Exception as e:
                         errors.append(f"Invalid manifest.json: {e}")
                 else:
-                    errors.append("Missing manifest.json")
+                    warnings.append("Missing manifest.json (will use default skill name)")
 
                 # Check for SKILL.md
                 for f in files:
                     if f.endswith("SKILL.md") or f == "SKILL.md":
                         has_skill_md = True
+                        # If no skill found from manifest, use SKILL.md parent folder
+                        if not skills_found:
+                            parts = f.rsplit("/", 1)
+                            if len(parts) > 1:
+                                skills_found.append(parts[0])
+                            else:
+                                skills_found.append("imported")
                         break
 
                 if not has_skill_md:
@@ -486,7 +586,7 @@ class NexusFSSkillsMixin:
 
         return {
             "valid": len(errors) == 0,
-            "manifest": manifest,
-            "files": files,
+            "skills_found": skills_found,
             "errors": errors,
+            "warnings": warnings,
         }

@@ -22,6 +22,7 @@ Runner:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -219,6 +220,7 @@ class SkillService:
             filter: Filter mode:
                 - "all" - All skills user can see
                 - "public" - Only public skills
+                - "shared" - Only skills shared directly with user (not public, not owned)
                 - "tenant" - Only tenant-shared skills
                 - "subscribed" - Only skills in user's library
                 - "owned" - Only skills owned by user
@@ -234,13 +236,108 @@ class SkillService:
         rebac = self._get_rebac()
         subscribed_skills = set(self._load_subscriptions(context))
 
-        # Collect skill paths from filesystem
+        # For "subscribed" filter, directly use subscribed skill paths
+        if filter == "subscribed":
+            logger.info(f"[discover] Returning subscribed skills directly: {subscribed_skills}")
+            results: list[SkillInfo] = []
+            for path in subscribed_skills:
+                is_public = self._is_skill_public(path)
+                metadata = self._load_skill_metadata(path, context, is_public=is_public)
+                results.append(
+                    SkillInfo(
+                        path=path,
+                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
+                        description=metadata.get("description", ""),
+                        owner=self._extract_owner_from_path(path),
+                        is_subscribed=True,
+                        is_public=is_public,
+                        version=metadata.get("version"),
+                        tags=metadata.get("tags", []),
+                    )
+                )
+            return results
+
+        # For "owned" filter, directly scan user's skill directory
+        if filter == "owned":
+            user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            owned_paths = self._find_skills_in_directory(user_skill_dir, context)
+            logger.info(f"[discover] Returning owned skills directly: {owned_paths}")
+            results = []
+            for path in owned_paths:
+                is_public = self._is_skill_public(path)
+                metadata = self._load_skill_metadata(path, context, is_public=is_public)
+                results.append(
+                    SkillInfo(
+                        path=path,
+                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
+                        description=metadata.get("description", ""),
+                        owner=self._extract_owner_from_path(path),
+                        is_subscribed=path in subscribed_skills,
+                        is_public=is_public,
+                        version=metadata.get("version"),
+                        tags=metadata.get("tags", []),
+                    )
+                )
+            return results
+
+        # For "shared" filter, directly use shared skill paths
+        if filter == "shared":
+            shared_skill_paths = self._find_direct_viewer_skills(context)
+            logger.info(f"[discover] Returning shared skills directly: {shared_skill_paths}")
+            results = []
+            for path in shared_skill_paths:
+                is_public = self._is_skill_public(path)
+                # Skip public skills - they're not "shared" per se
+                if is_public:
+                    continue
+                metadata = self._load_skill_metadata(path, context, is_public=is_public)
+                results.append(
+                    SkillInfo(
+                        path=path,
+                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
+                        description=metadata.get("description", ""),
+                        owner=self._extract_owner_from_path(path),
+                        is_subscribed=path in subscribed_skills,
+                        is_public=is_public,
+                        version=metadata.get("version"),
+                        tags=metadata.get("tags", []),
+                    )
+                )
+            return results
+
+        # For "public" filter, directly use public skill paths
+        if filter == "public":
+            public_skill_paths = self._find_public_skills()
+            logger.info(f"[discover] Returning public skills directly: {public_skill_paths}")
+            results = []
+            for path in public_skill_paths:
+                metadata = self._load_skill_metadata(path, context, is_public=True)
+                results.append(
+                    SkillInfo(
+                        path=path,
+                        name=metadata.get("name", path.rstrip("/").split("/")[-1]),
+                        description=metadata.get("description", ""),
+                        owner=self._extract_owner_from_path(path),
+                        is_subscribed=path in subscribed_skills,
+                        is_public=True,
+                        version=metadata.get("version"),
+                        tags=metadata.get("tags", []),
+                    )
+                )
+            return results
+
+        # TODO: Implement "tenant" filter - skills shared with the tenant
+        # if filter == "tenant":
+        #     tenant_skill_paths = self._find_tenant_shared_skills(context)
+        #     ...
+
+        # Collect skill paths from filesystem for other filters
         skill_paths = self._collect_skill_paths(context)
         logger.info(f"[discover] Found {len(skill_paths)} skill paths: {skill_paths[:5]}")
 
         # Filter by permission and build results
         subject = ("user", context.user_id)
-        results: list[SkillInfo] = []
+        results = []
 
         for path in skill_paths:
             # Check read permission (includes public check)
@@ -255,8 +352,6 @@ class SkillService:
             is_subscribed = path in subscribed_skills
 
             # Apply filter
-            if filter == "subscribed" and not is_subscribed:
-                continue
             if filter == "public" and not is_public:
                 continue
             if filter == "owned":
@@ -264,7 +359,7 @@ class SkillService:
                 skill_md_path = f"{path.rstrip('/')}/SKILL.md"
                 has_ownership = rebac.rebac_check(
                     subject=subject,
-                    permission="execute",
+                    permission="owner",
                     object=("file", skill_md_path),
                     tenant_id=context.tenant_id,
                 )
@@ -280,7 +375,7 @@ class SkillService:
                     path=path,
                     name=metadata.get("name", path.rstrip("/").split("/")[-1]),
                     description=metadata.get("description", ""),
-                    owner=metadata.get("author", "unknown"),
+                    owner=self._extract_owner_from_path(path),
                     is_subscribed=is_subscribed,
                     is_public=is_public,
                     version=metadata.get("version"),
@@ -392,7 +487,7 @@ class SkillService:
                     path=skill_path,
                     name=metadata.get("name", skill_path.rstrip("/").split("/")[-1]),
                     description=metadata.get("description", ""),
-                    owner=metadata.get("author", "unknown"),
+                    owner=self._extract_owner_from_path(skill_path),
                     version=metadata.get("version"),
                 )
             )
@@ -451,7 +546,7 @@ class SkillService:
             path=skill_path,
             name=metadata.get("name", skill_path.rstrip("/").split("/")[-1]),
             description=metadata.get("description", ""),
-            owner=metadata.get("author", "unknown"),
+            owner=self._extract_owner_from_path(skill_path),
             content=body,
             metadata=metadata,
         )
@@ -471,6 +566,21 @@ class SkillService:
         if hasattr(self._gw, "_fs") and hasattr(self._gw._fs, "_rebac_manager"):
             return self._gw._fs._rebac_manager
         raise RuntimeError("ReBAC manager not configured")
+
+    def _extract_owner_from_path(self, skill_path: str) -> str:
+        """Extract owner user_id from skill path.
+
+        Path format: /tenant:{tenant}/user:{user_id}/skill/{skill_name}/
+
+        Returns:
+            User ID if found, otherwise "unknown"
+        """
+        import re
+
+        match = re.search(r"/user:([^/]+)/skill/", skill_path)
+        if match:
+            return match.group(1)
+        return "unknown"
 
     def _assert_skill_owner(self, skill_path: str, context: OperationContext) -> None:
         """Assert that the user owns the skill (has execute permission).
@@ -623,10 +733,8 @@ class SkillService:
 
         # Ensure parent directory exists
         parent_dir = "/".join(path.split("/")[:-1])
-        try:
+        with contextlib.suppress(Exception):
             self._gw.mkdir(parent_dir, context=context)
-        except Exception:
-            pass  # Directory may already exist
 
         self._gw.write(path, content, context=context)
 
@@ -663,10 +771,7 @@ class SkillService:
                     relative = item_str[len(base_dir) :]
 
                     # Extract skill directory name (first path component)
-                    if "/" in relative:
-                        skill_name = relative.split("/")[0]
-                    else:
-                        skill_name = relative
+                    skill_name = relative.split("/")[0] if "/" in relative else relative
 
                     # Skip if empty or a file at root level
                     if not skill_name or skill_name.endswith((".md", ".json")):
@@ -701,6 +806,12 @@ class SkillService:
             if path not in skill_paths:
                 skill_paths.append(path)
 
+        # Skills shared directly with the user via direct_viewer
+        shared_skill_paths = self._find_direct_viewer_skills(context)
+        for path in shared_skill_paths:
+            if path not in skill_paths:
+                skill_paths.append(path)
+
         return skill_paths
 
     def _find_public_skills(self) -> list[str]:
@@ -726,18 +837,116 @@ class SkillService:
                 obj_id = t.get("object_id")
 
                 # Only include file objects that look like skill paths
-                if obj_type == "file" and obj_id:
-                    # Skill paths contain "/skill/" in them
-                    if "/skill/" in obj_id:
-                        # Add trailing slash for consistency with directory convention
-                        # (tuples are stored without trailing slash for hierarchy_manager compatibility)
-                        skill_path = obj_id if obj_id.endswith("/") else obj_id + "/"
-                        public_paths.append(skill_path)
+                # Skill paths contain "/skill/" in them
+                if obj_type == "file" and obj_id and "/skill/" in obj_id:
+                    # Add trailing slash for consistency with directory convention
+                    # (tuples are stored without trailing slash for hierarchy_manager compatibility)
+                    skill_path = obj_id if obj_id.endswith("/") else obj_id + "/"
+                    public_paths.append(skill_path)
 
         except Exception as e:
             logger.warning(f"Failed to find public skills: {e}")
 
         return public_paths
+
+    def _find_skills_in_directory(self, base_dir: str, context: OperationContext) -> list[str]:
+        """Find skill directories within a base directory.
+
+        Args:
+            base_dir: Base directory to scan (e.g., /tenant:x/user:y/skill/)
+            context: Operation context
+
+        Returns:
+            List of skill paths found in the directory
+        """
+        skill_paths: list[str] = []
+        try:
+            if not self._gw.exists(base_dir, context=context):
+                return skill_paths
+
+            # List all items in the directory
+            items = self._gw.list(base_dir, context=context)
+
+            # Extract unique skill directories
+            seen_skills: set[str] = set()
+            for item in items:
+                item_str = str(item)
+
+                # Skip if not under base_dir
+                if not item_str.startswith(base_dir):
+                    continue
+
+                # Get the relative path after base_dir
+                relative = item_str[len(base_dir) :]
+
+                # Extract skill directory name (first path component)
+                skill_name = relative.split("/")[0] if "/" in relative else relative
+
+                # Skip if empty or a file at root level
+                if (
+                    not skill_name
+                    or skill_name.startswith(".")
+                    or skill_name.endswith((".md", ".json", ".yaml"))
+                ):
+                    continue
+
+                if skill_name not in seen_skills:
+                    skill_path = f"{base_dir}{skill_name}/"
+                    # Verify this is a skill by checking for SKILL.md
+                    skill_md = f"{skill_path}SKILL.md"
+                    try:
+                        if self._gw.exists(skill_md, context=context):
+                            skill_paths.append(skill_path)
+                            seen_skills.add(skill_name)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Failed to find skills in {base_dir}: {e}")
+
+        return skill_paths
+
+    def _find_direct_viewer_skills(self, context: OperationContext) -> list[str]:
+        """Find skills where user has direct_viewer relation.
+
+        Queries the ReBAC tuples to find all skills that have been
+        shared with the user via direct_viewer relation.
+
+        Args:
+            context: Operation context with user_id
+
+        Returns:
+            List of skill paths that are shared with the user
+        """
+        shared_paths: list[str] = []
+
+        try:
+            # Query rebac_list_tuples for direct_viewer tuples where user is the subject
+            tuples = self._gw._fs.rebac_list_tuples(
+                subject=("user", context.user_id),
+                relation="direct_viewer",
+            )
+
+            for t in tuples:
+                obj_type = t.get("object_type")
+                obj_id = t.get("object_id")
+
+                # Only include file objects that look like skill paths
+                # Skill paths contain "/skill/" in them
+                if obj_type == "file" and obj_id and "/skill/" in obj_id:
+                    # Extract skill directory from SKILL.md path
+                    if obj_id.endswith("/SKILL.md") or obj_id.endswith("SKILL.md"):
+                        skill_path = obj_id[:-8]  # Remove "SKILL.md"
+                    else:
+                        skill_path = obj_id
+                    # Add trailing slash for consistency
+                    if not skill_path.endswith("/"):
+                        skill_path = skill_path + "/"
+                    shared_paths.append(skill_path)
+
+        except Exception as e:
+            logger.warning(f"Failed to find shared skills: {e}")
+
+        return shared_paths
 
     def _load_skill_metadata(
         self, skill_path: str, context: OperationContext, *, is_public: bool = False
@@ -797,10 +1006,8 @@ class SkillService:
             if len(parts) >= 3:
                 import yaml
 
-                try:
+                with contextlib.suppress(Exception):
                     metadata = yaml.safe_load(parts[1]) or {}
-                except Exception:
-                    pass
                 body = parts[2].strip()
         else:
             # Fallback: parse first heading as name

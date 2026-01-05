@@ -1331,7 +1331,9 @@ class NexusFS(  # type: ignore[misc]
                 return
 
         # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx).unwrap()
+        route.backend.mkdir(
+            route.backend_path, parents=parents, exist_ok=True, context=ctx
+        ).unwrap()
 
         # Create metadata entries for parent directories if parents=True
         if parents:

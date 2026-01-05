@@ -655,9 +655,7 @@ class GoogleDriveConnectorBackend(Backend):
             service = self._get_drive_service(context)
 
             # Resolve path to parent folder and filename
-            parent_id, filename = self._resolve_path_to_folder_id(
-                service, backend_path, context
-            )
+            parent_id, filename = self._resolve_path_to_folder_id(service, backend_path, context)
 
             # Check if file already exists
             query = f"name='{filename}' and '{parent_id}' in parents and trashed=false"
@@ -760,9 +758,7 @@ class GoogleDriveConnectorBackend(Backend):
             service = self._get_drive_service(context)
 
             # Resolve path to parent folder and filename
-            parent_id, filename = self._resolve_path_to_folder_id(
-                service, backend_path, context
-            )
+            parent_id, filename = self._resolve_path_to_folder_id(service, backend_path, context)
 
             # Find file by name in parent folder
             query = f"name='{filename}' and '{parent_id}' in parents and trashed=false"
@@ -892,9 +888,7 @@ class GoogleDriveConnectorBackend(Backend):
             service = self._get_drive_service(context)
 
             # Resolve path to parent folder and filename
-            parent_id, filename = self._resolve_path_to_folder_id(
-                service, backend_path, context
-            )
+            parent_id, filename = self._resolve_path_to_folder_id(service, backend_path, context)
 
             # Find file by name in parent folder
             query = f"name='{filename}' and '{parent_id}' in parents and trashed=false"

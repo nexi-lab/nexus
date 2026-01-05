@@ -350,7 +350,9 @@ class WorkspaceManager:
             )
 
             # Read manifest from CAS
-            manifest_bytes = self.backend.read_content(snapshot.manifest_hash, context=None).unwrap()
+            manifest_bytes = self.backend.read_content(
+                snapshot.manifest_hash, context=None
+            ).unwrap()
             manifest = json.loads(manifest_bytes.decode("utf-8"))
 
             # Get workspace path and ensure it ends with /
@@ -541,10 +543,14 @@ class WorkspaceManager:
 
             # Read manifests
             manifest1 = json.loads(
-                self.backend.read_content(snap1.manifest_hash, context=None).unwrap().decode("utf-8")
+                self.backend.read_content(snap1.manifest_hash, context=None)
+                .unwrap()
+                .decode("utf-8")
             )
             manifest2 = json.loads(
-                self.backend.read_content(snap2.manifest_hash, context=None).unwrap().decode("utf-8")
+                self.backend.read_content(snap2.manifest_hash, context=None)
+                .unwrap()
+                .decode("utf-8")
             )
 
             # Compute diff

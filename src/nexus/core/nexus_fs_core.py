@@ -684,7 +684,9 @@ class NexusFSCoreMixin:
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context).unwrap()
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
                             content = self._apply_dynamic_viewer_filter_if_needed(
                                 path, content, context
                             )
@@ -720,7 +722,9 @@ class NexusFSCoreMixin:
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context).unwrap()
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
                             content = self._apply_dynamic_viewer_filter_if_needed(
                                 path, content, context
                             )
@@ -753,7 +757,9 @@ class NexusFSCoreMixin:
                             from dataclasses import replace
 
                             read_context = replace(context, backend_path=route.backend_path)
-                        content = route.backend.read_content(meta.etag, context=read_context).unwrap()
+                        content = route.backend.read_content(
+                            meta.etag, context=read_context
+                        ).unwrap()
                         content = self._apply_dynamic_viewer_filter_if_needed(
                             path, content, context
                         )

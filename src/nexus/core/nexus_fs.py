@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.core.entity_registry import EntityRegistry
     from nexus.core.memory_api import Memory
+    from nexus.services.agent_service import AgentService
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -3548,9 +3549,9 @@ class NexusFS(  # type: ignore[misc]
     # Agent Service (Phase 2 Refactoring)
     # =========================================================================
 
-    _agent_service_instance: Any = None  # Lazy initialized AgentService
+    _agent_service_instance: AgentService | None = None  # Lazy initialized AgentService
 
-    def _get_agent_service(self) -> Any:
+    def _get_agent_service(self) -> AgentService:
         """Get or create AgentService instance.
 
         Uses Gateway pattern for clean dependency injection.
@@ -3836,7 +3837,7 @@ class NexusFS(  # type: ignore[misc]
             self.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
 
             # Write config.yaml
-            self._write_agent_config(config_path, config_data, context)
+            self._write_agent_config_legacy(config_path, config_data, context)
 
             # Grant ReBAC permissions
             if self._rebac_manager:

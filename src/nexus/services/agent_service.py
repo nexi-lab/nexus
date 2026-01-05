@@ -27,7 +27,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -182,7 +182,7 @@ class AgentService:
             content = self._gw.read(config_path)
             if isinstance(content, bytes):
                 content = content.decode("utf-8")
-            return yaml.safe_load(content)
+            return cast(dict[Any, Any] | None, yaml.safe_load(content))
         except Exception as e:
             logger.debug(f"Failed to read agent config {config_path}: {e}")
             return None

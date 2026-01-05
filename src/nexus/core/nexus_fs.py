@@ -52,7 +52,6 @@ from nexus.services.mount_service import MountService
 from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
-from nexus.services.skill_service import SkillService
 from nexus.services.version_service import VersionService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.metadata_store import SQLAlchemyMetadataStore
@@ -508,8 +507,8 @@ class NexusFS(  # type: ignore[misc]
             token_manager=None,  # Lazy init from db_path
         )
 
-        # SkillService: Skill management operations (16 methods)
-        self.skill_service = SkillService(nexus_fs=self)
+        # SkillService: Skill management - provided by NexusFSSkillsMixin._get_skill_service()
+        # Uses NexusFSGateway pattern for clean dependency injection
 
         # SearchService: Search operations - semantic (4) + basic (3, deferred to Phase 2.2)
         self.search_service = SearchService(
@@ -1177,9 +1176,9 @@ class NexusFS(  # type: ignore[misc]
 
         # Skip permission checks for admin/system users during provisioning
         # This significantly speeds up operations like skill imports (82s -> ~10s)
-        if ctx.is_admin:
+        if ctx.is_admin or ctx.is_system:
             logger.debug(
-                f"_check_permission: SKIPPED (admin bypass) - path={path}, permission={permission.name}, user={ctx.user}"
+                f"_check_permission: SKIPPED (admin/system bypass) - path={path}, permission={permission.name}, user={ctx.user}"
             )
             return
 

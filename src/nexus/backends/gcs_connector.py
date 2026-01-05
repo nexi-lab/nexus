@@ -43,6 +43,7 @@ from google.api_core import retry
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
 
+from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
@@ -207,6 +208,65 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def name(self) -> str:
         """Backend identifier name."""
         return "gcs_connector"
+
+    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+        """
+        Verify GCS connection is healthy.
+
+        Performs a lightweight bucket exists check to verify:
+        - GCP credentials are valid
+        - Bucket is accessible
+        - Network connectivity is working
+
+        Args:
+            context: Operation context (unused, GCS uses shared credentials)
+
+        Returns:
+            HandlerStatusResponse with health status and latency
+        """
+        import time
+
+        start = time.perf_counter()
+
+        try:
+            # Lightweight check - bucket.exists() is fast and verifies access
+            exists = self.bucket.exists()
+
+            if not exists:
+                return HandlerStatusResponse(
+                    success=False,
+                    error_message=f"Bucket '{self.bucket_name}' does not exist or is not accessible",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    details={"backend": self.name, "bucket": self.bucket_name},
+                )
+
+            latency_ms = (time.perf_counter() - start) * 1000
+            return HandlerStatusResponse(
+                success=True,
+                latency_ms=latency_ms,
+                details={
+                    "backend": self.name,
+                    "bucket": self.bucket_name,
+                    "prefix": self.prefix,
+                    "versioning_enabled": self.versioning_enabled,
+                },
+            )
+
+        except NotFound:
+            return HandlerStatusResponse(
+                success=False,
+                error_message=f"Bucket '{self.bucket_name}' not found",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={"backend": self.name, "bucket": self.bucket_name},
+            )
+
+        except Exception as e:
+            return HandlerStatusResponse(
+                success=False,
+                error_message=str(e),
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={"backend": self.name, "bucket": self.bucket_name},
+            )
 
     # _has_caching() inherited from CacheConnectorMixin
 

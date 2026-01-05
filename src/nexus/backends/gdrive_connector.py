@@ -36,7 +36,7 @@ import logging
 import mimetypes
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.backend import Backend
+from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -239,6 +239,110 @@ class GoogleDriveConnectorBackend(Backend):
             error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
             logger.error(error_msg)
             print(f"[GDRIVE-INIT] ✗ {error_msg}")
+
+    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+        """
+        Verify Google Drive connection is healthy.
+
+        Checks that OAuth tokens are valid and the Drive API is accessible.
+        For user-scoped backends, this verifies the specific user's credentials.
+
+        Args:
+            context: Operation context with user_id for OAuth lookup
+
+        Returns:
+            HandlerStatusResponse with health status and latency
+        """
+        import time
+
+        start = time.perf_counter()
+
+        # Determine user email
+        if self.user_email:
+            user_email = self.user_email
+        elif context and context.user_id:
+            user_email = context.user_id
+        else:
+            return HandlerStatusResponse(
+                success=False,
+                error_message="No user context provided for user-scoped backend",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={"backend": self.name, "user_scoped": True},
+            )
+
+        try:
+            # Check if we have a valid token
+            import asyncio
+
+            tenant_id = (
+                context.tenant_id
+                if context and hasattr(context, "tenant_id") and context.tenant_id
+                else "default"
+            )
+
+            # Try to get a valid token (will refresh if needed)
+            access_token = asyncio.run(
+                self.token_manager.get_valid_token(
+                    provider=self.provider,
+                    user_email=user_email,
+                    tenant_id=tenant_id,
+                )
+            )
+
+            if not access_token:
+                return HandlerStatusResponse(
+                    success=False,
+                    error_message=f"No valid OAuth token for user {user_email}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    details={
+                        "backend": self.name,
+                        "user_email": user_email,
+                        "tenant_id": tenant_id,
+                    },
+                )
+
+            # Optionally verify by calling Drive API (lightweight about() call)
+            try:
+                from google.oauth2.credentials import Credentials
+                from googleapiclient.discovery import build
+
+                creds = Credentials(token=access_token)
+                service = build("drive", "v3", credentials=creds)
+                about = service.about().get(fields="user").execute()
+                drive_user = about.get("user", {}).get("emailAddress", "unknown")
+            except Exception as api_error:
+                return HandlerStatusResponse(
+                    success=False,
+                    error_message=f"Drive API check failed: {api_error}",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    details={
+                        "backend": self.name,
+                        "user_email": user_email,
+                        "token_valid": True,
+                        "api_error": str(api_error),
+                    },
+                )
+
+            latency_ms = (time.perf_counter() - start) * 1000
+            return HandlerStatusResponse(
+                success=True,
+                latency_ms=latency_ms,
+                details={
+                    "backend": self.name,
+                    "user_email": user_email,
+                    "drive_user": drive_user,
+                    "tenant_id": tenant_id,
+                    "root_folder": self.root_folder,
+                },
+            )
+
+        except Exception as e:
+            return HandlerStatusResponse(
+                success=False,
+                error_message=str(e),
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={"backend": self.name, "user_email": user_email},
+            )
 
     @property
     def name(self) -> str:

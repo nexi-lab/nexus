@@ -4129,6 +4129,27 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("get_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    def get_agent_context(self, agent_id: str, api_key: str | None = None) -> dict:
+        """Get full agent context for SDK consumption.
+
+        Returns runtime configuration, capabilities, role prompt, and other
+        context needed by the agent SDK to operate.
+
+        Args:
+            agent_id: Agent identifier
+            api_key: Optional API key to include in context
+
+        Returns:
+            Agent context dict with runtime, capabilities, role_prompt, etc.
+
+        Raises:
+            RemoteFilesystemError: If context retrieval fails
+        """
+        result = self._call_rpc(
+            "get_agent_context", {"agent_id": agent_id, "api_key": api_key}
+        )
+        return result  # type: ignore[no-any-return]
+
     def delete_agent(self, agent_id: str) -> bool:
         """Delete an agent.
 

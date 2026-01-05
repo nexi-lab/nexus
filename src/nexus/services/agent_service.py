@@ -24,9 +24,10 @@ See docs/rfc/001-agent-service-refactor.md for full design.
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -382,12 +383,6 @@ class AgentService:
         Returns:
             List of agent info dicts
         """
-        # Build glob pattern
-        if user_id:
-            pattern = f"/tenant:{tenant_id}/user:{user_id}/agent/*/config.yaml"
-        else:
-            pattern = f"/tenant:{tenant_id}/user:*/agent/*/config.yaml"
-
         # Use metadata list to find agent configs
         agents = []
         try:
@@ -675,7 +670,7 @@ class AgentService:
 
     def _revoke_capabilities(
         self,
-        agent_id: str,
+        _agent_id: str,
         user_id: str,
         tenant_id: str,
         capabilities: dict,

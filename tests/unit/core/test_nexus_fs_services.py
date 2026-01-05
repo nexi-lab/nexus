@@ -29,7 +29,8 @@ class TestNexusFSServiceComposition:
         assert hasattr(fs, "mcp_service"), "MCPService not instantiated"
         assert hasattr(fs, "llm_service"), "LLMService not instantiated"
         assert hasattr(fs, "oauth_service"), "OAuthService not instantiated"
-        assert hasattr(fs, "skill_service"), "SkillService not instantiated"
+        # SkillService uses mixin pattern with lazy initialization via _get_skill_service()
+        assert hasattr(fs, "_get_skill_service"), "SkillService mixin not present"
         assert hasattr(fs, "search_service"), "SearchService not instantiated"
 
         # Verify services are not None
@@ -39,7 +40,8 @@ class TestNexusFSServiceComposition:
         assert fs.mcp_service is not None
         assert fs.llm_service is not None
         assert fs.oauth_service is not None
-        assert fs.skill_service is not None
+        # SkillService is lazily initialized through mixin - verify method exists
+        assert callable(fs._get_skill_service)
         assert fs.search_service is not None
 
     def test_service_dependencies_correct(self, tmp_path: Path):
@@ -66,7 +68,9 @@ class TestNexusFSServiceComposition:
         # Services that take nexus_fs should have it
         assert fs.mcp_service.nexus_fs == fs
         assert fs.llm_service.nexus_fs == fs
-        assert fs.skill_service.nexus_fs == fs
+        # SkillService uses gateway pattern - verify it can be retrieved through mixin
+        skill_service = fs._get_skill_service()
+        assert skill_service._gw._fs == fs
 
         # SearchService should have metadata and permission_enforcer
         assert fs.search_service.metadata == fs.metadata

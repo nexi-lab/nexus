@@ -1648,6 +1648,58 @@ class SkillsExportParams:
     include_dependencies: bool = False
 
 
+# New permission-based skill methods (v1.0.0)
+@dataclass
+class SkillsDiscoverParams:
+    """Parameters for skills_discover method."""
+
+    filter: str = "all"
+
+
+@dataclass
+class SkillsSubscribeParams:
+    """Parameters for skills_subscribe method."""
+
+    skill_path: str
+
+
+@dataclass
+class SkillsUnsubscribeParams:
+    """Parameters for skills_unsubscribe method."""
+
+    skill_path: str
+
+
+@dataclass
+class SkillsShareParams:
+    """Parameters for skills_share method."""
+
+    skill_path: str
+    share_with: str
+
+
+@dataclass
+class SkillsUnshareParams:
+    """Parameters for skills_unshare method."""
+
+    skill_path: str
+    unshare_from: str
+
+
+@dataclass
+class SkillsLoadParams:
+    """Parameters for skills_load method."""
+
+    skill_path: str
+
+
+@dataclass
+class SkillsGetPromptContextParams:
+    """Parameters for skills_get_prompt_context method."""
+
+    max_skills: int = 50
+
+
 # OAuth management methods (v0.9.0)
 @dataclass
 class OAuthListProvidersParams:
@@ -1894,6 +1946,14 @@ METHOD_PARAMS = {
     "skills_import": SkillsImportParams,
     "skills_validate_zip": SkillsValidateZipParams,
     "skills_export": SkillsExportParams,
+    # New permission-based skill methods (v1.0.0)
+    "skills_discover": SkillsDiscoverParams,
+    "skills_subscribe": SkillsSubscribeParams,
+    "skills_unsubscribe": SkillsUnsubscribeParams,
+    "skills_share": SkillsShareParams,
+    "skills_unshare": SkillsUnshareParams,
+    "skills_load": SkillsLoadParams,
+    "skills_get_prompt_context": SkillsGetPromptContextParams,
     # OAuth management methods (v0.9.0)
     "oauth_list_providers": OAuthListProvidersParams,
     "oauth_get_auth_url": OAuthGetAuthUrlParams,

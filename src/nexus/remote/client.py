@@ -5296,6 +5296,161 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("skills_export", params)
         return result  # type: ignore[no-any-return]
 
+    def skills_share(
+        self,
+        skill_path: str,
+        share_with: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Share a skill with users, groups, or make public.
+
+        Args:
+            skill_path: Path to the skill (e.g., /tenant:acme/user:alice/skill/code-review/)
+            share_with: Target to share with:
+                - "public" - Make skill visible to everyone
+                - "tenant" - Share with all users in current tenant
+                - "group:<name>" - Share with a group
+                - "user:<id>" - Share with a specific user
+                - "agent:<id>" - Share with a specific agent
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with success, tuple_id, skill_path, share_with
+        """
+        params: dict[str, Any] = {
+            "skill_path": skill_path,
+            "share_with": share_with,
+        }
+        result = self._call_rpc("skills_share", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_unshare(
+        self,
+        skill_path: str,
+        unshare_from: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Revoke sharing permission on a skill.
+
+        Args:
+            skill_path: Path to the skill
+            unshare_from: Target to unshare from (same format as share_with)
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with success, skill_path, unshare_from
+        """
+        params: dict[str, Any] = {
+            "skill_path": skill_path,
+            "unshare_from": unshare_from,
+        }
+        result = self._call_rpc("skills_unshare", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_discover(
+        self,
+        filter: str = "all",
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Discover skills the user has permission to see.
+
+        Args:
+            filter: Filter mode:
+                - "all" - All skills user can see
+                - "public" - Only public skills
+                - "subscribed" - Only skills in user's library
+                - "owned" - Only skills owned by user
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with skills list and count
+        """
+        params: dict[str, Any] = {
+            "filter": filter,
+        }
+        result = self._call_rpc("skills_discover", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_subscribe(
+        self,
+        skill_path: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Subscribe to a skill (add to user's library).
+
+        Args:
+            skill_path: Path to the skill to subscribe to
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with success, skill_path, already_subscribed
+        """
+        params: dict[str, Any] = {
+            "skill_path": skill_path,
+        }
+        result = self._call_rpc("skills_subscribe", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_unsubscribe(
+        self,
+        skill_path: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Unsubscribe from a skill (remove from user's library).
+
+        Args:
+            skill_path: Path to the skill to unsubscribe from
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with success, skill_path, was_subscribed
+        """
+        params: dict[str, Any] = {
+            "skill_path": skill_path,
+        }
+        result = self._call_rpc("skills_unsubscribe", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_get_prompt_context(
+        self,
+        max_skills: int = 50,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get skill metadata for system prompt injection.
+
+        Args:
+            max_skills: Maximum number of skills to include (default: 50)
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with xml, skills, count, token_estimate
+        """
+        params: dict[str, Any] = {
+            "max_skills": max_skills,
+        }
+        result = self._call_rpc("skills_get_prompt_context", params)
+        return result  # type: ignore[no-any-return]
+
+    def skills_load(
+        self,
+        skill_path: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Load full skill content on-demand.
+
+        Args:
+            skill_path: Path to the skill to load
+            _context: Operation context (optional)
+
+        Returns:
+            Dict with name, path, owner, description, content, metadata
+        """
+        params: dict[str, Any] = {
+            "skill_path": skill_path,
+        }
+        result = self._call_rpc("skills_load", params)
+        return result  # type: ignore[no-any-return]
+
     # ============================================================
     # OAuth Operations
     # ============================================================

@@ -2364,7 +2364,7 @@ class NexusFSSearchMixin:
                     detail_results.append(
                         {
                             "path": mem_path,
-                            "size": len(self.backend.read_content(mem.content_hash)),  # type: ignore[attr-defined]
+                            "size": len(self.backend.read_content(mem.content_hash).unwrap()),  # type: ignore[attr-defined]
                             "modified_at": mem.created_at,
                             "etag": mem.content_hash,
                         }

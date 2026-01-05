@@ -18,6 +18,7 @@ Backend-specific implementations:
 """
 
 import mimetypes
+import time
 from abc import abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
@@ -25,6 +26,7 @@ from typing import TYPE_CHECKING
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -141,7 +143,9 @@ class BaseBlobStorageConnector(Backend):
                 return self.prefix
         return backend_path
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """
         Get reference count (always 1 for connector backends).
 
@@ -153,10 +157,10 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context
 
         Returns:
-            Always 1 (no reference counting)
+            HandlerResponse with 1 (no reference counting)
         """
         # No deduplication - each file is unique
-        return 1
+        return HandlerResponse.ok(data=1, backend_name=self.name, path=content_hash)
 
     # === Abstract Methods (Must Implement in Subclasses) ===
 
@@ -412,7 +416,9 @@ class BaseBlobStorageConnector(Backend):
 
     # === Content Operations (Shared Implementation) ===
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> HandlerResponse[str]:
         """
         Write content to blob storage at actual path (not CAS path).
 
@@ -423,17 +429,18 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context with backend_path
 
         Returns:
-            If versioning enabled: Version ID (cloud-specific)
-            If no versioning: Content hash (for metadata compatibility)
-
-        Raises:
-            ValueError: If backend_path is not provided in context
-            BackendError: If write operation fails
+            HandlerResponse with version ID (if versioning) or content hash in data field
         """
+        start_time = time.perf_counter()
+
         if not context or not context.backend_path:
-            raise ValueError(
-                f"{self.name} connector requires backend_path in OperationContext. "
-                "This backend stores files at actual paths, not CAS hashes."
+            return HandlerResponse.error(
+                message=f"{self.name} connector requires backend_path in OperationContext. "
+                "This backend stores files at actual paths, not CAS hashes.",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
             )
 
         # Get actual blob path from backend_path
@@ -444,18 +451,26 @@ class BaseBlobStorageConnector(Backend):
             content_type = self._detect_content_type(context.backend_path, content)
 
             # Upload blob (subclass implements cloud-specific upload)
-            return self._upload_blob(blob_path, content, content_type)
+            result = self._upload_blob(blob_path, content, content_type)
+
+            return HandlerResponse.ok(
+                data=result,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=blob_path,
+            )
 
         except Exception as e:
-            if isinstance(e, BackendError):
-                raise
-            raise BackendError(
-                f"Failed to write content to {blob_path}: {e}",
-                backend=self.name,
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=blob_path,
-            ) from e
+            )
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bytes]:
         """
         Read content from blob storage using backend_path.
 
@@ -472,17 +487,18 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context with backend_path
 
         Returns:
-            File content as bytes
-
-        Raises:
-            ValueError: If backend_path is not provided in context
-            NexusFileNotFoundError: If file doesn't exist
-            BackendError: If read operation fails
+            HandlerResponse with file content as bytes in data field
         """
+        start_time = time.perf_counter()
+
         if not context or not context.backend_path:
-            raise ValueError(
-                f"{self.name} connector requires backend_path in OperationContext. "
-                "This backend reads files from actual paths, not CAS hashes."
+            return HandlerResponse.error(
+                message=f"{self.name} connector requires backend_path in OperationContext. "
+                "This backend reads files from actual paths, not CAS hashes.",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
             )
 
         # Get actual blob path from backend_path
@@ -496,16 +512,21 @@ class BaseBlobStorageConnector(Backend):
 
             # Download blob (subclass implements cloud-specific download)
             content, _version_id = self._download_blob(blob_path, version_id)
-            return content
 
-        except (NexusFileNotFoundError, BackendError):
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to read content from {blob_path}: {e}",
-                backend=self.name,
+            return HandlerResponse.ok(
+                data=content,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=blob_path,
-            ) from e
+            )
+
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=blob_path,
+            )
 
     def stream_content(
         self,
@@ -619,7 +640,9 @@ class BaseBlobStorageConnector(Backend):
                 pass
         return True  # Likely a version ID
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[None]:
         """
         Delete content from blob storage using backend_path.
 
@@ -629,13 +652,19 @@ class BaseBlobStorageConnector(Backend):
             content_hash: Content hash (ignored, kept for interface compatibility)
             context: Operation context with backend_path
 
-        Raises:
-            ValueError: If backend_path is not provided in context
-            NexusFileNotFoundError: If file doesn't exist
-            BackendError: If delete operation fails
+        Returns:
+            HandlerResponse indicating success or failure
         """
+        start_time = time.perf_counter()
+
         if not context or not context.backend_path:
-            raise ValueError(f"{self.name} connector requires backend_path in OperationContext")
+            return HandlerResponse.error(
+                message=f"{self.name} connector requires backend_path in OperationContext",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         blob_path = self._get_blob_path(context.backend_path)
 
@@ -643,16 +672,24 @@ class BaseBlobStorageConnector(Backend):
             # Delete blob (subclass implements cloud-specific delete)
             self._delete_blob(blob_path)
 
-        except (NexusFileNotFoundError, BackendError):
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to delete content at {blob_path}: {e}",
-                backend=self.name,
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=blob_path,
-            ) from e
+            )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=blob_path,
+            )
+
+    def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
         """
         Check if content exists at backend_path.
 
@@ -661,18 +698,37 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context with backend_path
 
         Returns:
-            True if file exists, False otherwise
+            HandlerResponse with True if file exists, False otherwise in data field
         """
+        start_time = time.perf_counter()
+
         if not context or not context.backend_path:
-            return False
+            return HandlerResponse.ok(
+                data=False,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         try:
             blob_path = self._get_blob_path(context.backend_path)
-            return self._blob_exists(blob_path)
-        except Exception:
-            return False
+            exists = self._blob_exists(blob_path)
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+            return HandlerResponse.ok(
+                data=exists,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=blob_path,
+            )
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
+
+    def get_content_size(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """
         Get content size using backend_path (cache-first, efficient).
 
@@ -684,15 +740,18 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context with backend_path
 
         Returns:
-            Content size in bytes
-
-        Raises:
-            ValueError: If backend_path is not provided
-            NexusFileNotFoundError: If file doesn't exist
-            BackendError: If operation fails
+            HandlerResponse with content size in bytes in data field
         """
+        start_time = time.perf_counter()
+
         if not context or not context.backend_path:
-            raise ValueError(f"{self.name} connector requires backend_path in OperationContext")
+            return HandlerResponse.error(
+                message=f"{self.name} connector requires backend_path in OperationContext",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         # OPTIMIZATION: Check cache first (efficient - no API call)
         # This is crucial for ls -la performance with many files
@@ -705,23 +764,33 @@ class BaseBlobStorageConnector(Backend):
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 assert isinstance(cached_size, int), "Cache size must be int"
-                return cached_size
+                return HandlerResponse.ok(
+                    data=cached_size,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                )
 
         # Fallback: Get size from cloud storage API
         # This only happens when file is not cached
         blob_path = self._get_blob_path(context.backend_path)
 
         try:
-            return self._get_blob_size(blob_path)
+            size = self._get_blob_size(blob_path)
 
-        except (NexusFileNotFoundError, BackendError):
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to get content size for {blob_path}: {e}",
-                backend=self.name,
+            return HandlerResponse.ok(
+                data=size,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=blob_path,
-            ) from e
+            )
+
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=blob_path,
+            )
 
     # === Directory Operations (Shared Implementation) ===
 
@@ -731,7 +800,7 @@ class BaseBlobStorageConnector(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """
         Create directory marker in blob storage.
 
@@ -744,15 +813,21 @@ class BaseBlobStorageConnector(Backend):
             exist_ok: Don't raise error if directory exists
             context: Operation context (not used for directory creation)
 
-        Raises:
-            FileExistsError: If directory exists and exist_ok=False
-            FileNotFoundError: If parent doesn't exist and parents=False
-            BackendError: If operation fails
+        Returns:
+            HandlerResponse indicating success or failure
         """
+        start_time = time.perf_counter()
+
         # Normalize path
         path = path.strip("/")
         if not path:
-            return  # Root always exists
+            # Root always exists
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path="/",
+            )
 
         # Directory paths end with trailing slash
         blob_path = self._get_blob_path(path) + "/"
@@ -761,35 +836,58 @@ class BaseBlobStorageConnector(Backend):
             # Check if directory marker already exists
             if self._blob_exists(blob_path):
                 if not exist_ok:
-                    raise FileExistsError(f"Directory already exists: {path}")
-                return
+                    return HandlerResponse.error(
+                        message=f"Directory already exists: {path}",
+                        code=409,
+                        is_expected=True,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
+                        path=path,
+                    )
+                return HandlerResponse.ok(
+                    data=None,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
 
             if not parents:
                 # Check if parent exists
                 parent = "/".join(path.split("/")[:-1])
-                if parent and not self.is_directory(parent):
-                    raise FileNotFoundError(f"Parent directory not found: {parent}")
+                if parent:
+                    parent_response = self.is_directory(parent)
+                    if not parent_response.success or not parent_response.data:
+                        return HandlerResponse.not_found(
+                            path=parent,
+                            message=f"Parent directory not found: {parent}",
+                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                            backend_name=self.name,
+                        )
 
             # Create directory marker (subclass implements cloud-specific creation)
             self._create_directory_marker(blob_path)
 
-        except (FileExistsError, FileNotFoundError):
-            raise
-        except Exception as e:
-            if isinstance(e, BackendError):
-                raise
-            raise BackendError(
-                f"Failed to create directory {path}: {e}",
-                backend=self.name,
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=path,
-            ) from e
+            )
+
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """
         Remove directory from blob storage.
 
@@ -798,29 +896,47 @@ class BaseBlobStorageConnector(Backend):
             recursive: Remove non-empty directory
             context: Operation context (not used for directory removal)
 
-        Raises:
-            BackendError: If trying to remove root
-            NexusFileNotFoundError: If directory doesn't exist
-            OSError: If directory not empty and recursive=False
-            BackendError: If operation fails
+        Returns:
+            HandlerResponse indicating success or failure
         """
+        start_time = time.perf_counter()
+
         path = path.strip("/")
         if not path:
-            raise BackendError("Cannot remove root directory", backend=self.name, path=path)
+            return HandlerResponse.error(
+                message="Cannot remove root directory",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path="/",
+            )
 
         blob_path = self._get_blob_path(path) + "/"
 
         try:
             # Check if directory marker exists
             if not self._blob_exists(blob_path):
-                raise NexusFileNotFoundError(path)
+                return HandlerResponse.not_found(
+                    path=path,
+                    message=f"Directory not found: {path}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                )
 
             if not recursive:
                 # Check if directory is empty
                 blobs, prefixes = self._list_blobs(prefix=blob_path, delimiter="/")
                 # Directory marker itself will be in the list, so check for more than 1
                 if len(blobs) > 1 or prefixes:
-                    raise OSError(f"Directory not empty: {path}")
+                    return HandlerResponse.error(
+                        message=f"Directory not empty: {path}",
+                        code=400,
+                        is_expected=True,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
+                        path=path,
+                    )
 
             # Delete directory marker
             self._delete_blob(blob_path)
@@ -836,18 +952,24 @@ class BaseBlobStorageConnector(Backend):
                             # Continue deleting other blobs even if one fails
                             self._delete_blob(blob_key)
 
-        except (NexusFileNotFoundError, OSError):
-            raise
-        except Exception as e:
-            if isinstance(e, BackendError):
-                raise
-            raise BackendError(
-                f"Failed to remove directory {path}: {e}",
-                backend=self.name,
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
                 path=path,
-            ) from e
+            )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+
+    def is_directory(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
         """
         Check if path is a directory.
 
@@ -860,25 +982,50 @@ class BaseBlobStorageConnector(Backend):
             context: Operation context (not used for directory check)
 
         Returns:
-            True if path is a directory (has marker or has children), False otherwise
+            HandlerResponse with True if path is a directory, False otherwise in data field
         """
+        start_time = time.perf_counter()
+
         try:
             path = path.strip("/")
             if not path:
-                return True  # Root is always a directory
+                # Root is always a directory
+                return HandlerResponse.ok(
+                    data=True,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path="/",
+                )
 
             blob_path = self._get_blob_path(path)
 
             # Check 1: Explicit directory marker blob
             if self._blob_exists(blob_path + "/"):
-                return True
+                return HandlerResponse.ok(
+                    data=True,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
 
             # Check 2: Virtual directory (has any blobs under this prefix)
             blobs, prefixes = self._list_blobs(prefix=blob_path + "/", delimiter="/")
-            return len(blobs) > 0 or len(prefixes) > 0
+            is_dir = len(blobs) > 0 or len(prefixes) > 0
 
-        except Exception:
-            return False
+            return HandlerResponse.ok(
+                data=is_dir,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
@@ -899,8 +1046,10 @@ class BaseBlobStorageConnector(Backend):
             path = path.strip("/")
 
             # Check if directory exists (except root)
-            if path and not self.is_directory(path):
-                raise FileNotFoundError(f"Directory not found: {path}")
+            if path:
+                is_dir_response = self.is_directory(path)
+                if not is_dir_response.success or not is_dir_response.data:
+                    raise FileNotFoundError(f"Directory not found: {path}")
 
             # Build prefix for this directory
             blob_base_path = self._get_blob_path(path)

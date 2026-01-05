@@ -9,6 +9,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.response import HandlerResponse, ResponseType
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.permissions_enhanced import EnhancedOperationContext
@@ -229,7 +231,9 @@ class Backend(ABC):
     # === Content Operations (CAS) ===
 
     @abstractmethod
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[str]":
         """
         Write content to storage and return its content hash.
 
@@ -241,10 +245,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            Content hash (SHA-256 as hex string)
-
-        Raises:
-            BackendError: If write operation fails
+            HandlerResponse with content hash (SHA-256 as hex string) in data field
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -253,7 +254,9 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]":
         """
         Read content by its hash.
 
@@ -262,11 +265,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            File content as bytes
-
-        Raises:
-            NexusFileNotFoundError: If content doesn't exist
-            BackendError: If read operation fails
+            HandlerResponse with file content as bytes in data field
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -298,10 +297,10 @@ class Backend(ABC):
         """
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
-            try:
-                result[content_hash] = self.read_content(content_hash, context=context)
-            except Exception:
-                # Return None for missing/errored content
+            response = self.read_content(content_hash, context=context)
+            if response.success:
+                result[content_hash] = response.data
+            else:
                 result[content_hash] = None
         return result
 
@@ -333,7 +332,8 @@ class Backend(ABC):
         """
         # Default implementation: read entire file and yield in chunks
         # Backends can override for true streaming from storage
-        content = self.read_content(content_hash, context=context)
+        response = self.read_content(content_hash, context=context)
+        content = response.unwrap()  # Raises on error
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
@@ -341,7 +341,7 @@ class Backend(ABC):
         self,
         chunks: Iterator[bytes],
         context: "OperationContext | None" = None,
-    ) -> str:
+    ) -> "HandlerResponse[str]":
         """
         Write content from an iterator of chunks and return its content hash.
 
@@ -354,10 +354,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            Content hash (SHA-256 as hex string)
-
-        Raises:
-            BackendError: If write operation fails
+            HandlerResponse with content hash (SHA-256 as hex string) in data field
 
         Example:
             >>> # Stream large file without loading into memory
@@ -365,7 +362,8 @@ class Backend(ABC):
             ...     with open(path, 'rb') as f:
             ...         while chunk := f.read(chunk_size):
             ...             yield chunk
-            >>> content_hash = backend.write_stream(file_chunks('/large/file.bin'))
+            >>> response = backend.write_stream(file_chunks('/large/file.bin'))
+            >>> content_hash = response.unwrap()
 
         Note:
             Default implementation collects all chunks and calls write_content().
@@ -377,7 +375,9 @@ class Backend(ABC):
         return self.write_content(content, context=context)
 
     @abstractmethod
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[None]":
         """
         Delete content by hash.
 
@@ -388,9 +388,8 @@ class Backend(ABC):
             content_hash: SHA-256 hash as hex string
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
-        Raises:
-            NexusFileNotFoundError: If content doesn't exist
-            BackendError: If delete operation fails
+        Returns:
+            HandlerResponse indicating success or failure
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -399,7 +398,9 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
         """
         Check if content exists.
 
@@ -408,7 +409,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            True if content exists, False otherwise
+            HandlerResponse with True if content exists, False otherwise in data field
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -417,7 +418,9 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_content_size(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]":
         """
         Get content size in bytes.
 
@@ -426,11 +429,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            Content size in bytes
-
-        Raises:
-            NexusFileNotFoundError: If content doesn't exist
-            BackendError: If operation fails
+            HandlerResponse with content size in bytes in data field
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -439,7 +438,9 @@ class Backend(ABC):
         pass
 
     @abstractmethod
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[int]":
         """
         Get reference count for content.
 
@@ -448,10 +449,7 @@ class Backend(ABC):
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
         Returns:
-            Number of references to this content
-
-        Raises:
-            NexusFileNotFoundError: If content doesn't exist
+            HandlerResponse with number of references in data field
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -468,7 +466,7 @@ class Backend(ABC):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> "HandlerResponse[None]":
         """
         Create a directory.
 
@@ -481,10 +479,8 @@ class Backend(ABC):
             exist_ok: Don't raise error if directory exists
             context: Operation context with user/tenant info (optional, for user-scoped backends)
 
-        Raises:
-            FileExistsError: If directory exists and exist_ok=False
-            FileNotFoundError: If parent doesn't exist and parents=False
-            BackendError: If operation fails
+        Returns:
+            HandlerResponse indicating success or failure
 
         Note:
             For user_scoped backends, context.user_id determines which user's
@@ -498,7 +494,7 @@ class Backend(ABC):
         path: str,
         recursive: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> "HandlerResponse[None]":
         """
         Remove a directory.
 
@@ -507,15 +503,15 @@ class Backend(ABC):
             recursive: Remove non-empty directory (like rm -rf)
             context: Operation context for authentication (optional)
 
-        Raises:
-            OSError: If directory not empty and recursive=False
-            NexusFileNotFoundError: If directory doesn't exist
-            BackendError: If operation fails
+        Returns:
+            HandlerResponse indicating success or failure
         """
         pass
 
     @abstractmethod
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def is_directory(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bool]":
         """
         Check if path is a directory.
 
@@ -524,7 +520,7 @@ class Backend(ABC):
             context: Operation context for authentication (optional)
 
         Returns:
-            True if path is a directory, False otherwise
+            HandlerResponse with True if path is a directory, False otherwise in data field
         """
         pass
 

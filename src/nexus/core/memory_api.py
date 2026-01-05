@@ -149,7 +149,7 @@ class Memory:
         # LocalBackend.write_content() handles hashing and storage
         try:
             backend_context = context if context else self.context
-            content_hash = self.backend.write_content(content_bytes, context=backend_context)
+            content_hash = self.backend.write_content(content_bytes, context=backend_context).unwrap()
         except Exception as e:
             # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
@@ -426,7 +426,7 @@ class Memory:
                     try:
                         content_bytes = self.backend.read_content(
                             memory.content_hash, context=self.context
-                        )
+                        ).unwrap()
                         content = content_bytes.decode("utf-8")
                         keyword_score = self._compute_keyword_score(query, content)
                     except Exception:
@@ -454,7 +454,7 @@ class Memory:
                 try:
                     content_bytes = self.backend.read_content(
                         memory.content_hash, context=self.context
-                    )
+                    ).unwrap()
                     content = content_bytes.decode("utf-8")
                 except Exception:
                     content = f"<content not available: {memory.content_hash}>"
@@ -569,7 +569,7 @@ class Memory:
         # Read content
         content = None
         try:
-            content_bytes = self.backend.read_content(memory.content_hash, context=self.context)
+            content_bytes = self.backend.read_content(memory.content_hash, context=self.context).unwrap()
             try:
                 content = content_bytes.decode("utf-8")
             except UnicodeDecodeError:
@@ -653,7 +653,7 @@ class Memory:
         # Read content
         content = None
         try:
-            content_bytes = self.backend.read_content(memory.content_hash, context=self.context)
+            content_bytes = self.backend.read_content(memory.content_hash, context=self.context).unwrap()
             try:
                 # Try to parse as JSON (structured content)
                 import json
@@ -2018,7 +2018,7 @@ class Memory:
                         # Read content
                         content_bytes = self.backend.read_content(
                             memory.content_hash, context=self.context
-                        )
+                        ).unwrap()
                         content = content_bytes.decode("utf-8")
 
                         # Generate embedding

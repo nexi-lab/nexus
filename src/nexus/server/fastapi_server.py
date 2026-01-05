@@ -963,6 +963,7 @@ def _register_routes(app: FastAPI) -> None:
         - Search daemon (if enabled)
         - Database connection
         - Background tasks
+        - Mounted backends (Issue #708)
         """
         health: dict[str, Any] = {
             "status": "healthy",
@@ -989,6 +990,45 @@ def _register_routes(app: FastAPI) -> None:
         health["components"]["subscriptions"] = {
             "status": "healthy" if _app_state.subscription_manager else "disabled",
         }
+
+        # Check mounted backends (Issue #708)
+        backends_health: dict[str, Any] = {}
+        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "path_router"):
+            mounts = _app_state.nexus_fs.path_router.list_mounts()
+            for mount in mounts:
+                backend = mount.backend
+                mount_point = mount.mount_point
+
+                # Call check_connection on backend
+                try:
+                    # Note: For user-scoped backends, health check without context
+                    # will return limited info. Full per-user health requires context.
+                    status = backend.check_connection()
+                    backends_health[mount_point] = {
+                        "backend": backend.name,
+                        "healthy": status.success,
+                        "latency_ms": status.latency_ms,
+                        "user_scoped": backend.user_scoped,
+                        "thread_safe": backend.thread_safe,
+                    }
+                    if status.error_message:
+                        backends_health[mount_point]["error"] = status.error_message
+                    if status.details:
+                        backends_health[mount_point]["details"] = status.details
+                except Exception as e:
+                    backends_health[mount_point] = {
+                        "backend": backend.name,
+                        "healthy": False,
+                        "error": str(e),
+                    }
+
+        health["components"]["backends"] = backends_health
+
+        # Update overall status if any backend is unhealthy
+        unhealthy_backends = [k for k, v in backends_health.items() if not v.get("healthy", True)]
+        if unhealthy_backends:
+            health["status"] = "degraded"
+            health["unhealthy_backends"] = unhealthy_backends
 
         return health
 

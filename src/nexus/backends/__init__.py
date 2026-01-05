@@ -1,6 +1,6 @@
 """Storage backends for Nexus."""
 
-from nexus.backends.backend import Backend
+from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 
@@ -82,6 +82,7 @@ def _register_optional_backends() -> None:
 __all__ = [
     # Base classes
     "Backend",
+    "HandlerStatusResponse",
     "BaseBlobStorageConnector",
     "CacheConnectorMixin",
     "CacheEntry",

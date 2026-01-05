@@ -6,11 +6,43 @@ combining content-addressable storage (CAS) with directory operations.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+
+@dataclass
+class HandlerStatusResponse:
+    """Response from backend connection health checks.
+
+    Inspired by MindsDB's handler pattern for consistent health monitoring
+    across all backend implementations.
+
+    Attributes:
+        success: Whether the connection/operation succeeded
+        error_message: Human-readable error description if failed
+        latency_ms: Time taken for the health check in milliseconds
+        details: Additional backend-specific status information
+    """
+
+    success: bool
+    error_message: str | None = None
+    latency_ms: float | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result: dict[str, Any] = {"success": self.success}
+        if self.error_message:
+            result["error_message"] = self.error_message
+        if self.latency_ms is not None:
+            result["latency_ms"] = self.latency_ms
+        if self.details:
+            result["details"] = self.details
+        return result
 
 
 class Backend(ABC):
@@ -94,6 +126,105 @@ class Backend(ABC):
             True
         """
         return False
+
+    @property
+    def is_connected(self) -> bool:
+        """
+        Whether the backend is currently connected.
+
+        For stateless backends (e.g., local filesystem), this always returns True.
+        For stateful backends (e.g., databases, cloud services with sessions),
+        this reflects the actual connection state.
+
+        Returns:
+            True if connected/ready, False otherwise
+            Default: True (for stateless backends)
+        """
+        return True
+
+    @property
+    def thread_safe(self) -> bool:
+        """
+        Whether this backend is safe for concurrent access from multiple threads.
+
+        Thread-safe backends can share a single instance across threads.
+        Non-thread-safe backends require per-thread instances or connection pooling.
+
+        Returns:
+            True if thread-safe, False otherwise
+            Default: True (most backends are thread-safe)
+        """
+        return True
+
+    # === Connection Management ===
+
+    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
+        """
+        Establish connection to the backend.
+
+        For stateless backends (e.g., local filesystem), this is a no-op.
+        For stateful backends (e.g., OAuth services, databases), this
+        initializes the connection and validates credentials.
+
+        Args:
+            context: Operation context for user-scoped backends (OAuth)
+
+        Returns:
+            HandlerStatusResponse with connection status
+
+        Note:
+            Default implementation returns success for stateless backends.
+            Override in backends that require connection initialization.
+        """
+        return HandlerStatusResponse(success=True, details={"backend": self.name})
+
+    def disconnect(self, context: "OperationContext | None" = None) -> None:  # noqa: B027
+        """
+        Close connection and release resources.
+
+        For stateless backends, this is a no-op.
+        For stateful backends, this closes connections and cleans up.
+
+        Args:
+            context: Operation context for user-scoped backends
+
+        Note:
+            Default implementation is no-op for stateless backends.
+            Override in backends that hold connections or resources.
+        """
+        pass
+
+    def check_connection(
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse":
+        """
+        Verify the backend connection is healthy.
+
+        Performs a lightweight health check to verify the backend is
+        accessible and credentials are valid. For user-scoped backends,
+        this checks the specific user's credentials.
+
+        Args:
+            context: Operation context for user-scoped backends
+
+        Returns:
+            HandlerStatusResponse with health status and latency
+
+        Note:
+            Default implementation returns success based on is_connected.
+            Override in backends that need active health verification.
+        """
+        import time
+
+        start = time.perf_counter()
+        success = self.is_connected
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        return HandlerStatusResponse(
+            success=success,
+            latency_ms=latency_ms,
+            details={"backend": self.name, "user_scoped": self.user_scoped},
+        )
 
     # === Content Operations (CAS) ===
 

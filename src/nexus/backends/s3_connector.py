@@ -36,6 +36,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
@@ -255,6 +256,64 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     def name(self) -> str:
         """Backend identifier name."""
         return "s3_connector"
+
+    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+        """
+        Verify S3 connection is healthy.
+
+        Performs a lightweight head_bucket call to verify:
+        - AWS credentials are valid
+        - Bucket is accessible
+        - Network connectivity is working
+
+        Args:
+            context: Operation context (unused, S3 uses shared credentials)
+
+        Returns:
+            HandlerStatusResponse with health status and latency
+        """
+        import time
+
+        start = time.perf_counter()
+
+        try:
+            # Lightweight check - head_bucket is fast and verifies access
+            self.client.head_bucket(Bucket=self.bucket_name)
+
+            latency_ms = (time.perf_counter() - start) * 1000
+            return HandlerStatusResponse(
+                success=True,
+                latency_ms=latency_ms,
+                details={
+                    "backend": self.name,
+                    "bucket": self.bucket_name,
+                    "prefix": self.prefix,
+                    "versioning_enabled": self.versioning_enabled,
+                },
+            )
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+
+            return HandlerStatusResponse(
+                success=False,
+                error_message=f"S3 access failed ({error_code}): {error_message}",
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={
+                    "backend": self.name,
+                    "bucket": self.bucket_name,
+                    "error_code": error_code,
+                },
+            )
+
+        except Exception as e:
+            return HandlerStatusResponse(
+                success=False,
+                error_message=str(e),
+                latency_ms=(time.perf_counter() - start) * 1000,
+                details={"backend": self.name, "bucket": self.bucket_name},
+            )
 
     # _has_caching() inherited from CacheConnectorMixin
 

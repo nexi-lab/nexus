@@ -93,7 +93,7 @@ class TestContentOperations:
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        content_hash = gcs_backend.write_content(test_content)
+        content_hash = gcs_backend.write_content(test_content).unwrap()
 
         # Should be SHA-256 hash
         assert len(content_hash) == 64
@@ -131,7 +131,7 @@ class TestContentOperations:
 
         gcs_backend.bucket.blob.side_effect = blob_side_effect
 
-        gcs_backend.write_content(test_content)
+        gcs_backend.write_content(test_content).unwrap()
 
         # Should not write content again (exists)
         assert mock_blob.upload_from_string.call_count == 0
@@ -151,7 +151,7 @@ class TestContentOperations:
         mock_blob.download_as_bytes.return_value = test_content
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_backend.read_content(expected_hash)
+        result = gcs_backend.read_content(expected_hash).unwrap()
 
         assert result == test_content
         mock_blob.download_as_bytes.assert_called_once_with(timeout=60)
@@ -163,7 +163,7 @@ class TestContentOperations:
         gcs_backend.bucket.blob.return_value = mock_blob
 
         with pytest.raises(NexusFileNotFoundError):
-            gcs_backend.read_content("nonexistent_hash")
+            gcs_backend.read_content("nonexistent_hash").unwrap()
 
     def test_read_content_hash_mismatch(self, gcs_backend: GCSBackend) -> None:
         """Test reading content with hash mismatch."""
@@ -173,7 +173,7 @@ class TestContentOperations:
         gcs_backend.bucket.blob.return_value = mock_blob
 
         with pytest.raises(BackendError) as exc_info:
-            gcs_backend.read_content("expected_hash")
+            gcs_backend.read_content("expected_hash").unwrap()
 
         assert "hash mismatch" in str(exc_info.value).lower()
 
@@ -183,7 +183,7 @@ class TestContentOperations:
         mock_blob.exists.return_value = True
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_backend.content_exists("some_hash")
+        result = gcs_backend.content_exists("some_hash").unwrap()
 
         assert result is True
 
@@ -193,7 +193,7 @@ class TestContentOperations:
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_backend.content_exists("some_hash")
+        result = gcs_backend.content_exists("some_hash").unwrap()
 
         assert result is False
 
@@ -204,7 +204,7 @@ class TestContentOperations:
         mock_blob.size = 1024
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        size = gcs_backend.get_content_size("some_hash")
+        size = gcs_backend.get_content_size("some_hash").unwrap()
 
         assert size == 1024
         mock_blob.reload.assert_called_once()
@@ -216,7 +216,7 @@ class TestContentOperations:
         gcs_backend.bucket.blob.return_value = mock_blob
 
         with pytest.raises(NexusFileNotFoundError):
-            gcs_backend.get_content_size("nonexistent_hash")
+            gcs_backend.get_content_size("nonexistent_hash").unwrap()
 
     def test_get_ref_count(self, gcs_backend: GCSBackend) -> None:
         """Test getting reference count."""
@@ -236,7 +236,7 @@ class TestContentOperations:
 
         gcs_backend.bucket.blob.side_effect = blob_side_effect
 
-        ref_count = gcs_backend.get_ref_count("some_hash")
+        ref_count = gcs_backend.get_ref_count("some_hash").unwrap()
 
         assert ref_count == 3
 
@@ -258,7 +258,7 @@ class TestContentOperations:
 
         gcs_backend.bucket.blob.side_effect = blob_side_effect
 
-        gcs_backend.delete_content("some_hash")
+        gcs_backend.delete_content("some_hash").unwrap()
 
         # Should not delete blob, only update metadata
         mock_blob.delete.assert_not_called()
@@ -282,7 +282,7 @@ class TestContentOperations:
 
         gcs_backend.bucket.blob.side_effect = blob_side_effect
 
-        gcs_backend.delete_content("some_hash")
+        gcs_backend.delete_content("some_hash").unwrap()
 
         # Should delete both content and metadata
         assert mock_blob.delete.call_count >= 1
@@ -295,7 +295,7 @@ class TestContentOperations:
         gcs_backend.bucket.blob.return_value = mock_blob
 
         with pytest.raises(NexusFileNotFoundError):
-            gcs_backend.delete_content("nonexistent_hash")
+            gcs_backend.delete_content("nonexistent_hash").unwrap()
 
 
 class TestDirectoryOperations:
@@ -307,7 +307,7 @@ class TestDirectoryOperations:
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        gcs_backend.mkdir("test_dir")
+        gcs_backend.mkdir("test_dir").unwrap()
 
         # Should create directory marker
         mock_blob.upload_from_string.assert_called_once_with(
@@ -320,7 +320,7 @@ class TestDirectoryOperations:
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        gcs_backend.mkdir("parent/child", parents=True)
+        gcs_backend.mkdir("parent/child", parents=True).unwrap()
 
         # Should create directory marker without checking parent
         mock_blob.upload_from_string.assert_called_once()
@@ -333,28 +333,30 @@ class TestDirectoryOperations:
 
         # Should raise error without exist_ok
         with pytest.raises(FileExistsError):
-            gcs_backend.mkdir("existing_dir", exist_ok=False)
+            gcs_backend.mkdir("existing_dir", exist_ok=False).unwrap()
 
         # Should succeed with exist_ok
-        gcs_backend.mkdir("existing_dir", exist_ok=True)
+        gcs_backend.mkdir("existing_dir", exist_ok=True).unwrap()
         mock_blob.upload_from_string.assert_not_called()
 
     def test_mkdir_parent_not_found(self, gcs_backend: GCSBackend) -> None:
         """Test creating directory when parent doesn't exist."""
+        from nexus.core.response import HandlerResponse
+
         mock_blob = Mock()
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        # Mock is_directory to return False for parent
-        gcs_backend.is_directory = Mock(return_value=False)
+        # Mock is_directory to return False for parent (wrapped in HandlerResponse)
+        gcs_backend.is_directory = Mock(return_value=HandlerResponse.ok(False))
 
         with pytest.raises(FileNotFoundError):
-            gcs_backend.mkdir("parent/child", parents=False)
+            gcs_backend.mkdir("parent/child", parents=False).unwrap()
 
     def test_mkdir_root(self, gcs_backend: GCSBackend) -> None:
         """Test creating root directory (no-op)."""
-        gcs_backend.mkdir("")
-        gcs_backend.mkdir("/")
+        gcs_backend.mkdir("").unwrap()
+        gcs_backend.mkdir("/").unwrap()
 
         # Should not attempt to create anything
         gcs_backend.bucket.blob.assert_not_called()
@@ -429,7 +431,7 @@ class TestDirectoryOperations:
         mock_blob.exists.return_value = True
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_backend.is_directory("test_dir")
+        result = gcs_backend.is_directory("test_dir").unwrap()
 
         assert result is True
 
@@ -439,14 +441,14 @@ class TestDirectoryOperations:
         mock_blob.exists.return_value = False
         gcs_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_backend.is_directory("test_dir")
+        result = gcs_backend.is_directory("test_dir").unwrap()
 
         assert result is False
 
     def test_is_directory_root(self, gcs_backend: GCSBackend) -> None:
         """Test that root is always a directory."""
-        assert gcs_backend.is_directory("") is True
-        assert gcs_backend.is_directory("/") is True
+        assert gcs_backend.is_directory("").unwrap() is True
+        assert gcs_backend.is_directory("/").unwrap() is True
 
 
 class TestHashOperations:

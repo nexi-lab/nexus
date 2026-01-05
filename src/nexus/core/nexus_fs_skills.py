@@ -1,32 +1,32 @@
 """Skills management operations for NexusFS.
 
-This module contains skills management operations exposed via RPC:
-- skills_create: Create a new skill from template
-- skills_create_from_content: Create a skill from web content
-- skills_create_from_file: Create skill from file or URL (auto-detects type)
-- skills_list: List all skills
-- skills_info: Get detailed skill information
-- skills_fork: Fork an existing skill
-- skills_publish: Publish skill to another tier
-- skills_search: Search skills by description
-- skills_import: Import skill from .zip/.skill package
-- skills_validate_zip: Validate skill ZIP package without importing
-- skills_export: Export skill to .zip package
-- skills_validate: Validate skill format
-- skills_submit_approval: Submit skill for approval
-- skills_approve: Approve a skill
-- skills_reject: Reject a skill
-- skills_list_approvals: List approval requests
+This module provides RPC methods for skill operations. It's a thin delegation
+layer to SkillService which contains the actual business logic.
+
+## APIs
+
+Distribution:
+- skills_share: Grant read permission on a skill
+- skills_unshare: Revoke read permission on a skill
+
+Subscription:
+- skills_discover: List skills the user has permission to see
+- skills_subscribe: Add a skill to the user's library
+- skills_unsubscribe: Remove a skill from the user's library
+
+Runner:
+- skills_get_prompt_context: Get skill metadata for system prompt injection
+- skills_load: Load full skill content on-demand
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import ValidationError
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.skill_service import SkillService
 
 logger = logging.getLogger(__name__)
 
@@ -35,840 +35,563 @@ if TYPE_CHECKING:
 
 
 class NexusFSSkillsMixin:
-    """Mixin providing skills management operations for NexusFS."""
+    """Mixin providing skills RPC methods for NexusFS.
 
-    def _run_async_skill_operation(self, coro: Any) -> dict[str, Any]:
-        """Run an async skill operation in the current or new event loop.
+    This is a thin delegation layer to SkillService. All business logic
+    lives in the service.
+    """
 
-        Args:
-            coro: Coroutine to run
+    _skill_service: SkillService | None = None
 
-        Returns:
-            Result from the coroutine
-        """
-        try:
-            # Try to get the current running loop
-            loop = asyncio.get_running_loop()
-            # If we're already in an async context, we can't use run_until_complete
-            # Instead, we need to schedule it differently
-            # For now, create a new thread with a new loop
-            import threading
+    def _get_skill_service(self) -> SkillService:
+        """Get or create SkillService instance."""
+        if self._skill_service is None:
+            from typing import Any, cast
 
-            result_holder: list[Any] = []
-            exception_holder: list[Exception] = []
+            from nexus.services.gateway import NexusFSGateway
 
-            def run_in_thread() -> None:
-                try:
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    result = new_loop.run_until_complete(coro)
-                    result_holder.append(result)
-                except Exception as e:
-                    exception_holder.append(e)
-                finally:
-                    new_loop.close()
+            # At runtime, self is a NexusFS instance (which inherits this mixin)
+            gateway = NexusFSGateway(cast(Any, self))
+            self._skill_service = SkillService(gateway=gateway)
+        return self._skill_service
 
-            thread = threading.Thread(target=run_in_thread)
-            thread.start()
-            thread.join()
+    # =========================================================================
+    # Distribution APIs
+    # =========================================================================
 
-            if exception_holder:
-                raise exception_holder[0]
-            if result_holder:
-                return result_holder[0]  # type: ignore[no-any-return]
-            return {}
-
-        except RuntimeError:
-            # No running loop - create one and run
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(coro)
-            finally:
-                loop.close()
-
-    def _get_skill_registry(self) -> Any:
-        """Get or create SkillRegistry instance.
-
-        Returns:
-            SkillRegistry instance
-        """
-        from typing import cast
-
-        from nexus.core.nexus_fs import NexusFilesystem
-        from nexus.skills import SkillRegistry
-
-        return SkillRegistry(cast(NexusFilesystem, self))
-
-    def _get_skill_manager(self) -> Any:
-        """Get or create SkillManager instance.
-
-        Returns:
-            SkillManager instance
-        """
-        from typing import cast
-
-        from nexus.core.nexus_fs import NexusFilesystem
-        from nexus.skills import SkillManager
-
-        registry = self._get_skill_registry()
-        return SkillManager(cast(NexusFilesystem, self), registry)
-
-    def _get_skill_governance(self) -> Any:
-        """Get or create SkillGovernance instance.
-
-        Returns:
-            SkillGovernance instance
-        """
-        from nexus.skills import SkillGovernance
-
-        # Get database connection if available
-        db_conn = None
-        if (
-            hasattr(self, "metadata_store")
-            and self.metadata_store
-            and hasattr(self.metadata_store, "session")
-        ):
-            from nexus.cli.commands.skills import SQLAlchemyDatabaseConnection
-
-            db_conn = SQLAlchemyDatabaseConnection(self.metadata_store.session)
-
-        return SkillGovernance(db_connection=db_conn)
-
-    @rpc_expose(description="Create a new skill from template")
-    def skills_create(
+    @rpc_expose(description="Share a skill with users, groups, or make public")
+    def skills_share(
         self,
-        name: str,
-        description: str,
-        template: str = "basic",
-        tier: str = "user",
-        author: str | None = None,
+        skill_path: str,
+        share_with: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Create a new skill from template.
+        """Grant read permission on a skill.
 
         Args:
-            name: Skill name
-            description: Skill description
-            template: Template name (default: "basic")
-            tier: Target tier (agent/user/tenant/system, default: "user")
-            author: Optional author name
-            context: Operation context with user_id, tenant_id
+            skill_path: Path to the skill (e.g., /tenant:acme/user:alice/skill/code-review/)
+            share_with: Target to share with:
+                - "public" - Make skill visible to everyone
+                - "tenant" - Share with all users in current tenant
+                - "group:<name>" - Share with a group
+                - "user:<id>" - Share with a specific user
+                - "agent:<id>" - Share with a specific agent
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with skill_path, name, tier, template
+            Dict with success, tuple_id, skill_path, share_with
         """
-        manager = self._get_skill_manager()
+        service = self._get_skill_service()
+        tuple_id = service.share(skill_path, share_with, context)
+        return {
+            "success": True,
+            "tuple_id": tuple_id,
+            "skill_path": skill_path,
+            "share_with": share_with,
+        }
 
-        async def create() -> dict[str, Any]:
-            skill_path = await manager.create_skill(
-                name=name,
-                description=description,
-                template=template,
-                tier=tier,
-                author=author,
-                context=context,
-            )
-            return {
-                "skill_path": skill_path,
-                "name": name,
-                "tier": tier,
-                "template": template,
-            }
-
-        return self._run_async_skill_operation(create())
-
-    @rpc_expose(description="Create a skill from web content")
-    def skills_create_from_content(
+    @rpc_expose(description="Revoke sharing permission on a skill")
+    def skills_unshare(
         self,
-        name: str,
-        description: str,
-        content: str,
-        tier: str = "user",
-        author: str | None = None,
-        source_url: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        skill_path: str,
+        unshare_from: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Create a skill from custom content.
+        """Revoke read permission on a skill.
 
         Args:
-            name: Skill name
-            description: Skill description
-            content: Skill markdown content
-            tier: Target tier (default: "user")
-            author: Optional author name
-            source_url: Optional source URL
-            metadata: Optional additional metadata
-            context: Operation context with user_id, tenant_id
+            skill_path: Path to the skill
+            unshare_from: Target to unshare from (same format as share_with)
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with skill_path, name, tier, source_url
+            Dict with success, skill_path, unshare_from
         """
-        manager = self._get_skill_manager()
+        service = self._get_skill_service()
+        success = service.unshare(skill_path, unshare_from, context)
+        return {
+            "success": success,
+            "skill_path": skill_path,
+            "unshare_from": unshare_from,
+        }
 
-        async def create() -> dict[str, Any]:
-            skill_path = await manager.create_skill_from_content(
-                name=name,
-                description=description,
-                content=content,
-                tier=tier,
-                author=author,
-                source_url=source_url,
-                metadata=metadata,
-                context=context,
-            )
-            return {
-                "skill_path": skill_path,
-                "name": name,
-                "tier": tier,
-                "source_url": source_url,
-            }
+    # =========================================================================
+    # Subscription APIs
+    # =========================================================================
 
-        return self._run_async_skill_operation(create())
-
-    @rpc_expose(description="Create skill from file or URL (auto-detects type)")
-    def skills_create_from_file(
+    @rpc_expose(description="Discover skills the user has permission to see")
+    def skills_discover(
         self,
-        source: str,
-        file_data: str | None = None,
-        name: str | None = None,
-        description: str | None = None,
-        tier: str = "agent",
-        use_ai: bool = False,
-        use_ocr: bool = False,
-        extract_tables: bool = False,
-        extract_images: bool = False,
-        _author: str | None = None,  # Unused: plugin manages authorship
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Create a skill from file or URL (auto-detects type).
-
-        Args:
-            source: File path or URL
-            file_data: Base64 encoded file data (for remote calls)
-            name: Skill name (auto-generated if not provided)
-            description: Skill description
-            tier: Target tier (agent, tenant, system)
-            use_ai: Enable AI enhancement
-            use_ocr: Enable OCR for scanned PDFs
-            extract_tables: Extract tables from documents
-            extract_images: Extract images from documents
-            author: Author name
-            context: Operation context
-
-        Returns:
-            Dict with skill_path, name, tier, source
-        """
-        import base64
-        import tempfile
-        from pathlib import Path
-        from urllib.parse import urlparse
-
-        # Load plugin
-        try:
-            from nexus_skill_seekers.plugin import SkillSeekersPlugin
-
-            plugin = SkillSeekersPlugin(nexus_fs=self)
-        except ImportError as e:
-            raise RuntimeError(
-                "skill-seekers plugin not installed. "
-                "Install with: pip install nexus-plugin-skill-seekers"
-            ) from e
-
-        # Detect source type
-        is_url = source.startswith(("http://", "https://"))
-        is_pdf = source.lower().endswith(".pdf")
-
-        # Auto-generate name if not provided
-        if not name:
-            if is_url:
-                parsed = urlparse(source)
-                name = parsed.path.strip("/").split("/")[-1] or parsed.netloc
-                name = name.lower().replace(".", "-").replace("_", "-")
-            else:
-                name = Path(source).stem.lower().replace(" ", "-").replace("_", "-")
-
-        async def create() -> dict[str, Any]:
-            skill_path: str | None = None
-
-            # Handle file data (for remote calls)
-            if file_data:
-                # Decode base64 and write to temp file
-                decoded = base64.b64decode(file_data)
-                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(source).suffix) as tmp:
-                    tmp.write(decoded)
-                    tmp_path = tmp.name
-
-                try:
-                    if is_pdf:
-                        skill_path = await plugin.generate_skill_from_pdf(
-                            pdf_path=tmp_path,
-                            name=name,
-                            tier=tier,
-                            description=description,
-                            use_ai=use_ai,
-                            use_ocr=use_ocr,
-                            extract_tables=extract_tables,
-                            extract_images=extract_images,
-                        )
-                finally:
-                    # Clean up temp file
-                    Path(tmp_path).unlink(missing_ok=True)
-            elif is_pdf:
-                # Local file path
-                skill_path = await plugin.generate_skill_from_pdf(
-                    pdf_path=source,
-                    name=name,
-                    tier=tier,
-                    description=description,
-                    use_ai=use_ai,
-                    use_ocr=use_ocr,
-                    extract_tables=extract_tables,
-                    extract_images=extract_images,
-                )
-            elif is_url:
-                # URL scraping
-                skill_path = await plugin.generate_skill(
-                    url=source,
-                    name=name,
-                    tier=tier,
-                    description=description,
-                    use_ai=use_ai,
-                )
-            else:
-                raise ValueError(f"Unsupported source type: {source}")
-
-            if not skill_path:
-                raise RuntimeError("Failed to generate skill")
-
-            return {
-                "skill_path": skill_path,
-                "name": name,
-                "tier": tier,
-                "source": source,
-            }
-
-        return self._run_async_skill_operation(create())
-
-    @rpc_expose(description="List all skills")
-    def skills_list(
-        self,
-        tier: str | None = None,
-        include_metadata: bool = True,
+        filter: str = "all",
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """List all skills.
+        """List skills the user has permission to see.
 
         Args:
-            tier: Filter by tier (agent/tenant/system)
-            include_metadata: Include full metadata (default: True)
-            context: Operation context
+            filter: Filter mode:
+                - "all" - All skills user can see
+                - "public" - Only public skills
+                - "subscribed" - Only skills in user's library
+                - "owned" - Only skills owned by user
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with skills list
+            Dict with skills list and count
         """
-        registry = self._get_skill_registry()
+        service = self._get_skill_service()
+        skills = service.discover(context, filter)
+        return {
+            "skills": [s.to_dict() for s in skills],
+            "count": len(skills),
+        }
 
-        async def list_skills() -> dict[str, Any]:
-            await registry.discover(context=context)
-            skills = registry.list_skills(tier=tier, include_metadata=include_metadata)
-
-            # Convert SkillMetadata objects to dicts
-            skills_data = []
-            for skill in skills:
-                if hasattr(skill, "__dict__"):
-                    # It's a SkillMetadata object
-                    skill_dict = {
-                        "name": skill.name,
-                        "description": skill.description,
-                        "version": skill.version,
-                        "author": skill.author,
-                        "tier": skill.tier,
-                        "file_path": skill.file_path,
-                        "requires": skill.requires,
-                    }
-                    if skill.created_at:
-                        skill_dict["created_at"] = skill.created_at.isoformat()
-                    if skill.modified_at:
-                        skill_dict["modified_at"] = skill.modified_at.isoformat()
-                    skills_data.append(skill_dict)
-                else:
-                    # It's already a string (skill name)
-                    skills_data.append(skill)
-
-            return {"skills": skills_data, "count": len(skills_data)}
-
-        return self._run_async_skill_operation(list_skills())
-
-    @rpc_expose(description="Get detailed skill information")
-    def skills_info(
+    @rpc_expose(description="Subscribe to a skill (add to user's library)")
+    def skills_subscribe(
         self,
-        skill_name: str,
+        skill_path: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Get detailed skill information.
+        """Subscribe to a skill.
 
         Args:
-            skill_name: Name of the skill
-            context: Operation context
+            skill_path: Path to the skill to subscribe to
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with skill metadata and dependencies
+            Dict with success, skill_path, already_subscribed
         """
-        registry = self._get_skill_registry()
+        service = self._get_skill_service()
+        newly_subscribed = service.subscribe(skill_path, context)
+        return {
+            "success": True,
+            "skill_path": skill_path,
+            "already_subscribed": not newly_subscribed,
+        }
 
-        async def get_info() -> dict[str, Any]:
-            await registry.discover(context=context)
-            metadata = registry.get_metadata(skill_name)
-
-            skill_info = {
-                "name": metadata.name,
-                "description": metadata.description,
-                "version": metadata.version,
-                "author": metadata.author,
-                "tier": metadata.tier,
-                "file_path": metadata.file_path,
-                "requires": metadata.requires,
-            }
-
-            if metadata.created_at:
-                skill_info["created_at"] = metadata.created_at.isoformat()
-            if metadata.modified_at:
-                skill_info["modified_at"] = metadata.modified_at.isoformat()
-
-            # Add resolved dependencies
-            if metadata.requires:
-                resolved = await registry.resolve_dependencies(skill_name)
-                skill_info["resolved_dependencies"] = resolved
-
-            return skill_info
-
-        return self._run_async_skill_operation(get_info())
-
-    @rpc_expose(description="Fork an existing skill")
-    def skills_fork(
+    @rpc_expose(description="Unsubscribe from a skill (remove from user's library)")
+    def skills_unsubscribe(
         self,
-        source_name: str,
-        target_name: str,
-        tier: str = "agent",
-        author: str | None = None,
+        skill_path: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Fork an existing skill.
+        """Unsubscribe from a skill.
 
         Args:
-            source_name: Source skill name
-            target_name: Target skill name
-            tier: Target tier (default: "agent")
-            author: Optional author name
-            context: Operation context
+            skill_path: Path to the skill to unsubscribe from
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            Dict with forked_path, source_name, target_name, tier
+            Dict with success, skill_path, was_subscribed
         """
-        manager = self._get_skill_manager()
-        registry = self._get_skill_registry()
+        service = self._get_skill_service()
+        was_subscribed = service.unsubscribe(skill_path, context)
+        return {
+            "success": True,
+            "skill_path": skill_path,
+            "was_subscribed": was_subscribed,
+        }
 
-        async def fork() -> dict[str, Any]:
-            await registry.discover(context=context)
-            forked_path = await manager.fork_skill(
-                source_name=source_name,
-                target_name=target_name,
-                tier=tier,
-                author=author,
-            )
-            return {
-                "forked_path": forked_path,
-                "source_name": source_name,
-                "target_name": target_name,
-                "tier": tier,
-            }
+    # =========================================================================
+    # Runner APIs
+    # =========================================================================
 
-        return self._run_async_skill_operation(fork())
-
-    @rpc_expose(description="Publish skill to another tier")
-    def skills_publish(
+    @rpc_expose(description="Get skill metadata for system prompt injection")
+    def skills_get_prompt_context(
         self,
-        skill_name: str,
-        source_tier: str = "agent",
-        target_tier: str = "tenant",
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Publish skill to another tier.
-
-        Args:
-            skill_name: Skill name
-            source_tier: Source tier (default: "agent")
-            target_tier: Target tier (default: "tenant")
-            context: Operation context
-
-        Returns:
-            Dict with published_path, skill_name, source_tier, target_tier
-        """
-        manager = self._get_skill_manager()
-
-        async def publish() -> dict[str, Any]:
-            published_path = await manager.publish_skill(
-                name=skill_name,
-                source_tier=source_tier,
-                target_tier=target_tier,
-            )
-            return {
-                "published_path": published_path,
-                "skill_name": skill_name,
-                "source_tier": source_tier,
-                "target_tier": target_tier,
-            }
-
-        return self._run_async_skill_operation(publish())
-
-    @rpc_expose(description="Search skills by description")
-    def skills_search(
-        self,
-        query: str,
-        tier: str | None = None,
-        limit: int = 10,
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Search skills by description.
-
-        Args:
-            query: Search query
-            tier: Filter by tier
-            limit: Maximum results (default: 10)
-            context: Operation context
-
-        Returns:
-            Dict with results list
-        """
-        manager = self._get_skill_manager()
-
-        async def search() -> dict[str, Any]:
-            results = await manager.search_skills(query=query, tier=tier, limit=limit)
-            # Convert to serializable format
-            results_data = [{"skill_name": name, "score": score} for name, score in results]
-            return {"results": results_data, "query": query, "count": len(results_data)}
-
-        return self._run_async_skill_operation(search())
-
-    @rpc_expose(description="Submit skill for approval")
-    def skills_submit_approval(
-        self,
-        skill_name: str,
-        submitted_by: str,
-        reviewers: list[str] | None = None,
-        comments: str | None = None,
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Submit a skill for approval.
-
-        Args:
-            skill_name: Skill name
-            submitted_by: Submitter ID
-            reviewers: Optional list of reviewer IDs
-            comments: Optional submission comments
-            context: Operation context
-
-        Returns:
-            Dict with approval_id, skill_name, submitted_by
-        """
-        governance = self._get_skill_governance()
-
-        async def submit() -> dict[str, Any]:
-            approval_id = await governance.submit_for_approval(
-                skill_name=skill_name,
-                submitted_by=submitted_by,
-                reviewers=reviewers,
-                comments=comments,
-            )
-            return {
-                "approval_id": approval_id,
-                "skill_name": skill_name,
-                "submitted_by": submitted_by,
-                "reviewers": reviewers,
-            }
-
-        return self._run_async_skill_operation(submit())
-
-    @rpc_expose(description="Approve a skill")
-    def skills_approve(
-        self,
-        approval_id: str,
-        reviewed_by: str,
-        reviewer_type: str = "user",
-        comments: str | None = None,
-        tenant_id: str | None = None,
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Approve a skill for publication.
-
-        Args:
-            approval_id: Approval request ID
-            reviewed_by: Reviewer ID
-            reviewer_type: Reviewer type (user/agent, default: "user")
-            comments: Optional review comments
-            tenant_id: Optional tenant ID
-            context: Operation context
-
-        Returns:
-            Dict with approval_id, reviewed_by, status
-        """
-        governance = self._get_skill_governance()
-
-        async def approve() -> dict[str, Any]:
-            await governance.approve_skill(
-                approval_id=approval_id,
-                reviewed_by=reviewed_by,
-                reviewer_type=reviewer_type,
-                comments=comments,
-                tenant_id=tenant_id,
-            )
-            return {
-                "approval_id": approval_id,
-                "reviewed_by": reviewed_by,
-                "reviewer_type": reviewer_type,
-                "status": "approved",
-            }
-
-        return self._run_async_skill_operation(approve())
-
-    @rpc_expose(description="Reject a skill")
-    def skills_reject(
-        self,
-        approval_id: str,
-        reviewed_by: str,
-        reviewer_type: str = "user",
-        comments: str | None = None,
-        tenant_id: str | None = None,
-        context: OperationContext | None = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Reject a skill for publication.
-
-        Args:
-            approval_id: Approval request ID
-            reviewed_by: Reviewer ID
-            reviewer_type: Reviewer type (user/agent, default: "user")
-            comments: Optional rejection reason
-            tenant_id: Optional tenant ID
-            context: Operation context
-
-        Returns:
-            Dict with approval_id, reviewed_by, status
-        """
-        governance = self._get_skill_governance()
-
-        async def reject() -> dict[str, Any]:
-            await governance.reject_skill(
-                approval_id=approval_id,
-                reviewed_by=reviewed_by,
-                reviewer_type=reviewer_type,
-                comments=comments,
-                tenant_id=tenant_id,
-            )
-            return {
-                "approval_id": approval_id,
-                "reviewed_by": reviewed_by,
-                "reviewer_type": reviewer_type,
-                "status": "rejected",
-            }
-
-        return self._run_async_skill_operation(reject())
-
-    @rpc_expose(description="List approval requests")
-    def skills_list_approvals(
-        self,
-        status: str | None = None,
-        skill_name: str | None = None,
-        _context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """List skill approval requests.
-
-        Args:
-            status: Filter by status (pending/approved/rejected)
-            skill_name: Filter by skill name
-            context: Operation context
-
-        Returns:
-            Dict with approvals list
-        """
-        governance = self._get_skill_governance()
-
-        async def list_approvals() -> dict[str, Any]:
-            approvals = await governance.list_approvals(status=status, skill_name=skill_name)
-
-            # Convert to serializable format
-            approvals_data = []
-            for approval in approvals:
-                approval_dict = {
-                    "approval_id": approval.approval_id,
-                    "skill_name": approval.skill_name,
-                    "status": approval.status.value,
-                    "submitted_by": approval.submitted_by,
-                }
-                if approval.submitted_at:
-                    approval_dict["submitted_at"] = approval.submitted_at.isoformat()
-                if approval.reviewed_by:
-                    approval_dict["reviewed_by"] = approval.reviewed_by
-                if approval.reviewed_at:
-                    approval_dict["reviewed_at"] = approval.reviewed_at.isoformat()
-                if approval.comments:
-                    approval_dict["comments"] = approval.comments
-                approvals_data.append(approval_dict)
-
-            return {"approvals": approvals_data, "count": len(approvals_data)}
-
-        return self._run_async_skill_operation(list_approvals())
-
-    @rpc_expose(description="Import skill from .zip/.skill package")
-    def skills_import(
-        self,
-        zip_data: str,
-        tier: str = "user",
-        allow_overwrite: bool = False,
+        max_skills: int = 50,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Import skill from ZIP package.
+        """Get skill metadata formatted for system prompt injection.
 
         Args:
-            zip_data: Base64 encoded ZIP file bytes
-            tier: Target tier (personal/tenant/system)
-            allow_overwrite: Allow overwriting existing skills
-            context: Operation context with user_id, tenant_id
+            max_skills: Maximum number of skills to include (default: 50)
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            {
-                "imported_skills": ["skill-name"],
-                "skill_paths": ["/tenant:<tid>/user:<uid>/skill/<skill_name>/"],
-                "tier": "personal"
-            }
-
-        Raises:
-            ValidationError: Invalid ZIP structure or skill format
-            PermissionDeniedError: Insufficient permissions
+            Dict with xml, skills, count, token_estimate
         """
-        import base64
+        service = self._get_skill_service()
+        prompt_context = service.get_prompt_context(context, max_skills)
+        return prompt_context.to_dict()
 
-        from nexus.core.nexus_fs import NexusFilesystem
-        from nexus.skills.importer import SkillImporter
-
-        # Permission check: system tier requires admin (users cannot add system skills)
-        if tier == "system" and context and not getattr(context, "is_admin", False):
-            from nexus.core.exceptions import PermissionDeniedError
-
-            raise PermissionDeniedError("Only admins can import to system tier")
-
-        # Decode base64 ZIP data
-        zip_bytes = base64.b64decode(zip_data)
-
-        # Get importer
-        from typing import cast
-
-        registry = self._get_skill_registry()
-        importer = SkillImporter(cast(NexusFilesystem, self), registry)
-
-        # Import skill
-        async def import_skill() -> dict[str, Any]:
-            return await importer.import_from_zip(
-                zip_data=zip_bytes,
-                tier=tier,
-                allow_overwrite=allow_overwrite,
-                context=context,
-            )
-
-        return self._run_async_skill_operation(import_skill())
-
-    @rpc_expose(description="Validate skill ZIP package without importing")
-    def skills_validate_zip(
+    @rpc_expose(description="Load full skill content on-demand")
+    def skills_load(
         self,
-        zip_data: str,
-        context: OperationContext | None = None,  # noqa: ARG002
+        skill_path: str,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Validate skill ZIP package.
+        """Load full skill content.
 
         Args:
-            zip_data: Base64 encoded ZIP file bytes
-            context: Operation context
+            skill_path: Path to the skill to load
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            {
-                "valid": bool,
-                "skills_found": ["skill-name"],
-                "errors": ["error message"],
-                "warnings": ["warning message"]
-            }
+            Dict with name, path, owner, description, content, metadata
         """
-        import base64
+        service = self._get_skill_service()
+        content = service.load(skill_path, context)
+        return content.to_dict()
 
-        from nexus.core.nexus_fs import NexusFilesystem
-        from nexus.skills.importer import SkillImporter
+    # =========================================================================
+    # Package APIs (Import/Export)
+    # =========================================================================
 
-        zip_bytes = base64.b64decode(zip_data)
-
-        from typing import cast
-
-        registry = self._get_skill_registry()
-        importer = SkillImporter(cast(NexusFilesystem, self), registry)
-
-        async def validate() -> dict[str, Any]:
-            return await importer.validate_zip(zip_bytes)
-
-        return self._run_async_skill_operation(validate())
-
-    @rpc_expose(description="Export skill to .skill package")
+    @rpc_expose(description="Export a skill as a .skill (ZIP) package")
     def skills_export(
         self,
-        skill_name: str,
-        include_dependencies: bool = False,
+        skill_path: str | None = None,
+        skill_name: str | None = None,
+        output_path: str | None = None,
         format: str = "generic",
+        include_dependencies: bool = False,  # noqa: ARG002 - TODO: Implement dependency inclusion
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Export skill to .skill (ZIP) package.
+        """Export a skill to .skill (ZIP) format.
 
         Args:
-            skill_name: Name of skill to export
-            include_dependencies: Include skill dependencies
-            context: Operation context
+            skill_path: Full path to the skill to export
+            skill_name: Name of the skill (will search in user's skills)
+            output_path: Optional path to write .skill file. If None, returns bytes.
+            format: Export format ('generic' or 'claude')
+            include_dependencies: Whether to include dependent skills
+            context: Operation context with user_id and tenant_id
 
         Returns:
-            {
-                "skill_name": str,
-                "zip_data": str,  # Base64 encoded ZIP file
-                "size_bytes": int,
-                "filename": str  # Suggested filename (e.g., "skill-name.skill")
-            }
+            Dict with success, path (if written), or bytes (base64 if not written)
         """
         import base64
+        import io
+        import zipfile
 
-        from nexus.skills.exporter import SkillExporter
+        from nexus.core.exceptions import ValidationError
 
-        registry = self._get_skill_registry()
-        exporter = SkillExporter(registry)
+        service = self._get_skill_service()
+        service._validate_context(context)
 
-        async def export() -> dict[str, Any]:
-            await registry.discover(context=context)
+        # Resolve skill_path from skill_name if needed
+        if not skill_path and skill_name:
+            if context is None:
+                raise ValidationError("context is required")
+            # Search for skill by name in user's skills
+            user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            skill_path = f"{user_skill_dir}{skill_name}/"
+            # Also check if it exists in subscribed skills
+            if not service._gw.exists(skill_path, context=context):
+                # Try to find in all discoverable skills
+                skills = service.discover(context, filter="all")
+                for s in skills:
+                    if s.name == skill_name:
+                        skill_path = s.path
+                        break
 
-            # Export to bytes
-            zip_bytes = await exporter.export_skill(
-                name=skill_name,
-                output_path=None,  # Return bytes
-                include_dependencies=include_dependencies,
-                format=format,
-                context=context,
-            )
+        if not skill_path:
+            raise ValidationError("Either skill_path or skill_name must be provided")
 
-            # Check if export succeeded
-            if zip_bytes is None:
-                raise ValidationError(f"Failed to export skill '{skill_name}'")
+        if context is None:
+            raise ValidationError("context is required")
+        service._assert_can_read(skill_path, context)
 
-            # Encode to base64
-            zip_base64 = base64.b64encode(zip_bytes).decode("utf-8")
+        # Ensure path ends with /
+        if not skill_path.endswith("/"):
+            skill_path += "/"
 
+        # Collect files from skill directory
+        files_to_export: list[tuple[str, bytes]] = []
+
+        def collect_files(dir_path: str, _prefix: str = "") -> None:
+            try:
+                items = service._gw.list(dir_path, context=context)
+                for item in items:
+                    item_str = str(item)
+                    if item_str.startswith(dir_path):
+                        rel_path = item_str[len(dir_path) :]
+                    else:
+                        rel_path = item_str
+
+                    full_path = (
+                        f"{dir_path}{rel_path}" if not item_str.startswith("/") else item_str
+                    )
+
+                    # Check if it's a file by trying to read it
+                    try:
+                        content = service._gw.read(full_path, context=context)
+                        if isinstance(content, str):
+                            content = content.encode("utf-8")
+                        files_to_export.append((rel_path, content))
+                    except Exception:
+                        # Might be a directory, try to recurse
+                        collect_files(full_path + "/", rel_path + "/")
+            except Exception:
+                pass
+
+        collect_files(skill_path)
+
+        if not files_to_export:
+            raise ValidationError(f"No files found in skill: {skill_path}")
+
+        # Create ZIP package
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # Add manifest
+            manifest = {
+                "version": "1.0",
+                "skill_path": skill_path,
+                "files": [f[0] for f in files_to_export],
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+            # Add skill files
+            for rel_path, content in files_to_export:
+                zf.writestr(rel_path, content)
+
+        zip_bytes = zip_buffer.getvalue()
+
+        # Extract skill name from path
+        skill_name_from_path = skill_path.rstrip("/").split("/")[-1]
+
+        if output_path:
+            # Write to file using filesystem
+            service._gw.write(output_path, zip_bytes, context=context)
             return {
-                "skill_name": skill_name,
-                "zip_data": zip_base64,
+                "success": True,
+                "path": output_path,
                 "size_bytes": len(zip_bytes),
-                "filename": f"{skill_name}.skill",  # Suggested filename with .skill extension (ZIP format)
+                "skill_name": skill_name_from_path,
+                "format": format,
+            }
+        else:
+            # Return base64 encoded bytes (frontend expects zip_data)
+            return {
+                "success": True,
+                "zip_data": base64.b64encode(zip_bytes).decode("ascii"),
+                "size_bytes": len(zip_bytes),
+                "skill_name": skill_name_from_path,
+                "format": format,
+                "filename": f"{skill_name_from_path}.skill",
             }
 
-        return self._run_async_skill_operation(export())
+    @rpc_expose(description="Import a skill from a .skill (ZIP) package")
+    def skills_import(
+        self,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,  # Alias for zip_bytes (frontend uses this name)
+        target_path: str | None = None,
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+        tier: str | None = None,  # noqa: ARG002 - Legacy parameter (ignored, always imports to user's skill dir)
+    ) -> dict[str, Any]:
+        """Import a skill from .skill (ZIP) format.
+
+        Skills are always imported to the user's skill directory:
+        /tenant:{tenant_id}/user:{user_id}/skill/{skill_name}/
+
+        Args:
+            source_path: Path to .skill file to import (either this or zip_bytes/zip_data)
+            zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
+            zip_data: Alias for zip_bytes (base64 encoded string)
+            target_path: Target path for the skill. If None, uses user's skill directory.
+            allow_overwrite: Whether to overwrite existing skill
+            context: Operation context with user_id and tenant_id
+
+        Returns:
+            Dict with imported_skills, skill_paths
+        """
+        import base64
+        import io
+        import zipfile
+
+        from nexus.core.exceptions import ValidationError
+
+        service = self._get_skill_service()
+        service._validate_context(context)
+
+        # Use zip_data as alias for zip_bytes
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
+        # Get ZIP data
+        if source_path:
+            raw_zip_data = service._gw.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
+        elif zip_bytes:
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
+        else:
+            raise ValidationError("Either source_path or zip_data required")
+
+        # Extract ZIP
+        zip_buffer = io.BytesIO(raw_zip_data)
+        files_imported: list[str] = []
+
+        with zipfile.ZipFile(zip_buffer, mode="r") as zf:
+            # Read manifest
+            try:
+                manifest_data = zf.read("manifest.json")
+                manifest = json.loads(manifest_data.decode("utf-8"))
+            except Exception:
+                manifest = {}
+
+            # Always import to user's skill directory
+            if context is None:
+                raise ValidationError("context is required")
+            base_path = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+
+            # Detect ZIP structure: flat (SKILL.md at root) or nested (skill-name/SKILL.md)
+            file_list = zf.namelist()
+            nested_skill_folder = None
+            for name in file_list:
+                if name.endswith("SKILL.md") and "/" in name:
+                    # e.g., "my-skill/SKILL.md" -> "my-skill"
+                    nested_skill_folder = name.split("/")[0]
+                    break
+
+            # Determine skill name from manifest, ZIP structure, or error
+            skill_name = None
+            if not target_path:
+                manifest_skill_path = manifest.get("skill_path", "")
+                if manifest_skill_path:
+                    # Extract skill name from manifest path
+                    skill_name = manifest_skill_path.rstrip("/").split("/")[-1]
+                elif nested_skill_folder:
+                    # Use folder name from ZIP structure
+                    skill_name = nested_skill_folder
+                else:
+                    raise ValidationError(
+                        "Cannot determine skill name. ZIP must contain SKILL.md in a named folder or have a manifest with skill_path."
+                    )
+
+                target_path = f"{base_path}{skill_name}/"
+
+            if not target_path.endswith("/"):
+                target_path += "/"
+
+            # Check if skill exists and allow_overwrite
+            skill_md_path = f"{target_path}SKILL.md"
+            if service._gw.exists(skill_md_path, context=context) and not allow_overwrite:
+                raise ValidationError(
+                    f"Skill already exists at {target_path}. Set allow_overwrite=true to overwrite."
+                )
+
+            # Extract skill name for response
+            skill_name = target_path.rstrip("/").split("/")[-1]
+
+            # Extract files, stripping the nested folder if present
+            for name in file_list:
+                if name == "manifest.json":
+                    continue
+
+                content = zf.read(name)
+
+                if nested_skill_folder and name.startswith(nested_skill_folder + "/"):
+                    # Strip the nested folder since target_path already includes skill name
+                    rel_path = name[len(nested_skill_folder) + 1 :]
+                else:
+                    rel_path = name
+
+                if rel_path and not rel_path.endswith("/"):  # Skip empty paths and folder entries
+                    file_path = f"{target_path}{rel_path}"
+                    service._gw.write(file_path, content, context=context)
+                    files_imported.append(file_path)
+
+        # Return format expected by frontend
+        return {
+            "imported_skills": [skill_name],
+            "skill_paths": [target_path],
+        }
+
+    @rpc_expose(description="Validate a .skill (ZIP) package")
+    def skills_validate_zip(
+        self,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,  # Alias for zip_bytes (frontend uses this name)
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Validate a .skill (ZIP) package without importing it.
+
+        Args:
+            source_path: Path to .skill file to validate
+            zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
+            zip_data: Alias for zip_bytes (base64 encoded string)
+            context: Operation context with user_id and tenant_id
+
+        Returns:
+            Dict with valid, skills_found, errors, warnings
+        """
+        import base64
+        import io
+        import zipfile
+
+        from nexus.core.exceptions import ValidationError
+
+        service = self._get_skill_service()
+        service._validate_context(context)
+
+        # Use zip_data as alias for zip_bytes
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
+        # Get ZIP data
+        if source_path:
+            raw_zip_data = service._gw.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
+        elif zip_bytes:
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
+        else:
+            raise ValidationError("Either source_path or zip_data required")
+
+        errors: list[str] = []
+        warnings: list[str] = []
+        skills_found: list[str] = []
+        has_skill_md = False
+
+        try:
+            zip_buffer = io.BytesIO(raw_zip_data)
+            with zipfile.ZipFile(zip_buffer, mode="r") as zf:
+                files = zf.namelist()
+
+                # Check for manifest
+                if "manifest.json" in files:
+                    try:
+                        manifest_data = zf.read("manifest.json")
+                        manifest = json.loads(manifest_data.decode("utf-8"))
+                        # Extract skill name from manifest
+                        skill_path = manifest.get("skill_path", "")
+                        if skill_path:
+                            skill_name = skill_path.rstrip("/").split("/")[-1]
+                            skills_found.append(skill_name)
+                    except Exception as e:
+                        errors.append(f"Invalid manifest.json: {e}")
+                else:
+                    warnings.append("Missing manifest.json (will use default skill name)")
+
+                # Check for SKILL.md
+                for f in files:
+                    if f.endswith("SKILL.md") or f == "SKILL.md":
+                        has_skill_md = True
+                        # If no skill found from manifest, use SKILL.md parent folder
+                        if not skills_found:
+                            parts = f.rsplit("/", 1)
+                            if len(parts) > 1:
+                                skills_found.append(parts[0])
+                            else:
+                                skills_found.append("imported")
+                        break
+
+                if not has_skill_md:
+                    errors.append("Missing SKILL.md file")
+
+        except zipfile.BadZipFile as e:
+            errors.append(f"Invalid ZIP file: {e}")
+        except Exception as e:
+            errors.append(f"Validation error: {e}")
+
+        return {
+            "valid": len(errors) == 0,
+            "skills_found": skills_found,
+            "errors": errors,
+            "warnings": warnings,
+        }

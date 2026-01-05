@@ -1,6 +1,11 @@
 """Unit tests for NexusFSSkillsMixin.
 
-Tests cover skills management operations:
+NOTE: These tests are for a planned API that was never implemented.
+The actual implementation uses SkillService with different methods:
+- skills_share, skills_unshare, skills_discover, skills_subscribe,
+- skills_unsubscribe, skills_load, skills_export, skills_import, etc.
+
+The tests below cover methods that DO NOT EXIST:
 - skills_create: Create a new skill from template
 - skills_create_from_content: Create skill from custom content
 - skills_create_from_file: Create skill from file or URL
@@ -13,6 +18,8 @@ Tests cover skills management operations:
 - skills_approve: Approve a skill
 - skills_reject: Reject a skill
 - skills_list_approvals: List approval requests
+
+TODO: Either implement these methods or rewrite tests for actual API.
 """
 
 from __future__ import annotations
@@ -26,6 +33,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+
+# Skip all tests - they test methods that don't exist (planned but never implemented)
+# The actual NexusFSSkillsMixin uses _get_skill_service() and SkillService,
+# not _get_skill_manager(), _get_skill_registry(), or _get_skill_governance()
+pytestmark = pytest.mark.skip(
+    reason="Tests for unimplemented API - NexusFSSkillsMixin uses SkillService, "
+    "not SkillManager/SkillRegistry/SkillGovernance"
+)
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.response import HandlerResponse, ResponseType
+from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext

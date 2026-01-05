@@ -3544,7 +3544,240 @@ class NexusFS(  # type: ignore[misc]
             return context.get("user_id") or context.get("user")
         return getattr(context, "user_id", None) or getattr(context, "user", None)
 
-    def _create_agent_config_data(
+    # =========================================================================
+    # Agent Service (Phase 2 Refactoring)
+    # =========================================================================
+
+    _agent_service_instance: Any = None  # Lazy initialized AgentService
+
+    def _get_agent_service(self) -> Any:
+        """Get or create AgentService instance.
+
+        Uses Gateway pattern for clean dependency injection.
+        """
+        if self._agent_service_instance is None:
+            from nexus.services.agent_service import AgentService
+            from nexus.services.gateway import NexusFSGateway
+
+            gateway = NexusFSGateway(self)
+
+            # Ensure entity registry is initialized
+            if not self._entity_registry:
+                from nexus.core.entity_registry import EntityRegistry
+
+                self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+
+            self._agent_service_instance = AgentService(
+                gateway=gateway,
+                entity_registry=self._entity_registry,
+                session_factory=self.metadata.SessionLocal,
+            )
+        return self._agent_service_instance
+
+    @rpc_expose(description="Register an AI agent")
+    def register_agent(
+        self,
+        agent_id: str,
+        name: str,
+        description: str | None = None,
+        generate_api_key: bool = False,
+        metadata: dict | None = None,
+        role_prompt: str | None = None,
+        runtime: dict | None = None,
+        capabilities: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Register an AI agent.
+
+        Args:
+            agent_id: Unique agent identifier
+            name: Human-readable name
+            description: Optional description
+            generate_api_key: If True, create API key for agent
+            metadata: Optional metadata dict (deprecated, use runtime)
+            role_prompt: Optional system prompt
+            runtime: Optional runtime configuration
+            capabilities: Optional capabilities (skills, resources)
+            context: Operation context (user_id extracted from here)
+
+        Returns:
+            Agent info dict with agent_id, user_id, name, etc.
+        """
+        user_id = self._extract_user_id(context)
+        if not user_id:
+            raise ValueError("user_id required in context to register agent")
+        tenant_id = self._extract_tenant_id(context) or "default"
+
+        # Handle legacy metadata field - convert to runtime if needed
+        if metadata and not runtime:
+            runtime = metadata
+
+        service = self._get_agent_service()
+        return service.register(
+            agent_id=agent_id,
+            name=name,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            description=description,
+            role_prompt=role_prompt,
+            runtime=runtime,
+            capabilities=capabilities,
+            generate_api_key=generate_api_key,
+        )
+
+    @rpc_expose(description="Update agent configuration")
+    def update_agent(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+        role_prompt: str | None = None,
+        runtime: dict | None = None,
+        capabilities: dict | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Update an existing agent's configuration.
+
+        Args:
+            agent_id: Agent identifier to update
+            name: Optional new name
+            description: Optional new description
+            metadata: Optional metadata (deprecated, use runtime)
+            role_prompt: Optional new role prompt
+            runtime: Optional new runtime config
+            capabilities: Optional new capabilities
+            context: Operation context
+
+        Returns:
+            Updated agent info dict
+        """
+        user_id = self._extract_user_id(context)
+        if not user_id:
+            raise ValueError("user_id required in context to update agent")
+        tenant_id = self._extract_tenant_id(context) or "default"
+
+        # Handle legacy metadata field
+        if metadata and not runtime:
+            runtime = metadata
+
+        service = self._get_agent_service()
+        return service.update(
+            agent_id=agent_id,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            name=name,
+            description=description,
+            role_prompt=role_prompt,
+            runtime=runtime,
+            capabilities=capabilities,
+        )
+
+    @rpc_expose(description="List all registered agents")
+    def list_agents(self, _context: dict | None = None) -> list[dict]:
+        """List all registered agents.
+
+        Returns:
+            List of agent info dicts
+        """
+        user_id = self._extract_user_id(_context)
+        tenant_id = self._extract_tenant_id(_context) or "default"
+
+        service = self._get_agent_service()
+        return service.list(user_id=user_id, tenant_id=tenant_id)
+
+    @rpc_expose(description="Get agent information")
+    def get_agent(self, agent_id: str, _context: dict | None = None) -> dict | None:
+        """Get information about a registered agent.
+
+        Args:
+            agent_id: Agent identifier
+            _context: Operation context (optional)
+
+        Returns:
+            Agent info dict, or None if not found
+        """
+        # Extract user_id from agent_id if not in context
+        user_id = self._extract_user_id(_context)
+        if not user_id and "," in agent_id:
+            user_id = agent_id.split(",", 1)[0]
+        if not user_id:
+            return None
+
+        tenant_id = self._extract_tenant_id(_context) or "default"
+
+        service = self._get_agent_service()
+        return service.get(agent_id=agent_id, user_id=user_id, tenant_id=tenant_id)
+
+    @rpc_expose(description="Delete an agent")
+    def delete_agent(self, agent_id: str, _context: dict | None = None) -> bool:
+        """Delete a registered agent.
+
+        Args:
+            agent_id: Agent identifier
+            _context: Operation context (optional)
+
+        Returns:
+            True if deleted, False if not found
+        """
+        # Extract user_id from agent_id if not in context
+        user_id = self._extract_user_id(_context)
+        if not user_id and "," in agent_id:
+            user_id = agent_id.split(",", 1)[0]
+        if not user_id:
+            return False
+
+        tenant_id = self._extract_tenant_id(_context) or "default"
+
+        service = self._get_agent_service()
+        return service.delete(agent_id=agent_id, user_id=user_id, tenant_id=tenant_id)
+
+    @rpc_expose(description="Get agent runtime context")
+    def get_agent_context(self, agent_id: str, context: dict | None = None) -> dict | None:
+        """Get agent's full runtime context.
+
+        Returns everything an agent needs to start:
+        - Runtime platform configuration
+        - Role prompt for system message
+        - Skill contexts
+        - Resource access list
+
+        Args:
+            agent_id: Agent identifier
+            context: Operation context
+
+        Returns:
+            AgentContext as dict, or None if not found
+        """
+        from dataclasses import asdict
+
+        # Extract user_id from agent_id if not in context
+        user_id = self._extract_user_id(context)
+        if not user_id and "," in agent_id:
+            user_id = agent_id.split(",", 1)[0]
+        if not user_id:
+            return None
+
+        tenant_id = self._extract_tenant_id(context) or "default"
+
+        service = self._get_agent_service()
+        agent_context = service.get_context(
+            agent_id=agent_id,
+            user_id=user_id,
+            tenant_id=tenant_id,
+        )
+        if agent_context is None:
+            return None
+
+        return asdict(agent_context)
+
+    # Note: Old agent helper methods (_create_agent_config_data, _write_agent_config,
+    # _create_agent_directory, _determine_agent_key_expiration, _create_agent_api_key,
+    # and old register_agent/update_agent/list_agents/get_agent/delete_agent implementations)
+    # have been removed - now using AgentService via _get_agent_service()
+
+    # Legacy helper kept temporarily for backward compatibility with provision_user
+    def _create_agent_config_data_legacy(
         self,
         agent_id: str,
         name: str,
@@ -3554,7 +3787,7 @@ class NexusFS(  # type: ignore[misc]
         metadata: dict | None = None,
         api_key: str | None = None,
     ) -> dict[str, Any]:
-        """Create agent config.yaml data structure."""
+        """Create agent config.yaml data structure (legacy - use AgentService.register instead)."""
         config_data: dict[str, Any] = {
             "agent_id": agent_id,
             "name": name,
@@ -3562,16 +3795,13 @@ class NexusFS(  # type: ignore[misc]
             "description": description,
             "created_at": created_at,
         }
-
         if metadata:
             config_data["metadata"] = metadata.copy()
-
         if api_key is not None:
             config_data["api_key"] = api_key
-
         return config_data
 
-    def _write_agent_config(
+    def _write_agent_config_legacy(
         self,
         config_path: str,
         config_data: dict[str, Any],
@@ -3718,8 +3948,28 @@ class NexusFS(  # type: ignore[misc]
         finally:
             session.close()
 
-    @rpc_expose(description="Register an AI agent")
-    def register_agent(
+    # ===== User Provisioning API (Issue #820) =====
+    # NOTE: The following old agent methods have been removed and replaced
+    # with AgentService (see _get_agent_service above):
+    # - register_agent (old implementation)
+    # - update_agent (old implementation)
+    # - list_agents (old implementation)
+    # - get_agent (old implementation)
+    # - delete_agent (old implementation)
+    # - _create_agent_config_data
+    # - _write_agent_config
+    # - _create_agent_directory
+    # - _determine_agent_key_expiration
+    # - _create_agent_api_key
+    #
+    # The thin delegation layer using AgentService is now at lines ~3577-3772
+
+    # OLD CODE REMOVED - START MARKER (for reference during cleanup)
+    # The following 600+ lines of old agent implementation code should be
+    # completely removed once we verify the new AgentService works correctly.
+    # For now, marking as deprecated to avoid breaking existing code.
+
+    def _OLD_register_agent(
         self,
         agent_id: str,
         name: str,
@@ -3728,7 +3978,7 @@ class NexusFS(  # type: ignore[misc]
         metadata: dict | None = None,  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
         context: dict | None = None,
     ) -> dict:
-        """Register an AI agent (v0.5.0).
+        """DEPRECATED: Old register_agent implementation. Use AgentService instead.
 
         Agents are persistent identities owned by users. They do NOT have session_id
         or expiry - they live forever until explicitly deleted.

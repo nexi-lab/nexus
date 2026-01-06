@@ -61,7 +61,9 @@ class TestGDriveMkdirFix:
             mock_context.user_id = "test_user"
             mock_context.tenant_id = "default"
 
-            connector.mkdir("test_folder", parents=True, exist_ok=False, context=mock_context).unwrap()
+            connector.mkdir(
+                "test_folder", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Verify _get_or_create_folder was called once with just the folder name
             mock_create.assert_called_once()
@@ -127,7 +129,9 @@ class TestGDriveMkdirFix:
             mock_context.tenant_id = "default"
 
             # Path with leading slash
-            connector.mkdir("/test_folder/", parents=True, exist_ok=False, context=mock_context).unwrap()
+            connector.mkdir(
+                "/test_folder/", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Should only create one folder (empty components are skipped)
             assert mock_create.call_count == 1
@@ -354,7 +358,9 @@ class TestGDriveIntegrationScenarios:
             mock_context.tenant_id = "default"
 
             # Create directory hierarchy
-            connector.mkdir("workspace/data", parents=True, exist_ok=False, context=mock_context).unwrap()
+            connector.mkdir(
+                "workspace/data", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Now check if a file in that hierarchy is detected as a directory
             existing_folders.add("workspace")

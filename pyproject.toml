@@ -318,15 +318,48 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
-disable_error_code = ["attr-defined"]
+# Legacy backend - not yet migrated to HandlerResponse
+disable_error_code = ["attr-defined", "override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gcs_connector"
-disable_error_code = ["attr-defined"]
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
-disable_error_code = ["attr-defined"]
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["attr-defined", "return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.local"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.hn_connector"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.gdrive_connector"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.base_blob_connector"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.gmail_connector"
+# Legacy backend - not yet migrated to HandlerResponse
+disable_error_code = ["override", "return-value", "no-any-return", "import-untyped", "unused-ignore"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.x_connector"
+# Legacy backend - not yet migrated to HandlerResponse
+disable_error_code = ["override", "return-value"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -352,12 +385,63 @@ disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import
 [[tool.mypy.overrides]]
 module = "nexus.storage.cache"
 # cachetools library has complex generic types
-disable_error_code = ["no-any-return", "misc", "call-overload"]
+disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]
 
 [[tool.mypy.overrides]]
 module = "nexus.search.embeddings"
-# Provider wrapper class has complex inheritance
-disable_error_code = ["override"]
+# Provider wrapper class has complex inheritance, openai stubs mismatch
+disable_error_code = ["override", "attr-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.workflows.loader",
+    "nexus.skills.skill_generator",
+    "nexus.mcp.provider_registry",
+    "nexus.mcp.oauth_mappings",
+    "nexus.skills.parser",
+    "nexus.server.auth.oauth_factory",
+    "nexus.workflows.storage",
+]
+# yaml/requests stubs handled at project level
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "nexus.server.auth.oidc"
+# requests stubs
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.fuse.cache",
+    "nexus.core.rebac_iterator_cache",
+    "nexus.core.rebac_cache",
+    "nexus.core.permission_boundary_cache",
+]
+# cachetools returns Any from generic cache
+disable_error_code = ["import-untyped", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = "nexus.config"
+# pydantic v2 API, yaml stubs
+disable_error_code = ["import-untyped", "attr-defined", "typeddict-item"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.server.subscriptions.models",
+    "nexus.server.subscriptions.manager",
+]
+# pydantic v2 API
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "nexus.llm.message"
+# pydantic BaseModel.model_dump
+disable_error_code = ["no-any-return", "misc"]
+
+[[tool.mypy.overrides]]
+module = "nexus.storage.metadata_store"
+# alembic dynamic imports
+disable_error_code = ["attr-defined"]
 
 [tool.ruff]
 target-version = "py311"

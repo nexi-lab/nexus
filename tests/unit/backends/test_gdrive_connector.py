@@ -16,6 +16,7 @@ import pytest
 
 from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
 from nexus.core.exceptions import BackendError
+from nexus.core.response import HandlerResponse
 
 
 class TestGDriveMkdirFix:
@@ -52,7 +53,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector, "_get_or_create_folder", return_value="folder_id"
             ) as mock_create,
@@ -61,7 +62,9 @@ class TestGDriveMkdirFix:
             mock_context.user_id = "test_user"
             mock_context.tenant_id = "default"
 
-            connector.mkdir("test_folder", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir(
+                "test_folder", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Verify _get_or_create_folder was called once with just the folder name
             mock_create.assert_called_once()
@@ -83,7 +86,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector,
                 "_get_or_create_folder",
@@ -96,7 +99,7 @@ class TestGDriveMkdirFix:
 
             connector.mkdir(
                 "workspace/data/images", parents=True, exist_ok=False, context=mock_context
-            )
+            ).unwrap()
 
             # Verify _get_or_create_folder was called 3 times, once for each component
             assert mock_create.call_count == 3, "Should create 3 folders for 3 path components"
@@ -117,7 +120,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector, "_get_or_create_folder", return_value="folder_id"
             ) as mock_create,
@@ -127,7 +130,9 @@ class TestGDriveMkdirFix:
             mock_context.tenant_id = "default"
 
             # Path with leading slash
-            connector.mkdir("/test_folder/", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir(
+                "/test_folder/", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Should only create one folder (empty components are skipped)
             assert mock_create.call_count == 1
@@ -174,7 +179,7 @@ class TestGDriveIsDirectoryFix:
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector.is_directory("test_file.png")
+            result = connector.is_directory("test_file.png").unwrap()
 
             # Should return False since no folder with that name was found
             assert result is False, "PNG file should not be identified as a directory"
@@ -192,7 +197,7 @@ class TestGDriveIsDirectoryFix:
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector.is_directory("test_folder")
+            result = connector.is_directory("test_folder").unwrap()
 
             # Should return True since a folder was found
             assert result is True, "Folder should be identified as a directory"
@@ -200,8 +205,8 @@ class TestGDriveIsDirectoryFix:
     def test_is_directory_root_always_true(self, connector):
         """Test is_directory returns True for root path."""
         # Root should always be a directory without querying API
-        assert connector.is_directory("") is True
-        assert connector.is_directory("/") is True
+        assert connector.is_directory("").unwrap() is True
+        assert connector.is_directory("/").unwrap() is True
 
     def test_is_directory_nested_file_path(self, connector, mock_service):
         """Test is_directory correctly handles nested paths like workspace/data/file.png."""
@@ -227,7 +232,7 @@ class TestGDriveIsDirectoryFix:
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector.is_directory("workspace/data/file.png")
+            result = connector.is_directory("workspace/data/file.png").unwrap()
 
             # Should return False since file.png is not a folder
             assert result is False, "Nested file path should not be identified as directory"
@@ -248,7 +253,7 @@ class TestGDriveIsDirectoryFix:
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
             patch.object(connector, "_get_or_create_folder") as mock_create,
         ):
-            result = connector.is_directory("workspace/data")
+            result = connector.is_directory("workspace/data").unwrap()
 
             # Should return False since parent doesn't exist
             assert result is False, "Should return False when parent folder doesn't exist"
@@ -270,7 +275,7 @@ class TestGDriveIsDirectoryFix:
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            connector.is_directory("test_item")
+            connector.is_directory("test_item").unwrap()
 
             # Verify the query includes folder MIME type filter
             call_args = mock_files_list.list.call_args[1]
@@ -314,7 +319,7 @@ class TestGDriveIntegrationScenarios:
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
             # Simulate checking if "image.png" is a directory (should be False)
-            is_dir = connector.is_directory("test_drive/image.png")
+            is_dir = connector.is_directory("test_drive/image.png").unwrap()
 
             assert is_dir is False, "PNG file should not be detected as directory in FUSE scenario"
 
@@ -354,13 +359,15 @@ class TestGDriveIntegrationScenarios:
             mock_context.tenant_id = "default"
 
             # Create directory hierarchy
-            connector.mkdir("workspace/data", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir(
+                "workspace/data", parents=True, exist_ok=False, context=mock_context
+            ).unwrap()
 
             # Now check if a file in that hierarchy is detected as a directory
             existing_folders.add("workspace")
             existing_folders.add("data")
 
-            is_dir = connector.is_directory("workspace/data/file.png")
+            is_dir = connector.is_directory("workspace/data/file.png").unwrap()
 
             assert is_dir is False, "File should not be detected as directory even after mkdir"
 
@@ -451,8 +458,8 @@ class TestGDriveErrorHandling:
 
     def test_operation_without_context(self, connector):
         """Test operations fail gracefully without context."""
-        with pytest.raises((ValueError, BackendError)):
-            connector.write_content(b"test", context=None)
+        with pytest.raises(BackendError):
+            connector.write_content(b"test", context=None).unwrap()
 
     def test_mkdir_with_invalid_path(self, connector):
         """Test mkdir handles invalid paths."""
@@ -465,11 +472,11 @@ class TestGDriveErrorHandling:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             contextlib.suppress(ValueError, BackendError, FileNotFoundError),
         ):
             # Empty path should be handled
-            connector.mkdir("", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir("", parents=True, exist_ok=False, context=mock_context).unwrap()
 
     def test_is_directory_handles_api_errors(self, connector):
         """Test is_directory returns False on API errors."""
@@ -481,7 +488,7 @@ class TestGDriveErrorHandling:
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
         ):
             # Should return False instead of raising
-            result = connector.is_directory("some/path")
+            result = connector.is_directory("some/path").unwrap()
             assert result is False
 
 
@@ -532,7 +539,7 @@ class TestGDriveWriteContent:
                 connector, "_resolve_path_to_folder_id", return_value=("parent_id", "test.txt")
             ),
         ):
-            result = connector.write_content(test_content, context=mock_context)
+            result = connector.write_content(test_content, context=mock_context).unwrap()
 
             # Should return SHA-256 hash
             assert len(result) == 64
@@ -565,7 +572,7 @@ class TestGDriveWriteContent:
                 connector, "_resolve_path_to_folder_id", return_value=("parent_id", "existing.txt")
             ),
         ):
-            result = connector.write_content(test_content, context=mock_context)
+            result = connector.write_content(test_content, context=mock_context).unwrap()
 
             # Should return SHA-256 hash
             assert len(result) == 64
@@ -574,7 +581,7 @@ class TestGDriveWriteContent:
     def test_write_content_without_context(self, connector):
         """Test write_content fails without context."""
         with pytest.raises(BackendError) as exc_info:
-            connector.write_content(b"test", context=None)
+            connector.write_content(b"test", context=None).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -599,7 +606,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.read_content("hash", context=None)
+            backend.read_content("hash", context=None).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -610,7 +617,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.delete_content("hash", context=None)
+            backend.delete_content("hash", context=None).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -663,7 +670,7 @@ class TestGDriveSharedDrives:
             patch.object(connector_shared, "_get_drive_service", return_value=mock_service),
             patch.object(connector_shared, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector_shared.is_directory("shared_folder")
+            result = connector_shared.is_directory("shared_folder").unwrap()
 
             # Verify shared drives parameters were used
             assert result is True

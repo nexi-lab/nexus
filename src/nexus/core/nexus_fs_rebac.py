@@ -2318,7 +2318,7 @@ class NexusFSReBACMixin:
                 raise RuntimeError(f"File not found: {file_path}")
 
             # Read raw content from backend
-            content_bytes = route.backend.read_content(meta.etag, context=context)
+            content_bytes = route.backend.read_content(meta.etag, context=context).unwrap()
             content = (
                 content_bytes.decode("utf-8") if isinstance(content_bytes, bytes) else content_bytes
             )

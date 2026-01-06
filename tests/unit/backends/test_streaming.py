@@ -16,6 +16,7 @@ class TestBackendWriteStreamDefault:
 
     def test_default_write_stream_collects_chunks(self) -> None:
         """Test that default implementation collects chunks and calls write_content."""
+        from nexus.core.response import HandlerResponse
 
         class TestBackend(Backend):
             """Minimal test backend."""
@@ -31,35 +32,37 @@ class TestBackendWriteStreamDefault:
             def user_scoped(self) -> bool:
                 return False
 
-            def write_content(self, content: bytes, context=None) -> str:
+            def write_content(self, content: bytes, context=None) -> HandlerResponse[str]:
                 self.written_content = content
-                return hash_content(content)
+                return HandlerResponse.ok(hash_content(content))
 
-            def read_content(self, content_hash: str, context=None) -> bytes:
-                return b""
+            def read_content(self, content_hash: str, context=None) -> HandlerResponse[bytes]:
+                return HandlerResponse.ok(b"")
 
-            def delete_content(self, content_hash: str, context=None) -> None:
-                pass
+            def delete_content(self, content_hash: str, context=None) -> HandlerResponse[None]:
+                return HandlerResponse.ok(None)
 
-            def content_exists(self, content_hash: str, context=None) -> bool:
-                return False
+            def content_exists(self, content_hash: str, context=None) -> HandlerResponse[bool]:
+                return HandlerResponse.ok(False)
 
-            def get_content_size(self, content_hash: str, context=None) -> int:
-                return 0
+            def get_content_size(self, content_hash: str, context=None) -> HandlerResponse[int]:
+                return HandlerResponse.ok(0)
 
-            def get_ref_count(self, content_hash: str, context=None) -> int:
-                return 0
+            def get_ref_count(self, content_hash: str, context=None) -> HandlerResponse[int]:
+                return HandlerResponse.ok(0)
 
             def mkdir(
                 self, path: str, parents: bool = False, exist_ok: bool = False, context=None
-            ) -> None:
-                pass
+            ) -> HandlerResponse[None]:
+                return HandlerResponse.ok(None)
 
-            def rmdir(self, path: str, recursive: bool = False, context=None) -> None:
-                pass
+            def rmdir(
+                self, path: str, recursive: bool = False, context=None
+            ) -> HandlerResponse[None]:
+                return HandlerResponse.ok(None)
 
-            def is_directory(self, path: str, context=None) -> bool:
-                return False
+            def is_directory(self, path: str, context=None) -> HandlerResponse[bool]:
+                return HandlerResponse.ok(False)
 
         backend = TestBackend()
 
@@ -68,7 +71,7 @@ class TestBackendWriteStreamDefault:
             yield b"World"
             yield b"!"
 
-        result_hash = backend.write_stream(chunks())
+        result_hash = backend.write_stream(chunks()).unwrap()
 
         assert backend.written_content == b"Hello World!"
         assert result_hash == hash_content(b"Hello World!")
@@ -86,7 +89,7 @@ class TestLocalBackendStreaming:
         """Test that stream_content yields file content in chunks."""
         # Write some content first
         content = b"A" * 1000 + b"B" * 1000 + b"C" * 1000
-        content_hash = local_backend.write_content(content)
+        content_hash = local_backend.write_content(content).unwrap()
 
         # Stream with small chunks
         chunks = list(local_backend.stream_content(content_hash, chunk_size=500))
@@ -98,7 +101,7 @@ class TestLocalBackendStreaming:
     def test_stream_content_default_chunk_size(self, local_backend: LocalBackend) -> None:
         """Test stream_content with default chunk size."""
         content = b"test content"
-        content_hash = local_backend.write_content(content)
+        content_hash = local_backend.write_content(content).unwrap()
 
         chunks = list(local_backend.stream_content(content_hash))
 
@@ -118,10 +121,10 @@ class TestLocalBackendStreaming:
             yield b"Hello "
             yield b"World!"
 
-        content_hash = local_backend.write_stream(chunks())
+        content_hash = local_backend.write_stream(chunks()).unwrap()
 
         # Verify content was written correctly
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_hash).unwrap()
         assert content == b"Hello World!"
 
     def test_write_stream_hash_matches_write_content(self, local_backend: LocalBackend) -> None:
@@ -129,13 +132,13 @@ class TestLocalBackendStreaming:
         content = b"Test content for hash comparison"
 
         # Write using write_content
-        hash1 = local_backend.write_content(content)
+        hash1 = local_backend.write_content(content).unwrap()
 
         # Write using write_stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks())
+        hash2 = local_backend.write_stream(chunks()).unwrap()
 
         assert hash1 == hash2
 
@@ -144,15 +147,15 @@ class TestLocalBackendStreaming:
         content = b"Duplicate content"
 
         # First write
-        hash1 = local_backend.write_content(content)
-        ref1 = local_backend.get_ref_count(hash1)
+        hash1 = local_backend.write_content(content).unwrap()
+        ref1 = local_backend.get_ref_count(hash1).unwrap()
 
         # Second write via stream
         def chunks():
             yield content
 
-        hash2 = local_backend.write_stream(chunks())
-        ref2 = local_backend.get_ref_count(hash2)
+        hash2 = local_backend.write_stream(chunks()).unwrap()
+        ref2 = local_backend.get_ref_count(hash2).unwrap()
 
         assert hash1 == hash2
         assert ref2 == ref1 + 1
@@ -167,10 +170,10 @@ class TestLocalBackendStreaming:
             for _ in range(num_chunks):
                 yield content_per_chunk
 
-        content_hash = local_backend.write_stream(chunks())
+        content_hash = local_backend.write_stream(chunks()).unwrap()
 
         # Verify content
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_hash).unwrap()
         assert len(content) == chunk_size * num_chunks
         assert content == content_per_chunk * num_chunks
 
@@ -181,10 +184,10 @@ class TestLocalBackendStreaming:
             return
             yield  # Make it a generator
 
-        content_hash = local_backend.write_stream(chunks())
+        content_hash = local_backend.write_stream(chunks()).unwrap()
 
         # Should write empty content
-        content = local_backend.read_content(content_hash)
+        content = local_backend.read_content(content_hash).unwrap()
         assert content == b""
 
 

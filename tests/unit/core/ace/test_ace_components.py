@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.core.ace.feedback import FeedbackManager
 from nexus.core.ace.trajectory import TrajectoryManager
 from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 from nexus.storage.models import Base
 
 
@@ -34,8 +35,8 @@ def session(engine):
 def mock_backend():
     """Create mock storage backend."""
     backend = Mock()
-    backend.read_content = Mock(return_value=b'{"content": "test"}')
-    backend.write_content = Mock(return_value="hash123")
+    backend.read_content = Mock(return_value=HandlerResponse.ok(b'{"content": "test"}'))
+    backend.write_content = Mock(return_value=HandlerResponse.ok("hash123"))
     return backend
 
 

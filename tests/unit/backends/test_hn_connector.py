@@ -162,18 +162,18 @@ class TestDirectoryOperations:
 
     def test_is_directory_root(self, hn_connector: HNConnectorBackend) -> None:
         """Test root is a directory."""
-        assert hn_connector.is_directory("") is True
-        assert hn_connector.is_directory("/") is True
-        assert hn_connector.is_directory("hn") is True
+        assert hn_connector.is_directory("").unwrap() is True
+        assert hn_connector.is_directory("/").unwrap() is True
+        assert hn_connector.is_directory("hn").unwrap() is True
 
     def test_is_directory_feed(self, hn_connector: HNConnectorBackend) -> None:
         """Test feed paths are directories."""
         for feed in ["top", "new", "best", "ask", "show", "jobs"]:
-            assert hn_connector.is_directory(feed) is True
+            assert hn_connector.is_directory(feed).unwrap() is True
 
     def test_is_directory_file(self, hn_connector: HNConnectorBackend) -> None:
         """Test file paths are not directories."""
-        assert hn_connector.is_directory("top/1.json") is False
+        assert hn_connector.is_directory("top/1.json").unwrap() is False
 
     def test_list_dir_root(self, hn_connector: HNConnectorBackend) -> None:
         """Test listing root directory."""
@@ -196,28 +196,28 @@ class TestReadOnly:
     """Test read-only behavior."""
 
     def test_write_not_supported(self, hn_connector: HNConnectorBackend) -> None:
-        """Test write raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc_info:
-            hn_connector.write_content(b"test")
-        assert "read-only" in str(exc_info.value)
+        """Test write returns error response."""
+        result = hn_connector.write_content(b"test")
+        assert not result.success
+        assert "read-only" in result.error_message
 
     def test_delete_not_supported(self, hn_connector: HNConnectorBackend) -> None:
-        """Test delete raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc_info:
-            hn_connector.delete_content("hash")
-        assert "read-only" in str(exc_info.value)
+        """Test delete returns error response."""
+        result = hn_connector.delete_content("hash")
+        assert not result.success
+        assert "read-only" in result.error_message
 
     def test_mkdir_not_supported(self, hn_connector: HNConnectorBackend) -> None:
-        """Test mkdir raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc_info:
-            hn_connector.mkdir("/hn/custom")
-        assert "fixed virtual structure" in str(exc_info.value)
+        """Test mkdir returns error response."""
+        result = hn_connector.mkdir("/hn/custom")
+        assert not result.success
+        assert "fixed virtual structure" in result.error_message
 
     def test_rmdir_not_supported(self, hn_connector: HNConnectorBackend) -> None:
-        """Test rmdir raises NotImplementedError."""
-        with pytest.raises(NotImplementedError) as exc_info:
-            hn_connector.rmdir("/hn/top")
-        assert "fixed virtual structure" in str(exc_info.value)
+        """Test rmdir returns error response."""
+        result = hn_connector.rmdir("/hn/top")
+        assert not result.success
+        assert "fixed virtual structure" in result.error_message
 
 
 class TestContentExists:
@@ -226,21 +226,21 @@ class TestContentExists:
     def test_exists_valid_path(self, hn_connector: HNConnectorBackend) -> None:
         """Test valid paths exist."""
         context = OperationContext(user="test", groups=[], backend_path="top/1.json")
-        assert hn_connector.content_exists("", context) is True
+        assert hn_connector.content_exists("", context).unwrap() is True
 
     def test_exists_directory(self, hn_connector: HNConnectorBackend) -> None:
         """Test directories exist."""
         context = OperationContext(user="test", groups=[], backend_path="top")
-        assert hn_connector.content_exists("", context) is True
+        assert hn_connector.content_exists("", context).unwrap() is True
 
     def test_exists_invalid_path(self, hn_connector: HNConnectorBackend) -> None:
         """Test invalid paths don't exist."""
         context = OperationContext(user="test", groups=[], backend_path="invalid/1.json")
-        assert hn_connector.content_exists("", context) is False
+        assert hn_connector.content_exists("", context).unwrap() is False
 
     def test_exists_no_context(self, hn_connector: HNConnectorBackend) -> None:
         """Test no context returns False."""
-        assert hn_connector.content_exists("") is False
+        assert hn_connector.content_exists("").unwrap() is False
 
 
 class TestReadContent:
@@ -249,14 +249,14 @@ class TestReadContent:
     def test_read_requires_context(self, hn_connector: HNConnectorBackend) -> None:
         """Test read requires context with backend_path."""
         with pytest.raises(BackendError) as exc_info:
-            hn_connector.read_content("")
+            hn_connector.read_content("").unwrap()
         assert "requires context" in str(exc_info.value)
 
     def test_read_directory_fails(self, hn_connector: HNConnectorBackend) -> None:
         """Test reading directory fails."""
         context = OperationContext(user="test", groups=[], backend_path="top")
         with pytest.raises(BackendError) as exc_info:
-            hn_connector.read_content("", context)
+            hn_connector.read_content("", context).unwrap()
         assert "Cannot read directory" in str(exc_info.value)
 
 

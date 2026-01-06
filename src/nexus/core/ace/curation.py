@@ -149,7 +149,7 @@ class Curator:
             return None
 
         try:
-            content_bytes = self.backend.read_content(memory.content_hash)
+            content_bytes = self.backend.read_content(memory.content_hash).unwrap()
             content_data: dict[str, Any] = json.loads(content_bytes.decode("utf-8"))
             return content_data
         except Exception:

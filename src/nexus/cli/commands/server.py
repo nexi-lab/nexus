@@ -1036,7 +1036,7 @@ def serve(
                 try:
                     # Create /workspace directory directly via backend
                     try:
-                        backend.mkdir("/workspace")
+                        backend.mkdir("/workspace").unwrap()
                         console.print("[green]✓[/green] Created /workspace")
                     except Exception as mkdir_err:
                         # Directory might already exist, check and ignore

@@ -140,7 +140,7 @@ class PlaybookManager:
 
         # Store content in CAS
         content_json = json.dumps(content, indent=2).encode("utf-8")
-        content_hash = self.backend.write_content(content_json)
+        content_hash = self.backend.write_content(content_json).unwrap()
 
         # Create playbook record
         playbook = PlaybookModel(
@@ -187,7 +187,7 @@ class PlaybookManager:
             logger.info(
                 f"Reading playbook content: hash={playbook.content_hash}, playbook_id={playbook_id}"
             )
-            content_bytes = self.backend.read_content(playbook.content_hash)
+            content_bytes = self.backend.read_content(playbook.content_hash).unwrap()
             content_data = json.loads(content_bytes.decode("utf-8"))
         except Exception as e:
             logger.error(f"Failed to read playbook content for {playbook_id}: {e}")
@@ -267,7 +267,7 @@ class PlaybookManager:
             logger.info(
                 f"Updating playbook: reading content hash={playbook.content_hash}, playbook_id={playbook_id}"
             )
-            content_bytes = self.backend.read_content(playbook.content_hash)
+            content_bytes = self.backend.read_content(playbook.content_hash).unwrap()
             content_data = json.loads(content_bytes.decode("utf-8"))
         except Exception as e:
             logger.error(f"Failed to read existing content for {playbook_id}: {e}")
@@ -300,7 +300,7 @@ class PlaybookManager:
 
         # Store updated content in CAS
         content_json = json.dumps(content_data, indent=2).encode("utf-8")
-        new_content_hash = self.backend.write_content(content_json)
+        new_content_hash = self.backend.write_content(content_json).unwrap()
 
         # Update playbook record
         playbook.content_hash = new_content_hash

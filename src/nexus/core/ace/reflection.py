@@ -402,7 +402,7 @@ Provide your analysis as valid JSON only, no additional commentary.
 
         # Store in CAS
         content_json = json.dumps(content, indent=2).encode("utf-8")
-        content_hash = self.backend.write_content(content_json)
+        content_hash = self.backend.write_content(content_json).unwrap()
 
         # Create memory record
         memory = MemoryModel(

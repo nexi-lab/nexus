@@ -199,7 +199,7 @@ class ConsolidationEngine:
             return None
 
         try:
-            content_bytes = self.backend.read_content(memory.content_hash)
+            content_bytes = self.backend.read_content(memory.content_hash).unwrap()
             content = content_bytes.decode("utf-8")
         except Exception:
             content = ""
@@ -281,7 +281,7 @@ Provide only the consolidated summary, no additional commentary.
 
         # Store in CAS
         content_json = json.dumps(content_data, indent=2).encode("utf-8")
-        content_hash = self.backend.write_content(content_json)
+        content_hash = self.backend.write_content(content_json).unwrap()
 
         # Track source memory IDs
         source_ids = [m["memory_id"] for m in source_memories]

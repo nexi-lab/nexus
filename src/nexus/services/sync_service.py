@@ -877,7 +877,7 @@ class SyncService:
                 from nexus.core.operation_context import OperationContext
 
                 size_context = OperationContext(backend_path=backend_path)
-                result: int = backend.get_content_size(path_hash, size_context)
+                result: int = backend.get_content_size(path_hash, size_context).unwrap()
                 return result
         except Exception:
             pass

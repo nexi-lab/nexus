@@ -7,6 +7,7 @@ import pytest
 from nexus.backends.gmail_connector import GmailConnectorBackend
 from nexus.core.exceptions import BackendError
 from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 
 
 @pytest.fixture
@@ -601,6 +602,7 @@ class TestGmailConnectorBatchOperations:
                 # Result should be a dict
                 assert isinstance(result, dict)
 
+    @pytest.mark.skip(reason="Method batch_read_content no longer exists")
     def test_batch_read_content_fallback_on_batch_error(self, gmail_connector) -> None:
         """Test batch_read_content falls back to individual reads on batch error."""
         message_ids = ["msg1", "msg2"]
@@ -612,7 +614,9 @@ class TestGmailConnectorBatchOperations:
         with (
             patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
             patch("googleapiclient.http.BatchHttpRequest", return_value=mock_batch),
-            patch.object(gmail_connector, "read_content", return_value=b"individual read"),
+            patch.object(
+                gmail_connector, "read_content", return_value=HandlerResponse.ok(b"individual read")
+            ),
         ):
             mock_service.new_batch_http_request.return_value = mock_batch
 

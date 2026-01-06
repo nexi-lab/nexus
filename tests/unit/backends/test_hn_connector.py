@@ -199,25 +199,25 @@ class TestReadOnly:
         """Test write returns error response."""
         result = hn_connector.write_content(b"test")
         assert not result.success
-        assert "read-only" in result.message
+        assert "read-only" in result.error_message
 
     def test_delete_not_supported(self, hn_connector: HNConnectorBackend) -> None:
         """Test delete returns error response."""
         result = hn_connector.delete_content("hash")
         assert not result.success
-        assert "read-only" in result.message
+        assert "read-only" in result.error_message
 
     def test_mkdir_not_supported(self, hn_connector: HNConnectorBackend) -> None:
         """Test mkdir returns error response."""
         result = hn_connector.mkdir("/hn/custom")
         assert not result.success
-        assert "fixed virtual structure" in result.message
+        assert "fixed virtual structure" in result.error_message
 
     def test_rmdir_not_supported(self, hn_connector: HNConnectorBackend) -> None:
         """Test rmdir returns error response."""
         result = hn_connector.rmdir("/hn/top")
         assert not result.success
-        assert "fixed virtual structure" in result.message
+        assert "fixed virtual structure" in result.error_message
 
 
 class TestContentExists:

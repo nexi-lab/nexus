@@ -159,7 +159,7 @@ class TestWriteContentWithoutVersioning:
         mock_blob = Mock()
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_backend.write_content(test_content, context=context)
+        result = gcs_connector_backend.write_content(test_content, context=context).unwrap()
 
         # Should return SHA-256 hash (64 chars)
         assert len(result) == 64
@@ -179,7 +179,7 @@ class TestWriteContentWithoutVersioning:
     ) -> None:
         """Test write_content fails without context."""
         with pytest.raises(ValueError) as exc_info:
-            gcs_connector_backend.write_content(b"test")
+            gcs_connector_backend.write_content(b"test").unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -190,7 +190,7 @@ class TestWriteContentWithoutVersioning:
         context = OperationContext(user="test_user", groups=[])
 
         with pytest.raises(ValueError) as exc_info:
-            gcs_connector_backend.write_content(b"test", context=context)
+            gcs_connector_backend.write_content(b"test", context=context).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -260,7 +260,7 @@ class TestReadContentWithoutVersioning:
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
         # Pass any hash - should be ignored
-        result = gcs_connector_backend.read_content("any_hash_value", context=context)
+        result = gcs_connector_backend.read_content("any_hash_value", context=context).unwrap()
 
         assert result == test_content
         # Should read from backend_path, not hash
@@ -279,9 +279,9 @@ class TestReadContentWithoutVersioning:
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
         # Try reading with different "old version" hashes
-        result1 = gcs_connector_backend.read_content("old_hash_v1", context=context)
-        result2 = gcs_connector_backend.read_content("old_hash_v2", context=context)
-        result3 = gcs_connector_backend.read_content("current_hash", context=context)
+        result1 = gcs_connector_backend.read_content("old_hash_v1", context=context).unwrap()
+        result2 = gcs_connector_backend.read_content("old_hash_v2", context=context).unwrap()
+        result3 = gcs_connector_backend.read_content("current_hash", context=context).unwrap()
 
         # All should return current content
         assert result1 == current_content
@@ -297,7 +297,7 @@ class TestReadContentWithoutVersioning:
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
         with pytest.raises(NexusFileNotFoundError):
-            gcs_connector_backend.read_content("any_hash", context=context)
+            gcs_connector_backend.read_content("any_hash", context=context).unwrap()
 
 
 class TestReadContentWithVersioning:
@@ -364,9 +364,9 @@ class TestVersioningIntegration:
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
         # Write v1
-        hash1 = gcs_connector_backend.write_content(b"version 1", context=context)
+        hash1 = gcs_connector_backend.write_content(b"version 1", context=context).unwrap()
         # Write v2 (overwrites)
-        hash2 = gcs_connector_backend.write_content(b"version 2", context=context)
+        hash2 = gcs_connector_backend.write_content(b"version 2", context=context).unwrap()
 
         # Both writes go to same path
         assert gcs_connector_backend.bucket.blob.call_count == 2
@@ -548,7 +548,7 @@ class TestReadContentWithCaching:
         mock_blob.download_as_bytes.return_value = test_content
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_backend.read_content("any_hash", context=context)
+        result = gcs_connector_backend.read_content("any_hash", context=context).unwrap()
 
         assert result == test_content
         mock_blob.download_as_bytes.assert_called_once()
@@ -586,7 +586,7 @@ class TestWriteContentWithCaching:
         mock_blob = Mock()
         gcs_connector_backend.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_backend.write_content(test_content, context=context)
+        result = gcs_connector_backend.write_content(test_content, context=context).unwrap()
 
         # Should return hash (no versioning)
         assert len(result) == 64

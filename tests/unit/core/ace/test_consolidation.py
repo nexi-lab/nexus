@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.ace.consolidation import ConsolidationEngine
+from nexus.core.handler_response import HandlerResponse
 from nexus.storage.models import Base, MemoryModel
 
 
@@ -32,8 +33,8 @@ def session(engine):
 def mock_backend():
     """Create mock storage backend."""
     backend = Mock()
-    backend.read_content = Mock(return_value=b'{"content": "test memory"}')
-    backend.write_content = Mock(return_value="hash123")
+    backend.read_content = Mock(return_value=HandlerResponse.ok(b'{"content": "test memory"}'))
+    backend.write_content = Mock(return_value=HandlerResponse.ok("hash123"))
     return backend
 
 
@@ -111,7 +112,7 @@ class TestLoadMemory:
         session.add(memory)
         session.commit()
 
-        mock_backend.read_content.return_value = b"test content"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
 
         result = consolidation_engine._load_memory("mem1")
 
@@ -286,7 +287,7 @@ class TestConsolidateAsync:
         session.add_all([mem1, mem2])
         session.commit()
 
-        mock_backend.read_content.return_value = b"test content"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
 
         result = await consolidation_engine.consolidate_async(
             memory_ids=["mem1", "mem2"], importance_threshold=0.5
@@ -307,7 +308,7 @@ class TestConsolidateAsync:
         session.add_all([mem1, mem2])
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         # Should fail because only 1 memory below threshold
         with pytest.raises(ValueError, match="Need at least 2 memories"):
@@ -336,7 +337,7 @@ class TestConsolidateAsync:
         session.add_all([mem1, mem2])
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         result = await consolidation_engine.consolidate_async(
             ["mem1", "mem2"], importance_threshold=0.6
@@ -366,7 +367,7 @@ class TestConsolidateAsync:
         session.add_all([mem1, mem2])
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         result = await consolidation_engine.consolidate_async(
             ["mem1", "mem2"], importance_threshold=0.6
@@ -390,7 +391,7 @@ class TestConsolidateAsync:
             session.add(mem)
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         result = await consolidation_engine.consolidate_async(
             memory_ids=["mem0", "mem1", "mem2", "mem3", "mem4"],
@@ -419,7 +420,7 @@ class TestConsolidateByCriteria:
             session.add(mem)
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         with patch.object(
             consolidation_engine, "consolidate_async", new_callable=AsyncMock
@@ -465,7 +466,7 @@ class TestConsolidateByCriteria:
             session.add(mem)
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         with patch.object(
             consolidation_engine, "consolidate_async", new_callable=AsyncMock
@@ -489,7 +490,7 @@ class TestSyncConsolidate:
         session.add_all([mem1, mem2])
         session.commit()
 
-        mock_backend.read_content.return_value = b"test"
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
 
         result = consolidation_engine.sync_consolidate(["mem1", "mem2"])
 

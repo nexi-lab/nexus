@@ -209,7 +209,7 @@ class TestWriteContentWithVersioning:
         mock_blob.generation = 1234567890  # GCS generation number
         gcs_connector_versioned.bucket.blob.return_value = mock_blob
 
-        result = gcs_connector_versioned.write_content(test_content, context=context)
+        result = gcs_connector_versioned.write_content(test_content, context=context).unwrap()
 
         # Should return generation number as string
         assert result == "1234567890"
@@ -233,13 +233,13 @@ class TestWriteContentWithVersioning:
         mock_blob1 = Mock()
         mock_blob1.generation = 1000
         gcs_connector_versioned.bucket.blob.return_value = mock_blob1
-        gen1 = gcs_connector_versioned.write_content(b"version 1", context=context)
+        gen1 = gcs_connector_versioned.write_content(b"version 1", context=context).unwrap()
 
         # Second write (same path)
         mock_blob2 = Mock()
         mock_blob2.generation = 2000
         gcs_connector_versioned.bucket.blob.return_value = mock_blob2
-        gen2 = gcs_connector_versioned.write_content(b"version 2", context=context)
+        gen2 = gcs_connector_versioned.write_content(b"version 2", context=context).unwrap()
 
         assert gen1 == "1000"
         assert gen2 == "2000"
@@ -314,7 +314,7 @@ class TestReadContentWithVersioning:
         gcs_connector_versioned.bucket.blob.return_value = mock_blob
 
         # Read old version by generation number
-        result = gcs_connector_versioned.read_content("1000", context=context)
+        result = gcs_connector_versioned.read_content("1000", context=context).unwrap()
 
         assert result == old_content
         # Should create blob with specific generation
@@ -333,7 +333,7 @@ class TestReadContentWithVersioning:
         gcs_connector_versioned.bucket.blob.return_value = mock_blob
 
         # Hash-like identifier (hex string, not numeric)
-        result = gcs_connector_versioned.read_content("abc123def456", context=context)
+        result = gcs_connector_versioned.read_content("abc123def456", context=context).unwrap()
 
         assert result == current_content
         # Should read current version (no generation parameter)
@@ -392,9 +392,9 @@ class TestVersioningIntegration:
         gcs_connector_versioned.bucket.blob.side_effect = write_calls
 
         # Write v1
-        gen1 = gcs_connector_versioned.write_content(b"version 1", context=context)
+        gen1 = gcs_connector_versioned.write_content(b"version 1", context=context).unwrap()
         # Write v2
-        gen2 = gcs_connector_versioned.write_content(b"version 2", context=context)
+        gen2 = gcs_connector_versioned.write_content(b"version 2", context=context).unwrap()
 
         # Different generations returned
         assert gen1 == "1000"
@@ -420,9 +420,9 @@ class TestVersioningIntegration:
         gcs_connector_versioned.bucket.blob.side_effect = blob_side_effect
 
         # Read old version
-        content_v1 = gcs_connector_versioned.read_content(gen1, context=context)
+        content_v1 = gcs_connector_versioned.read_content(gen1, context=context).unwrap()
         # Read new version
-        content_v2 = gcs_connector_versioned.read_content(gen2, context=context)
+        content_v2 = gcs_connector_versioned.read_content(gen2, context=context).unwrap()
 
         # Both versions should be readable
         assert content_v1 == b"version 1"
@@ -612,7 +612,7 @@ class TestWriteContentWithVersionCheck:
         # Write with correct expected_version
         result = gcs_connector_versioned.write_content_with_version_check(
             test_content, context=context, expected_version="1000"
-        )
+        ).unwrap()
 
         # Should succeed and return new generation
         assert result == "1000"
@@ -636,7 +636,7 @@ class TestWriteContentWithVersionCheck:
         with pytest.raises(ConflictError):
             gcs_connector_versioned.write_content_with_version_check(
                 test_content, context=context, expected_version="1000"
-            )
+            ).unwrap()
 
     def test_write_without_version_check(self, gcs_connector_backend: GCSConnectorBackend) -> None:
         """Test write_content_with_version_check without expected_version."""
@@ -649,7 +649,7 @@ class TestWriteContentWithVersionCheck:
         # No expected_version means skip version check
         result = gcs_connector_backend.write_content_with_version_check(
             test_content, context=context, expected_version=None
-        )
+        ).unwrap()
 
         # Should return hash (no versioning)
         assert len(result) == 64

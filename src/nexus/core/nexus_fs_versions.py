@@ -107,7 +107,7 @@ class NexusFSVersionsMixin:
             check_write=False,
         )
 
-        content = route.backend.read_content(version_meta.etag)
+        content = route.backend.read_content(version_meta.etag).unwrap()
         return content
 
     @rpc_expose(description="List file versions")

@@ -264,7 +264,7 @@ def test_undo_write_update(nx: NexusFS) -> None:
         assert last_op.snapshot_hash == old_hash
 
         # Undo by restoring old content
-        old_content = nx.backend.read_content(last_op.snapshot_hash)
+        old_content = nx.backend.read_content(last_op.snapshot_hash).unwrap()
         nx.write(path, old_content)
 
         # Verify restoration
@@ -292,7 +292,7 @@ def test_undo_delete(nx: NexusFS) -> None:
         assert last_op.snapshot_hash == content_hash
 
         # Undo by restoring from snapshot
-        restored_content = nx.backend.read_content(last_op.snapshot_hash)
+        restored_content = nx.backend.read_content(last_op.snapshot_hash).unwrap()
         nx.write(path, restored_content)
 
         # Verify restoration

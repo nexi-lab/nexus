@@ -403,7 +403,7 @@ class NexusFSCoreMixin:
                 from dataclasses import replace
 
                 read_context = replace(context, backend_path=route.backend_path)
-            original_content = route.backend.read_content(meta.etag, context=read_context)
+            original_content = route.backend.read_content(meta.etag, context=read_context).unwrap()
 
             # Apply dynamic_viewer filtering for CSV files before parsing
             original_content = self._apply_dynamic_viewer_filter_if_needed(
@@ -459,7 +459,7 @@ class NexusFSCoreMixin:
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
             # The backend handles authentication and API calls
-            content = route.backend.read_content("", context=read_context)
+            content = route.backend.read_content("", context=read_context).unwrap()
             if return_metadata:
                 # Generate synthetic metadata for dynamic content
                 from datetime import datetime
@@ -479,7 +479,7 @@ class NexusFSCoreMixin:
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
-        content = route.backend.read_content(meta.etag, context=read_context)
+        content = route.backend.read_content(meta.etag, context=read_context).unwrap()
 
         # Apply dynamic_viewer filtering for CSV files
         content = self._apply_dynamic_viewer_filter_if_needed(path, content, context)
@@ -684,7 +684,9 @@ class NexusFSCoreMixin:
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
                             content = self._apply_dynamic_viewer_filter_if_needed(
                                 path, content, context
                             )
@@ -720,7 +722,9 @@ class NexusFSCoreMixin:
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
                             content = self._apply_dynamic_viewer_filter_if_needed(
                                 path, content, context
                             )
@@ -753,7 +757,9 @@ class NexusFSCoreMixin:
                             from dataclasses import replace
 
                             read_context = replace(context, backend_path=route.backend_path)
-                        content = route.backend.read_content(meta.etag, context=read_context)
+                        content = route.backend.read_content(
+                            meta.etag, context=read_context
+                        ).unwrap()
                         content = self._apply_dynamic_viewer_filter_if_needed(
                             path, content, context
                         )
@@ -866,7 +872,7 @@ class NexusFSCoreMixin:
 
         # Read the full content and slice (backends can override for efficiency)
         # Note: For true efficiency, backends could implement read_range() natively
-        content = route.backend.read_content(meta.etag, context=read_context)
+        content = route.backend.read_content(meta.etag, context=read_context).unwrap()
 
         # Apply range
         return content[start:end]
@@ -992,7 +998,7 @@ class NexusFSCoreMixin:
         meta = self.metadata.get(path)
 
         # Write content via streaming
-        content_hash = route.backend.write_stream(chunks, context=context)
+        content_hash = route.backend.write_stream(chunks, context=context).unwrap()
 
         # Get size from backend metadata (written during streaming)
         # For now, we can't easily get size without reading - set to 0 and update on next read
@@ -1000,7 +1006,7 @@ class NexusFSCoreMixin:
         size = 0
         if hasattr(route.backend, "get_content_size"):
             with contextlib.suppress(Exception):
-                size = route.backend.get_content_size(content_hash, context=context)
+                size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1191,7 +1197,7 @@ class NexusFSCoreMixin:
             context = OperationContext(
                 user="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
-        content_hash = route.backend.write_content(content, context=context)
+        content_hash = route.backend.write_content(content, context=context).unwrap()
 
         # NOTE: Do NOT delete old content when updating a file!
         # Version history preserves references to old content hashes.
@@ -1623,7 +1629,7 @@ class NexusFSCoreMixin:
         # Write all content to backend CAS (deduplicated automatically)
         for (path, content), route in zip(validated_files, routes, strict=False):
             # Write to backend - returns content hash
-            content_hash = route.backend.write_content(content, context=context)
+            content_hash = route.backend.write_content(content, context=context).unwrap()
 
             # Get existing metadata for this file
             meta = existing_metadata.get(path)
@@ -1868,7 +1874,7 @@ class NexusFSCoreMixin:
         # Skip content deletion for directories - they have no actual CAS content
         # (directories are stored with empty hash but no actual CAS entry)
         if meta.etag and meta.mime_type != "inode/directory":
-            route.backend.delete_content(meta.etag, context=context)
+            route.backend.delete_content(meta.etag, context=context).unwrap()
 
         # Remove from metadata
         self.metadata.delete(path)
@@ -2277,7 +2283,7 @@ class NexusFSCoreMixin:
                     from dataclasses import replace
 
                     size_context = replace(context, backend_path=route.backend_path)
-                size = route.backend.get_content_size(meta.etag, context=size_context)
+                size = route.backend.get_content_size(meta.etag, context=size_context).unwrap()
             except Exception:
                 size = None
 
@@ -2510,7 +2516,7 @@ class NexusFSCoreMixin:
                 raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
             # Read content from CAS
-            content = self.backend.read_content(memory.content_hash, context=context)
+            content = self.backend.read_content(memory.content_hash, context=context).unwrap()
 
             if return_metadata:
                 return {
@@ -2598,7 +2604,7 @@ class NexusFSCoreMixin:
             router.delete_memory(memory.memory_id)
 
             # Also delete content from CAS (decrement ref count)
-            self.backend.delete_content(memory.content_hash, context=context)
+            self.backend.delete_content(memory.content_hash, context=context).unwrap()
         finally:
             session.close()
 
@@ -2796,7 +2802,7 @@ class NexusFSCoreMixin:
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
                     with contextlib.suppress(Exception):
-                        route.backend.delete_content(file_meta.etag)
+                        route.backend.delete_content(file_meta.etag).unwrap()
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]
@@ -2804,7 +2810,7 @@ class NexusFSCoreMixin:
 
         # Remove directory in backend
         with contextlib.suppress(NexusFileNotFoundError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
+            route.backend.rmdir(route.backend_path, recursive=recursive).unwrap()
 
         # Delete the directory metadata (only if explicit directory)
         if not is_implicit:

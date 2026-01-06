@@ -8,6 +8,7 @@ import os
 import platform
 import shutil
 import tempfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.response import HandlerResponse
 from nexus.search.zoekt_client import notify_zoekt_write
 from nexus.storage.content_cache import ContentCache
 
@@ -339,7 +341,9 @@ class LocalBackend(Backend):
         """Get the lock file path for a content hash."""
         return self._get_meta_path(content_hash).with_suffix(".lock")
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> HandlerResponse[str]:
         """
         Write content to CAS storage and return its hash.
 
@@ -349,7 +353,11 @@ class LocalBackend(Backend):
         Args:
             content: File content as bytes
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse with content hash in data field
         """
+        start_time = time.perf_counter()
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
 
@@ -372,7 +380,12 @@ class LocalBackend(Backend):
                         self.content_cache.put(content_hash, content)
                     # Ensure Bloom filter is updated (may already exist)
                     self._cas_bloom_add(content_hash)
-                    return content_hash
+                    return HandlerResponse.ok(
+                        data=content_hash,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
+                        path=content_hash,
+                    )
 
                 # Content doesn't exist - write atomically
                 content_path.parent.mkdir(parents=True, exist_ok=True)
@@ -406,7 +419,12 @@ class LocalBackend(Backend):
                     # Notify Zoekt to reindex (new content written)
                     notify_zoekt_write(str(content_path))
 
-                    return content_hash
+                    return HandlerResponse.ok(
+                        data=content_hash,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
+                        path=content_hash,
+                    )
 
                 finally:
                     # Clean up temp file if it still exists
@@ -414,12 +432,17 @@ class LocalBackend(Backend):
                         with contextlib.suppress(OSError):
                             tmp_path.unlink()
 
-        except OSError as e:
-            raise BackendError(
-                f"Failed to write content: {e}", backend="local", path=content_hash
-            ) from e
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bytes]:
         """Read content by its hash with retry for Windows file locking.
 
         Uses Bloom filter for fast miss detection after checking in-memory cache.
@@ -427,12 +450,22 @@ class LocalBackend(Backend):
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse with file content in data field
         """
+        start_time = time.perf_counter()
+
         # Check cache first for fast path
         if self.content_cache is not None:
             cached_content = self.content_cache.get(content_hash)
             if cached_content is not None:
-                return cached_content
+                return HandlerResponse.ok(
+                    data=cached_content,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
         # Note: We intentionally do NOT use Bloom filter for early rejection here
         # because another process/instance sharing the same root may have written
@@ -452,14 +485,14 @@ class LocalBackend(Backend):
             if not content_path.exists():
                 if attempt < max_retries - 1:
                     # File might be mid-write - retry
-                    import time
-
                     time.sleep(retry_delay)
                     continue
                 # File genuinely doesn't exist
-                raise NexusFileNotFoundError(
+                return HandlerResponse.not_found(
                     path=content_hash,
                     message=f"CAS content not found: {content_hash}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
                 )
 
             try:
@@ -470,13 +503,13 @@ class LocalBackend(Backend):
                     content: bytes | None = read_file(str(content_path))
                     if content is None:
                         if attempt < max_retries - 1:
-                            import time
-
                             time.sleep(retry_delay)
                             continue
-                        raise NexusFileNotFoundError(
+                        return HandlerResponse.not_found(
                             path=content_hash,
                             message=f"CAS content not found: {content_hash}",
+                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                            backend_name=self.name,
                         )
                 except ImportError:
                     # Fallback to standard read
@@ -485,9 +518,12 @@ class LocalBackend(Backend):
                 # Verify hash
                 actual_hash = self._compute_hash(content)
                 if actual_hash != content_hash:
-                    raise BackendError(
-                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                        backend="local",
+                    msg = f"Content hash mismatch: expected {content_hash}, got {actual_hash}"
+                    return HandlerResponse.error(
+                        message=msg,
+                        code=500,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
                         path=content_hash,
                     )
 
@@ -495,23 +531,31 @@ class LocalBackend(Backend):
                 if self.content_cache is not None:
                     self.content_cache.put(content_hash, content)
 
-                return content
+                return HandlerResponse.ok(
+                    data=content,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
             except OSError as e:
                 # File might be locked on Windows - retry
                 if attempt < max_retries - 1:
-                    import time
-
                     time.sleep(retry_delay)
                     continue
-                raise BackendError(
-                    f"Failed to read content: {e}", backend="local", path=content_hash
-                ) from e
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
         # Should never reach here
-        raise BackendError(
-            f"Failed to read content after {max_retries} retries",
-            backend="local",
+        return HandlerResponse.error(
+            message=f"Failed to read content after {max_retries} retries",
+            code=500,
+            execution_time_ms=(time.perf_counter() - start_time) * 1000,
+            backend_name=self.name,
             path=content_hash,
         )
 
@@ -556,22 +600,16 @@ class LocalBackend(Backend):
 
             if max_workers == 1:
                 # Single file - no need for thread pool overhead
-                try:
-                    content = self.read_content(uncached_hashes[0], context=context)
-                    result[uncached_hashes[0]] = content
-                except Exception:
-                    result[uncached_hashes[0]] = None
+                response = self.read_content(uncached_hashes[0], context=context)
+                result[uncached_hashes[0]] = response.data if response.success else None
             else:
                 # Multiple files - use parallel reads
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
                 def read_one(content_hash: str) -> tuple[str, bytes | None]:
                     """Read a single file, returning (hash, content) or (hash, None) on error."""
-                    try:
-                        content = self.read_content(content_hash, context=context)
-                        return (content_hash, content)
-                    except Exception:
-                        return (content_hash, None)
+                    response = self.read_content(content_hash, context=context)
+                    return (content_hash, response.data if response.success else None)
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {executor.submit(read_one, h): h for h in uncached_hashes}
@@ -621,7 +659,7 @@ class LocalBackend(Backend):
         self,
         chunks: "Iterator[bytes]",
         context: "OperationContext | None" = None,
-    ) -> str:
+    ) -> HandlerResponse[str]:
         """
         Write content from an iterator of chunks.
 
@@ -633,13 +671,15 @@ class LocalBackend(Backend):
             context: Operation context (ignored for local backend)
 
         Returns:
-            Content hash (BLAKE3 or SHA-256 as hex string)
+            HandlerResponse with content hash in data field
         """
+        start_time = time.perf_counter()
         # Write to temp file while collecting chunks for hashing
         # Note: We collect chunks for hashing to ensure consistency with hash_content()
         # which may use Rust BLAKE3. True streaming hash requires matching incremental hasher.
         tmp_path = None
         collected_chunks: list[bytes] = []
+        content_hash = "stream"  # Default for error reporting
 
         try:
             # Create temp file in CAS directory for atomic move
@@ -682,7 +722,12 @@ class LocalBackend(Backend):
                     # Ensure Bloom filter is updated
                     self._cas_bloom_add(content_hash)
 
-                    return content_hash
+                    return HandlerResponse.ok(
+                        data=content_hash,
+                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                        backend_name=self.name,
+                        path=content_hash,
+                    )
 
                 # Content doesn't exist - move temp file to final location
                 content_path.parent.mkdir(parents=True, exist_ok=True)
@@ -696,29 +741,48 @@ class LocalBackend(Backend):
                 # Add to Bloom filter for fast future lookups
                 self._cas_bloom_add(content_hash)
 
-                return content_hash
+                return HandlerResponse.ok(
+                    data=content_hash,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
-        except OSError as e:
-            raise BackendError(
-                f"Failed to write stream: {e}", backend="local", path="stream"
-            ) from e
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
         finally:
             # Clean up temp file if it still exists
             if tmp_path is not None and tmp_path.exists():
                 with contextlib.suppress(OSError):
                     tmp_path.unlink()
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+    def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[None]:
         """Delete content by hash with reference counting.
 
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse indicating success or failure
         """
+        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
-            raise NexusFileNotFoundError(content_hash)
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         # Fix #514: Use file locking to prevent race condition on ref_count
         lock_path = self._get_lock_path(content_hash)
@@ -751,8 +815,6 @@ class LocalBackend(Backend):
             # Clean up lock file AFTER releasing the lock (fixes #562 - Windows PermissionError)
             # Retry logic for Windows file locking semantics
             if should_delete_lock and lock_path.exists():
-                import time
-
                 for attempt in range(3):
                     try:
                         lock_path.unlink()
@@ -764,17 +826,25 @@ class LocalBackend(Backend):
                         else:
                             # Last attempt failed - log warning but don't fail the operation
                             # Lock file will be orphaned but this is better than failing deletion
-                            import logging
-
-                            logging.warning(
+                            logger.warning(
                                 f"Failed to delete lock file {lock_path} after 3 attempts. "
                                 "File will be orphaned but content deletion succeeded."
                             )
 
-        except OSError as e:
-            raise BackendError(
-                f"Failed to delete content: {e}", backend="local", path=content_hash
-            ) from e
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
+
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
     def _cleanup_empty_dirs(self, dir_path: Path) -> None:
         """Remove empty parent directories up to CAS root."""
@@ -789,7 +859,9 @@ class LocalBackend(Backend):
         except OSError:
             pass
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+    def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
         """Check if content exists.
 
         Uses Bloom filter for fast miss detection - avoids disk I/O
@@ -798,45 +870,109 @@ class LocalBackend(Backend):
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse with True if content exists, False otherwise
         """
+        start_time = time.perf_counter()
+
         # Fast path: Bloom filter says content definitely doesn't exist
         if not self._cas_bloom_check(content_hash):
-            return False
+            return HandlerResponse.ok(
+                data=False,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         content_path = self._hash_to_path(content_hash)
-        return content_path.exists()
+        exists = content_path.exists()
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        return HandlerResponse.ok(
+            data=exists,
+            execution_time_ms=(time.perf_counter() - start_time) * 1000,
+            backend_name=self.name,
+            path=content_hash,
+        )
+
+    def get_content_size(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """Get content size in bytes.
 
         Args:
             content_hash: SHA-256 hash as hex string
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse with content size in bytes
         """
+        start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
         if not content_path.exists():
-            raise NexusFileNotFoundError(content_hash)
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         try:
-            return content_path.stat().st_size
-        except OSError as e:
-            raise BackendError(
-                f"Failed to get content size: {e}", backend="local", path=content_hash
-            ) from e
+            size = content_path.stat().st_size
+            return HandlerResponse.ok(
+                data=size,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    def get_ref_count(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """Get reference count for content.
 
         Args:
             content_hash: SHA-256 hash as hex string
             context: Operation context (ignored for local backend)
-        """
-        if not self.content_exists(content_hash, context=context):
-            raise NexusFileNotFoundError(content_hash)
 
-        metadata = self._read_metadata(content_hash)
-        return int(metadata.get("ref_count", 0))
+        Returns:
+            HandlerResponse with reference count
+        """
+        start_time = time.perf_counter()
+
+        exists_response = self.content_exists(content_hash, context=context)
+        if not exists_response.success or not exists_response.data:
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
+
+        try:
+            metadata = self._read_metadata(content_hash)
+            ref_count = int(metadata.get("ref_count", 0))
+            return HandlerResponse.ok(
+                data=ref_count,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
     # === Directory Operations ===
 
@@ -846,7 +982,7 @@ class LocalBackend(Backend):
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """Create directory in virtual directory structure.
 
         Args:
@@ -854,7 +990,11 @@ class LocalBackend(Backend):
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
             _context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse indicating success or failure
         """
+        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
         try:
@@ -862,53 +1002,131 @@ class LocalBackend(Backend):
                 full_path.mkdir(parents=True, exist_ok=exist_ok)
             else:
                 full_path.mkdir(exist_ok=exist_ok)
-        except FileExistsError as e:
-            if not exist_ok:
-                raise e
-        except FileNotFoundError as e:
-            raise BackendError(
-                f"Parent directory not found: {path}", backend="local", path=path
-            ) from e
-        except OSError as e:
-            raise BackendError(
-                f"Failed to create directory: {e}", backend="local", path=path
-            ) from e
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+        except FileExistsError:
+            if exist_ok:
+                return HandlerResponse.ok(
+                    data=None,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
+            return HandlerResponse.error(
+                message=f"Directory already exists: {path}",
+                code=409,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+        except FileNotFoundError:
+            return HandlerResponse.error(
+                message=f"Parent directory not found: {path}",
+                code=404,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
-        """Remove directory from virtual directory structure."""
+    ) -> HandlerResponse[None]:
+        """Remove directory from virtual directory structure.
+
+        Returns:
+            HandlerResponse indicating success or failure
+        """
+        start_time = time.perf_counter()
         full_path = self.dir_root / path.lstrip("/")
 
         if not full_path.exists():
-            raise NexusFileNotFoundError(path)
+            return HandlerResponse.not_found(
+                path=path,
+                message=f"Directory not found: {path}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+            )
 
         if not full_path.is_dir():
-            raise BackendError(f"Path is not a directory: {path}", backend="local", path=path)
+            return HandlerResponse.error(
+                message=f"Path is not a directory: {path}",
+                code=400,
+                is_expected=True,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
         try:
             if recursive:
                 shutil.rmtree(full_path)
             else:
                 full_path.rmdir()
+            return HandlerResponse.ok(
+                data=None,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
         except OSError as e:
-            # Re-raise OSError for "directory not empty"
+            # Directory not empty
             if e.errno in (errno.ENOTEMPTY, 66):  # errno.ENOTEMPTY or macOS errno 66
-                raise
-            raise BackendError(
-                f"Failed to remove directory: {e}", backend="local", path=path
-            ) from e
+                return HandlerResponse.error(
+                    message=f"Directory not empty: {path}",
+                    code=400,
+                    is_expected=True,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
-        """Check if path is a directory."""
+    def is_directory(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
+        """Check if path is a directory.
+
+        Returns:
+            HandlerResponse with True if path is a directory, False otherwise
+        """
+        start_time = time.perf_counter()
         try:
             full_path = self.dir_root / path.lstrip("/")
-            return full_path.exists() and full_path.is_dir()
-        except Exception:
-            return False
+            is_dir = full_path.exists() and full_path.is_dir()
+            return HandlerResponse.ok(
+                data=is_dir,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
+        except Exception as e:
+            return HandlerResponse.from_exception(
+                e,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=path,
+            )
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using local filesystem."""

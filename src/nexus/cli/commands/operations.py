@@ -343,10 +343,10 @@ def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
             # Read old content from correct backend (route to find backend for this path)
             try:
                 route = nx.router.route(operation.path)
-                old_content = route.backend.read_content(operation.snapshot_hash)
+                old_content = route.backend.read_content(operation.snapshot_hash).unwrap()
             except Exception:
                 # Fallback: try default backend (for backward compatibility)
-                old_content = nx.backend.read_content(operation.snapshot_hash)
+                old_content = nx.backend.read_content(operation.snapshot_hash).unwrap()
             nx.write(operation.path, old_content)
             console.print(f"  Restored previous version of {operation.path}")
         else:
@@ -360,10 +360,10 @@ def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
             # Read content from correct backend (route to find backend for this path)
             try:
                 route = nx.router.route(operation.path)
-                content = route.backend.read_content(operation.snapshot_hash)
+                content = route.backend.read_content(operation.snapshot_hash).unwrap()
             except Exception:
                 # Fallback: try default backend (for backward compatibility)
-                content = nx.backend.read_content(operation.snapshot_hash)
+                content = nx.backend.read_content(operation.snapshot_hash).unwrap()
             nx.write(operation.path, content)
 
             # Restore metadata if available

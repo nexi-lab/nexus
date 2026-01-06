@@ -606,7 +606,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.read_content("hash", context=None)
+            backend.read_content("hash", context=None).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 
@@ -617,7 +617,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.delete_content("hash", context=None)
+            backend.delete_content("hash", context=None).unwrap()
 
         assert "backend_path" in str(exc_info.value)
 

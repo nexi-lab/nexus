@@ -1385,9 +1385,10 @@ class GoogleDriveConnectorBackend(Backend):
                 path=path,
             )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
+        except Exception:
+            # On API errors, return False (can't verify = treat as not a directory)
+            return HandlerResponse.ok(
+                data=False,
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,

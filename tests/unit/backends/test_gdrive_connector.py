@@ -16,6 +16,7 @@ import pytest
 
 from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
 from nexus.core.exceptions import BackendError
+from nexus.core.response import HandlerResponse
 
 
 class TestGDriveMkdirFix:
@@ -52,7 +53,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector, "_get_or_create_folder", return_value="folder_id"
             ) as mock_create,
@@ -85,7 +86,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector,
                 "_get_or_create_folder",
@@ -119,7 +120,7 @@ class TestGDriveMkdirFix:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             patch.object(
                 connector, "_get_or_create_folder", return_value="folder_id"
             ) as mock_create,
@@ -471,7 +472,7 @@ class TestGDriveErrorHandling:
         with (
             patch.object(connector, "_get_drive_service", return_value=mock_service),
             patch.object(connector, "_get_or_create_root_folder", return_value="root_id"),
-            patch.object(connector, "is_directory", return_value=False),
+            patch.object(connector, "is_directory", return_value=HandlerResponse.ok(False)),
             contextlib.suppress(ValueError, BackendError, FileNotFoundError),
         ):
             # Empty path should be handled

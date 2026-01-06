@@ -239,7 +239,10 @@ class TestWorkspaceManagerPermissions:
         mock_session.get.side_effect = [mock_snap1, mock_snap2]
 
         # Mock manifest reads
-        mock_backend.read_content.side_effect = [HandlerResponse.ok(b"{}"), HandlerResponse.ok(b"{}")]
+        mock_backend.read_content.side_effect = [
+            HandlerResponse.ok(b"{}"),
+            HandlerResponse.ok(b"{}"),
+        ]
 
         # Execute
         result = workspace_manager.diff_snapshots("snap1", "snap2")
@@ -287,7 +290,10 @@ class TestWorkspaceManagerPermissions:
         mock_session.get.side_effect = [mock_snap1, mock_snap2]
 
         # Mock manifest reads
-        mock_backend.read_content.side_effect = [HandlerResponse.ok(b"{}"), HandlerResponse.ok(b"{}")]
+        mock_backend.read_content.side_effect = [
+            HandlerResponse.ok(b"{}"),
+            HandlerResponse.ok(b"{}"),
+        ]
 
         # Execute
         workspace_manager.diff_snapshots("snap1", "snap2")

@@ -614,7 +614,9 @@ class TestGmailConnectorBatchOperations:
         with (
             patch.object(gmail_connector, "_get_gmail_service", return_value=mock_service),
             patch("googleapiclient.http.BatchHttpRequest", return_value=mock_batch),
-            patch.object(gmail_connector, "read_content", return_value=HandlerResponse.ok(b"individual read")),
+            patch.object(
+                gmail_connector, "read_content", return_value=HandlerResponse.ok(b"individual read")
+            ),
         ):
             mock_service.new_batch_http_request.return_value = mock_batch
 

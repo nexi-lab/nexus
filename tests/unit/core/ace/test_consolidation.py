@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.ace.consolidation import ConsolidationEngine
-from nexus.core.handler_response import HandlerResponse
+from nexus.core.response import HandlerResponse
 from nexus.storage.models import Base, MemoryModel
 
 

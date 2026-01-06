@@ -8,8 +8,8 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.core.ace.feedback import FeedbackManager
 from nexus.core.ace.trajectory import TrajectoryManager
-from nexus.core.handler_response import HandlerResponse
 from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 from nexus.storage.models import Base
 
 

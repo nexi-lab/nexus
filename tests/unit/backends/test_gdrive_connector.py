@@ -669,7 +669,7 @@ class TestGDriveSharedDrives:
             patch.object(connector_shared, "_get_drive_service", return_value=mock_service),
             patch.object(connector_shared, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector_shared.is_directory("shared_folder")
+            result = connector_shared.is_directory("shared_folder").unwrap()
 
             # Verify shared drives parameters were used
             assert result is True

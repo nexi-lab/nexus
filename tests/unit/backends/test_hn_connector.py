@@ -162,18 +162,18 @@ class TestDirectoryOperations:
 
     def test_is_directory_root(self, hn_connector: HNConnectorBackend) -> None:
         """Test root is a directory."""
-        assert hn_connector.is_directory("") is True
-        assert hn_connector.is_directory("/") is True
-        assert hn_connector.is_directory("hn") is True
+        assert hn_connector.is_directory("").unwrap() is True
+        assert hn_connector.is_directory("/").unwrap() is True
+        assert hn_connector.is_directory("hn").unwrap() is True
 
     def test_is_directory_feed(self, hn_connector: HNConnectorBackend) -> None:
         """Test feed paths are directories."""
         for feed in ["top", "new", "best", "ask", "show", "jobs"]:
-            assert hn_connector.is_directory(feed) is True
+            assert hn_connector.is_directory(feed).unwrap() is True
 
     def test_is_directory_file(self, hn_connector: HNConnectorBackend) -> None:
         """Test file paths are not directories."""
-        assert hn_connector.is_directory("top/1.json") is False
+        assert hn_connector.is_directory("top/1.json").unwrap() is False
 
     def test_list_dir_root(self, hn_connector: HNConnectorBackend) -> None:
         """Test listing root directory."""
@@ -226,21 +226,21 @@ class TestContentExists:
     def test_exists_valid_path(self, hn_connector: HNConnectorBackend) -> None:
         """Test valid paths exist."""
         context = OperationContext(user="test", groups=[], backend_path="top/1.json")
-        assert hn_connector.content_exists("", context) is True
+        assert hn_connector.content_exists("", context).unwrap() is True
 
     def test_exists_directory(self, hn_connector: HNConnectorBackend) -> None:
         """Test directories exist."""
         context = OperationContext(user="test", groups=[], backend_path="top")
-        assert hn_connector.content_exists("", context) is True
+        assert hn_connector.content_exists("", context).unwrap() is True
 
     def test_exists_invalid_path(self, hn_connector: HNConnectorBackend) -> None:
         """Test invalid paths don't exist."""
         context = OperationContext(user="test", groups=[], backend_path="invalid/1.json")
-        assert hn_connector.content_exists("", context) is False
+        assert hn_connector.content_exists("", context).unwrap() is False
 
     def test_exists_no_context(self, hn_connector: HNConnectorBackend) -> None:
         """Test no context returns False."""
-        assert hn_connector.content_exists("") is False
+        assert hn_connector.content_exists("").unwrap() is False
 
 
 class TestReadContent:
@@ -249,14 +249,14 @@ class TestReadContent:
     def test_read_requires_context(self, hn_connector: HNConnectorBackend) -> None:
         """Test read requires context with backend_path."""
         with pytest.raises(BackendError) as exc_info:
-            hn_connector.read_content("")
+            hn_connector.read_content("").unwrap()
         assert "requires context" in str(exc_info.value)
 
     def test_read_directory_fails(self, hn_connector: HNConnectorBackend) -> None:
         """Test reading directory fails."""
         context = OperationContext(user="test", groups=[], backend_path="top")
         with pytest.raises(BackendError) as exc_info:
-            hn_connector.read_content("", context)
+            hn_connector.read_content("", context).unwrap()
         assert "Cannot read directory" in str(exc_info.value)
 
 

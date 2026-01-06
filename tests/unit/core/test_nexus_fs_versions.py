@@ -5,8 +5,8 @@ from unittest.mock import Mock
 import pytest
 
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.handler_response import HandlerResponse
 from nexus.core.nexus_fs_versions import NexusFSVersionsMixin
+from nexus.core.response import HandlerResponse
 
 
 class TestNexusFSVersions:
@@ -184,7 +184,10 @@ class TestNexusFSVersions:
         mock_route = Mock()
         mock_backend = Mock()
         mock_backend.read_content = Mock(
-            side_effect=[b"line 1\nline 2\nline 3", b"line 1\nline 2 modified\nline 3"]
+            side_effect=[
+                HandlerResponse.ok(b"line 1\nline 2\nline 3"),
+                HandlerResponse.ok(b"line 1\nline 2 modified\nline 3"),
+            ]
         )
         mock_route.backend = mock_backend
         mock_fs.router.route = Mock(return_value=mock_route)

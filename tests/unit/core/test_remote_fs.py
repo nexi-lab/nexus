@@ -9,6 +9,7 @@ import pytest
 
 from nexus import NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.core.response import HandlerResponse
 
 
 @pytest.fixture
@@ -142,7 +143,7 @@ class TestWriteAndRead:
 
         # Mock backend write_content to return a hash
         content_hash = "abc123def456"
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
 
         # Mock router.route to return the backend
         from unittest.mock import Mock
@@ -161,7 +162,7 @@ class TestWriteAndRead:
         assert call_args[0][0] == content  # First positional arg
 
         # Mock backend read_content
-        remote_fs.backend.read_content.return_value = content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(content)
 
         # Read file
         result = remote_fs.read(path)
@@ -178,7 +179,7 @@ class TestWriteAndRead:
         path = "/test.txt"
         content_hash = "hash123"
 
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, content)
 
         # Check metadata exists
@@ -206,7 +207,7 @@ class TestWriteAndRead:
         hash2 = "hash2"
 
         # Write first version
-        remote_fs.backend.write_content.return_value = hash1
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash1)
         remote_fs.write(path, content1)
 
         meta1 = remote_fs.metadata.get(path)
@@ -215,7 +216,7 @@ class TestWriteAndRead:
         assert meta1.version == 1
 
         # Write second version
-        remote_fs.backend.write_content.return_value = hash2
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash2)
         remote_fs.write(path, content2)
 
         # With version tracking (v0.3.5), old content is NOT deleted
@@ -268,7 +269,7 @@ class TestAppend:
         content_hash = "hash123"
 
         # Mock backend write_content
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
 
         # Mock router.route
         from unittest.mock import Mock
@@ -309,14 +310,14 @@ class TestAppend:
         remote_fs.router.route = Mock(return_value=mock_route)
 
         # Create initial file
-        remote_fs.backend.write_content.return_value = hash1
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash1)
         remote_fs.write(path, initial_content)
 
         # Mock read_content to return initial content
-        remote_fs.backend.read_content.return_value = initial_content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(initial_content)
 
         # Append new content
-        remote_fs.backend.write_content.return_value = hash2
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash2)
         result = remote_fs.append(path, append_content)
 
         # Verify the combined content was written
@@ -346,11 +347,11 @@ class TestAppend:
 
         for i, line in enumerate(lines, 1):
             # Mock read to return accumulated content
-            remote_fs.backend.read_content.return_value = accumulated
+            remote_fs.backend.read_content.return_value = HandlerResponse.ok(accumulated)
 
             # Append
             hash_val = f"hash{i}"
-            remote_fs.backend.write_content.return_value = hash_val
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash_val)
             result = remote_fs.append(path, line)
 
             # Update accumulated content
@@ -376,7 +377,7 @@ class TestAppend:
         remote_fs.router.route = Mock(return_value=mock_route)
 
         # Append with string
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         _result = remote_fs.append(path, content)
 
         # Verify bytes were written
@@ -410,11 +411,11 @@ class TestAppend:
             line = (json.dumps(event) + "\n").encode("utf-8")
 
             # Mock read
-            remote_fs.backend.read_content.return_value = accumulated
+            remote_fs.backend.read_content.return_value = HandlerResponse.ok(accumulated)
 
             # Append
             hash_val = f"hash{i}"
-            remote_fs.backend.write_content.return_value = hash_val
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash_val)
             remote_fs.append(path, line)
 
             accumulated += line
@@ -441,11 +442,11 @@ class TestAppend:
         remote_fs.router.route = Mock(return_value=mock_route)
 
         # Create initial file
-        remote_fs.backend.write_content.return_value = hash1
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(hash1)
         remote_fs.write(path, initial_content)
 
         # Mock read to return initial content
-        remote_fs.backend.read_content.return_value = initial_content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(initial_content)
 
         # Try to append with wrong etag
         with pytest.raises(ConflictError) as exc_info:
@@ -488,7 +489,7 @@ class TestDelete:
         remote_fs.router.route = Mock(return_value=mock_route)
 
         # Create file
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, content)
 
         assert remote_fs.exists(path)
@@ -518,7 +519,7 @@ class TestExists:
         path = "/test.txt"
         content_hash = "hash123"
 
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, b"test")
 
         assert remote_fs.exists(path) is True
@@ -550,7 +551,7 @@ class TestList:
         ]
 
         for path in files_to_create:
-            remote_fs.backend.write_content.return_value = f"hash_{path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{path}")
             remote_fs.write(path, b"content")
 
         # List recursively
@@ -561,13 +562,13 @@ class TestList:
     def test_list_non_recursive(self, remote_fs: NexusFS) -> None:
         """Test listing directory non-recursively."""
         # Create files at different levels
-        remote_fs.backend.write_content.return_value = "hash1"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash1")
         remote_fs.write("/workspace/file1.txt", b"content")
 
-        remote_fs.backend.write_content.return_value = "hash2"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash2")
         remote_fs.write("/workspace/file2.txt", b"content")
 
-        remote_fs.backend.write_content.return_value = "hash3"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash3")
         remote_fs.write("/workspace/subdir/file3.txt", b"content")
 
         # List non-recursively (includes directories now)
@@ -585,7 +586,7 @@ class TestList:
         content = b"test content"
         content_hash = "hash123"
 
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, content)
 
         # List with details
@@ -614,7 +615,7 @@ class TestGlob:
         ]
 
         for path in files:
-            remote_fs.backend.write_content.return_value = f"hash_{path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{path}")
             remote_fs.write(path, b"content")
 
         # Find all .txt files in /data
@@ -635,7 +636,7 @@ class TestGlob:
         ]
 
         for path in files:
-            remote_fs.backend.write_content.return_value = f"hash_{path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{path}")
             remote_fs.write(path, b"content")
 
         # Find all Python files recursively
@@ -646,7 +647,7 @@ class TestGlob:
 
     def test_glob_no_matches(self, remote_fs: NexusFS) -> None:
         """Test glob with no matches."""
-        remote_fs.backend.write_content.return_value = "hash"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash")
         remote_fs.write("/test.txt", b"content")
 
         matches = remote_fs.glob("*.pdf")
@@ -679,12 +680,12 @@ class TestGrep:
         for path, content in files.items():
             content_hash = f"hash_{path}"
             content_store[content_hash] = content
-            remote_fs.backend.write_content.return_value = content_hash
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
             remote_fs.write(path, content)
 
         # Mock read_content to return correct content based on hash
         def mock_read_content(content_hash, context=None):
-            return content_store.get(content_hash, b"")
+            return HandlerResponse.ok(content_store.get(content_hash, b""))
 
         remote_fs.backend.read_content.side_effect = mock_read_content
 
@@ -701,9 +702,9 @@ class TestGrep:
         content = b"Error: something failed\nerror in line 2"
         path = "/test.txt"
 
-        remote_fs.backend.write_content.return_value = "hash"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash")
         remote_fs.write(path, content)
-        remote_fs.backend.read_content.return_value = content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(content)
 
         # Case-insensitive search
         matches = remote_fs.grep("ERROR", ignore_case=True)
@@ -719,9 +720,9 @@ class TestGrep:
         }
 
         for path, content in files.items():
-            remote_fs.backend.write_content.return_value = f"hash_{path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{path}")
             remote_fs.write(path, content)
-            remote_fs.backend.read_content.return_value = content
+            remote_fs.backend.read_content.return_value = HandlerResponse.ok(content)
 
         # Search only in Python files
         matches = remote_fs.grep("def", file_pattern="*.py")
@@ -758,10 +759,10 @@ class TestDirectoryOperations:
         """Test checking if path is directory."""
         path = "/workspace"
 
-        remote_fs.backend.is_directory.return_value = True
+        remote_fs.backend.is_directory.return_value = HandlerResponse.ok(True)
         assert remote_fs.is_directory(path) is True
 
-        remote_fs.backend.is_directory.return_value = False
+        remote_fs.backend.is_directory.return_value = HandlerResponse.ok(False)
         assert remote_fs.is_directory(path) is False
 
 
@@ -820,7 +821,7 @@ class TestReadOnlyPaths:
         # First create a file
         path = "/test.txt"
         content_hash = "hash123"
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, b"content")
 
         # Mock readonly route
@@ -871,7 +872,7 @@ class TestRmdirWithFiles:
 
         # Create file in directory
         path = "/workspace/data/file.txt"
-        remote_fs.backend.write_content.return_value = "hash123"
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok("hash123")
         remote_fs.write(path, b"content")
 
         # Try to remove parent directory without recursive flag
@@ -890,7 +891,7 @@ class TestRmdirWithFiles:
         ]
 
         for file_path in files:
-            remote_fs.backend.write_content.return_value = f"hash_{file_path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{file_path}")
             remote_fs.write(file_path, b"content")
 
         # Remove directory recursively
@@ -918,9 +919,9 @@ class TestGrepEdgeCases:
         path = "/file.txt"
         content_hash = "hash123"
 
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, content)
-        remote_fs.backend.read_content.return_value = content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(content)
 
         # Search with max_results limit
         matches = remote_fs.grep("TODO", max_results=10)
@@ -934,9 +935,9 @@ class TestGrepEdgeCases:
         path = "/binary.dat"
         content_hash = "hash123"
 
-        remote_fs.backend.write_content.return_value = content_hash
+        remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, binary_content)
-        remote_fs.backend.read_content.return_value = binary_content
+        remote_fs.backend.read_content.return_value = HandlerResponse.ok(binary_content)
 
         # Search should skip binary file (can't decode as UTF-8)
         matches = remote_fs.grep("TODO")
@@ -958,7 +959,7 @@ class TestListDeprecatedAPI:
         ]
 
         for path in files:
-            remote_fs.backend.write_content.return_value = f"hash_{path}"
+            remote_fs.backend.write_content.return_value = HandlerResponse.ok(f"hash_{path}")
             remote_fs.write(path, b"content")
 
         # Use deprecated prefix parameter

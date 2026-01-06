@@ -173,7 +173,7 @@ class TestWriteContentWithoutVersioning:
 
     def test_write_content_without_context(self, s3_connector_backend: S3ConnectorBackend) -> None:
         """Test write_content fails without context."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BackendError) as exc_info:
             s3_connector_backend.write_content(b"test").unwrap()
 
         assert "backend_path" in str(exc_info.value)
@@ -184,7 +184,7 @@ class TestWriteContentWithoutVersioning:
         """Test write_content fails without backend_path."""
         context = OperationContext(user="test_user", groups=[])
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BackendError) as exc_info:
             s3_connector_backend.write_content(b"test", context=context).unwrap()
 
         assert "backend_path" in str(exc_info.value)
@@ -203,7 +203,7 @@ class TestWriteContentWithVersioning:
         # Mock response with version ID
         s3_connector_versioned.client.put_object.return_value = {"VersionId": "abc123version"}
 
-        result = s3_connector_versioned.write_content(test_content, context=context)
+        result = s3_connector_versioned.write_content(test_content, context=context).unwrap()
 
         # Should return version ID
         assert result == "abc123version"
@@ -216,11 +216,11 @@ class TestWriteContentWithVersioning:
 
         # First write
         s3_connector_versioned.client.put_object.return_value = {"VersionId": "version1"}
-        ver1 = s3_connector_versioned.write_content(b"version 1", context=context)
+        ver1 = s3_connector_versioned.write_content(b"version 1", context=context).unwrap()
 
         # Second write (same path)
         s3_connector_versioned.client.put_object.return_value = {"VersionId": "version2"}
-        ver2 = s3_connector_versioned.write_content(b"version 2", context=context)
+        ver2 = s3_connector_versioned.write_content(b"version 2", context=context).unwrap()
 
         assert ver1 == "version1"
         assert ver2 == "version2"
@@ -274,7 +274,7 @@ class TestReadContentWithVersioning:
         s3_connector_versioned.client.get_object.return_value = {"Body": mock_body}
 
         # Read old version by version ID
-        result = s3_connector_versioned.read_content("version123", context=context)
+        result = s3_connector_versioned.read_content("version123", context=context).unwrap()
 
         assert result == old_content
         # Should request specific version
@@ -295,7 +295,7 @@ class TestReadContentWithVersioning:
 
         # Hash-like identifier (hex string, 64 chars)
         hex_hash = "a" * 64
-        result = s3_connector_versioned.read_content(hex_hash, context=context)
+        result = s3_connector_versioned.read_content(hex_hash, context=context).unwrap()
 
         assert result == current_content
         # Should read current version (no VersionId parameter)
@@ -379,7 +379,7 @@ class TestDirectoryOperations:
         # Mock head_object to indicate directory exists
         s3_connector_backend.client.head_object.return_value = {}
 
-        with pytest.raises(FileExistsError):
+        with pytest.raises(BackendError):
             s3_connector_backend.mkdir("existingdir", exist_ok=False).unwrap()
 
     def test_is_directory_with_marker(self, s3_connector_backend: S3ConnectorBackend) -> None:

@@ -61,7 +61,7 @@ class TestGDriveMkdirFix:
             mock_context.user_id = "test_user"
             mock_context.tenant_id = "default"
 
-            connector.mkdir("test_folder", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir("test_folder", parents=True, exist_ok=False, context=mock_context).unwrap()
 
             # Verify _get_or_create_folder was called once with just the folder name
             mock_create.assert_called_once()
@@ -96,7 +96,7 @@ class TestGDriveMkdirFix:
 
             connector.mkdir(
                 "workspace/data/images", parents=True, exist_ok=False, context=mock_context
-            )
+            ).unwrap()
 
             # Verify _get_or_create_folder was called 3 times, once for each component
             assert mock_create.call_count == 3, "Should create 3 folders for 3 path components"
@@ -127,7 +127,7 @@ class TestGDriveMkdirFix:
             mock_context.tenant_id = "default"
 
             # Path with leading slash
-            connector.mkdir("/test_folder/", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir("/test_folder/", parents=True, exist_ok=False, context=mock_context).unwrap()
 
             # Should only create one folder (empty components are skipped)
             assert mock_create.call_count == 1
@@ -354,7 +354,7 @@ class TestGDriveIntegrationScenarios:
             mock_context.tenant_id = "default"
 
             # Create directory hierarchy
-            connector.mkdir("workspace/data", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir("workspace/data", parents=True, exist_ok=False, context=mock_context).unwrap()
 
             # Now check if a file in that hierarchy is detected as a directory
             existing_folders.add("workspace")
@@ -451,7 +451,7 @@ class TestGDriveErrorHandling:
 
     def test_operation_without_context(self, connector):
         """Test operations fail gracefully without context."""
-        with pytest.raises((ValueError, BackendError)):
+        with pytest.raises(BackendError):
             connector.write_content(b"test", context=None).unwrap()
 
     def test_mkdir_with_invalid_path(self, connector):
@@ -469,7 +469,7 @@ class TestGDriveErrorHandling:
             contextlib.suppress(ValueError, BackendError, FileNotFoundError),
         ):
             # Empty path should be handled
-            connector.mkdir("", parents=True, exist_ok=False, context=mock_context)
+            connector.mkdir("", parents=True, exist_ok=False, context=mock_context).unwrap()
 
     def test_is_directory_handles_api_errors(self, connector):
         """Test is_directory returns False on API errors."""
@@ -599,7 +599,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.read_content("hash", context=None).unwrap()
+            backend.read_content("hash", context=None)
 
         assert "backend_path" in str(exc_info.value)
 
@@ -610,7 +610,7 @@ class TestGDriveReadWriteDeleteRequireComplexMocking:
         )
 
         with pytest.raises(BackendError) as exc_info:
-            backend.delete_content("hash", context=None).unwrap()
+            backend.delete_content("hash", context=None)
 
         assert "backend_path" in str(exc_info.value)
 
@@ -663,7 +663,7 @@ class TestGDriveSharedDrives:
             patch.object(connector_shared, "_get_drive_service", return_value=mock_service),
             patch.object(connector_shared, "_get_or_create_root_folder", return_value="root_id"),
         ):
-            result = connector_shared.is_directory("shared_folder").unwrap()
+            result = connector_shared.is_directory("shared_folder")
 
             # Verify shared drives parameters were used
             assert result is True

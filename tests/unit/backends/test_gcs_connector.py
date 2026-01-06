@@ -178,7 +178,7 @@ class TestWriteContentWithoutVersioning:
         self, gcs_connector_backend: GCSConnectorBackend
     ) -> None:
         """Test write_content fails without context."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BackendError) as exc_info:
             gcs_connector_backend.write_content(b"test").unwrap()
 
         assert "backend_path" in str(exc_info.value)
@@ -189,7 +189,7 @@ class TestWriteContentWithoutVersioning:
         """Test write_content fails without backend_path."""
         context = OperationContext(user="test_user", groups=[])
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BackendError) as exc_info:
             gcs_connector_backend.write_content(b"test", context=context).unwrap()
 
         assert "backend_path" in str(exc_info.value)
@@ -348,7 +348,7 @@ class TestReadContentWithVersioning:
         gcs_connector_versioned.bucket.blob.return_value = mock_blob
 
         with pytest.raises(NexusFileNotFoundError):
-            gcs_connector_versioned.read_content("9999", context=context)
+            gcs_connector_versioned.read_content("9999", context=context).unwrap()
 
 
 class TestVersioningIntegration:

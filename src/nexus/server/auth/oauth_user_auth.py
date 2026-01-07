@@ -130,7 +130,7 @@ class OAuthUserAuth:
         return auth_url, state
 
     async def handle_google_callback(
-        self, code: str, _state: str | None = None
+        self, code: str, _state: str | None = None, redirect_uri: str | None = None
     ) -> tuple[UserModel, str]:
         """Handle Google OAuth callback.
 
@@ -140,6 +140,9 @@ class OAuthUserAuth:
         Args:
             code: Authorization code from OAuth callback
             state: State parameter for CSRF protection (optional, should be validated by caller)
+            redirect_uri: Optional redirect URI to use for token exchange.
+                         Must match the redirect_uri used in authorization URL.
+                         If not provided, uses default from OAuth provider config.
 
         Returns:
             Tuple of (UserModel, JWT token)
@@ -149,7 +152,9 @@ class OAuthUserAuth:
         """
         # Exchange code for tokens
         try:
-            oauth_credential = await self.google_provider.exchange_code(code)
+            oauth_credential = await self.google_provider.exchange_code(
+                code, redirect_uri=redirect_uri
+            )
         except Exception as e:
             logger.error(f"Failed to exchange OAuth code: {e}")
             raise ValueError(f"OAuth token exchange failed: {e}") from e

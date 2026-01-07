@@ -152,6 +152,12 @@ class OAuthUserAuth:
         """
         # Exchange code for tokens
         try:
+            logger.info(
+                f"[OAUTH-DEBUG] handle_google_callback: redirect_uri parameter = {redirect_uri}"
+            )
+            logger.info(
+                f"[OAUTH-DEBUG] handle_google_callback: google_provider.redirect_uri = {self.google_provider.redirect_uri}"
+            )
             oauth_credential = await self.google_provider.exchange_code(
                 code, redirect_uri=redirect_uri
             )

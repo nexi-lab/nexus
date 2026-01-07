@@ -151,6 +151,14 @@ class GoogleOAuthProvider(OAuthProvider):
         # Use provided redirect_uri or fall back to instance redirect_uri
         uri_to_use = redirect_uri if redirect_uri is not None else self.redirect_uri
 
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"[OAUTH-DEBUG] exchange_code: redirect_uri param = {redirect_uri}, "
+            f"self.redirect_uri = {self.redirect_uri}, uri_to_use = {uri_to_use}"
+        )
+
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,

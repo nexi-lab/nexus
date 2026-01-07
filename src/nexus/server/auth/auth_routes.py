@@ -985,8 +985,11 @@ async def oauth_check(
             if existing_user and existing_user.email_verified == 1:
                 # Email verified on both sides - auto-link and login
                 # Note: Existing users will go through frontend tenant creation flow
+                logger.info(
+                    f"[OAUTH-DEBUG] Calling handle_google_callback with redirect_uri={request.redirect_uri}"
+                )
                 user, token = await oauth_provider.handle_google_callback(
-                    code=request.code, _state=request.state
+                    code=request.code, _state=request.state, redirect_uri=request.redirect_uri
                 )
                 if not user.email:
                     raise ValueError("OAuth user must have an email")

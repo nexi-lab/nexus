@@ -726,15 +726,19 @@ def serve(
             sys.exit(1)
 
         # Create authentication provider
-        auth_provider = None
+        from nexus.server.auth.base import AuthProvider
+
+        auth_provider: AuthProvider | None = None
         if auth_type == "database":
-            # Database authentication - requires database connection
+            # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.server.auth.factory import DiscriminatingAuthProvider
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -743,23 +747,47 @@ def serve(
                 )
                 sys.exit(1)
 
+            jwt_secret = os.getenv("NEXUS_JWT_SECRET")
+            if not jwt_secret:
+                import secrets
+
+                jwt_secret = secrets.token_urlsafe(32)
+                console.print(
+                    "[yellow]⚠️  Warning:[/yellow] NEXUS_JWT_SECRET not set, using auto-generated secret"
+                )
+                console.print(
+                    "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
+                )
+
             engine = create_engine(
                 db_url,
-                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
-                pool_recycle=1800,  # Recycle connections every 30 min
-                pool_size=5,  # Auth doesn't need many connections
+                pool_pre_ping=True,
+                pool_recycle=1800,
+                pool_size=5,
             )
             session_factory = sessionmaker(bind=engine)
-            auth_provider = create_auth_provider("database", session_factory=session_factory)
+
+            # Create composite provider that routes tokens to appropriate handler
+            auth_provider = DiscriminatingAuthProvider(
+                api_key_provider=DatabaseAPIKeyAuth(session_factory=session_factory),
+                jwt_provider=DatabaseLocalAuth(
+                    session_factory=session_factory,
+                    jwt_secret=jwt_secret,
+                    token_expiry=3600,
+                ),
+            )
+            console.print(
+                "[green]✓[/green] Database authentication enabled (API keys + username/password)"
+            )
 
         elif auth_type == "local":
-            # Local username/password authentication with JWT tokens
+            # Local username/password authentication with JWT tokens (database-backed)
             import os
 
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.server.auth.factory import create_auth_provider
+            from nexus.server.auth.database_local import DatabaseLocalAuth
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -785,8 +813,11 @@ def serve(
                 pool_size=5,  # Auth doesn't need many connections
             )
             session_factory = sessionmaker(bind=engine)
-            auth_provider = create_auth_provider(
-                "local", session_factory=session_factory, jwt_secret=jwt_secret
+            # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
+            auth_provider = DatabaseLocalAuth(
+                session_factory=session_factory,
+                jwt_secret=jwt_secret,
+                token_expiry=3600,
             )
             console.print("[green]✓[/green] Local authentication enabled (username/password + JWT)")
 

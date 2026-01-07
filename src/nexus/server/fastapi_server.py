@@ -1584,9 +1584,11 @@ def _register_routes(app: FastAPI) -> None:
             full_path = f"/{path}"
 
             # Create minimal context for the operation
-            from nexus.core.context import OperationContext
+            from nexus.core.permissions import OperationContext
 
             context = OperationContext(
+                user="system",
+                groups=[],
                 tenant_id=tenant_id,
                 subject_type="system",
                 subject_id="stream",
@@ -1974,7 +1976,9 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
         return await func(**kwargs)
     else:
         # Run sync function in thread pool with timeout (Issue #932)
-        return await to_thread_with_timeout(func, **kwargs)
+        # Use longer timeout for sync operations (5 minutes)
+        timeout = 300.0 if method == "sync_mount" else None
+        return await to_thread_with_timeout(func, timeout=timeout, **kwargs)
 
 
 # ============================================================================

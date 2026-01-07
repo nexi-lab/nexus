@@ -116,9 +116,23 @@ class RPCResponse:
         code: RPCErrorCode,
         message: str,
         data: Any = None,
+        is_expected: bool = False,
     ) -> RPCResponse:
-        """Create error response."""
-        error_dict: dict[str, Any] = {"code": code.value, "message": message}
+        """Create error response.
+
+        Args:
+            request_id: The request ID to respond to
+            code: The error code
+            message: Human-readable error message
+            data: Optional additional error data
+            is_expected: Whether this is an expected error (user error) vs
+                        unexpected (system error). Used for logging/alerting.
+        """
+        error_dict: dict[str, Any] = {
+            "code": code.value,
+            "message": message,
+            "is_expected": is_expected,
+        }
         if data is not None:
             error_dict["data"] = data
         return cls(id=request_id, result=None, error=error_dict)

@@ -232,7 +232,6 @@ class TestHandlerResponseFromException:
         response = HandlerResponse.from_exception(exc)
         assert response.is_expected_error is False
 
-
 class TestHandlerResponseUnwrap:
     """Tests for HandlerResponse.unwrap() method."""
 

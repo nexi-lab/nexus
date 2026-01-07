@@ -217,6 +217,21 @@ class TestHandlerResponseFromException:
         assert response.backend_name == "gcs"
         assert response.path == "/bucket/key"
 
+    def test_from_exception_respects_is_expected_attribute(self):
+        """Test that from_exception uses the is_expected attribute from exceptions.
+
+        Issue #706: Expected vs Unexpected Error Classification
+        """
+        # Expected error (NexusFileNotFoundError has is_expected=True)
+        exc = NexusFileNotFoundError("/test")
+        response = HandlerResponse.from_exception(exc)
+        assert response.is_expected_error is True
+
+        # Unexpected error (BackendError has is_expected=False)
+        exc = BackendError("Connection failed")
+        response = HandlerResponse.from_exception(exc)
+        assert response.is_expected_error is False
+
 
 class TestHandlerResponseUnwrap:
     """Tests for HandlerResponse.unwrap() method."""

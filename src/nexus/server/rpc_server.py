@@ -939,22 +939,37 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self._send_rpc_response(response)
 
         except ValueError as e:
-            # Invalid parameters
+            # Invalid parameters - expected user error
             self._send_error_response(
-                request.id, RPCErrorCode.INVALID_PARAMS, f"Invalid parameters: {e}"
+                request.id,
+                RPCErrorCode.INVALID_PARAMS,
+                f"Invalid parameters: {e}",
+                is_expected=True,
             )
         except NexusFileNotFoundError as e:
             self._send_error_response(
-                request.id, RPCErrorCode.FILE_NOT_FOUND, str(e), data={"path": str(e)}
+                request.id,
+                RPCErrorCode.FILE_NOT_FOUND,
+                str(e),
+                data={"path": str(e)},
+                is_expected=e.is_expected,
             )
         except FileExistsError as e:
-            self._send_error_response(request.id, RPCErrorCode.FILE_EXISTS, str(e))
+            self._send_error_response(
+                request.id, RPCErrorCode.FILE_EXISTS, str(e), is_expected=True
+            )
         except InvalidPathError as e:
-            self._send_error_response(request.id, RPCErrorCode.INVALID_PATH, str(e))
+            self._send_error_response(
+                request.id, RPCErrorCode.INVALID_PATH, str(e), is_expected=e.is_expected
+            )
         except NexusPermissionError as e:
-            self._send_error_response(request.id, RPCErrorCode.PERMISSION_ERROR, str(e))
+            self._send_error_response(
+                request.id, RPCErrorCode.PERMISSION_ERROR, str(e), is_expected=e.is_expected
+            )
         except ValidationError as e:
-            self._send_error_response(request.id, RPCErrorCode.VALIDATION_ERROR, str(e))
+            self._send_error_response(
+                request.id, RPCErrorCode.VALIDATION_ERROR, str(e), is_expected=e.is_expected
+            )
         except ConflictError as e:
             # v0.3.9: Handle optimistic concurrency conflicts
             self._send_error_response(
@@ -966,14 +981,25 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     "expected_etag": e.expected_etag,
                     "current_etag": e.current_etag,
                 },
+                is_expected=e.is_expected,
             )
         except NexusError as e:
-            logger.warning(f"NexusError in method {method}: {e}")
-            self._send_error_response(request.id, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
+            # Use error classification for logging
+            if e.is_expected:
+                logger.info(f"Expected error in method {method}: {e}")
+            else:
+                logger.warning(f"NexusError in method {method}: {e}")
+            self._send_error_response(
+                request.id,
+                RPCErrorCode.INTERNAL_ERROR,
+                f"Nexus error: {e}",
+                is_expected=e.is_expected,
+            )
         except Exception as e:
+            # Unexpected system error
             logger.exception(f"Error executing method {method}")
             self._send_error_response(
-                request.id, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"
+                request.id, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}", is_expected=False
             )
 
     def _dispatch_method(self, method: str, params: Any) -> Any:
@@ -1586,7 +1612,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_error_response(
-        self, request_id: str | int | None, code: RPCErrorCode, message: str, data: Any = None
+        self,
+        request_id: str | int | None,
+        code: RPCErrorCode,
+        message: str,
+        data: Any = None,
+        is_expected: bool = False,
     ) -> None:
         """Send error response.
 
@@ -1595,8 +1626,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             code: Error code
             message: Error message
             data: Optional error data
+            is_expected: Whether this is an expected error (user error) vs
+                        unexpected (system error). Used for logging/alerting.
         """
-        response = RPCResponse.create_error(request_id, code, message, data)
+        response = RPCResponse.create_error(request_id, code, message, data, is_expected)
         self._send_rpc_response(response)
 
     def _send_json_response(self, status_code: int, data: dict[str, Any]) -> None:

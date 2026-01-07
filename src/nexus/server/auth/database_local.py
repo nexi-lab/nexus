@@ -273,6 +273,52 @@ class DatabaseLocalAuth(LocalAuth):
 
             return user
 
+    async def register(
+        self,
+        email: str,
+        password: str,
+        username: str | None = None,
+        display_name: str | None = None,
+    ) -> tuple[UserModel, str]:
+        """Register a new user and return user with JWT token.
+
+        This is a convenience method that wraps register_user() and generates a token.
+        Used by the /auth/register endpoint.
+
+        Args:
+            email: User email
+            password: Plain-text password
+            username: Optional username
+            display_name: Optional display name
+
+        Returns:
+            Tuple of (UserModel, JWT token)
+
+        Raises:
+            ValueError: If email or username already exists
+        """
+        # Register user
+        user = self.register_user(
+            email=email,
+            password=password,
+            username=username,
+            display_name=display_name,
+        )
+
+        # Generate JWT token
+        user_info = {
+            "subject_type": "user",
+            "subject_id": user.user_id,
+            "tenant_id": None,  # TODO: Get from ReBAC groups
+            "is_admin": user.is_global_admin == 1,
+            "name": user.display_name or user.username or user.email,
+        }
+
+        assert user.email is not None, "User email cannot be None after registration"
+        token = self.create_token(user.email, user_info)
+
+        return (user, token)
+
     def login(self, identifier: str, password: str) -> str | None:
         """Authenticate user and create JWT token.
 
@@ -327,6 +373,38 @@ class DatabaseLocalAuth(LocalAuth):
             token = self.create_token(user.email, user_info)
             logger.info(f"Login successful: {identifier} (user_id={user.user_id})")
             return token
+
+    async def login_async(self, identifier: str, password: str) -> tuple[UserModel, str] | None:
+        """Authenticate user and return user with JWT token.
+
+        This is a convenience method that wraps login() and returns user object.
+        Used by the /auth/login endpoint.
+
+        Args:
+            identifier: Email or username
+            password: Plain-text password
+
+        Returns:
+            Tuple of (UserModel, JWT token) if credentials valid, None otherwise
+
+        Raises:
+            ValueError: If credentials are invalid
+        """
+        token = self.login(identifier, password)
+        if not token:
+            raise ValueError("Invalid email/username or password")
+
+        # Get user to return
+        with self.session_factory() as session:
+            user = get_user_by_email(session, identifier)
+            if not user:
+                user = get_user_by_username(session, identifier)
+            if not user:
+                raise ValueError("User not found after successful login")
+
+            # Make instance detached so it can be accessed after session closes
+            session.expunge(user)
+            return (user, token)
 
     def change_password(self, user_id: str, old_password: str, new_password: str) -> bool:
         """Change user password.

@@ -909,6 +909,36 @@ def create_app(
     else:
         logger.info("Rate limiting is DISABLED (NEXUS_RATE_LIMIT_DISABLED=true)")
 
+    # Initialize authentication provider for user registration/login endpoints
+    if auth_provider is not None:
+        try:
+            from nexus.server.auth.auth_routes import set_auth_provider
+
+            # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
+            from nexus.server.auth.base import AuthProvider
+            from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.server.auth.factory import DiscriminatingAuthProvider
+
+            local_auth_provider: AuthProvider | None = None
+            if isinstance(auth_provider, DatabaseLocalAuth):
+                local_auth_provider = auth_provider
+            elif isinstance(auth_provider, DiscriminatingAuthProvider):
+                # Extract JWT provider from DiscriminatingAuthProvider
+                local_auth_provider = auth_provider.jwt_provider
+
+            if local_auth_provider and isinstance(local_auth_provider, DatabaseLocalAuth):
+                set_auth_provider(local_auth_provider)
+                logger.info("DatabaseLocalAuth provider registered for user authentication")
+            else:
+                logger.debug(
+                    f"Auth provider is {type(auth_provider).__name__}, not DatabaseLocalAuth. "
+                    "User registration/login endpoints will not be available."
+                )
+        except ImportError as e:
+            logger.warning(f"Failed to import auth routes: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to register auth provider: {e}")
+
     # Register routes
     _register_routes(app)
 

@@ -128,11 +128,14 @@ class GoogleOAuthProvider(OAuthProvider):
 
         return f"{self.AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
-    async def exchange_code(self, code: str) -> OAuthCredential:
+    async def exchange_code(self, code: str, redirect_uri: str | None = None) -> OAuthCredential:
         """Exchange authorization code for tokens.
 
         Args:
             code: Authorization code from OAuth callback
+            redirect_uri: Optional redirect URI to use for token exchange.
+                         Must match the redirect_uri used in authorization URL.
+                         If not provided, uses self.redirect_uri
 
         Returns:
             OAuthCredential with access_token, refresh_token, etc.
@@ -145,12 +148,15 @@ class GoogleOAuthProvider(OAuthProvider):
             >>> cred = await provider.exchange_code("4/0AY0e...")
             >>> print(cred.access_token)
         """
+        # Use provided redirect_uri or fall back to instance redirect_uri
+        uri_to_use = redirect_uri if redirect_uri is not None else self.redirect_uri
+
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": self.redirect_uri,
+            "redirect_uri": uri_to_use,
         }
 
         async with httpx.AsyncClient() as client:

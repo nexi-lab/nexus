@@ -108,6 +108,7 @@ class OAuthCallbackRequest(BaseModel):
     provider: str = Field(..., description="OAuth provider (e.g., 'google')")
     code: str = Field(..., description="Authorization code from OAuth provider")
     state: str | None = Field(None, description="State parameter for CSRF protection")
+    redirect_uri: str | None = Field(None, description="Redirect URI used in authorization URL")
 
 
 class OAuthCheckRequest(BaseModel):
@@ -116,6 +117,7 @@ class OAuthCheckRequest(BaseModel):
     provider: str = Field(..., description="OAuth provider (e.g., 'google')")
     code: str = Field(..., description="Authorization code from OAuth provider")
     state: str | None = Field(None, description="State parameter for CSRF protection")
+    redirect_uri: str | None = Field(None, description="Redirect URI used in authorization URL")
 
 
 class OAuthConfirmRequest(BaseModel):
@@ -275,7 +277,11 @@ async def login(
         401: Invalid credentials
     """
     try:
-        user, token = await auth.login(identifier=request.identifier, password=request.password)  # type: ignore[misc]
+        result = await auth.login_async(identifier=request.identifier, password=request.password)  # type: ignore[attr-defined]
+        if result is None:
+            raise ValueError("Invalid email/username or password")
+
+        user, token = result
 
         return LoginResponse(
             token=token,
@@ -435,7 +441,9 @@ async def oauth_check(
         # Exchange code for tokens to get user info
         from nexus.server.auth.pending_oauth import get_pending_oauth_manager
 
-        oauth_credential = await oauth_provider.google_provider.exchange_code(request.code)
+        oauth_credential = await oauth_provider.google_provider.exchange_code(
+            request.code, redirect_uri=request.redirect_uri
+        )
         user_info = await oauth_provider._extract_google_user_info(oauth_credential.access_token)
 
         provider_user_id = user_info.get("sub")
@@ -1038,7 +1046,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
 
     try:
         user, token = await oauth_provider.handle_google_callback(
-            code=request.code, _state=request.state
+            code=request.code, _state=request.state, redirect_uri=request.redirect_uri
         )
 
         # Ensure user has email (required for OAuth)

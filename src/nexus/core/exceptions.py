@@ -1,12 +1,52 @@
-"""Custom exceptions for Nexus filesystem operations."""
+"""Custom exceptions for Nexus filesystem operations.
+
+Exception Classification:
+    All Nexus exceptions have an `is_expected` attribute that distinguishes
+    user errors (expected) from system errors (unexpected):
+
+    Expected errors (is_expected=True):
+        - User input validation failures
+        - Resource not found (user requested non-existent item)
+        - Permission denied (user lacks access)
+        - Conflicts (optimistic concurrency)
+        These are logged at INFO level without stack traces.
+
+    Unexpected errors (is_expected=False):
+        - Backend/infrastructure failures
+        - Internal state corruption
+        - Bugs and unhandled conditions
+        These are logged at ERROR level with full stack traces.
+
+Usage:
+    try:
+        result = operation()
+    except NexusError as e:
+        if e.is_expected:
+            logger.info(f"Expected error: {e}")
+        else:
+            logger.error(f"System error: {e}", exc_info=True)
+"""
 
 
 class NexusError(Exception):
-    """Base exception for all Nexus errors."""
+    """Base exception for all Nexus errors.
 
-    def __init__(self, message: str, path: str | None = None):
+    Attributes:
+        message: Human-readable error description
+        path: Optional file/resource path for context
+        is_expected: Whether this is an expected user error (True) or
+                     unexpected system error (False). Subclasses set
+                     appropriate defaults.
+    """
+
+    is_expected: bool = False  # Default: unexpected (system error)
+
+    def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         self.message = message
         self.path = path
+        # Allow instance override of class default
+        if is_expected is not None:
+            self.is_expected = is_expected
         super().__init__(self._format_message())
 
     def _format_message(self) -> str:
@@ -17,7 +57,12 @@ class NexusError(Exception):
 
 
 class NexusFileNotFoundError(NexusError, FileNotFoundError):
-    """Raised when a file or directory does not exist."""
+    """Raised when a file or directory does not exist.
+
+    This is an expected error - the user requested a resource that doesn't exist.
+    """
+
+    is_expected = True  # User asked for non-existent resource
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "File not found"
@@ -25,7 +70,13 @@ class NexusFileNotFoundError(NexusError, FileNotFoundError):
 
 
 class NexusPermissionError(NexusError):
-    """Raised when access to a file or directory is denied."""
+    """Raised when access to a file or directory is denied.
+
+    This is an expected error - the user attempted an operation they lack
+    permissions for.
+    """
+
+    is_expected = True  # User lacks required permissions
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Permission denied"
@@ -35,20 +86,28 @@ class NexusPermissionError(NexusError):
 class PermissionDeniedError(NexusError):
     """Raised when ReBAC permission check fails.
 
-    This is used by ReBAC-enabled operations (skills, memory, etc.) when
-    a subject lacks the required permission on an object.
+    This is an expected error - the user attempted an operation they lack
+    ReBAC permissions for.
 
     Examples:
         >>> raise PermissionDeniedError("No permission to read skill 'my-skill'")
         >>> raise PermissionDeniedError("User lacks 'approve' permission", path="/skills/my-skill")
     """
 
+    is_expected = True  # User lacks ReBAC permissions
+
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
 
 
 class BackendError(NexusError):
-    """Raised when a backend operation fails."""
+    """Raised when a backend operation fails.
+
+    This is an unexpected error - indicates infrastructure/system failure
+    that requires investigation.
+    """
+
+    is_expected = False  # System/infrastructure failure
 
     def __init__(self, message: str, backend: str | None = None, path: str | None = None):
         self.backend = backend
@@ -58,7 +117,12 @@ class BackendError(NexusError):
 
 
 class InvalidPathError(NexusError):
-    """Raised when a path is invalid or contains illegal characters."""
+    """Raised when a path is invalid or contains illegal characters.
+
+    This is an expected error - the user provided an invalid path.
+    """
+
+    is_expected = True  # User provided invalid input
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Invalid path"
@@ -66,29 +130,43 @@ class InvalidPathError(NexusError):
 
 
 class MetadataError(NexusError):
-    """Raised when metadata operations fail."""
+    """Raised when metadata operations fail.
 
-    def __init__(self, message: str, path: str | None = None):
-        super().__init__(message, path)
+    This is an unexpected error - indicates internal state corruption
+    or system failure.
+    """
+
+    is_expected = False  # Internal state/system failure
+
+    def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
+        super().__init__(message, path, is_expected)
 
 
 class ValidationError(NexusError):
     """Raised when validation fails.
 
-    This is a domain error that should be caught and converted to
-    appropriate HTTP status codes (400 Bad Request) in API layers.
+    This is an expected error - the user provided invalid input that
+    failed validation. Should be converted to HTTP 400 Bad Request.
 
     Examples:
         >>> raise ValidationError("name is required")
         >>> raise ValidationError("size cannot be negative", path="/data/file.txt")
     """
 
-    def __init__(self, message: str, path: str | None = None):
-        super().__init__(message, path)
+    is_expected = True  # User input validation failure
+
+    def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
+        super().__init__(message, path, is_expected)
 
 
 class ParserError(NexusError):
-    """Raised when document parsing fails."""
+    """Raised when document parsing fails.
+
+    This is an expected error - the user provided a document that
+    couldn't be parsed (unsupported format, corrupted, etc.).
+    """
+
+    is_expected = True  # User provided unparseable document
 
     def __init__(self, message: str, path: str | None = None, parser: str | None = None):
         self.parser = parser
@@ -100,9 +178,8 @@ class ParserError(NexusError):
 class ConflictError(NexusError):
     """Raised when optimistic concurrency check fails.
 
-    This occurs when a write operation specifies an if_match etag/version
-    that doesn't match the current file version, indicating another agent
-    has modified the file concurrently.
+    This is an expected error - indicates concurrent modification which
+    is a normal condition in multi-agent systems.
 
     Agents must handle this error explicitly by:
     1. Retrying with a fresh read
@@ -119,6 +196,8 @@ class ConflictError(NexusError):
         ...     result = nx.read(path, return_metadata=True)
         ...     nx.write(path, content, if_match=result['etag'])
     """
+
+    is_expected = True  # Normal condition in concurrent systems
 
     def __init__(self, path: str, expected_etag: str, current_etag: str):
         """Initialize conflict error.
@@ -140,6 +219,9 @@ class ConflictError(NexusError):
 class AuditLogError(NexusError):
     """Raised when audit logging fails and audit_strict_mode is enabled.
 
+    This is an unexpected error - indicates critical infrastructure failure
+    that requires immediate investigation. P0 COMPLIANCE issue.
+
     P0 COMPLIANCE: This exception prevents operations from succeeding without
     proper audit trail, ensuring compliance with SOX, HIPAA, GDPR, PCI DSS.
 
@@ -154,6 +236,8 @@ class AuditLogError(NexusError):
     - Use only in high-availability scenarios where availability > auditability
     """
 
+    is_expected = False  # Critical infrastructure failure
+
     def __init__(
         self, message: str, path: str | None = None, original_error: Exception | None = None
     ):
@@ -164,16 +248,15 @@ class AuditLogError(NexusError):
 class AuthenticationError(NexusError):
     """Raised when authentication fails.
 
-    This is used by OAuth and other authentication systems when:
-    - Credentials are not found
-    - Tokens are invalid or expired
-    - Token refresh fails
-    - Authentication provider is unavailable
+    This is an expected error - the user's credentials are invalid or expired.
+    Common in OAuth flows when tokens need refresh.
 
     Examples:
         >>> raise AuthenticationError("No OAuth credential found for google:user@example.com")
         >>> raise AuthenticationError("Failed to refresh token: refresh_token revoked")
     """
+
+    is_expected = True  # User auth issue (invalid/expired credentials)
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)

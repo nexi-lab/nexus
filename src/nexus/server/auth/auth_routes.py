@@ -604,10 +604,14 @@ async def setup_tenant(
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_profile(_auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> UserResponse:
+async def get_profile(
+    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> UserResponse:
     """Get current user profile.
 
     Args:
+        user_info: Authenticated user information from JWT token
         auth: Authentication provider
 
     Returns:
@@ -615,23 +619,43 @@ async def get_profile(_auth: DatabaseLocalAuth = Depends(get_auth_provider)) -> 
 
     Raises:
         401: Not authenticated
+        404: User not found
     """
-    # TODO: Get user from JWT token in Authorization header
-    # For now, this is a placeholder that requires implementation
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Profile endpoint requires JWT token authentication middleware",
-    )
+    from nexus.server.auth.user_helpers import get_user_by_id
+
+    user_id, _email = user_info
+
+    # Get user from database
+    with auth.session_factory() as session:
+        user = get_user_by_id(session, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User not found: {user_id}",
+            )
+
+        return UserResponse(
+            user_id=user.user_id,
+            email=user.email or "",
+            username=user.username,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
+            is_global_admin=user.is_global_admin == 1,
+            primary_auth_method=user.primary_auth_method,
+        )
 
 
 @router.patch("/me", response_model=UserResponse)
 async def update_profile(
-    _request: UpdateProfileRequest, _auth: DatabaseLocalAuth = Depends(get_auth_provider)
+    request: UpdateProfileRequest,
+    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> UserResponse:
     """Update current user profile.
 
     Args:
         request: Profile update request
+        user_info: Authenticated user information from JWT token
         auth: Authentication provider
 
     Returns:
@@ -639,23 +663,51 @@ async def update_profile(
 
     Raises:
         401: Not authenticated
+        404: User not found
     """
-    # TODO: Get user from JWT token in Authorization header
-    # For now, this is a placeholder that requires implementation
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Profile update endpoint requires JWT token authentication middleware",
-    )
+    from nexus.server.auth.user_helpers import get_user_by_id
+
+    user_id, _email = user_info
+
+    # Update user in database
+    with auth.session_factory() as session, session.begin():
+        user = get_user_by_id(session, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User not found: {user_id}",
+            )
+
+        # Update fields if provided
+        if request.display_name is not None:
+            user.display_name = request.display_name
+        if request.avatar_url is not None:
+            user.avatar_url = request.avatar_url
+
+        session.flush()
+
+        return UserResponse(
+            user_id=user.user_id,
+            email=user.email or "",
+            username=user.username,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
+            is_global_admin=user.is_global_admin == 1,
+            primary_auth_method=user.primary_auth_method,
+        )
 
 
 @router.post("/change-password")
 async def change_password(
-    _request: ChangePasswordRequest, _auth: DatabaseLocalAuth = Depends(get_auth_provider)
+    request: ChangePasswordRequest,
+    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
 ) -> dict[str, str]:
     """Change user password.
 
     Args:
         request: Password change request
+        user_info: Authenticated user information from JWT token
         auth: Authentication provider
 
     Returns:
@@ -663,13 +715,30 @@ async def change_password(
 
     Raises:
         401: Not authenticated or invalid current password
+        404: User not found
     """
-    # TODO: Get user from JWT token in Authorization header
-    # For now, this is a placeholder that requires implementation
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Change password endpoint requires JWT token authentication middleware",
-    )
+    user_id, _email = user_info
+
+    # Change password
+    try:
+        success = auth.change_password(
+            user_id=user_id,
+            old_password=request.current_password,
+            new_password=request.new_password,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect",
+            )
+
+        return {"message": "Password changed successfully", "success": "true"}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 # ==============================================================================

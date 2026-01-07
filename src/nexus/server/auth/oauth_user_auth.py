@@ -112,15 +112,21 @@ class OAuthUserAuth:
 
         logger.info("Initialized OAuthUserAuth with Google OAuth")
 
-    def get_google_auth_url(self) -> tuple[str, str]:
+    def get_google_auth_url(self, redirect_uri: str | None = None) -> tuple[str, str]:
         """Get Google OAuth authorization URL.
+
+        Args:
+            redirect_uri: Optional redirect URI to use after OAuth callback.
+                         If not provided, uses default from OAuth provider config.
 
         Returns:
             Tuple of (authorization_url, state)
             State should be stored in session for CSRF protection
         """
         state = secrets.token_urlsafe(32)
-        auth_url = self.google_provider.get_authorization_url(state=state)
+        auth_url = self.google_provider.get_authorization_url(
+            state=state, redirect_uri=redirect_uri
+        )
         return auth_url, state
 
     async def handle_google_callback(

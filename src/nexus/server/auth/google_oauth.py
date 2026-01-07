@@ -89,11 +89,15 @@ class GoogleOAuthProvider(OAuthProvider):
         """
         super().__init__(client_id, client_secret, redirect_uri, scopes, provider_name)
 
-    def get_authorization_url(self, state: str | None = None) -> str:
+    def get_authorization_url(
+        self, state: str | None = None, redirect_uri: str | None = None
+    ) -> str:
         """Generate Google OAuth authorization URL.
 
         Args:
             state: Optional state parameter for CSRF protection
+            redirect_uri: Optional redirect URI to override the default one.
+                         If not provided, uses self.redirect_uri
 
         Returns:
             Authorization URL for user to visit
@@ -107,9 +111,12 @@ class GoogleOAuthProvider(OAuthProvider):
             >>> print(f"Visit: {url}")
             Visit: https://accounts.google.com/o/oauth2/v2/auth?client_id=...
         """
+        # Use provided redirect_uri or fall back to instance redirect_uri
+        uri_to_use = redirect_uri if redirect_uri is not None else self.redirect_uri
+
         params = {
             "client_id": self.client_id,
-            "redirect_uri": self.redirect_uri,
+            "redirect_uri": uri_to_use,
             "response_type": "code",
             "scope": " ".join(self.scopes),
             "access_type": "offline",  # Request refresh token

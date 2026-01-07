@@ -6,7 +6,7 @@ Provides endpoints for user registration, login, OAuth authentication, and profi
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from nexus.server.auth.database_local import DatabaseLocalAuth
@@ -63,6 +63,49 @@ def set_nexus_instance(nexus_fs: Any) -> None:
 def get_nexus_instance() -> Any | None:
     """Get the global NexusFS instance."""
     return _nexus_fs_instance
+
+
+async def get_authenticated_user(
+    authorization: str = Header(..., description="Bearer JWT token"),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> tuple[str, str]:
+    """Extract authenticated user from JWT token.
+
+    Args:
+        authorization: Authorization header with Bearer token
+        auth: Authentication provider
+
+    Returns:
+        Tuple of (user_id, email)
+
+    Raises:
+        HTTPException: If token is missing, invalid, or expired
+    """
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format. Expected 'Bearer <token>'",
+        )
+
+    token = authorization[7:]  # Remove "Bearer " prefix
+
+    try:
+        claims = auth.verify_token(token)
+        user_id = claims.get("subject_id")
+        email = claims.get("email")
+
+        if not user_id or not email:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing user information",
+            )
+
+        return user_id, email
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid or expired token: {e}",
+        ) from e
 
 
 # ==============================================================================
@@ -128,6 +171,13 @@ class OAuthConfirmRequest(BaseModel):
     tenant_slug: str | None = Field(None, description="Optional tenant slug for new user")
 
 
+class TenantSetupRequest(BaseModel):
+    """Tenant setup request for password users."""
+
+    tenant_name: str | None = Field(None, description="Optional tenant name")
+    tenant_slug: str | None = Field(None, description="Optional tenant slug")
+
+
 class UserResponse(BaseModel):
     """User information response."""
 
@@ -148,6 +198,7 @@ class RegisterResponse(BaseModel):
     username: str | None = None
     display_name: str | None = None
     token: str
+    api_key: str | None = None
 
 
 class LoginResponse(BaseModel):
@@ -155,6 +206,7 @@ class LoginResponse(BaseModel):
 
     token: str
     user: UserResponse
+    api_key: str | None = None
 
 
 class OAuthAuthorizeResponse(BaseModel):
@@ -217,6 +269,15 @@ class OAuthConfirmResponse(BaseModel):
     message: str = "OAuth authentication confirmed"
 
 
+class TenantSetupResponse(BaseModel):
+    """Tenant setup response."""
+
+    user: UserResponse
+    api_key: str
+    tenant_id: str
+    message: str = "Tenant created successfully"
+
+
 # ==============================================================================
 # Router
 # ==============================================================================
@@ -242,12 +303,19 @@ async def register(
         422: Invalid request data
     """
     try:
-        user, token = await auth.register(  # type: ignore[attr-defined]
+        user, token = await auth.register(
             email=request.email,
             password=request.password,
             username=request.username,
             display_name=request.display_name,
         )
+
+        # Don't create API key yet - user needs to create tenant first
+        # Frontend will redirect to tenant creation page, then user can create API key
+        api_key = None
+
+        # User email should never be None after registration
+        assert user.email is not None, "User email cannot be None after registration"
 
         return RegisterResponse(
             user_id=user.user_id,
@@ -255,6 +323,7 @@ async def register(
             username=user.username,
             display_name=user.display_name,
             token=token,
+            api_key=api_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
@@ -277,11 +346,58 @@ async def login(
         401: Invalid credentials
     """
     try:
-        result = await auth.login_async(identifier=request.identifier, password=request.password)  # type: ignore[attr-defined]
+        result = await auth.login_async(identifier=request.identifier, password=request.password)
         if result is None:
             raise ValueError("Invalid email/username or password")
 
         user, token = result
+
+        # User email should never be None after successful login
+        assert user.email is not None, "User email cannot be None after login"
+
+        # Try to retrieve encrypted API key for returning users
+        # If user has already created tenant, they'll have an encrypted API key stored
+        api_key = None
+        oauth_provider = get_oauth_provider()
+
+        if oauth_provider:
+            from datetime import UTC, datetime
+
+            from sqlalchemy import select
+
+            from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
+
+            with auth.session_factory() as session:
+                # Look for encrypted API keys for this user
+                api_key_stmt = select(OAuthAPIKeyModel).where(
+                    OAuthAPIKeyModel.user_id == user.user_id,
+                )
+                oauth_api_keys = session.scalars(api_key_stmt).all()
+
+                # Try to find a valid (non-expired, non-revoked) API key
+                crypto = oauth_provider.oauth_crypto
+                for oauth_key in oauth_api_keys:
+                    try:
+                        # Verify the key still exists in api_keys and hasn't expired or been revoked
+                        api_key_model = session.get(APIKeyModel, oauth_key.key_id)
+                        if api_key_model and not api_key_model.revoked:
+                            # Check expiration
+                            is_expired = False
+                            if api_key_model.expires_at:
+                                current_time = datetime.now(UTC)
+                                expires_at = api_key_model.expires_at
+                                if expires_at.tzinfo is None:
+                                    expires_at = expires_at.replace(tzinfo=UTC)
+                                is_expired = expires_at <= current_time
+
+                            if not is_expired:
+                                # Decrypt and return the API key
+                                api_key = crypto.decrypt_token(oauth_key.encrypted_key_value)
+                                break
+                    except Exception as e:
+                        # Decryption failed or key invalid, continue to next one
+                        logger.warning(f"Failed to decrypt API key {oauth_key.key_id}: {e}")
+                        continue
 
         return LoginResponse(
             token=token,
@@ -294,9 +410,197 @@ async def login(
                 is_global_admin=user.is_global_admin == 1,
                 primary_auth_method=user.primary_auth_method,
             ),
+            api_key=api_key,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
+
+
+@router.post("/setup-tenant", response_model=TenantSetupResponse)
+async def setup_tenant(
+    request: TenantSetupRequest,
+    user_info: tuple[str, str] = Depends(get_authenticated_user),
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> TenantSetupResponse:
+    """Create tenant and API key for password-authenticated users.
+
+    This endpoint is for password users who have already registered and logged in
+    but don't have a tenant yet. It creates a tenant and generates an API key.
+
+    Args:
+        request: Tenant setup request with optional tenant_name and tenant_slug
+        user_info: Authenticated user information from JWT token
+        auth: Authentication provider
+
+    Returns:
+        User information, API key, and tenant_id
+
+    Raises:
+        401: Not authenticated or invalid token
+        400: Invalid request data
+        500: Server error during tenant creation
+    """
+    user_id, email = user_info
+
+    try:
+        from datetime import UTC, datetime, timedelta
+
+        from nexus.server.auth.user_helpers import get_user_by_id
+
+        # Get user from database
+        with auth.session_factory() as session:
+            user = get_user_by_id(session, user_id)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"User not found: {user_id}",
+                )
+
+            if not user.email:
+                raise ValueError("User email is required for tenant setup")
+
+            # Generate tenant_id based on email type
+            # For personal emails (gmail, outlook, etc): use username
+            # For work emails: use full domain (e.g., multifi.ai)
+            email_username, email_domain = (
+                user.email.split("@") if "@" in user.email else (user.email, "")
+            )
+            personal_domains = [
+                "gmail.com",
+                "outlook.com",
+                "hotmail.com",
+                "yahoo.com",
+                "icloud.com",
+                "proton.me",
+                "protonmail.com",
+            ]
+            is_personal = email_domain.lower() in personal_domains
+
+            # Calculate default tenant_id and name
+            if is_personal:
+                default_tenant_id = email_username
+                first_name = (
+                    user.display_name.split()[0]
+                    if user.display_name
+                    else email_username.capitalize()
+                )
+                default_tenant_name = f"{first_name}'s Org"
+            else:
+                # Remove dots from domain for tenant_id (e.g., multifi.ai -> multifiai)
+                default_tenant_id = email_domain.replace(".", "")
+                default_tenant_name = email_domain
+
+            # Use custom tenant_slug and tenant_name from request if provided
+            tenant_id = request.tenant_slug if request.tenant_slug else default_tenant_id
+            tenant_name = request.tenant_name if request.tenant_name else default_tenant_name
+
+            # Make user detached so we can access it after session closes
+            session.expunge(user)
+
+        # Provision full user resources (workspace, agents, skills, permissions)
+        # This is done outside the session to avoid conflicts
+        api_key_value = None
+        key_id = None
+        try:
+            from nexus.core.permissions import OperationContext
+
+            nx = get_nexus_instance()
+            if not nx:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="NexusFS instance not configured. Cannot provision user resources.",
+                )
+
+            admin_context = OperationContext(
+                user="system",
+                groups=[],
+                tenant_id=tenant_id,
+                is_admin=True,
+            )
+
+            # Provision user resources with API key (90 days expiry)
+            provision_result = nx.provision_user(
+                user_id=user_id,
+                email=user.email,
+                display_name=user.display_name,
+                tenant_id=tenant_id,
+                tenant_name=tenant_name,
+                create_api_key=True,
+                api_key_name="Password Auth Auto-generated Key",
+                api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
+                create_agents=True,
+                import_skills=True,
+                context=admin_context,
+            )
+            logger.info(f"Provisioned password user resources: {provision_result}")
+
+            # Extract API key and key_id for encryption storage
+            api_key_value = provision_result.get("api_key")
+            key_id = provision_result.get("key_id")
+
+            if not api_key_value or not key_id:
+                raise ValueError("Failed to create API key during provisioning")
+
+        except Exception as e:
+            logger.error(f"Failed to provision password user resources: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to provision user resources: {e}",
+            ) from e
+
+        # Encrypt and store the raw API key in oauth_api_keys table
+        # This allows password users to retrieve their API key on subsequent logins (if we implement that)
+        try:
+            from nexus.storage.models import OAuthAPIKeyModel
+
+            # Get OAuth provider for crypto (password users use the same encryption as OAuth)
+            oauth_provider = get_oauth_provider()
+            if oauth_provider:
+                crypto = oauth_provider.oauth_crypto
+                encrypted_key_value = crypto.encrypt_token(api_key_value)
+
+                # Store encrypted key in a new session
+                with auth.session_factory() as key_session, key_session.begin():
+                    oauth_api_key = OAuthAPIKeyModel(
+                        key_id=key_id,
+                        user_id=user_id,
+                        encrypted_key_value=encrypted_key_value,
+                    )
+                    key_session.add(oauth_api_key)
+                    logger.info(f"Stored encrypted API key for password user: {user_id}")
+            else:
+                # OAuth provider not configured - skip encryption storage
+                # User can still use the API key, just can't retrieve it on subsequent logins
+                logger.warning(
+                    f"OAuth provider not configured - skipping encrypted API key storage for user {user_id}"
+                )
+        except Exception as e:
+            logger.error(f"Failed to encrypt and store API key: {e}")
+            # Don't fail the request - user still got the API key, just can't retrieve it later
+
+        return TenantSetupResponse(
+            user=UserResponse(
+                user_id=user.user_id,
+                email=user.email,
+                username=user.username,
+                display_name=user.display_name,
+                avatar_url=user.avatar_url,
+                is_global_admin=user.is_global_admin == 1,
+                primary_auth_method=user.primary_auth_method,
+            ),
+            api_key=api_key_value,
+            tenant_id=tenant_id,
+            message="Tenant created successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Tenant setup failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Tenant setup failed: {e}",
+        ) from e
 
 
 @router.get("/me", response_model=UserResponse)

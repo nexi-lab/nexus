@@ -119,6 +119,13 @@ class DiscriminatingAuthProvider(AuthProvider):
         result = await self.authenticate(token)
         return result.authenticated
 
+    def close(self) -> None:
+        """Cleanup resources from both providers."""
+        if self.api_key_provider:
+            self.api_key_provider.close()
+        if self.jwt_provider:
+            self.jwt_provider.close()
+
 
 def create_auth_provider(
     auth_type: str | None, auth_config: dict[str, Any] | None = None, **kwargs: Any

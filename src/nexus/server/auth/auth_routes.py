@@ -368,8 +368,12 @@ async def change_password(
 
 
 @router.get("/oauth/google/authorize", response_model=OAuthAuthorizeResponse)
-async def get_google_oauth_url() -> OAuthAuthorizeResponse:
+async def get_google_oauth_url(redirect_uri: str | None = None) -> OAuthAuthorizeResponse:
     """Get Google OAuth authorization URL.
+
+    Args:
+        redirect_uri: Optional redirect URI to use after OAuth callback.
+                     If not provided, uses default from OAuth provider config.
 
     Returns:
         Authorization URL and state for OAuth flow
@@ -385,7 +389,7 @@ async def get_google_oauth_url() -> OAuthAuthorizeResponse:
         )
 
     try:
-        auth_url, state = oauth_provider.get_google_auth_url()
+        auth_url, state = oauth_provider.get_google_auth_url(redirect_uri=redirect_uri)
         return OAuthAuthorizeResponse(auth_url=auth_url, state=state)
     except Exception as e:
         logger.error(f"Failed to generate Google OAuth URL: {e}")

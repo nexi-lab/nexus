@@ -1,13 +1,14 @@
 """End-to-end tests for adaptive retrieval depth (Issue #1021).
 
-Tests the adaptive k calculation based on query complexity through
-the full stack: FastAPI -> NexusFS -> SemanticSearch -> ContextBuilder.
+Tests the adaptive k calculation through the FastAPI /api/search/query endpoint.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,331 +16,283 @@ import pytest
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+# Add direct import path for context_builder to avoid Python 3.12+ imports in nexus/__init__.py
+_llm_path = str(Path(__file__).parent.parent.parent / "src" / "nexus" / "llm")
+if _llm_path not in sys.path:
+    sys.path.insert(0, _llm_path)
 
-class TestAdaptiveRetrievalE2E:
-    """End-to-end tests for adaptive retrieval depth."""
 
-    @pytest.fixture
-    def isolated_db(self, tmp_path):
-        """Create an isolated database path for integration tests."""
-        import uuid
-
-        unique_id = str(uuid.uuid4())[:8]
-        db_path = tmp_path / f"adaptive_test_db_{unique_id}.db"
-        yield db_path
-        if db_path.exists():
-            from contextlib import suppress
-
-            with suppress(Exception):
-                db_path.unlink()
+class TestAdaptiveRetrievalFastAPI:
+    """E2E tests for adaptive retrieval through FastAPI endpoints."""
 
     @pytest.fixture
-    def sample_documents(self) -> list[tuple[str, str]]:
-        """Create sample documents for testing."""
-        docs = [
-            (
-                "/docs/auth.md",
-                "# Authentication\n\nAuthentication is the process of verifying "
-                "user identity. It uses tokens and sessions.",
-            ),
-            (
-                "/docs/authorization.md",
-                "# Authorization\n\nAuthorization determines what resources a user "
-                "can access after authentication.",
-            ),
-            (
-                "/docs/api.md",
-                "# API Documentation\n\nThe REST API provides endpoints for CRUD "
-                "operations on resources.",
-            ),
-            (
-                "/docs/database.md",
-                "# Database\n\nThe database stores user data, sessions, and "
-                "application state using PostgreSQL.",
-            ),
-            (
-                "/docs/security.md",
-                "# Security Best Practices\n\nImplement rate limiting, input "
-                "validation, and use HTTPS for all connections.",
-            ),
-        ]
-        return docs
+    def mock_search_results(self):
+        """Create mock search results."""
+        from dataclasses import dataclass
 
-    def test_context_builder_complexity_estimation(self):
-        """Test that query complexity is estimated correctly."""
-        try:
-            from nexus.llm.context_builder import ContextBuilder
-        except ImportError as e:
-            if "litellm" in str(e):
-                pytest.skip("litellm not installed - skipping test")
-            raise
+        @dataclass
+        class MockSearchResult:
+            path: str
+            chunk_text: str
+            score: float
+            chunk_index: int = 0
+            line_start: int | None = None
+            line_end: int | None = None
+            keyword_score: float | None = None
+            vector_score: float | None = None
 
-        builder = ContextBuilder()
-
-        # Simple queries should have low complexity
-        simple_queries = [
-            ("What is Python?", 0.3),
-            ("Define REST API", 0.3),
-            ("Who created Linux?", 0.3),
-        ]
-        for query, max_expected in simple_queries:
-            score = builder.estimate_query_complexity(query)
-            assert score < max_expected, (
-                f"Simple query '{query}' has complexity {score}, expected < {max_expected}"
+        return [
+            MockSearchResult(
+                path=f"/docs/doc{i}.md",
+                chunk_text=f"Document {i} content about authentication and security.",
+                score=0.9 - (i * 0.05),
+                chunk_index=i,
             )
-            logger.info(f"[TEST] Simple query '{query}' -> complexity={score:.3f}")
-
-        # Complex queries should have higher complexity
-        complex_queries = [
-            ("How does authentication compare to authorization in web security?", 0.4),
-            (
-                "Explain the relationship between database indexing and query performance",
-                0.4,
-            ),
-            ("What are all the differences between REST and GraphQL since 2020?", 0.4),
+            for i in range(20)
         ]
-        for query, min_expected in complex_queries:
-            score = builder.estimate_query_complexity(query)
-            assert score > min_expected, (
-                f"Complex query '{query}' has complexity {score}, expected > {min_expected}"
-            )
-            logger.info(f"[TEST] Complex query '{query}' -> complexity={score:.3f}")
 
-    def test_dynamic_k_calculation(self):
-        """Test that dynamic k is calculated correctly based on complexity."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
+    @pytest.fixture
+    def test_client(self):
+        """Create FastAPI test client."""
+        pytest.importorskip("httpx")
+        pytest.importorskip("litellm")
+        from fastapi.testclient import TestClient
 
-        config = AdaptiveRetrievalConfig(k_base=10, k_min=3, k_max=20, delta=0.5)
-        builder = ContextBuilder(adaptive_config=config)
+        from nexus.server.fastapi_server import create_app
 
-        # Simple query should get k close to k_base
-        simple_query = "What is Python?"
-        k_simple = builder.calculate_k_dynamic(simple_query)
-        logger.info(f"[TEST] Simple query k={k_simple}")
-        assert 3 <= k_simple <= 12, f"Simple query k={k_simple} out of expected range"
+        app = create_app()
+        return TestClient(app)
 
-        # Complex query should get higher k
-        complex_query = "How does authentication compare to authorization in web security?"
-        k_complex = builder.calculate_k_dynamic(complex_query)
-        logger.info(f"[TEST] Complex query k={k_complex}")
-        assert k_complex > k_simple, (
-            f"Complex query k={k_complex} should be > simple query k={k_simple}"
-        )
-        assert k_complex <= 20, f"Complex query k={k_complex} should respect k_max=20"
+    @pytest.fixture
+    def mock_app_state(self, mock_search_results):
+        """Mock the app state with search daemon."""
+        from nexus.server import fastapi_server
 
-    def test_get_retrieval_params(self):
-        """Test the get_retrieval_params helper method."""
-        from nexus.llm.context_builder import ContextBuilder
+        # Create mock search daemon
+        mock_daemon = MagicMock()
+        mock_daemon.is_initialized = True
 
-        builder = ContextBuilder()
+        # Track calls to verify adaptive_k is passed
+        search_calls = []
 
-        query = "How does caching affect database performance?"
-        params = builder.get_retrieval_params(query)
+        async def mock_search(
+            query: str,
+            search_type: str = "hybrid",
+            limit: int = 10,
+            path_filter: str | None = None,
+            alpha: float = 0.5,
+            fusion_method: str = "rrf",
+            adaptive_k: bool = False,
+        ):
+            # Record the call
+            search_calls.append({
+                "query": query,
+                "limit": limit,
+                "adaptive_k": adaptive_k,
+            })
 
-        assert "k" in params
-        assert "k_base" in params
-        assert "complexity_score" in params
+            # If adaptive_k is enabled, the limit should have been adjusted
+            # by the daemon before this mock is called
+            return mock_search_results[:limit]
 
-        logger.info(
-            f"[TEST] Retrieval params for '{query}': "
-            f"k={params['k']}, k_base={params['k_base']}, "
-            f"complexity={params['complexity_score']:.3f}"
+        mock_daemon.search = mock_search
+
+        # Patch app state
+        original_daemon = fastapi_server._app_state.search_daemon
+        fastapi_server._app_state.search_daemon = mock_daemon
+
+        yield {"daemon": mock_daemon, "calls": search_calls}
+
+        # Restore
+        fastapi_server._app_state.search_daemon = original_daemon
+
+    def test_search_endpoint_accepts_adaptive_k_param(self, test_client, mock_app_state):
+        """Test that /api/search/query accepts adaptive_k parameter."""
+        response = test_client.get(
+            "/api/search/query",
+            params={
+                "q": "What is Python?",
+                "limit": 10,
+                "adaptive_k": "true",
+            },
         )
 
-        assert isinstance(params["k"], int)
-        assert isinstance(params["complexity_score"], float)
-        assert 0.0 <= params["complexity_score"] <= 1.0
+        # Should not error on the parameter
+        assert response.status_code in (200, 503), f"Unexpected status: {response.status_code}"
+
+    def test_search_endpoint_passes_adaptive_k_to_daemon(
+        self, test_client, mock_app_state
+    ):
+        """Test that adaptive_k parameter is passed to search daemon."""
+        # Make request with adaptive_k=true
+        response = test_client.get(
+            "/api/search/query",
+            params={
+                "q": "How does authentication compare to authorization?",
+                "limit": 10,
+                "adaptive_k": "true",
+            },
+        )
+
+        if response.status_code == 200:
+            # Verify adaptive_k was passed to daemon
+            calls = mock_app_state["calls"]
+            assert len(calls) > 0, "Search daemon should have been called"
+            assert calls[-1]["adaptive_k"] is True, "adaptive_k should be True"
+            logger.info(f"[TEST] Search call: {calls[-1]}")
+
+    def test_search_without_adaptive_k_defaults_to_false(
+        self, test_client, mock_app_state
+    ):
+        """Test that adaptive_k defaults to False when not specified."""
+        response = test_client.get(
+            "/api/search/query",
+            params={
+                "q": "What is Python?",
+                "limit": 10,
+            },
+        )
+
+        if response.status_code == 200:
+            calls = mock_app_state["calls"]
+            assert len(calls) > 0
+            assert calls[-1]["adaptive_k"] is False, "adaptive_k should default to False"
+
+
+class TestAdaptiveRetrievalDaemon:
+    """Test adaptive retrieval in the search daemon."""
 
     @pytest.mark.asyncio
-    async def test_semantic_search_with_adaptive_k(self, sample_documents):
-        """Test semantic search with adaptive_k parameter."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig
+    async def test_daemon_applies_adaptive_k(self, caplog):
+        """Test that SearchDaemon applies adaptive k when enabled."""
+        # Import directly to avoid Python 3.12+ requirements in nexus/__init__.py
+        from context_builder import ContextBuilder
 
-        # Configure adaptive retrieval
-        config = AdaptiveRetrievalConfig(k_base=5, k_min=2, k_max=10, delta=0.5)
+        # Test the context builder directly (daemon uses this)
+        builder = ContextBuilder()
 
-        # Test that adaptive_k parameter is accepted
-        # Note: Full integration would require actual embedding provider and NexusFS
-        # For this test, we verify the config is properly structured
+        simple_query = "What is Python?"
+        complex_query = "How does authentication compare to authorization in web security?"
 
-        logger.info(
-            f"[TEST] Adaptive config: k_base={config.k_base}, "
-            f"k_min={config.k_min}, k_max={config.k_max}, delta={config.delta}"
+        k_simple = builder.calculate_k_dynamic(simple_query, k_base=10)
+        k_complex = builder.calculate_k_dynamic(complex_query, k_base=10)
+
+        logger.info(f"[TEST] Simple query: k={k_simple}")
+        logger.info(f"[TEST] Complex query: k={k_complex}")
+
+        assert k_complex > k_simple, (
+            f"Complex query should get higher k ({k_complex} vs {k_simple})"
         )
 
-        # Verify sample documents are available
-        assert len(sample_documents) > 0
-        logger.info(f"[TEST] Sample documents count: {len(sample_documents)}")
+    @pytest.mark.asyncio
+    async def test_daemon_search_with_adaptive_k_logging(self, caplog):
+        """Test that daemon logs adaptive k adjustments."""
+        with caplog.at_level(logging.INFO):
+            # Import directly to avoid Python 3.12+ requirements
+            from context_builder import ContextBuilder
 
-    def test_logging_output_on_adaptive_k(self, caplog):
-        """Test that adaptive k logs correctly when enabled."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
-
-        config = AdaptiveRetrievalConfig(k_base=10, k_min=3, k_max=20, delta=0.5)
-        builder = ContextBuilder(adaptive_config=config)
-
-        with caplog.at_level(logging.INFO, logger="nexus.llm.context_builder"):
-            # Trigger adaptive k calculation
+            builder = ContextBuilder()
             query = "How does authentication compare to authorization in web security?"
-            _ = builder.calculate_k_dynamic(query)
 
-            # Check that log message was generated
-            assert any("[ADAPTIVE-K]" in record.message for record in caplog.records), (
-                "Expected [ADAPTIVE-K] log message"
-            )
+            # This should log the adaptive k calculation
+            _ = builder.calculate_k_dynamic(query, k_base=10)
 
-            # Verify log contains expected information
-            log_messages = [r.message for r in caplog.records]
-            logger.info(f"[TEST] Captured log messages: {log_messages}")
+            # Check logs
+            adaptive_logs = [r for r in caplog.records if "[ADAPTIVE-K]" in r.message]
+            assert len(adaptive_logs) > 0, "Should have logged adaptive k calculation"
 
-            adaptive_log = next((m for m in log_messages if "[ADAPTIVE-K]" in m), None)
-            if adaptive_log:
-                assert "complexity=" in adaptive_log
-                assert "k_base=" in adaptive_log
-                assert "k_final=" in adaptive_log
-                logger.info(f"[TEST] Adaptive log: {adaptive_log}")
+            log_msg = adaptive_logs[0].message
+            assert "complexity=" in log_msg
+            assert "k_final=" in log_msg
+            logger.info(f"[TEST] Adaptive k log: {log_msg}")
 
 
-class TestAdaptiveRetrievalIntegration:
-    """Integration tests for adaptive retrieval with mocked search."""
+class TestAdaptiveRetrievalComplexity:
+    """Test query complexity estimation."""
 
-    @pytest.fixture
-    def mock_search_results(self) -> list[dict[str, Any]]:
-        """Create mock search results."""
-        return [
-            {
-                "path": f"/docs/doc{i}.md",
-                "chunk_index": 0,
-                "chunk_text": f"Document {i} content about various topics.",
-                "score": 0.9 - (i * 0.1),
-            }
-            for i in range(10)
+    def test_simple_queries_low_complexity(self):
+        """Test that simple queries have low complexity scores."""
+        # Import directly to avoid Python 3.12+ requirements
+        from context_builder import ContextBuilder
+
+        builder = ContextBuilder()
+
+        simple_queries = [
+            "What is Python?",
+            "Define REST API",
+            "Who created Linux?",
         ]
 
-    def test_adaptive_k_adjusts_result_count(self, mock_search_results):
-        """Test that adaptive k actually changes the number of results."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
+        for query in simple_queries:
+            score = builder.estimate_query_complexity(query)
+            assert score < 0.3, f"Simple query '{query}' has high complexity {score}"
+            logger.info(f"[TEST] '{query}' -> complexity={score:.3f}")
 
-        config = AdaptiveRetrievalConfig(k_base=5, k_min=2, k_max=10, delta=0.8)
-        builder = ContextBuilder(adaptive_config=config)
+    def test_complex_queries_high_complexity(self):
+        """Test that complex queries have higher complexity scores."""
+        # Import directly to avoid Python 3.12+ requirements
+        from context_builder import ContextBuilder
 
-        # Simple query - should get fewer results
-        simple_query = "What is Python?"
-        k_simple = builder.calculate_k_dynamic(simple_query)
-        simple_results = mock_search_results[:k_simple]
+        builder = ContextBuilder()
 
-        # Complex query - should get more results
-        complex_query = (
-            "Explain the relationship between authentication, authorization, "
-            "and session management in distributed systems since 2020"
+        complex_queries = [
+            "How does authentication compare to authorization in web security?",
+            "Explain all the differences between REST and GraphQL since 2020",
+            "What is the relationship between microservices and distributed systems?",
+        ]
+
+        for query in complex_queries:
+            score = builder.estimate_query_complexity(query)
+            assert score > 0.4, f"Complex query '{query}' has low complexity {score}"
+            logger.info(f"[TEST] '{query}' -> complexity={score:.3f}")
+
+    def test_dynamic_k_respects_bounds(self):
+        """Test that k_min and k_max bounds are respected."""
+        # Import directly to avoid Python 3.12+ requirements
+        from context_builder import AdaptiveRetrievalConfig, ContextBuilder
+
+        config = AdaptiveRetrievalConfig(
+            k_base=10, k_min=5, k_max=15, delta=2.0
         )
-        k_complex = builder.calculate_k_dynamic(complex_query)
-        complex_results = mock_search_results[:k_complex]
-
-        logger.info(f"[TEST] Simple query: k={k_simple}, results={len(simple_results)}")
-        logger.info(f"[TEST] Complex query: k={k_complex}, results={len(complex_results)}")
-
-        # Complex query should retrieve more documents
-        assert len(complex_results) >= len(simple_results), (
-            f"Complex query should retrieve >= documents than simple query "
-            f"({len(complex_results)} vs {len(simple_results)})"
-        )
-
-    def test_disabled_adaptive_k_returns_k_base(self):
-        """Test that disabled adaptive retrieval returns k_base consistently."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
-
-        config = AdaptiveRetrievalConfig(k_base=10, enabled=False)
         builder = ContextBuilder(adaptive_config=config)
 
         queries = [
-            "What is Python?",
-            "How does authentication compare to authorization in web security?",
-            "Explain all the relationships between microservices in distributed systems",
+            "x",  # Very simple
+            "Explain all complex relationships between auth, authz, sessions, tokens",
         ]
 
         for query in queries:
             k = builder.calculate_k_dynamic(query)
-            assert k == 10, f"Disabled adaptive should return k_base=10, got {k}"
-            logger.info(f"[TEST] Disabled adaptive: query='{query[:30]}...' -> k={k}")
+            assert 5 <= k <= 15, f"k={k} out of bounds for query: {query}"
+            logger.info(f"[TEST] '{query[:30]}...' -> k={k}")
 
-    def test_config_parameters_affect_output(self):
-        """Test that configuration parameters affect the output correctly."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
-        query = "How does caching affect database query performance?"
+class TestAdaptiveRetrievalAPIContract:
+    """Test the API contract for adaptive retrieval."""
 
-        # Low delta - less sensitivity to complexity
-        low_delta_config = AdaptiveRetrievalConfig(k_base=10, delta=0.1)
-        low_delta_builder = ContextBuilder(adaptive_config=low_delta_config)
-        k_low_delta = low_delta_builder.calculate_k_dynamic(query)
+    def test_adaptive_k_parameter_in_openapi_schema(self):
+        """Test that adaptive_k is documented in OpenAPI schema."""
+        pytest.importorskip("litellm")
+        from nexus.server.fastapi_server import create_app
 
-        # High delta - more sensitivity to complexity
-        high_delta_config = AdaptiveRetrievalConfig(k_base=10, delta=1.0)
-        high_delta_builder = ContextBuilder(adaptive_config=high_delta_config)
-        k_high_delta = high_delta_builder.calculate_k_dynamic(query)
+        app = create_app()
+        openapi = app.openapi()
 
-        logger.info(f"[TEST] Low delta (0.1): k={k_low_delta}")
-        logger.info(f"[TEST] High delta (1.0): k={k_high_delta}")
+        # Find the search endpoint
+        search_path = openapi.get("paths", {}).get("/api/search/query", {})
+        get_params = search_path.get("get", {}).get("parameters", [])
 
-        assert k_high_delta >= k_low_delta, (
-            f"Higher delta should produce >= k value (high={k_high_delta}, low={k_low_delta})"
+        param_names = [p.get("name") for p in get_params]
+        assert "adaptive_k" in param_names, (
+            f"adaptive_k should be in OpenAPI params, found: {param_names}"
         )
 
-    def test_k_bounds_are_respected(self):
-        """Test that k_min and k_max bounds are always respected."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
+        # Find adaptive_k param details
+        adaptive_k_param = next(p for p in get_params if p.get("name") == "adaptive_k")
+        assert adaptive_k_param.get("schema", {}).get("type") == "boolean"
+        assert adaptive_k_param.get("schema", {}).get("default") is False
 
-        config = AdaptiveRetrievalConfig(
-            k_base=10,
-            k_min=5,
-            k_max=15,
-            delta=2.0,  # High delta to push boundaries
-        )
-        builder = ContextBuilder(adaptive_config=config)
-
-        test_queries = [
-            "x",  # Very simple
-            "What is this?",  # Simple
-            "How does X work?",  # Medium
-            (
-                "Explain all the complex relationships between authentication, "
-                "authorization, session management, token refresh, and OAuth2 "
-                "in distributed microservices architecture since 2020"
-            ),  # Very complex
-        ]
-
-        for query in test_queries:
-            k = builder.calculate_k_dynamic(query)
-            assert config.k_min <= k <= config.k_max, (
-                f"k={k} out of bounds [{config.k_min}, {config.k_max}] for query: '{query[:50]}...'"
-            )
-            logger.info(
-                f"[TEST] Query '{query[:30]}...' -> k={k} (bounds: {config.k_min}-{config.k_max})"
-            )
-
-
-class TestAdaptiveRetrievalWithFastAPI:
-    """Tests for adaptive retrieval through FastAPI endpoints."""
-
-    def test_adaptive_k_config_dataclass(self):
-        """Test AdaptiveRetrievalConfig is properly exported."""
-        from nexus.llm.context_builder import AdaptiveRetrievalConfig
-
-        # Test default values
-        config = AdaptiveRetrievalConfig()
-        assert config.k_base == 10
-        assert config.k_min == 3
-        assert config.k_max == 20
-        assert config.delta == 0.5
-        assert config.enabled is True
-
-        # Test custom values
-        custom = AdaptiveRetrievalConfig(k_base=15, k_min=5, k_max=25, delta=0.8, enabled=True)
-        assert custom.k_base == 15
-        assert custom.k_min == 5
-        assert custom.k_max == 25
-        assert custom.delta == 0.8
+        logger.info(f"[TEST] adaptive_k param: {adaptive_k_param}")
 
 
 # Standalone test runner

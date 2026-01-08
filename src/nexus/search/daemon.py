@@ -380,22 +380,39 @@ class SearchDaemon:
         path_filter: str | None = None,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        adaptive_k: bool = False,
     ) -> list[SearchResult]:
         """Execute a search query with pre-warmed indexes.
 
         Args:
             query: Search query text
             search_type: Type of search ("keyword", "semantic", "hybrid")
-            limit: Maximum number of results
+            limit: Maximum number of results (used as k_base when adaptive_k=True)
             path_filter: Optional path prefix filter
             alpha: Weight for semantic vs keyword (0.0 = all keyword, 1.0 = all semantic)
             fusion_method: Fusion algorithm for hybrid search ("rrf", "weighted", "rrf_weighted")
+            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search results sorted by relevance
         """
         if not self._initialized:
             raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        # Apply adaptive k if enabled (Issue #1021)
+        if adaptive_k:
+            from nexus.llm.context_builder import ContextBuilder
+
+            context_builder = ContextBuilder()
+            original_limit = limit
+            limit = context_builder.calculate_k_dynamic(query, k_base=limit)
+            if limit != original_limit:
+                logger.info(
+                    "[SEARCH-DAEMON] Adaptive k applied: %d -> %d for query: %s",
+                    original_limit,
+                    limit,
+                    query[:50],
+                )
 
         start = time.perf_counter()
 

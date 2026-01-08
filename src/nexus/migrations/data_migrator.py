@@ -15,7 +15,7 @@ import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFilesystem
@@ -238,7 +238,7 @@ class DataMigrator:
         import time
 
         try:
-            from google.cloud import storage
+            from google.cloud import storage  # type: ignore[attr-defined]
         except ImportError:
             return ImportResult(
                 errors=[
@@ -376,7 +376,7 @@ class DataMigrator:
         return result
 
     def _list_s3_objects(
-        self, s3_client, bucket: str, prefix: str, options: ImportOptions
+        self, s3_client: Any, bucket: str, prefix: str, options: ImportOptions
     ) -> Iterator[FileInfo]:
         """List objects in S3 bucket matching criteria.
 
@@ -409,7 +409,9 @@ class DataMigrator:
                     size=obj["Size"],
                 )
 
-    def _list_gcs_blobs(self, bucket, prefix: str, options: ImportOptions) -> Iterator[FileInfo]:
+    def _list_gcs_blobs(
+        self, bucket: Any, prefix: str, options: ImportOptions
+    ) -> Iterator[FileInfo]:
         """List blobs in GCS bucket matching criteria.
 
         Args:

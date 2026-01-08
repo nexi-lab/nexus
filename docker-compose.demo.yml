@@ -46,6 +46,11 @@ services:
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
     # - enable_self_join_elimination=on: Query optimizer improvement
     # - wal_compression=lz4: 30-50% WAL size reduction with fast compression
+    # pgvector HNSW tuning (Issue #1004):
+    # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
+    # - max_parallel_maintenance_workers=7: Parallel index build (up to 30x faster)
+    # - shared_buffers=1GB: Cache HNSW index in memory
+    # See: docs/performance/vector-search-tuning.md
     command: >
       postgres
       -c shared_preload_libraries=pg_stat_statements
@@ -56,6 +61,10 @@ services:
       -c enable_self_join_elimination=on
       -c enable_distinct_reordering=on
       -c wal_compression=lz4
+      -c maintenance_work_mem=2GB
+      -c max_parallel_maintenance_workers=7
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:

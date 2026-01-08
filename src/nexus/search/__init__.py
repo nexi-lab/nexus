@@ -74,6 +74,12 @@ from nexus.search.fusion import (
     rrf_weighted_fusion,
     weighted_fusion,
 )
+from nexus.search.hnsw_config import (
+    DatasetScale,
+    HNSWConfig,
+    get_recommended_config,
+    get_vector_count,
+)
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase
 from nexus.search.zoekt_client import (
@@ -101,6 +107,11 @@ __all__ = [
     "create_cached_embedding_provider",
     # Vector DB (sqlite-vec + pgvector)
     "VectorDatabase",
+    # HNSW Configuration (Issue #1004)
+    "HNSWConfig",
+    "DatasetScale",
+    "get_vector_count",
+    "get_recommended_config",
     # Semantic Search (sync)
     "SemanticSearch",
     "SemanticSearchResult",

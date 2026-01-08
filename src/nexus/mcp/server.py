@@ -9,12 +9,15 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import logging
 from typing import Any
 
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
 from nexus.mcp.formatters import format_response
+
+logger = logging.getLogger(__name__)
 
 # Context variable for per-request API key (set by infrastructure, not AI)
 _request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -595,6 +598,13 @@ def create_mcp_server(
             paginated_matches = all_matches[offset : offset + limit]
             has_more = (offset + limit) < total
 
+            # Issue #538: Log truncation when results exceed limit
+            if has_more or offset > 0:
+                logger.info(
+                    f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
+                    f"(offset={offset}, limit={limit})"
+                )
+
             result = {
                 "total": total,
                 "count": len(paginated_matches),
@@ -656,6 +666,13 @@ def create_mcp_server(
             # Apply pagination
             paginated_results = all_results[offset : offset + limit]
             has_more = (offset + limit) < total
+
+            # Issue #538: Log truncation when results exceed limit
+            if has_more or offset > 0:
+                logger.info(
+                    f"[GREP] Truncated {total} -> {len(paginated_results)} results "
+                    f"(offset={offset}, limit={limit})"
+                )
 
             result = {
                 "total": total,

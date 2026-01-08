@@ -1661,6 +1661,223 @@ def _register_routes(app: FastAPI) -> None:
             logger.error(f"Stream error for /{path}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Stream error: {e}") from e
 
+    # ========================================================================
+    # Share Link Endpoints (Issue #227)
+    # ========================================================================
+
+    @app.get("/api/share/{link_id}", tags=["share"])
+    async def get_share_link_info(
+        link_id: str,
+        auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    ) -> JSONResponse:
+        """Get share link information.
+
+        Anonymous users get minimal info. Authenticated owners get full details.
+        This endpoint does NOT count as an access - use POST /access for that.
+        """
+        nexus_fs = _app_state.nexus_fs
+        if nexus_fs is None:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        # Build context if authenticated
+        context = None
+        if auth_result and auth_result.get("authenticated"):
+            context = get_operation_context(auth_result)
+
+        result = await to_thread_with_timeout(nexus_fs.get_share_link, link_id, context=context)
+
+        if not result.success:
+            error_msg = (result.error_message or "").lower()
+            status_code = 404 if "not found" in error_msg else 400
+            raise HTTPException(status_code=status_code, detail=result.error_message or "Error")
+
+        return JSONResponse(content=result.data)
+
+    @app.post("/api/share/{link_id}/access", tags=["share"])
+    async def access_share_link(
+        link_id: str,
+        request: Request,
+        auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    ) -> JSONResponse:
+        """Access a shared resource via share link.
+
+        This validates the link, checks password if required, logs the access,
+        and returns resource info if valid. This DOES count as an access.
+
+        Request body (optional):
+            - password: Password if the link is password-protected
+        """
+        nexus_fs = _app_state.nexus_fs
+        if nexus_fs is None:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        # Parse request body
+        password = None
+        try:
+            body = await request.json()
+            password = body.get("password")
+        except Exception:
+            pass  # No body or invalid JSON is fine
+
+        # Get client info for logging
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+
+        # Build context if authenticated
+        context = None
+        if auth_result and auth_result.get("authenticated"):
+            context = get_operation_context(auth_result)
+
+        result = await to_thread_with_timeout(
+            nexus_fs.access_share_link,
+            link_id,
+            password=password,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            context=context,
+        )
+
+        if not result.success:
+            # Map error messages to appropriate HTTP status codes
+            error_msg = (result.error_message or "").lower()
+            if "not found" in error_msg:
+                status_code = 404
+            elif "expired" in error_msg or "revoked" in error_msg:
+                status_code = 410  # Gone
+            elif "password" in error_msg:
+                status_code = 401
+            elif "limit" in error_msg:
+                status_code = 429  # Too Many Requests
+            else:
+                status_code = 400
+            raise HTTPException(
+                status_code=status_code, detail=result.error_message or "Access denied"
+            )
+
+        return JSONResponse(content=result.data)
+
+    @app.get("/api/share/{link_id}/download", tags=["share"])
+    async def download_via_share_link(
+        link_id: str,
+        request: Request,
+        password: str | None = Query(None, description="Password if link is protected"),
+        auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    ) -> StreamingResponse:
+        """Download a file directly via share link.
+
+        Validates the link and streams the file content if valid.
+        """
+        nexus_fs = _app_state.nexus_fs
+        if nexus_fs is None:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        # Get client info for logging
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+
+        # Build context if authenticated
+        context = None
+        if auth_result and auth_result.get("authenticated"):
+            context = get_operation_context(auth_result)
+
+        # First validate the share link
+        access_result = await to_thread_with_timeout(
+            nexus_fs.access_share_link,
+            link_id,
+            password=password,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            context=context,
+        )
+
+        if not access_result.success:
+            error_msg = (access_result.error_message or "").lower()
+            if "not found" in error_msg:
+                status_code = 404
+            elif "expired" in error_msg or "revoked" in error_msg:
+                status_code = 410
+            elif "password" in error_msg:
+                status_code = 401
+            elif "limit" in error_msg:
+                status_code = 429
+            else:
+                status_code = 400
+            raise HTTPException(
+                status_code=status_code, detail=access_result.error_message or "Access denied"
+            )
+
+        # Get the file path and read permissions from access result
+        data = access_result.data or {}
+        file_path = data.get("path")
+        tenant_id = data.get("tenant_id", "default")
+
+        if not file_path:
+            raise HTTPException(status_code=500, detail="Share link missing file path")
+
+        try:
+            # Create context for file access (system context with the link's tenant)
+            from nexus.core.permissions import OperationContext
+
+            stream_context = OperationContext(
+                user="share_link",
+                groups=[],
+                tenant_id=tenant_id,
+                subject_type="share_link",
+                subject_id=link_id,
+                is_admin=True,  # Bypass ReBAC - link already validated
+            )
+
+            # Get file metadata
+            meta = await to_thread_with_timeout(nexus_fs.stat, file_path, context=stream_context)
+            content_hash = meta.get("etag") or meta.get("content_hash")
+            if not content_hash:
+                raise HTTPException(status_code=500, detail="File has no content hash")
+
+            # Get the backend
+            route = nexus_fs.router.route(file_path)
+            backend = route.backend
+
+            # Check if backend supports streaming
+            if not hasattr(backend, "stream_content"):
+                # Fall back to read
+                content = await to_thread_with_timeout(
+                    nexus_fs.read, file_path, context=stream_context
+                )
+                # Convert to bytes for streaming
+                if isinstance(content, str):
+                    content_bytes: bytes = content.encode()
+                elif isinstance(content, bytes):
+                    content_bytes = content
+                else:
+                    content_bytes = b""
+                return StreamingResponse(
+                    iter([content_bytes]),
+                    media_type="application/octet-stream",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{file_path.split("/")[-1]}"',
+                    },
+                )
+
+            # Create streaming generator
+            def generate() -> Iterator[bytes]:
+                yield from backend.stream_content(content_hash, context=stream_context)
+
+            return StreamingResponse(
+                generate(),
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Length": str(meta.get("size", 0)),
+                    "Content-Disposition": f'attachment; filename="{file_path.split("/")[-1]}"',
+                    "X-Content-Hash": content_hash,
+                },
+            )
+
+        except NexusFileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"File not found: {file_path}") from None
+        except Exception as e:
+            logger.error(f"Share link download error for {link_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Download error: {e}") from e
+
     # Main RPC endpoint (authenticated users get RATE_LIMIT_AUTHENTICATED)
     # Rate limiting key is extracted from Bearer token to identify users
     @app.post("/api/nfs/{method}")

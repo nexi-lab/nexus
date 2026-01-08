@@ -36,6 +36,7 @@ from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
 from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
+from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
 
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
@@ -61,6 +62,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
     NexusFSSearchMixin,
     NexusFSReBACMixin,
+    NexusFSShareLinksMixin,  # Issue #227: Document Sharing & Access Links
     # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
     NexusFSMountsMixin,
     NexusFSOAuthMixin,

@@ -3599,3 +3599,64 @@ class ShareLinkAccessLogModel(Base):
     def __repr__(self) -> str:
         status = "success" if self.success else f"failed:{self.failure_reason}"
         return f"<ShareLinkAccessLogModel(log_id={self.log_id}, link_id={self.link_id}, status={status})>"
+
+
+class MigrationHistoryModel(Base):
+    """Tracks migration history for upgrade/rollback support.
+
+    Records all migration operations (upgrades, rollbacks, imports) for:
+    - Audit trail of version changes
+    - Rollback point identification
+    - Migration status tracking
+
+    Issue #165: Migration Tools & Upgrade Paths
+    """
+
+    __tablename__ = "migration_history"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # Version information
+    from_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    to_version: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Migration type: 'upgrade', 'rollback', 'import'
+    migration_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Status: 'pending', 'running', 'completed', 'failed', 'rolled_back'
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+
+    # Backup information
+    backup_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Error tracking
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Additional metadata as JSON
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        # Query migrations by status
+        Index("idx_migration_history_status", "status"),
+        # Query migrations by time
+        Index("idx_migration_history_started_at", "started_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<MigrationHistoryModel(id={self.id}, "
+            f"{self.from_version}->{self.to_version}, "
+            f"type={self.migration_type}, status={self.status})>"
+        )

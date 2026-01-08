@@ -5901,6 +5901,147 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
+    # =========================================================================
+    # Share Link Methods
+    # =========================================================================
+
+    def create_share_link(
+        self,
+        path: str,
+        permission_level: str = "viewer",
+        expires_in_hours: int | None = None,
+        max_access_count: int | None = None,
+        password: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a share link for a file or directory.
+
+        Args:
+            path: Path to share
+            permission_level: Access level ("viewer", "editor", "owner")
+            expires_in_hours: Optional expiration time in hours
+            max_access_count: Optional maximum access count
+            password: Optional password protection
+
+        Returns:
+            Dict with link_id, share_url, and link details
+        """
+        result = self._call_rpc(
+            "create_share_link",
+            {
+                "path": path,
+                "permission_level": permission_level,
+                "expires_in_hours": expires_in_hours,
+                "max_access_count": max_access_count,
+                "password": password,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def get_share_link(
+        self,
+        link_id: str,
+    ) -> dict[str, Any]:
+        """Get details of a share link.
+
+        Args:
+            link_id: The share link ID
+
+        Returns:
+            Share link details
+        """
+        result = self._call_rpc("get_share_link", {"link_id": link_id})
+        return result  # type: ignore[no-any-return]
+
+    def list_share_links(
+        self,
+        path: str | None = None,
+        include_revoked: bool = False,
+        include_expired: bool = False,
+    ) -> dict[str, Any]:
+        """List share links created by the current user.
+
+        Args:
+            path: Optional filter by path
+            include_revoked: Include revoked links
+            include_expired: Include expired links
+
+        Returns:
+            Dict with count and list of share links
+        """
+        result = self._call_rpc(
+            "list_share_links",
+            {
+                "path": path,
+                "include_revoked": include_revoked,
+                "include_expired": include_expired,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def revoke_share_link(
+        self,
+        link_id: str,
+    ) -> dict[str, Any]:
+        """Revoke a share link.
+
+        Args:
+            link_id: The share link ID to revoke
+
+        Returns:
+            Dict with revoked status
+        """
+        result = self._call_rpc("revoke_share_link", {"link_id": link_id})
+        return result  # type: ignore[no-any-return]
+
+    def access_share_link(
+        self,
+        link_id: str,
+        password: str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        """Access a shared resource via share link.
+
+        Args:
+            link_id: The share link ID
+            password: Password if link is protected
+            ip_address: Client IP for logging
+            user_agent: Client user agent for logging
+
+        Returns:
+            Dict with access_granted, path, permission_level, etc.
+        """
+        result = self._call_rpc(
+            "access_share_link",
+            {
+                "link_id": link_id,
+                "password": password,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+            },
+        )
+        return result  # type: ignore[no-any-return]
+
+    def get_share_link_access_logs(
+        self,
+        link_id: str,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Get access logs for a share link.
+
+        Args:
+            link_id: The share link ID
+            limit: Maximum number of logs to return
+
+        Returns:
+            Dict with count and list of access logs
+        """
+        result = self._call_rpc(
+            "get_share_link_access_logs",
+            {"link_id": link_id, "limit": limit},
+        )
+        return result  # type: ignore[no-any-return]
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

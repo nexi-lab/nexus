@@ -1290,12 +1290,12 @@ class NexusFSSearchMixin:
             mtime_start = time.time()
             try:
                 # Bulk fetch metadata for mtime sorting
-                metadata_map = self.metadata.get_metadata_bulk(matches)
+                metadata_map = self.metadata.get_file_metadata_bulk(matches, "modified_at")
                 # Sort by mtime descending (newest first), with path as tiebreaker
                 sorted_matches = sorted(
                     matches,
                     key=lambda p: (
-                        -(metadata_map.get(p, {}).get("modified_at", 0) or 0),
+                        -(metadata_map.get(p, 0) or 0),
                         p,  # Alphabetical tiebreaker
                     ),
                 )

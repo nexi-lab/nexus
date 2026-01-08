@@ -1,6 +1,14 @@
-# MCP Server Evaluation Tests
+# MCP Server E2E Evaluation Tests
 
-LLM-driven evaluation tests for the Nexus MCP server. These tests verify that AI agents can effectively use the MCP tools to accomplish real-world tasks.
+LLM-driven end-to-end tests for the Nexus MCP server. These tests verify that AI agents can effectively use the MCP tools to accomplish real-world tasks.
+
+> **Note for future developers**: These are essentially **E2E tests** for the MCP server.
+> The term "evaluation" follows the `mcp-builder` skill convention for LLM-driven tests.
+>
+> **Related test directories:**
+> - `tests/evaluation/` (this) - MCP E2E tests using LLM to verify tool usability
+> - `tests/benchmarks/` - Performance benchmarks (throughput, latency) - no LLM required
+> - [nexus-benchmarks repo](https://github.com/nexi-lab/nexus-benchmarks) - BFCL benchmark for Dynamic Discovery vs Static comparison
 
 ## Why Separate from Regular Tests?
 

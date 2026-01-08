@@ -85,11 +85,13 @@ class TestAdaptiveRetrievalFastAPI:
             adaptive_k: bool = False,
         ):
             # Record the call
-            search_calls.append({
-                "query": query,
-                "limit": limit,
-                "adaptive_k": adaptive_k,
-            })
+            search_calls.append(
+                {
+                    "query": query,
+                    "limit": limit,
+                    "adaptive_k": adaptive_k,
+                }
+            )
 
             # If adaptive_k is enabled, the limit should have been adjusted
             # by the daemon before this mock is called
@@ -120,9 +122,7 @@ class TestAdaptiveRetrievalFastAPI:
         # Should not error on the parameter
         assert response.status_code in (200, 503), f"Unexpected status: {response.status_code}"
 
-    def test_search_endpoint_passes_adaptive_k_to_daemon(
-        self, test_client, mock_app_state
-    ):
+    def test_search_endpoint_passes_adaptive_k_to_daemon(self, test_client, mock_app_state):
         """Test that adaptive_k parameter is passed to search daemon."""
         # Make request with adaptive_k=true
         response = test_client.get(
@@ -141,9 +141,7 @@ class TestAdaptiveRetrievalFastAPI:
             assert calls[-1]["adaptive_k"] is True, "adaptive_k should be True"
             logger.info(f"[TEST] Search call: {calls[-1]}")
 
-    def test_search_without_adaptive_k_defaults_to_false(
-        self, test_client, mock_app_state
-    ):
+    def test_search_without_adaptive_k_defaults_to_false(self, test_client, mock_app_state):
         """Test that adaptive_k defaults to False when not specified."""
         response = test_client.get(
             "/api/search/query",
@@ -251,9 +249,7 @@ class TestAdaptiveRetrievalComplexity:
         # Import directly to avoid Python 3.12+ requirements
         from context_builder import AdaptiveRetrievalConfig, ContextBuilder
 
-        config = AdaptiveRetrievalConfig(
-            k_base=10, k_min=5, k_max=15, delta=2.0
-        )
+        config = AdaptiveRetrievalConfig(k_base=10, k_min=5, k_max=15, delta=2.0)
         builder = ContextBuilder(adaptive_config=config)
 
         queries = [

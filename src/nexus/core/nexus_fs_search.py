@@ -41,6 +41,100 @@ GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached 
 # Glob strategy thresholds
 GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count
 
+# =============================================================================
+# Issue #538: Gitignore-style default exclusion patterns
+# =============================================================================
+# These patterns are automatically excluded from grep/glob searches
+# to match common .gitignore conventions and improve performance.
+DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
+    {
+        # Version control
+        ".git",
+        ".svn",
+        ".hg",
+        # Dependencies
+        "node_modules",
+        "vendor",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".tox",
+        ".nox",
+        # Build artifacts
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        "target",  # Rust/Java
+        # IDE/Editor
+        ".idea",
+        ".vscode",
+        "*.swp",
+        "*.swo",
+        # OS files
+        ".DS_Store",
+        "Thumbs.db",
+        # Cache/temp
+        ".cache",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "*.pyc",
+        "*.pyo",
+        # Coverage/test artifacts
+        "coverage",
+        ".coverage",
+        "htmlcov",
+        # Logs
+        "*.log",
+        "logs",
+    }
+)
+
+
+def _should_ignore_path(
+    path: str, ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
+) -> bool:
+    """Check if a path should be ignored based on gitignore-style patterns.
+
+    Issue #538: Provides gitignore-like filtering for grep/glob operations.
+
+    Args:
+        path: File path to check (e.g., "/workspace/node_modules/pkg/index.js")
+        ignore_patterns: Set of patterns to match against path segments
+
+    Returns:
+        True if the path should be ignored, False otherwise
+    """
+    # Split path into segments and check each against ignore patterns
+    segments = path.strip("/").split("/")
+    for segment in segments:
+        # Direct match (e.g., "node_modules", ".git")
+        if segment in ignore_patterns:
+            return True
+        # Wildcard suffix match (e.g., "*.pyc", "*.log")
+        for pattern in ignore_patterns:
+            if pattern.startswith("*.") and segment.endswith(pattern[1:]):
+                return True
+    return False
+
+
+def _filter_ignored_paths(
+    paths: list[str], ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
+) -> list[str]:
+    """Filter out paths matching gitignore-style patterns.
+
+    Issue #538: Bulk filtering for better performance.
+
+    Args:
+        paths: List of file paths to filter
+        ignore_patterns: Set of patterns to exclude
+
+    Returns:
+        Filtered list with ignored paths removed
+    """
+    return [p for p in paths if not _should_ignore_path(p, ignore_patterns)]
+
 
 class SearchStrategy(StrEnum):
     """Strategy for grep operations (Issue #929).
@@ -1049,7 +1143,8 @@ class NexusFSSearchMixin:
             path: Base path to search from (default: "/")
 
         Returns:
-            List of matching file paths, sorted by name
+            List of matching file paths, sorted by modification time (newest first).
+            Issue #538: Automatically excludes gitignore-style patterns (.git, node_modules, etc.)
 
         Examples:
             # Find all Python files recursively
@@ -1092,11 +1187,20 @@ class NexusFSSearchMixin:
         )
         list_elapsed = time.time() - list_start
         logger.debug(
-            f"[GLOB] Phase 1: list() found {len(accessible_files)} files in {list_elapsed:.3f}s"
+            f"[GLOB] Phase 2: list() found {len(accessible_files)} files in {list_elapsed:.3f}s"
         )
 
         if not accessible_files:
             return []
+
+        # Phase 2.5: Apply gitignore-style filtering (Issue #538)
+        pre_filter_count = len(accessible_files)
+        accessible_files = _filter_ignored_paths(accessible_files)
+        if pre_filter_count != len(accessible_files):
+            logger.debug(
+                f"[GLOB] Issue #538: Filtered {pre_filter_count - len(accessible_files)} "
+                f"gitignore-matched paths ({pre_filter_count} -> {len(accessible_files)})"
+            )
 
         # Phase 3: Select strategy based on pattern and file count (Issue #929)
         strategy = self._select_glob_strategy(pattern, len(accessible_files))
@@ -1180,7 +1284,30 @@ class NexusFSSearchMixin:
             f"in {match_elapsed:.3f}s (total: {total_elapsed:.3f}s)"
         )
 
-        return sorted(matches)
+        # Issue #538: Sort by modification time (newest first) instead of alphabetically
+        # Get metadata for matched files to enable mtime sorting
+        if matches:
+            mtime_start = time.time()
+            try:
+                # Bulk fetch metadata for mtime sorting
+                metadata_map = self.metadata.get_file_metadata_bulk(matches, "modified_at")
+                # Sort by mtime descending (newest first), with path as tiebreaker
+                sorted_matches = sorted(
+                    matches,
+                    key=lambda p: (
+                        -(metadata_map.get(p, 0) or 0),
+                        p,  # Alphabetical tiebreaker
+                    ),
+                )
+                mtime_elapsed = time.time() - mtime_start
+                logger.debug(f"[GLOB] Issue #538: mtime sort completed in {mtime_elapsed:.3f}s")
+                return sorted_matches
+            except Exception as e:
+                # Fallback to alphabetical sort if metadata fetch fails
+                logger.debug(f"[GLOB] mtime sort failed ({e}), falling back to alphabetical")
+                return sorted(matches)
+
+        return []
 
     @rpc_expose(description="Execute multiple glob patterns in single call")
     def glob_batch(
@@ -1360,9 +1487,18 @@ class NexusFSSearchMixin:
         # Phase 1: Get files to search
         list_start = time.time()
         if file_pattern:
+            # glob() already applies gitignore filtering (Issue #538)
             files = self.glob(file_pattern, path, context=context)
         else:
             files = cast(list[str], self.list(path, recursive=True, context=context))
+            # Apply gitignore filtering for non-glob paths (Issue #538)
+            pre_filter_count = len(files)
+            files = _filter_ignored_paths(files)
+            if pre_filter_count != len(files):
+                logger.debug(
+                    f"[GREP] Issue #538: Filtered {pre_filter_count - len(files)} "
+                    f"gitignore-matched paths ({pre_filter_count} -> {len(files)})"
+                )
         list_elapsed = time.time() - list_start
         logger.debug(f"[GREP] Phase 1: list() found {len(files)} files in {list_elapsed:.3f}s")
 

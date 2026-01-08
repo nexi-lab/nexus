@@ -1820,6 +1820,63 @@ class MCPSyncParams:
     name: str
 
 
+# ============================================================
+# Share Link parameter schemas (Issue #227)
+# ============================================================
+
+
+@dataclass
+class CreateShareLinkParams:
+    """Parameters for create_share_link method."""
+
+    path: str
+    permission_level: str = "viewer"
+    expires_in_hours: int | None = None
+    max_access_count: int | None = None
+    password: str | None = None
+
+
+@dataclass
+class GetShareLinkParams:
+    """Parameters for get_share_link method."""
+
+    link_id: str
+
+
+@dataclass
+class ListShareLinksParams:
+    """Parameters for list_share_links method."""
+
+    path: str | None = None
+    include_revoked: bool = False
+    include_expired: bool = False
+
+
+@dataclass
+class RevokeShareLinkParams:
+    """Parameters for revoke_share_link method."""
+
+    link_id: str
+
+
+@dataclass
+class AccessShareLinkParams:
+    """Parameters for access_share_link method."""
+
+    link_id: str
+    password: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+
+@dataclass
+class GetShareLinkAccessLogsParams:
+    """Parameters for get_share_link_access_logs method."""
+
+    link_id: str
+    limit: int = 100
+
+
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
     "read": ReadParams,
@@ -1996,6 +2053,13 @@ METHOD_PARAMS = {
     "ace_query_playbooks": AceQueryPlaybooksParams,
     # Semantic search methods (Issue #947)
     "semantic_search_index": SemanticSearchIndexParams,
+    # Share link methods (Issue #227)
+    "create_share_link": CreateShareLinkParams,
+    "get_share_link": GetShareLinkParams,
+    "list_share_links": ListShareLinksParams,
+    "revoke_share_link": RevokeShareLinkParams,
+    "access_share_link": AccessShareLinkParams,
+    "get_share_link_access_logs": GetShareLinkAccessLogsParams,
 }
 
 

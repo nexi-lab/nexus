@@ -3541,8 +3541,7 @@ class ShareLinkModel(Base):
 
         # Check access count limit
         return not (
-            self.max_access_count is not None
-            and self.access_count >= self.max_access_count
+            self.max_access_count is not None and self.access_count >= self.max_access_count
         )
 
 

@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, text
 
+from nexus.search.hnsw_config import HNSWConfig
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -33,14 +35,19 @@ if TYPE_CHECKING:
 class VectorDatabase:
     """Vector database using sqlite-vec or pgvector based on database type."""
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, hnsw_config: HNSWConfig | None = None):
         """Initialize vector database.
 
         Args:
             engine: SQLAlchemy engine
+            hnsw_config: Optional HNSW configuration. If not provided, uses
+                medium-scale defaults (m=24, ef_construction=128). Use
+                HNSWConfig.for_dataset_size() for auto-configuration based
+                on your dataset size.
         """
         self.engine = engine
         self.db_type = engine.dialect.name
+        self.hnsw_config = hnsw_config or HNSWConfig.medium_scale()
         self._initialized = False
         self.vec_available = False  # Set to True if vector extension is loaded
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
@@ -262,21 +269,23 @@ class VectorDatabase:
             conn.rollback()
 
         # Create HNSW index for vector search (only if pgvector available)
-        # Tuned for 100K+ vectors with 1536 dimensions (OpenAI embeddings)
-        # - m=24: More connections for high-dimensional data, improves recall
-        # - ef_construction=128: Better graph quality at build time
-        # See: https://github.com/nexi-lab/nexus/issues/947
+        # Parameters are configurable via HNSWConfig for different dataset scales
+        # See: https://github.com/nexi-lab/nexus/issues/947, #1004
         if vec_available:
             try:
-                conn.execute(
-                    text("""
-                    CREATE INDEX IF NOT EXISTS idx_chunks_embedding_hnsw
-                    ON document_chunks
-                    USING hnsw (embedding halfvec_cosine_ops)
-                    WITH (m = 24, ef_construction = 128)
-                """)
+                # Use configurable HNSW parameters
+                index_sql = self.hnsw_config.get_create_index_sql(
+                    table="document_chunks",
+                    column="embedding",
+                    index_name="idx_chunks_embedding_hnsw",
+                    operator_class="halfvec_cosine_ops",
                 )
+                conn.execute(text(index_sql))
                 conn.commit()
+                logger.info(
+                    f"HNSW index created with m={self.hnsw_config.m}, "
+                    f"ef_construction={self.hnsw_config.ef_construction}"
+                )
             except Exception:
                 # Index might already exist or other pgvector-related error
                 # Rollback transaction to avoid InFailedSqlTransaction errors
@@ -426,10 +435,10 @@ class VectorDatabase:
         Returns:
             Search results
         """
-        # Set ef_search for better recall (default is 40, we use 100 for ~0.998 recall)
+        # Set ef_search for better recall (configurable via HNSWConfig)
         # Using SET LOCAL to only affect current transaction
-        # See: https://github.com/nexi-lab/nexus/issues/947
-        session.execute(text("SET LOCAL hnsw.ef_search = 100"))
+        # See: https://github.com/nexi-lab/nexus/issues/947, #1004
+        self.hnsw_config.apply_search_settings(session)
 
         if path_filter:
             query = text("""

@@ -107,7 +107,7 @@ class IntegrityValidator:
             Combined ValidationResult from all checks
         """
         result = ValidationResult()
-        checks: list[tuple[str, Callable[[], ValidationResult]]] = [
+        checks = [
             ("Metadata integrity", self.validate_metadata_integrity),
             ("Content integrity", self.validate_content_integrity),
             ("Orphaned content", self.check_orphaned_content),
@@ -205,16 +205,10 @@ class IntegrityValidator:
                         result.warnings.append(f"Could not read content: {path}")
                         continue
 
-                    # Compute hash - ensure we have bytes
-                    content_bytes: bytes
+                    # Compute hash
                     if isinstance(content, str):
-                        content_bytes = content.encode("utf-8")
-                    elif isinstance(content, bytes):
-                        content_bytes = content
-                    else:
-                        result.warnings.append(f"Unexpected content type for {path}")
-                        continue
-                    computed_hash = hashlib.sha256(content_bytes).hexdigest()
+                        content = content.encode("utf-8")
+                    computed_hash = hashlib.sha256(content).hexdigest()
 
                     # Compare with stored hash (if available)
                     # Handle different hash formats by checking prefix match

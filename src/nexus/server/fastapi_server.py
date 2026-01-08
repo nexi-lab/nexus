@@ -1657,8 +1657,9 @@ def _register_routes(app: FastAPI) -> None:
         result = await to_thread_with_timeout(nexus_fs.get_share_link, link_id, context=context)
 
         if not result.success:
-            status_code = 404 if "not found" in result.error_message.lower() else 400
-            raise HTTPException(status_code=status_code, detail=result.error_message)
+            error_msg = (result.error_message or "").lower()
+            status_code = 404 if "not found" in error_msg else 400
+            raise HTTPException(status_code=status_code, detail=result.error_message or "Error")
 
         return JSONResponse(content=result.data)
 
@@ -1708,7 +1709,7 @@ def _register_routes(app: FastAPI) -> None:
 
         if not result.success:
             # Map error messages to appropriate HTTP status codes
-            error_msg = result.error_message.lower()
+            error_msg = (result.error_message or "").lower()
             if "not found" in error_msg:
                 status_code = 404
             elif "expired" in error_msg or "revoked" in error_msg:
@@ -1719,7 +1720,9 @@ def _register_routes(app: FastAPI) -> None:
                 status_code = 429  # Too Many Requests
             else:
                 status_code = 400
-            raise HTTPException(status_code=status_code, detail=result.error_message)
+            raise HTTPException(
+                status_code=status_code, detail=result.error_message or "Access denied"
+            )
 
         return JSONResponse(content=result.data)
 
@@ -1758,7 +1761,7 @@ def _register_routes(app: FastAPI) -> None:
         )
 
         if not access_result.success:
-            error_msg = access_result.error_message.lower()
+            error_msg = (access_result.error_message or "").lower()
             if "not found" in error_msg:
                 status_code = 404
             elif "expired" in error_msg or "revoked" in error_msg:
@@ -1769,11 +1772,14 @@ def _register_routes(app: FastAPI) -> None:
                 status_code = 429
             else:
                 status_code = 400
-            raise HTTPException(status_code=status_code, detail=access_result.error_message)
+            raise HTTPException(
+                status_code=status_code, detail=access_result.error_message or "Access denied"
+            )
 
         # Get the file path and read permissions from access result
-        file_path = access_result.data.get("path")
-        tenant_id = access_result.data.get("tenant_id", "default")
+        data = access_result.data or {}
+        file_path = data.get("path")
+        tenant_id = data.get("tenant_id", "default")
 
         if not file_path:
             raise HTTPException(status_code=500, detail="Share link missing file path")
@@ -1807,8 +1813,15 @@ def _register_routes(app: FastAPI) -> None:
                 content = await to_thread_with_timeout(
                     nexus_fs.read, file_path, context=stream_context
                 )
+                # Convert to bytes for streaming
+                if isinstance(content, str):
+                    content_bytes: bytes = content.encode()
+                elif isinstance(content, bytes):
+                    content_bytes = content
+                else:
+                    content_bytes = b""
                 return StreamingResponse(
-                    iter([content.encode() if isinstance(content, str) else content]),
+                    iter([content_bytes]),
                     media_type="application/octet-stream",
                     headers={
                         "Content-Disposition": f'attachment; filename="{file_path.split("/")[-1]}"',

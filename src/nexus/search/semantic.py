@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 
 from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
-from nexus.search.chunking import ChunkStrategy, DocumentChunker
+from nexus.search.chunking import (
+    ChunkStrategy,
+    DocumentChunker,
+    EntropyAwareChunker,
+    EntropyFilterResult,
+)
 from nexus.search.embeddings import EmbeddingProvider
 from nexus.search.vector_db import VectorDatabase
 from nexus.storage.models import DocumentChunkModel, FilePathModel
@@ -72,6 +77,9 @@ class SemanticSearch:
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
         adaptive_config: AdaptiveRetrievalConfig | None = None,
+        entropy_filtering: bool = False,
+        entropy_threshold: float = 0.35,
+        entropy_alpha: float = 0.5,
     ):
         """Initialize semantic search.
 
@@ -81,6 +89,11 @@ class SemanticSearch:
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy
             adaptive_config: Configuration for adaptive retrieval depth (Issue #1021)
+            entropy_filtering: If True, filter redundant chunks before indexing (Issue #1024)
+            entropy_threshold: Redundancy threshold for entropy filtering (default: 0.35)
+                               Chunks scoring below this are filtered out
+            entropy_alpha: Balance between entity novelty (α) and semantic novelty (1-α)
+                           Default 0.5 gives equal weight to both signals
         """
         self.nx = nx
         self.chunk_size = chunk_size
@@ -101,6 +114,19 @@ class SemanticSearch:
         # Initialize context builder for adaptive retrieval (Issue #1021)
         self.adaptive_config = adaptive_config or AdaptiveRetrievalConfig()
         self._context_builder = ContextBuilder(adaptive_config=self.adaptive_config)
+
+        # Initialize entropy-aware chunker (Issue #1024)
+        self.entropy_filtering = entropy_filtering
+        self.entropy_threshold = entropy_threshold
+        self.entropy_alpha = entropy_alpha
+        self._entropy_chunker: EntropyAwareChunker | None = None
+        if entropy_filtering:
+            self._entropy_chunker = EntropyAwareChunker(
+                redundancy_threshold=entropy_threshold,
+                alpha=entropy_alpha,
+                embedding_provider=embedding_provider,
+                base_chunker=self.chunker,
+            )
 
     def initialize(self) -> None:
         """Initialize the search engine (create vector extensions and FTS tables)."""
@@ -181,8 +207,23 @@ class SemanticSearch:
 
             session.commit()
 
-        # Chunk document
-        chunks = self.chunker.chunk(content, path)
+        # Chunk document (with optional entropy filtering - Issue #1024)
+        entropy_result: EntropyFilterResult | None = None
+        if self.entropy_filtering and self._entropy_chunker:
+            # Use entropy-aware chunking to filter redundant chunks
+            entropy_result = await self._entropy_chunker.chunk_with_filtering(
+                content, path, compute_lines=True
+            )
+            chunks = entropy_result.chunks
+            logger.info(
+                "[SEMANTIC-SEARCH] Entropy filtering for %s: %d -> %d chunks (%.1f%% reduction)",
+                path,
+                entropy_result.original_count,
+                entropy_result.filtered_count,
+                entropy_result.reduction_percent,
+            )
+        else:
+            chunks = self.chunker.chunk(content, path)
 
         if not chunks:
             # Update tracking even for empty files (Issue #865)
@@ -195,6 +236,8 @@ class SemanticSearch:
             return 0
 
         # Generate embeddings (if provider available)
+        # Note: If entropy filtering was used WITH embeddings, they were already generated
+        # But we still need fresh embeddings for the filtered chunks only
         embeddings = None
         if self.embedding_provider:
             chunk_texts = [chunk.text for chunk in chunks]
@@ -480,6 +523,12 @@ class SemanticSearch:
             "chunk_size": self.chunk_size,
             "chunk_strategy": self.chunk_strategy.value,
             "database_type": self.vector_db.db_type,
+            # Issue #1024: Entropy filtering configuration
+            "entropy_filtering": {
+                "enabled": self.entropy_filtering,
+                "threshold": self.entropy_threshold,
+                "alpha": self.entropy_alpha,
+            },
             "search_capabilities": {
                 "semantic": has_embeddings,
                 "keyword": True,  # Always available via FTS

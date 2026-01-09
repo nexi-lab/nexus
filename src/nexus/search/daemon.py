@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.bm25s_search import BM25SIndex
+    from nexus.search.chunking import EntropyAwareChunker
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,11 @@ class DaemonConfig:
     # Performance settings
     query_timeout_seconds: float = 10.0
 
+    # Entropy-aware filtering (Issue #1024)
+    entropy_filtering: bool = False
+    entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
+    entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -142,6 +148,9 @@ class SearchDaemon:
         self._async_search: AsyncSemanticSearch | None = None
         self._embedding_provider: Any = None
 
+        # Entropy-aware chunker for filtering redundant content (Issue #1024)
+        self._entropy_chunker: EntropyAwareChunker | None = None
+
         # State
         self._initialized = False
         self._shutting_down = False
@@ -150,6 +159,9 @@ class SearchDaemon:
         self._refresh_task: asyncio.Task | None = None
         self._pending_refresh_paths: set[str] = set()
         self._refresh_lock = asyncio.Lock()
+
+        # NexusFS reference for reading file content (set by FastAPI server)
+        self._nexus_fs: Any = None
 
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
@@ -187,6 +199,20 @@ class SearchDaemon:
         # Check optional components
         await self._check_zoekt()
         await self._check_embedding_cache()
+
+        # Initialize entropy-aware chunker if enabled (Issue #1024)
+        if self.config.entropy_filtering:
+            from nexus.search.chunking import EntropyAwareChunker
+
+            self._entropy_chunker = EntropyAwareChunker(
+                redundancy_threshold=self.config.entropy_threshold,
+                alpha=self.config.entropy_alpha,
+                embedding_provider=self._embedding_provider,
+            )
+            logger.info(
+                f"Entropy filtering enabled: threshold={self.config.entropy_threshold}, "
+                f"alpha={self.config.entropy_alpha}"
+            )
 
         # Start index refresh background task
         if self.config.refresh_enabled:
@@ -829,12 +855,75 @@ class SearchDaemon:
                 logger.error(f"Index refresh error: {e}")
 
     async def _refresh_indexes(self, paths: list[str]) -> None:
-        """Refresh indexes for a batch of changed files."""
+        """Refresh indexes for a batch of changed files.
+
+        Issue #1024: Uses entropy-aware chunking to filter redundant content
+        before indexing to BM25S.
+        """
         logger.debug(f"Refreshing indexes for {len(paths)} files")
 
-        # BM25S refresh would go here
-        # Vector index refresh would go here
-        # For now, this is a placeholder for the incremental update logic
+        if not self._bm25s_index or not self._nexus_fs:
+            logger.debug("BM25S index or NexusFS not available, skipping refresh")
+            return
+
+        indexed_count = 0
+        filtered_chunks = 0
+        total_chunks = 0
+
+        for path in paths:
+            try:
+                # Read file content
+                content_bytes = self._nexus_fs.read(path)
+                if not content_bytes:
+                    continue
+                content = content_bytes.decode("utf-8", errors="replace")
+
+                # Get path_id for indexing
+                path_id = path  # Use path as ID for now
+
+                # Apply entropy filtering if enabled (Issue #1024)
+                if self._entropy_chunker:
+                    result = await self._entropy_chunker.chunk_with_filtering(
+                        content, path, compute_lines=True
+                    )
+                    total_chunks += result.original_count
+                    filtered_chunks += result.original_count - result.filtered_count
+
+                    # Index only the filtered (non-redundant) content
+                    if result.chunks:
+                        # Combine filtered chunks for BM25S indexing
+                        filtered_content = "\n\n".join(c.text for c in result.chunks)
+                        await self._bm25s_index.index_document(path_id, path, filtered_content)
+                        indexed_count += 1
+                else:
+                    # Index full content without filtering
+                    await self._bm25s_index.index_document(path_id, path, content)
+                    indexed_count += 1
+
+            except Exception as e:
+                logger.warning(f"Failed to refresh index for {path}: {e}")
+
+        if indexed_count > 0:
+            logger.info(
+                f"[DAEMON] Indexed {indexed_count}/{len(paths)} files"
+                + (
+                    f", filtered {filtered_chunks}/{total_chunks} redundant chunks"
+                    if self._entropy_chunker
+                    else ""
+                )
+            )
+
+        # Update BM25S document count (include delta index)
+        if self._bm25s_index:
+            corpus_len = (
+                len(self._bm25s_index._corpus) if hasattr(self._bm25s_index, "_corpus") else 0
+            )
+            delta_len = (
+                len(self._bm25s_index._delta_corpus)
+                if hasattr(self._bm25s_index, "_delta_corpus")
+                else 0
+            )
+            self.stats.bm25_documents = corpus_len + delta_len
 
     # =========================================================================
     # Statistics
@@ -877,6 +966,12 @@ class SearchDaemon:
             "last_index_refresh": self.stats.last_index_refresh,
             "zoekt_available": self.stats.zoekt_available,
             "embedding_cache_connected": self.stats.embedding_cache_connected,
+            # Issue #1024: Entropy filtering configuration
+            "entropy_filtering": {
+                "enabled": self.config.entropy_filtering,
+                "threshold": self.config.entropy_threshold,
+                "alpha": self.config.entropy_alpha,
+            },
         }
 
     def get_health(self) -> dict[str, Any]:

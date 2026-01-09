@@ -65,10 +65,10 @@ class EntityExtractor:
         ),
         # Numbers with units or currency
         "NUMBER": re.compile(
-            r"\b(?:"
-            r"\$[\d,]+(?:\.\d{2})?"  # Currency: $1,234.56
+            r"(?:"
+            r"\$[\d,]+(?:\.\d+)?"  # Currency: $1,234 or $1,234.56
             r"|[\d,]+(?:\.\d+)?\s*(?:million|billion|trillion|k|m|b|%|percent)"  # Numbers with units
-            r")\b",
+            r")",
             re.IGNORECASE,
         ),
         # Email addresses
@@ -78,7 +78,9 @@ class EntityExtractor:
     }
 
     # Patterns for proper nouns (used for PERSON, ORG, LOCATION detection)
-    PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b")
+    # Matches: "John Smith", "Apple Inc", "Google LLC", "New York City"
+    # Each word starts with uppercase, followed by lowercase OR all uppercase (for suffixes like LLC, Inc)
+    PROPER_NOUN_PATTERN = re.compile(r"\b[A-Z][a-z]+(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,}))*\b")
 
     # Common organization suffixes
     ORG_SUFFIXES = frozenset(

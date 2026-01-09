@@ -1388,6 +1388,197 @@ def _register_routes(app: FastAPI) -> None:
         }
 
     # =========================================================================
+    # Memory API Endpoints (Issue #1023 - Temporal Query Operators)
+    # =========================================================================
+
+    @app.get("/api/memory/query", tags=["memory"])
+    async def memory_query(
+        scope: str | None = Query(None, description="Filter by scope (agent/user/tenant/global)"),
+        memory_type: str | None = Query(None, description="Filter by memory type"),
+        state: str = Query("active", description="Filter by state (inactive/active/all)"),
+        after: str | None = Query(
+            None, description="Filter memories created after this time (ISO-8601). #1023"
+        ),
+        before: str | None = Query(
+            None, description="Filter memories created before this time (ISO-8601). #1023"
+        ),
+        during: str | None = Query(
+            None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
+        ),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Query memories with optional temporal filters (Issue #1023).
+
+        Supports three temporal operators:
+        - after: Return memories created after this datetime
+        - before: Return memories created before this datetime
+        - during: Return memories created during this period (partial date like "2025" or "2025-01")
+
+        Note: 'during' cannot be used together with 'after' or 'before'.
+
+        Args:
+            scope: Filter by scope
+            memory_type: Filter by memory type
+            state: Filter by state (default: active)
+            after: ISO-8601 datetime or date string
+            before: ISO-8601 datetime or date string
+            during: Partial date string (year, year-month, or full date)
+            limit: Maximum number of results
+
+        Returns:
+            List of memories matching the filters
+        """
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            context = get_operation_context(_auth_result)
+
+            results = _app_state.nexus_fs.memory.query(
+                scope=scope,
+                memory_type=memory_type,
+                state=state,
+                after=after,
+                before=before,
+                during=during,
+                limit=limit,
+                context=context,
+            )
+
+            return {
+                "memories": results,
+                "total": len(results),
+                "filters": {
+                    "scope": scope,
+                    "memory_type": memory_type,
+                    "state": state,
+                    "after": after,
+                    "before": before,
+                    "during": during,
+                },
+            }
+
+        except ValueError as e:
+            # Handle temporal validation errors
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Memory query error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Memory query error: {e}") from e
+
+    @app.get("/api/memory/list", tags=["memory"])
+    async def memory_list(
+        scope: str | None = Query(None, description="Filter by scope"),
+        memory_type: str | None = Query(None, description="Filter by memory type"),
+        namespace: str | None = Query(None, description="Filter by exact namespace"),
+        namespace_prefix: str | None = Query(None, description="Filter by namespace prefix"),
+        state: str = Query("active", description="Filter by state (inactive/active/all)"),
+        after: str | None = Query(
+            None, description="Filter memories created after this time (ISO-8601). #1023"
+        ),
+        before: str | None = Query(
+            None, description="Filter memories created before this time (ISO-8601). #1023"
+        ),
+        during: str | None = Query(
+            None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
+        ),
+        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """List memories with optional temporal filters (Issue #1023).
+
+        Similar to query but also supports namespace filtering.
+
+        Args:
+            scope: Filter by scope
+            memory_type: Filter by memory type
+            namespace: Filter by exact namespace
+            namespace_prefix: Filter by namespace prefix
+            state: Filter by state
+            after: ISO-8601 datetime or date string
+            before: ISO-8601 datetime or date string
+            during: Partial date string
+            limit: Maximum number of results
+
+        Returns:
+            List of memories matching the filters
+        """
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            context = get_operation_context(_auth_result)
+
+            results = _app_state.nexus_fs.memory.list(
+                scope=scope,
+                memory_type=memory_type,
+                namespace=namespace,
+                namespace_prefix=namespace_prefix,
+                state=state,
+                after=after,
+                before=before,
+                during=during,
+                limit=limit,
+                context=context,
+            )
+
+            return {
+                "memories": results,
+                "total": len(results),
+            }
+
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Memory list error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Memory list error: {e}") from e
+
+    @app.post("/api/memory/store", tags=["memory"])
+    async def memory_store(
+        request: Request,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Store a new memory.
+
+        Request body:
+        {
+            "content": "Memory content",
+            "scope": "user",
+            "memory_type": "fact",
+            "importance": 0.8,
+            "namespace": "optional/namespace",
+            "path_key": "optional_key",
+            "state": "active"
+        }
+
+        Returns:
+            The created memory ID
+        """
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            body = await request.json()
+            context = get_operation_context(_auth_result)
+
+            memory_id = _app_state.nexus_fs.memory.store(
+                content=body.get("content", ""),
+                scope=body.get("scope", "user"),
+                memory_type=body.get("memory_type"),
+                importance=body.get("importance"),
+                namespace=body.get("namespace"),
+                path_key=body.get("path_key"),
+                state=body.get("state", "active"),
+                context=context,
+            )
+
+            return {"memory_id": memory_id, "status": "created"}
+
+        except Exception as e:
+            logger.error(f"Memory store error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
+
+    # =========================================================================
     # Hotspot Detection API Endpoints (Issue #921)
     # =========================================================================
 

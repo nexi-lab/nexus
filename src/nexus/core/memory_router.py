@@ -2,7 +2,11 @@
 
 Resolves virtual paths to canonical memory IDs regardless of path order.
 Enables multiple virtual path views for the same memory.
+
+Includes temporal query operators (Issue #1023) for time-based filtering.
 """
+
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -162,6 +166,8 @@ class MemoryViewRouter:
         namespace: str | None = None,  # v0.8.0: Exact namespace match
         namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
         state: str | None = None,  # #368: Filter by state ('inactive', 'active', 'all')
+        after: datetime | None = None,  # #1023: Temporal filter - after this time
+        before: datetime | None = None,  # #1023: Temporal filter - before this time
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -175,6 +181,8 @@ class MemoryViewRouter:
             namespace: Filter by exact namespace match. v0.8.0
             namespace_prefix: Filter by namespace prefix (hierarchical). v0.8.0
             state: Filter by state ('inactive', 'active', 'all'). #368
+            after: Filter memories created after this datetime. #1023
+            before: Filter memories created before this datetime. #1023
             limit: Maximum number of results.
 
         Returns:
@@ -207,6 +215,15 @@ class MemoryViewRouter:
         # #368: State filtering
         if state and state != "all":
             stmt = stmt.where(MemoryModel.state == state)
+
+        # #1023: Temporal filtering
+        if after:
+            stmt = stmt.where(MemoryModel.created_at >= after)
+        if before:
+            stmt = stmt.where(MemoryModel.created_at <= before)
+
+        # Order by created_at DESC for consistent ordering
+        stmt = stmt.order_by(MemoryModel.created_at.desc())
 
         if limit:
             stmt = stmt.limit(limit)

@@ -97,6 +97,8 @@ class Memory:
         context: OperationContext | None = None,
         generate_embedding: bool = True,  # #406: Generate embedding for semantic search
         embedding_provider: Any = None,  # #406: Optional embedding provider
+        resolve_coreferences: bool = False,  # #1027: Resolve pronouns to entity names
+        coreference_context: str | None = None,  # #1027: Prior conversation context
     ) -> str:
         """Store a memory.
 
@@ -110,6 +112,8 @@ class Memory:
             state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
+            resolve_coreferences: Resolve pronouns to entity names for context-independence. #1027
+            coreference_context: Prior conversation context for pronoun resolution. #1027
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -134,8 +138,28 @@ class Memory:
             ...     state="inactive"  # Won't appear in queries until approved
             ... )
             >>> memory.approve(memory_id)  # Activate it later
+
+            >>> # Resolve coreferences for context-independent storage (#1027)
+            >>> memory_id = memory.store(
+            ...     content="He went to the store.",
+            ...     resolve_coreferences=True,
+            ...     coreference_context="John Smith was hungry."
+            ... )
+            >>> # Stored as: "John Smith went to the store."
         """
         import json
+
+        # #1027: Apply coreference resolution before storing (write-time disambiguation)
+        # This transforms "He went to the store" -> "John Smith went to the store"
+        # making memories self-contained and context-independent
+        if resolve_coreferences and isinstance(content, str):
+            from nexus.core.coref_resolver import resolve_coreferences as resolve_coref
+
+            content = resolve_coref(
+                text=content,
+                context=coreference_context,
+                llm_provider=self.llm_provider,
+            )
 
         # Convert content to bytes
         if isinstance(content, dict):
@@ -709,14 +733,14 @@ class Memory:
 
         # Read content
         content = None
+        import json
+
         try:
             content_bytes = self.backend.read_content(
                 memory.content_hash, context=self.context
             ).unwrap()
             try:
                 # Try to parse as JSON (structured content)
-                import json
-
                 content = json.loads(content_bytes.decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to text or hex

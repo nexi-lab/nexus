@@ -572,7 +572,9 @@ class TestEntropyAwareChunker:
         unique_section = "John Smith from Microsoft visited New York on 2024-01-15."
         repeated_section = "Hello world hello world hello world."
 
-        content = f"{unique_section}\n\n{repeated_section}\n\n{repeated_section}\n\n{repeated_section}"
+        content = (
+            f"{unique_section}\n\n{repeated_section}\n\n{repeated_section}\n\n{repeated_section}"
+        )
 
         result = chunker.chunk_with_filtering_sync(content)
 

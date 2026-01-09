@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from nexus.search.chunking import (
     ChunkStrategy,
     DocumentChunk,

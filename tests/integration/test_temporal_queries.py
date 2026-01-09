@@ -1,12 +1,23 @@
 """End-to-end tests for temporal query operators (Issue #1023).
 
 Tests the `after`, `before`, `during` temporal operators through the Memory API
-with an actual SQLite database to verify filtering works correctly.
+with PostgreSQL or SQLite database to verify filtering works correctly.
+
+Environment variables:
+    TEST_DATABASE_URL: PostgreSQL connection URL (default: sqlite:///:memory:)
+
+Example:
+    # Run with PostgreSQL
+    TEST_DATABASE_URL=postgresql://localhost/nexus_test pytest tests/integration/test_temporal_queries.py
+
+    # Run with SQLite (default)
+    pytest tests/integration/test_temporal_queries.py
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -24,13 +35,20 @@ logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
 
+# Use PostgreSQL if TEST_DATABASE_URL is set, otherwise SQLite
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
+
 
 @pytest.fixture
 def engine():
-    """Create in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory:")
+    """Create database for testing (PostgreSQL or SQLite)."""
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.drop_all(engine)  # Clean slate for PostgreSQL
     Base.metadata.create_all(engine)
-    return engine
+    yield engine
+    if DATABASE_URL.startswith("postgresql"):
+        Base.metadata.drop_all(engine)  # Cleanup for PostgreSQL
+    engine.dispose()
 
 
 @pytest.fixture
@@ -334,6 +352,55 @@ class TestTemporalQueryOrdering:
         assert "today" in results[0]["content"]
 
         logger.info("[TEST] Results correctly ordered by created_at DESC")
+
+
+class TestPostgreSQLTimestampPrecision:
+    """PostgreSQL-specific tests for timestamp precision."""
+
+    @pytest.mark.skipif(
+        not DATABASE_URL.startswith("postgresql"),
+        reason="PostgreSQL-specific test"
+    )
+    def test_microsecond_precision(self, session):
+        """Test that PostgreSQL handles microsecond precision correctly."""
+        from nexus.core.memory_router import MemoryViewRouter
+
+        now = datetime.now(UTC)
+
+        # Create memories with microsecond differences
+        mem1 = MemoryModel(
+            content_hash="hash_micro1",
+            tenant_id="acme",
+            user_id="alice",
+            agent_id="agent1",
+            scope="user",
+            state="active",
+            created_at=now - timedelta(microseconds=500000),  # 0.5 seconds ago
+        )
+        mem2 = MemoryModel(
+            content_hash="hash_micro2",
+            tenant_id="acme",
+            user_id="alice",
+            agent_id="agent1",
+            scope="user",
+            state="active",
+            created_at=now - timedelta(microseconds=100000),  # 0.1 seconds ago
+        )
+        session.add(mem1)
+        session.add(mem2)
+        session.commit()
+
+        router = MemoryViewRouter(session, entity_registry=None)
+
+        # Query with precise timestamp (should only get mem2)
+        after_precise = now - timedelta(microseconds=300000)
+        results = router.query_memories(tenant_id="acme", after=after_precise)
+
+        micro_results = [r for r in results if r.content_hash.startswith("hash_micro")]
+        assert len(micro_results) == 1
+        assert micro_results[0].content_hash == "hash_micro2"
+
+        logger.info("[TEST] PostgreSQL microsecond precision verified")
 
 
 # Standalone test runner

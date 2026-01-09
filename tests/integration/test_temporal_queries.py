@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
@@ -32,8 +32,6 @@ from nexus.storage.models import Base, MemoryModel
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-UTC = timezone.utc
 
 # Use PostgreSQL if TEST_DATABASE_URL is set, otherwise SQLite
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")

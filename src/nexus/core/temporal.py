@@ -10,11 +10,8 @@ Based on SimpleMem research (arXiv:2601.02553) which achieves
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
-
-# UTC timezone constant
-UTC = timezone.utc
 
 
 class TemporalRange(NamedTuple):

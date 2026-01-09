@@ -1,6 +1,6 @@
 """Unit tests for temporal parsing utilities (Issue #1023)."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -10,8 +10,6 @@ from nexus.core.temporal import (
     parse_temporal_range,
     validate_temporal_params,
 )
-
-UTC = timezone.utc
 
 
 class TestParseDatetime:

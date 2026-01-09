@@ -1413,15 +1413,23 @@ def _register_routes(app: FastAPI) -> None:
         during: str | None = Query(
             None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
         ),
+        entity_type: str | None = Query(
+            None, description="Filter by entity type (PERSON, ORG, LOCATION, DATE, etc.). #1025"
+        ),
+        person: str | None = Query(None, description="Filter by person name reference. #1025"),
         limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
-        """Query memories with optional temporal filters (Issue #1023).
+        """Query memories with optional temporal and entity filters.
 
-        Supports three temporal operators:
+        Supports temporal operators (Issue #1023):
         - after: Return memories created after this datetime
         - before: Return memories created before this datetime
         - during: Return memories created during this period (partial date like "2025" or "2025-01")
+
+        Supports entity filters (Issue #1025 - SimpleMem symbolic layer):
+        - entity_type: Filter by extracted entity type (PERSON, ORG, LOCATION, DATE, etc.)
+        - person: Filter by person name reference
 
         Note: 'during' cannot be used together with 'after' or 'before'.
 
@@ -1432,6 +1440,8 @@ def _register_routes(app: FastAPI) -> None:
             after: ISO-8601 datetime or date string
             before: ISO-8601 datetime or date string
             during: Partial date string (year, year-month, or full date)
+            entity_type: Entity type to filter by (e.g., PERSON, ORG)
+            person: Person name to filter by
             limit: Maximum number of results
 
         Returns:
@@ -1450,6 +1460,8 @@ def _register_routes(app: FastAPI) -> None:
                 after=after,
                 before=before,
                 during=during,
+                entity_type=entity_type,
+                person=person,
                 limit=limit,
                 context=context,
             )
@@ -1464,6 +1476,8 @@ def _register_routes(app: FastAPI) -> None:
                     "after": after,
                     "before": before,
                     "during": during,
+                    "entity_type": entity_type,
+                    "person": person,
                 },
             }
 

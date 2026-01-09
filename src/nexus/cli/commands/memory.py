@@ -85,6 +85,17 @@ def store(
     default="active",
     help="Filter by state (inactive/active/all). Defaults to 'active'. #368",
 )
+@click.option(
+    "--after", default=None, help="Filter memories created after this time (ISO-8601). #1023"
+)
+@click.option(
+    "--before", default=None, help="Filter memories created before this time (ISO-8601). #1023"
+)
+@click.option(
+    "--during",
+    default=None,
+    help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
+)
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def query(
@@ -93,6 +104,9 @@ def query(
     scope: str | None,
     memory_type: str | None,
     state: str,
+    after: str | None,
+    before: str | None,
+    during: str | None,
     limit: int,
     output_json: bool,
 ) -> None:
@@ -103,6 +117,8 @@ def query(
         nexus memory query --scope user --type preference
         nexus memory query --agent-id agent1 --limit 10
         nexus memory query --state inactive
+        nexus memory query --during "2025-01"  # Memories from January 2025
+        nexus memory query --after "2025-01-01T00:00:00Z"  # After this date
         nexus memory query --json
     """
     nx = get_default_filesystem()
@@ -113,6 +129,9 @@ def query(
             scope=scope,
             memory_type=memory_type,
             state=state,
+            after=after,
+            before=before,
+            during=during,
             limit=limit,
         )
 
@@ -172,6 +191,17 @@ def query(
     default=None,
     help="Embedding provider for semantic search (default: auto-detect from env)",
 )
+@click.option(
+    "--after", default=None, help="Filter memories created after this time (ISO-8601). #1023"
+)
+@click.option(
+    "--before", default=None, help="Filter memories created before this time (ISO-8601). #1023"
+)
+@click.option(
+    "--during",
+    default=None,
+    help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
+)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def search(
     query_text: str,
@@ -180,6 +210,9 @@ def search(
     limit: int,
     search_mode: str,
     embedding_provider: str | None,
+    after: str | None,
+    before: str | None,
+    during: str | None,
     output_json: bool,
 ) -> None:
     """Semantic search over memories.
@@ -200,6 +233,10 @@ def search(
 
         # Specify embedding provider
         nexus memory search "authentication" --provider openrouter
+
+        # Search with temporal filters (#1023)
+        nexus memory search "project updates" --during "2025-01"
+        nexus memory search "API changes" --after "2025-01-01"
 
         # JSON output
         nexus memory search "database" --json
@@ -229,6 +266,9 @@ def search(
             limit=limit,
             search_mode=search_mode,
             embedding_provider=embedding_provider_obj,
+            after=after,
+            before=before,
+            during=during,
         )
 
         if output_json:
@@ -272,6 +312,17 @@ def search(
 @click.option("--namespace", default=None, help="Filter by exact namespace")
 @click.option("--namespace-prefix", default=None, help="Filter by namespace prefix (hierarchical)")
 @click.option("--state", default="active", help="Filter by state (inactive/active/all)")
+@click.option(
+    "--after", default=None, help="Filter memories created after this time (ISO-8601). #1023"
+)
+@click.option(
+    "--before", default=None, help="Filter memories created before this time (ISO-8601). #1023"
+)
+@click.option(
+    "--during",
+    default=None,
+    help="Filter memories during this period (e.g., '2025', '2025-01'). #1023",
+)
 @click.option("--limit", type=int, default=100, help="Maximum number of results")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 def list(
@@ -280,6 +331,9 @@ def list(
     namespace: str | None,
     namespace_prefix: str | None,
     state: str,
+    after: str | None,
+    before: str | None,
+    during: str | None,
     limit: int,
     output_json: bool,
 ) -> None:
@@ -292,6 +346,8 @@ def list(
         nexus memory list --namespace-prefix "knowledge/"
         nexus memory list --state inactive  # List pending memories
         nexus memory list --state all  # List all memories
+        nexus memory list --during "2025-01"  # List January 2025 memories
+        nexus memory list --after "2025-01-01"  # List recent memories
         nexus memory list --json
     """
     nx = get_default_filesystem()
@@ -303,6 +359,9 @@ def list(
             namespace=namespace,
             namespace_prefix=namespace_prefix,
             state=state,
+            after=after,
+            before=before,
+            during=during,
             limit=limit,
         )
 

@@ -168,6 +168,8 @@ class MemoryViewRouter:
         state: str | None = None,  # #368: Filter by state ('inactive', 'active', 'all')
         after: datetime | None = None,  # #1023: Temporal filter - after this time
         before: datetime | None = None,  # #1023: Temporal filter - before this time
+        entity_type: str | None = None,  # #1025: Filter by entity type
+        person: str | None = None,  # #1025: Filter by person reference
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -183,6 +185,8 @@ class MemoryViewRouter:
             state: Filter by state ('inactive', 'active', 'all'). #368
             after: Filter memories created after this datetime. #1023
             before: Filter memories created before this datetime. #1023
+            entity_type: Filter by entity type (e.g., "PERSON", "ORG"). #1025
+            person: Filter by person name reference. #1025
             limit: Maximum number of results.
 
         Returns:
@@ -222,6 +226,12 @@ class MemoryViewRouter:
         if before:
             stmt = stmt.where(MemoryModel.created_at <= before)
 
+        # #1025: Entity filtering (using LIKE for contains check)
+        if entity_type:
+            stmt = stmt.where(MemoryModel.entity_types.contains(entity_type))
+        if person:
+            stmt = stmt.where(MemoryModel.person_refs.contains(person))
+
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
 
@@ -246,6 +256,9 @@ class MemoryViewRouter:
         embedding: str | None = None,  # #406: Embedding vector (JSON)
         embedding_model: str | None = None,  # #406: Embedding model name
         embedding_dim: int | None = None,  # #406: Embedding dimension
+        entities_json: str | None = None,  # #1025: Entity extraction JSON
+        entity_types: str | None = None,  # #1025: Comma-separated entity types
+        person_refs: str | None = None,  # #1025: Comma-separated person names
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -263,6 +276,9 @@ class MemoryViewRouter:
             embedding: Vector embedding as JSON string. #406
             embedding_model: Name of embedding model used. #406
             embedding_dim: Dimension of embedding vector. #406
+            entities_json: JSON string of extracted entities. #1025
+            entity_types: Comma-separated entity types (e.g., "PERSON,ORG,DATE"). #1025
+            person_refs: Comma-separated person names for quick filtering. #1025
 
         Returns:
             MemoryModel: Created or updated memory.
@@ -306,6 +322,13 @@ class MemoryViewRouter:
                 existing_memory.embedding_model = embedding_model
             if embedding_dim is not None:
                 existing_memory.embedding_dim = embedding_dim
+            # Update entity extraction fields (#1025)
+            if entities_json is not None:
+                existing_memory.entities_json = entities_json
+            if entity_types is not None:
+                existing_memory.entity_types = entity_types
+            if person_refs is not None:
+                existing_memory.person_refs = person_refs
 
             existing_memory.validate()
             self.session.commit()
@@ -327,6 +350,9 @@ class MemoryViewRouter:
                 embedding=embedding,  # #406
                 embedding_model=embedding_model,  # #406
                 embedding_dim=embedding_dim,  # #406
+                entities_json=entities_json,  # #1025
+                entity_types=entity_types,  # #1025
+                person_refs=person_refs,  # #1025
             )
 
             # Validate before adding

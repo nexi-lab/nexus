@@ -97,6 +97,7 @@ class Memory:
         context: OperationContext | None = None,
         generate_embedding: bool = True,  # #406: Generate embedding for semantic search
         embedding_provider: Any = None,  # #406: Optional embedding provider
+        extract_entities: bool = True,  # #1025: Extract named entities
     ) -> str:
         """Store a memory.
 
@@ -110,6 +111,7 @@ class Memory:
             state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
+            extract_entities: Extract named entities for symbolic filtering. Defaults to True. #1025
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -202,6 +204,31 @@ class Memory:
                         # Failed to generate embedding, continue without it
                         pass
 
+        # #1025: Extract named entities for symbolic filtering
+        entities_json_str = None
+        entity_types_str = None
+        person_refs_str = None
+
+        if extract_entities:
+            # Get text content for entity extraction
+            if isinstance(content, dict):
+                text_for_entities = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_entities = content
+            else:
+                text_for_entities = None
+
+            if text_for_entities and len(text_for_entities.strip()) > 0:
+                from nexus.core.entity_extractor import EntityExtractor
+
+                extractor = EntityExtractor(use_spacy=False)
+                entities = extractor.extract(text_for_entities)
+
+                if entities:
+                    entities_json_str = json.dumps([e.to_dict() for e in entities])
+                    entity_types_str = extractor.get_entity_types_string(text_for_entities)
+                    person_refs_str = extractor.get_person_refs_string(text_for_entities)
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -217,6 +244,9 @@ class Memory:
             embedding=embedding_json,  # #406: Store embedding
             embedding_model=embedding_model_name,  # #406: Store model name
             embedding_dim=embedding_dim,  # #406: Store dimension
+            entities_json=entities_json_str,  # #1025: Store entities
+            entity_types=entity_types_str,  # #1025: Store entity types
+            person_refs=person_refs_str,  # #1025: Store person references
         )
 
         return memory.memory_id
@@ -232,6 +262,8 @@ class Memory:
         after: str | datetime | None = None,  # #1023: Temporal filter
         before: str | datetime | None = None,  # #1023: Temporal filter
         during: str | None = None,  # #1023: Temporal range (partial date)
+        entity_type: str | None = None,  # #1025: Filter by entity type
+        person: str | None = None,  # #1025: Filter by person reference
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -247,6 +279,8 @@ class Memory:
             after: Return memories created after this time (ISO-8601 or datetime). #1023
             before: Return memories created before this time (ISO-8601 or datetime). #1023
             during: Return memories during this period (partial date: "2025", "2025-01"). #1023
+            entity_type: Filter by entity type (e.g., "PERSON", "ORG", "DATE"). #1025
+            person: Filter by person name reference. #1025
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -263,6 +297,12 @@ class Memory:
 
             >>> # Query memories after a specific date (#1023)
             >>> memories = memory.query(after="2025-01-01T00:00:00Z")
+
+            >>> # Query memories containing a person (#1025)
+            >>> memories = memory.query(person="John Smith")
+
+            >>> # Query memories with organization entities (#1025)
+            >>> memories = memory.query(entity_type="ORG")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
@@ -283,6 +323,8 @@ class Memory:
             state=state,
             after=after_dt,
             before=before_dt,
+            entity_type=entity_type,  # #1025: Entity filtering
+            person=person,  # #1025: Person filtering
             limit=limit,
         )
 
@@ -326,6 +368,8 @@ class Memory:
                     "state": memory.state,  # #368
                     "namespace": memory.namespace,  # v0.8.0
                     "path_key": memory.path_key,  # v0.8.0
+                    "entity_types": memory.entity_types,  # #1025
+                    "person_refs": memory.person_refs,  # #1025
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }

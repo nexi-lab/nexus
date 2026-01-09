@@ -1099,6 +1099,17 @@ class MemoryModel(Base):
         Text, nullable=True
     )  # Vector embedding (JSON array for SQLite, vector for PostgreSQL)
 
+    # Entity extraction support (#1025 - SimpleMem symbolic layer)
+    entities_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON: [{"text": "John Smith", "type": "PERSON", "start": 0, "end": 10}, ...]
+    entity_types: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Comma-separated: "PERSON,ORG,DATE"
+    person_refs: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Comma-separated person names for quick filtering
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -1122,6 +1133,7 @@ class MemoryModel(Base):
         Index("idx_memory_expires", "expires_at"),
         Index("idx_memory_namespace", "namespace"),  # v0.8.0
         Index("idx_memory_state", "state"),  # #368 - memory state management
+        Index("idx_memory_entity_types", "entity_types"),  # #1025 - entity type filtering
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

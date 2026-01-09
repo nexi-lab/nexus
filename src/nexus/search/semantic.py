@@ -10,10 +10,13 @@ BM25 ranking (pg_textsearch):
 - Falls back to ts_rank() on PostgreSQL < 17 or when extension unavailable
 
 Supports hybrid search combining keyword (FTS/BM25) and semantic (vector) search.
+
+Issue #1021: Supports adaptive retrieval depth based on query complexity.
 """
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,10 +24,13 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 from nexus.search.chunking import ChunkStrategy, DocumentChunker
 from nexus.search.embeddings import EmbeddingProvider
 from nexus.search.vector_db import VectorDatabase
 from nexus.storage.models import DocumentChunkModel, FilePathModel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -65,6 +71,7 @@ class SemanticSearch:
         embedding_provider: EmbeddingProvider | None = None,
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
+        adaptive_config: AdaptiveRetrievalConfig | None = None,
     ):
         """Initialize semantic search.
 
@@ -73,6 +80,7 @@ class SemanticSearch:
             embedding_provider: Embedding provider (optional - needed for semantic/hybrid search)
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy
+            adaptive_config: Configuration for adaptive retrieval depth (Issue #1021)
         """
         self.nx = nx
         self.chunk_size = chunk_size
@@ -89,6 +97,10 @@ class SemanticSearch:
         self.chunker = DocumentChunker(
             chunk_size=chunk_size, strategy=chunk_strategy, overlap_size=128
         )
+
+        # Initialize context builder for adaptive retrieval (Issue #1021)
+        self.adaptive_config = adaptive_config or AdaptiveRetrievalConfig()
+        self._context_builder = ContextBuilder(adaptive_config=self.adaptive_config)
 
     def initialize(self) -> None:
         """Initialize the search engine (create vector extensions and FTS tables)."""
@@ -293,17 +305,19 @@ class SemanticSearch:
         search_mode: str = "semantic",
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        adaptive_k: bool = False,
     ) -> list[SemanticSearchResult]:
         """Search documents.
 
         Args:
             query: Natural language query
             path: Root path to search (default: all files)
-            limit: Maximum number of results
+            limit: Maximum number of results (used as k_base when adaptive_k=True)
             filters: Optional filters (currently unused)
             search_mode: Search mode - "semantic", "keyword", or "hybrid" (default: "semantic")
             alpha: Weight for vector search in hybrid mode (0.0 = all BM25, 1.0 = all vector)
             fusion_method: Fusion method for hybrid: "rrf" (default), "weighted", "rrf_weighted"
+            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search results ranked by relevance
@@ -316,7 +330,25 @@ class SemanticSearch:
             ...     alpha=0.3,  # Favor BM25
             ...     fusion_method="rrf",
             ... )
+
+            >>> # Adaptive retrieval - adjusts k based on query complexity
+            >>> results = await search.search(
+            ...     "How does authentication compare to authorization?",
+            ...     adaptive_k=True,  # Will increase limit for complex query
+            ... )
         """
+        # Apply adaptive k if enabled (Issue #1021)
+        original_limit = limit
+        if adaptive_k and self.adaptive_config.enabled:
+            limit = self._context_builder.calculate_k_dynamic(query, k_base=limit)
+            if limit != original_limit:
+                logger.info(
+                    "[SEMANTIC-SEARCH] Adaptive k applied: %d -> %d for query: %s",
+                    original_limit,
+                    limit,
+                    query[:50],
+                )
+
         # Build path filter
         path_filter = path if path != "/" else None
 
@@ -457,16 +489,28 @@ class SemanticSearch:
 
     # Backward compatibility wrapper methods
     async def keyword_search(
-        self, query: str, path: str = "/", limit: int = 10
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        adaptive_k: bool = False,
     ) -> list[SemanticSearchResult]:
         """Keyword search (wrapper for search with mode='keyword')."""
-        return await self.search(query, path=path, limit=limit, search_mode="keyword")
+        return await self.search(
+            query, path=path, limit=limit, search_mode="keyword", adaptive_k=adaptive_k
+        )
 
     async def semantic_search(
-        self, query: str, path: str = "/", limit: int = 10
+        self,
+        query: str,
+        path: str = "/",
+        limit: int = 10,
+        adaptive_k: bool = False,
     ) -> list[SemanticSearchResult]:
         """Semantic search (wrapper for search with mode='semantic')."""
-        return await self.search(query, path=path, limit=limit, search_mode="semantic")
+        return await self.search(
+            query, path=path, limit=limit, search_mode="semantic", adaptive_k=adaptive_k
+        )
 
     async def hybrid_search(
         self,
@@ -475,15 +519,17 @@ class SemanticSearch:
         limit: int = 10,
         alpha: float = 0.5,
         fusion_method: str = "rrf",
+        adaptive_k: bool = False,
     ) -> list[SemanticSearchResult]:
         """Hybrid search combining keyword (BM25) and semantic (vector) search.
 
         Args:
             query: Search query
             path: Root path to search (default: all files)
-            limit: Maximum results
+            limit: Maximum results (used as k_base when adaptive_k=True)
             alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
             fusion_method: "rrf" (default), "weighted", "rrf_weighted"
+            adaptive_k: If True, dynamically adjust limit based on query complexity
 
         Returns:
             List of search results ranked by fusion score
@@ -495,6 +541,7 @@ class SemanticSearch:
             search_mode="hybrid",
             alpha=alpha,
             fusion_method=fusion_method,
+            adaptive_k=adaptive_k,
         )
 
     async def get_stats(self) -> dict[str, Any]:

@@ -74,7 +74,7 @@ class LLMCorefResolver(CorefResolver):
     """
 
     # Few-shot + CoT prompt based on research best practices
-    RESOLUTION_PROMPT = '''You are a coreference resolution system. Your task is to replace all pronouns with the specific entity names they refer to, making the text self-contained and unambiguous.
+    RESOLUTION_PROMPT = """You are a coreference resolution system. Your task is to replace all pronouns with the specific entity names they refer to, making the text self-contained and unambiguous.
 
 ## Instructions
 1. Identify all pronouns (he, she, him, her, his, hers, they, them, their, it, its, etc.)
@@ -112,10 +112,10 @@ Text to resolve: {text}
 First, identify each pronoun and reason about what it refers to.
 Then provide ONLY the resolved text with pronouns replaced.
 
-Reasoning:'''
+Reasoning:"""
 
     # Simpler prompt for when context is minimal
-    SIMPLE_PROMPT = '''Replace all pronouns in the text with the entity names they refer to.
+    SIMPLE_PROMPT = """Replace all pronouns in the text with the entity names they refer to.
 
 Known entities: {entities}
 
@@ -123,7 +123,7 @@ Text: {text}
 
 Return ONLY the resolved text with pronouns replaced by names. If a pronoun cannot be resolved, leave it unchanged.
 
-Resolved text:'''
+Resolved text:"""
 
     def __init__(self, llm_provider: Any = None):
         """Initialize LLM resolver.
@@ -292,9 +292,7 @@ Resolved text:'''
         words = set(re.findall(r"\b\w+\b", text.lower()))
         return bool(words & pronouns)
 
-    def _build_context(
-        self, context: str | None, entity_hints: dict[str, str] | None
-    ) -> str:
+    def _build_context(self, context: str | None, entity_hints: dict[str, str] | None) -> str:
         """Build full context string from context and hints."""
         parts = []
 
@@ -345,9 +343,7 @@ Resolved text:'''
 
         return text
 
-    def _detect_replacements(
-        self, original: str, resolved: str
-    ) -> list[dict[str, Any]]:
+    def _detect_replacements(self, original: str, resolved: str) -> list[dict[str, Any]]:
         """Detect what pronouns were replaced."""
         replacements = []
 
@@ -532,14 +528,48 @@ class HeuristicCorefResolver(CorefResolver):
         first = name.split()[0].lower()
 
         male_names = {
-            "john", "james", "robert", "michael", "david", "william",
-            "richard", "joseph", "thomas", "charles", "daniel", "matthew",
-            "bob", "tom", "jim", "mike", "dave", "bill", "joe", "dan",
+            "john",
+            "james",
+            "robert",
+            "michael",
+            "david",
+            "william",
+            "richard",
+            "joseph",
+            "thomas",
+            "charles",
+            "daniel",
+            "matthew",
+            "bob",
+            "tom",
+            "jim",
+            "mike",
+            "dave",
+            "bill",
+            "joe",
+            "dan",
         }
         female_names = {
-            "mary", "patricia", "jennifer", "linda", "elizabeth", "barbara",
-            "susan", "jessica", "sarah", "karen", "lisa", "nancy", "betty",
-            "alice", "jane", "kate", "emma", "olivia", "sophia", "anna",
+            "mary",
+            "patricia",
+            "jennifer",
+            "linda",
+            "elizabeth",
+            "barbara",
+            "susan",
+            "jessica",
+            "sarah",
+            "karen",
+            "lisa",
+            "nancy",
+            "betty",
+            "alice",
+            "jane",
+            "kate",
+            "emma",
+            "olivia",
+            "sophia",
+            "anna",
         }
 
         if first in male_names:
@@ -548,9 +578,7 @@ class HeuristicCorefResolver(CorefResolver):
             return "female"
         return None
 
-    def _find_matching_entity(
-        self, pronoun: str, entities: dict[str, str]
-    ) -> str | None:
+    def _find_matching_entity(self, pronoun: str, entities: dict[str, str]) -> str | None:
         """Find entity matching the pronoun's gender."""
         if pronoun in self.MALE_PRONOUNS:
             return entities.get("male") or entities.get("speaker")

@@ -101,9 +101,7 @@ class TestHeuristicCorefResolver:
     def test_multiple_pronouns(self, resolver):
         """Test multiple pronoun replacement."""
         text = "He called her about his project."
-        result = resolver.resolve(
-            text, entity_hints={"male": "Bob", "female": "Alice"}
-        )
+        result = resolver.resolve(text, entity_hints={"male": "Bob", "female": "Alice"})
         assert "Bob" in result.resolved_text
         assert "Alice" in result.resolved_text
 
@@ -150,9 +148,7 @@ class TestLLMCorefResolver:
 
     def test_format_entities(self, resolver):
         """Test entity formatting for prompt."""
-        formatted = resolver._format_entities(
-            {"male": "John", "female": "Alice"}
-        )
+        formatted = resolver._format_entities({"male": "John", "female": "Alice"})
         assert "John (male)" in formatted
         assert "Alice (female)" in formatted
 

@@ -2,12 +2,16 @@
 
 High-level API for storing, querying, and searching agent memories
 with identity-based relationships and semantic search.
+
+Includes temporal query operators (Issue #1023) for time-based filtering
+inspired by SimpleMem (arXiv:2601.02553).
 """
 
 from __future__ import annotations
 
 import builtins
 import contextlib
+from datetime import datetime
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
@@ -16,6 +20,7 @@ from nexus.core.entity_registry import EntityRegistry
 from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
+from nexus.core.temporal import validate_temporal_params
 
 
 class Memory:
@@ -224,6 +229,9 @@ class Memory:
         scope: str | None = None,
         memory_type: str | None = None,
         state: str | None = "active",  # #368: Default to active memories only
+        after: str | datetime | None = None,  # #1023: Temporal filter
+        before: str | datetime | None = None,  # #1023: Temporal filter
+        during: str | None = None,  # #1023: Temporal range (partial date)
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -236,22 +244,34 @@ class Memory:
             scope: Filter by scope.
             memory_type: Filter by memory type.
             state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
+            after: Return memories created after this time (ISO-8601 or datetime). #1023
+            before: Return memories created before this time (ISO-8601 or datetime). #1023
+            during: Return memories during this period (partial date: "2025", "2025-01"). #1023
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
             List of memory dictionaries with metadata.
 
-        Example:
+        Examples:
             >>> memories = memory.query(scope="user", memory_type="preference")
             >>> for mem in memories:
             ...     print(f"{mem['memory_id']}: {mem['content']}")
+
+            >>> # Query memories from January 2025 (#1023)
+            >>> memories = memory.query(during="2025-01")
+
+            >>> # Query memories after a specific date (#1023)
+            >>> memories = memory.query(after="2025-01-01T00:00:00Z")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
             user_id = context.user_id if context else self.user_id
         if tenant_id is None:
             tenant_id = context.tenant_id if context else self.tenant_id
+
+        # #1023: Validate and normalize temporal parameters
+        after_dt, before_dt = validate_temporal_params(after, before, during)
 
         # Query memories
         memories = self.memory_router.query_memories(
@@ -261,6 +281,8 @@ class Memory:
             scope=scope,
             memory_type=memory_type,
             state=state,
+            after=after_dt,
+            before=before_dt,
             limit=limit,
         )
 
@@ -319,6 +341,9 @@ class Memory:
         limit: int = 10,
         search_mode: str = "hybrid",
         embedding_provider: Any = None,
+        after: str | datetime | None = None,  # #1023: Temporal filter
+        before: str | datetime | None = None,  # #1023: Temporal filter
+        during: str | None = None,  # #1023: Temporal range (partial date)
     ) -> list[dict[str, Any]]:
         """Semantic search over memories.
 
@@ -329,14 +354,23 @@ class Memory:
             limit: Maximum number of results.
             search_mode: Search mode - "semantic", "keyword", or "hybrid" (default: "hybrid")
             embedding_provider: Optional embedding provider for semantic/hybrid search
+            after: Return memories created after this time (ISO-8601 or datetime). #1023
+            before: Return memories created before this time (ISO-8601 or datetime). #1023
+            during: Return memories during this period (partial date: "2025", "2025-01"). #1023
 
         Returns:
             List of memory dictionaries with relevance scores.
 
-        Example:
+        Examples:
             >>> results = memory.search("Python programming preferences")
             >>> for mem in results:
             ...     print(f"Score: {mem['score']:.2f} - {mem['content']}")
+
+            >>> # Search memories from January 2025 (#1023)
+            >>> results = memory.search("project updates", during="2025-01")
+
+            >>> # Search recent memories only (#1023)
+            >>> results = memory.search("API design", after="2025-01-01")
 
         Note:
             Semantic search requires vector embeddings. If not available,
@@ -344,6 +378,9 @@ class Memory:
         """
         import asyncio
         import json
+
+        # #1023: Validate and normalize temporal parameters
+        after_dt, before_dt = validate_temporal_params(after, before, during)
 
         # If semantic or hybrid mode is requested but no embeddings available, fall back to keyword
         if (
@@ -356,7 +393,9 @@ class Memory:
 
         if search_mode == "keyword":
             # Keyword-only search using text matching
-            return self._keyword_search(query, scope, memory_type, limit)
+            return self._keyword_search(
+                query, scope, memory_type, limit, after_dt, before_dt
+            )
 
         # For semantic/hybrid search, we need embeddings
         if embedding_provider is None:
@@ -369,10 +408,14 @@ class Memory:
                     embedding_provider = create_embedding_provider(provider="openrouter")
                 except Exception:
                     # Fall back to keyword search if no provider available
-                    return self._keyword_search(query, scope, memory_type, limit)
+                    return self._keyword_search(
+                        query, scope, memory_type, limit, after_dt, before_dt
+                    )
             except ImportError:
                 # Fall back to keyword search
-                return self._keyword_search(query, scope, memory_type, limit)
+                return self._keyword_search(
+                    query, scope, memory_type, limit, after_dt, before_dt
+                )
 
         # Generate query embedding
         query_embedding = asyncio.run(embedding_provider.embed_text(query))
@@ -397,6 +440,12 @@ class Memory:
                 stmt = stmt.where(MemoryModel.user_id == self.user_id)
             if self.agent_id:
                 stmt = stmt.where(MemoryModel.agent_id == self.agent_id)
+
+            # #1023: Temporal filtering
+            if after_dt:
+                stmt = stmt.where(MemoryModel.created_at >= after_dt)
+            if before_dt:
+                stmt = stmt.where(MemoryModel.created_at <= before_dt)
 
             # Get memories with embeddings
             result = session.execute(stmt)
@@ -487,13 +536,21 @@ class Memory:
             return results
 
     def _keyword_search(
-        self, query: str, scope: str | None, memory_type: str | None, limit: int
+        self,
+        query: str,
+        scope: str | None,
+        memory_type: str | None,
+        limit: int,
+        after_dt: datetime | None = None,  # #1023: Temporal filter
+        before_dt: datetime | None = None,  # #1023: Temporal filter
     ) -> list[dict[str, Any]]:
         """Keyword-only search fallback."""
         # Get all memories matching filters
         memories = self.query(
             scope=scope,
             memory_type=memory_type,
+            after=after_dt,  # #1023: Pass temporal filters
+            before=before_dt,  # #1023: Pass temporal filters
             limit=limit * 3,  # Get more to filter
         )
 
@@ -857,6 +914,9 @@ class Memory:
         namespace: str | None = None,  # v0.8.0: Exact namespace match
         namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
         state: str | None = "active",  # #368: Default to active memories only
+        after: str | datetime | None = None,  # #1023: Temporal filter
+        before: str | datetime | None = None,  # #1023: Temporal filter
+        during: str | None = None,  # #1023: Temporal range (partial date)
         limit: int | None = 100,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -868,6 +928,9 @@ class Memory:
             namespace: Filter by exact namespace match. v0.8.0
             namespace_prefix: Filter by namespace prefix for hierarchical queries. v0.8.0
             state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
+            after: Return memories created after this time (ISO-8601 or datetime). #1023
+            before: Return memories created before this time (ISO-8601 or datetime). #1023
+            during: Return memories during this period (partial date: "2025", "2025-01"). #1023
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -889,11 +952,20 @@ class Memory:
 
             >>> # List inactive memories (pending review)
             >>> pending = memory.list(state="inactive")
+
+            >>> # List memories from last week (#1023)
+            >>> recent = memory.list(after="2025-01-01")
+
+            >>> # List memories from January 2025 (#1023)
+            >>> jan = memory.list(during="2025-01")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
         tenant_id = context.tenant_id if context else self.tenant_id
         user_id = context.user_id if context else self.user_id
         agent_id = context.agent_id if context else self.agent_id
+
+        # #1023: Validate and normalize temporal parameters
+        after_dt, before_dt = validate_temporal_params(after, before, during)
 
         memories = self.memory_router.query_memories(
             tenant_id=tenant_id,
@@ -904,6 +976,8 @@ class Memory:
             namespace=namespace,
             namespace_prefix=namespace_prefix,
             state=state,
+            after=after_dt,
+            before=before_dt,
             limit=limit,
         )
 

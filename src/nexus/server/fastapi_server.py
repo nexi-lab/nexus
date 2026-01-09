@@ -658,12 +658,20 @@ async def lifespan(_app: FastAPI) -> Any:
                     "1",
                     "yes",
                 ),
+                # Issue #1024: Entropy-aware filtering for redundant content
+                entropy_filtering=os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+                in ("true", "1", "yes"),
+                entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
+                entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
             _app_state.search_daemon = SearchDaemon(config)
             await _app_state.search_daemon.startup()
             _app_state.search_daemon_enabled = True
             set_search_daemon(_app_state.search_daemon)
+
+            # Set NexusFS reference for index refresh (Issue #1024)
+            _app_state.search_daemon._nexus_fs = _app_state.nexus_fs
 
             stats = _app_state.search_daemon.get_stats()
             logger.info(

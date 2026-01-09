@@ -312,10 +312,11 @@ Resolved text:"""
     def _extract_resolved_text(self, response: Any, original: str) -> str:
         """Extract resolved text from LLM response."""
         # Handle different response types
+        text: str
         if hasattr(response, "content"):
-            text = response.content
+            text = str(response.content)
         elif hasattr(response, "text"):
-            text = response.text
+            text = str(response.text)
         elif isinstance(response, str):
             text = response
         else:

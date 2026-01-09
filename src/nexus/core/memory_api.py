@@ -329,10 +329,12 @@ class Memory:
         )
 
         # Filter by permissions first (before fetching content)
+        # Use provided context or fall back to instance context
+        check_context = context or self.context
         accessible_memories = []
         for memory in memories:
             # Check read permission
-            if self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+            if self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
                 accessible_memories.append(memory)
 
         # Batch read all content hashes (optimization: single operation instead of N queries)

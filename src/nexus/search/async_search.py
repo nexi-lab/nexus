@@ -41,7 +41,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from nexus.llm.context_builder import ContextBuilder
-from nexus.search.chunking import ChunkStrategy, DocumentChunker
+from nexus.search.chunking import ChunkStrategy, DocumentChunker, EntropyAwareChunker
 from nexus.search.embeddings import EmbeddingProvider
 
 if TYPE_CHECKING:
@@ -116,6 +116,9 @@ class AsyncSemanticSearch:
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
         batch_size: int = 100,
+        entropy_filtering: bool = False,
+        entropy_threshold: float = 0.35,
+        entropy_alpha: float = 0.5,
     ):
         """Initialize async semantic search.
 
@@ -125,10 +128,16 @@ class AsyncSemanticSearch:
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy
             batch_size: Batch size for bulk operations
+            entropy_filtering: Enable entropy-aware filtering (Issue #1024)
+            entropy_threshold: Redundancy threshold for entropy filtering (default: 0.35)
+            entropy_alpha: Balance between entity and semantic novelty (default: 0.5)
         """
         self.database_url = database_url
         self.embedding_provider = embedding_provider
         self.batch_size = batch_size
+        self.entropy_filtering = entropy_filtering
+        self.entropy_threshold = entropy_threshold
+        self.entropy_alpha = entropy_alpha
 
         # Create async engine and session factory
         self.engine = create_async_engine_from_url(database_url)
@@ -143,6 +152,16 @@ class AsyncSemanticSearch:
             chunk_size=chunk_size,
             strategy=chunk_strategy,
         )
+
+        # Entropy-aware chunker (Issue #1024)
+        self._entropy_chunker: EntropyAwareChunker | None = None
+        if entropy_filtering:
+            self._entropy_chunker = EntropyAwareChunker(
+                redundancy_threshold=entropy_threshold,
+                alpha=entropy_alpha,
+                embedding_provider=embedding_provider,
+                base_chunker=self.chunker,
+            )
 
         # Detect DB type
         self.db_type = "postgresql" if "postgresql" in database_url else "sqlite"
@@ -258,9 +277,23 @@ class AsyncSemanticSearch:
         Returns:
             Number of chunks indexed
         """
-        # Chunk document (CPU-bound, run in executor)
-        loop = asyncio.get_event_loop()
-        chunks = await loop.run_in_executor(None, lambda: self.chunker.chunk(content, path))
+        # Chunk document with optional entropy filtering (Issue #1024)
+        if self.entropy_filtering and self._entropy_chunker:
+            # Use entropy-aware chunking to filter redundant content
+            entropy_result = await self._entropy_chunker.chunk_with_filtering(
+                content, path, compute_lines=True
+            )
+            chunks = entropy_result.chunks
+            if entropy_result.original_count > 0:
+                logger.debug(
+                    f"[ASYNC-SEARCH] Entropy filtering for {path}: "
+                    f"{entropy_result.original_count} -> {entropy_result.filtered_count} chunks "
+                    f"({entropy_result.reduction_percent:.1f}% reduction)"
+                )
+        else:
+            # Regular chunking (CPU-bound, run in executor)
+            loop = asyncio.get_event_loop()
+            chunks = await loop.run_in_executor(None, lambda: self.chunker.chunk(content, path))
 
         if not chunks:
             return 0

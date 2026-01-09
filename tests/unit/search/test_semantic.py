@@ -342,3 +342,46 @@ class TestSemanticSearch:
         search = SemanticSearch(nx)
         # Should not raise
         search.close()
+
+    def test_init_with_entropy_filtering(self, nx, mock_embedding_provider):
+        """Test initialization with entropy filtering enabled (Issue #1024)."""
+        search = SemanticSearch(
+            nx,
+            embedding_provider=mock_embedding_provider,
+            entropy_filtering=True,
+            entropy_threshold=0.35,
+            entropy_alpha=0.5,
+        )
+
+        assert search.entropy_filtering is True
+        assert search.entropy_threshold == 0.35
+        assert search.entropy_alpha == 0.5
+        assert search._entropy_chunker is not None
+        assert search._entropy_chunker.redundancy_threshold == 0.35
+        assert search._entropy_chunker.alpha == 0.5
+
+    def test_init_entropy_filtering_disabled_by_default(self, nx):
+        """Test entropy filtering is disabled by default."""
+        search = SemanticSearch(nx)
+
+        assert search.entropy_filtering is False
+        assert search._entropy_chunker is None
+
+    def test_get_index_stats_includes_entropy_config(self, nx):
+        """Test that get_index_stats includes entropy filtering config."""
+        import asyncio
+
+        search = SemanticSearch(
+            nx,
+            entropy_filtering=True,
+            entropy_threshold=0.4,
+            entropy_alpha=0.6,
+        )
+        search.vector_db.initialize = MagicMock()
+
+        stats = asyncio.run(search.get_index_stats())
+
+        assert "entropy_filtering" in stats
+        assert stats["entropy_filtering"]["enabled"] is True
+        assert stats["entropy_filtering"]["threshold"] == 0.4
+        assert stats["entropy_filtering"]["alpha"] == 0.6

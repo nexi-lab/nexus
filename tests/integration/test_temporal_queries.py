@@ -272,7 +272,9 @@ class TestTemporalQueryCombined:
         assert len(results) == 1
         assert "Memory from last week" in results[0]["content"]
 
-        logger.info(f"[TEST] Range {after_date.date()} to {before_date.date()} returned {len(results)} memories")
+        logger.info(
+            f"[TEST] Range {after_date.date()} to {before_date.date()} returned {len(results)} memories"
+        )
 
     def test_invalid_date_range_raises_error(self, memory_api):
         """Test that after > before raises ValueError."""
@@ -356,8 +358,7 @@ class TestPostgreSQLTimestampPrecision:
     """PostgreSQL-specific tests for timestamp precision."""
 
     @pytest.mark.skipif(
-        not DATABASE_URL.startswith("postgresql"),
-        reason="PostgreSQL-specific test"
+        not DATABASE_URL.startswith("postgresql"), reason="PostgreSQL-specific test"
     )
     def test_microsecond_precision(self, session):
         """Test that PostgreSQL handles microsecond precision correctly."""

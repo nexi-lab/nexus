@@ -143,9 +143,7 @@ class TestValidateTemporalParams:
 
     def test_after_and_before(self) -> None:
         """Test both after and before parameters."""
-        after_dt, before_dt = validate_temporal_params(
-            after="2025-01-01", before="2025-12-31"
-        )
+        after_dt, before_dt = validate_temporal_params(after="2025-01-01", before="2025-12-31")
         assert after_dt == datetime(2025, 1, 1, 0, 0, 0, tzinfo=UTC)
         assert before_dt == datetime(2025, 12, 31, 0, 0, 0, tzinfo=UTC)
 

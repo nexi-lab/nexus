@@ -140,9 +140,7 @@ def parse_temporal_range(value: str) -> TemporalRange:
         if start.month == 12:
             end = datetime(start.year + 1, 1, 1, tzinfo=UTC) - timedelta(seconds=1)
         else:
-            end = datetime(start.year, start.month + 1, 1, tzinfo=UTC) - timedelta(
-                seconds=1
-            )
+            end = datetime(start.year, start.month + 1, 1, tzinfo=UTC) - timedelta(seconds=1)
         return TemporalRange(start, end)
 
     # Date only: YYYY-MM-DD

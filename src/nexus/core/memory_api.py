@@ -393,9 +393,7 @@ class Memory:
 
         if search_mode == "keyword":
             # Keyword-only search using text matching
-            return self._keyword_search(
-                query, scope, memory_type, limit, after_dt, before_dt
-            )
+            return self._keyword_search(query, scope, memory_type, limit, after_dt, before_dt)
 
         # For semantic/hybrid search, we need embeddings
         if embedding_provider is None:
@@ -413,9 +411,7 @@ class Memory:
                     )
             except ImportError:
                 # Fall back to keyword search
-                return self._keyword_search(
-                    query, scope, memory_type, limit, after_dt, before_dt
-                )
+                return self._keyword_search(query, scope, memory_type, limit, after_dt, before_dt)
 
         # Generate query embedding
         query_embedding = asyncio.run(embedding_provider.embed_text(query))

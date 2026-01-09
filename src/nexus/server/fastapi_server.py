@@ -1556,7 +1556,9 @@ def _register_routes(app: FastAPI) -> None:
             "importance": 0.8,
             "namespace": "optional/namespace",
             "path_key": "optional_key",
-            "state": "active"
+            "state": "active",
+            "resolve_coreferences": false,
+            "coreference_context": "Prior conversation context"
         }
 
         Returns:
@@ -1577,6 +1579,8 @@ def _register_routes(app: FastAPI) -> None:
                 namespace=body.get("namespace"),
                 path_key=body.get("path_key"),
                 state=body.get("state", "active"),
+                resolve_coreferences=body.get("resolve_coreferences", False),
+                coreference_context=body.get("coreference_context"),
                 context=context,
             )
 

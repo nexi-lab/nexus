@@ -445,6 +445,7 @@ class TestSemanticSearchWithMocking:
             limit=5,
             filters={"file_type": "python"},
             search_mode="semantic",
+            adaptive_k=False,
         )
 
     @pytest.mark.asyncio

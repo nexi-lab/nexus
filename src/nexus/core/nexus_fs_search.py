@@ -2074,6 +2074,7 @@ class NexusFSSearchMixin:
         limit: int = 10,
         filters: dict[str, Any] | None = None,
         search_mode: str = "semantic",
+        adaptive_k: bool = False,
     ) -> builtins.list[dict[str, Any]]:
         """
         Search documents using natural language queries.
@@ -2086,9 +2087,10 @@ class NexusFSSearchMixin:
         Args:
             query: Natural language query (e.g., "How does authentication work?")
             path: Root path to search (default: all files)
-            limit: Maximum number of results (default: 10)
+            limit: Maximum number of results (default: 10, used as k_base when adaptive_k=True)
             filters: Optional filters (file_type, etc.)
             search_mode: Search mode - "keyword", "semantic", or "hybrid" (default: "semantic")
+            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search result dicts, each containing:
@@ -2132,6 +2134,7 @@ class NexusFSSearchMixin:
                 limit=limit,
                 path_filter=path if path != "/" else None,
                 search_mode=search_mode,
+                adaptive_k=adaptive_k,
             )
             return [
                 {
@@ -2149,7 +2152,12 @@ class NexusFSSearchMixin:
 
         # Fallback to sync search
         sync_results = await self._semantic_search.search(
-            query=query, path=path, limit=limit, filters=filters, search_mode=search_mode
+            query=query,
+            path=path,
+            limit=limit,
+            filters=filters,
+            search_mode=search_mode,
+            adaptive_k=adaptive_k,
         )
 
         return [

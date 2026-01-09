@@ -1266,6 +1266,10 @@ def _register_routes(app: FastAPI) -> None:
             0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0
         ),
         fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
+        adaptive_k: bool = Query(
+            False,
+            description="Adaptive retrieval: dynamically adjust limit based on query complexity",
+        ),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Execute a fast search query using the search daemon.
@@ -1275,10 +1279,11 @@ def _register_routes(app: FastAPI) -> None:
         Args:
             q: Search query text
             type: Search type ("keyword", "semantic", or "hybrid")
-            limit: Maximum number of results (1-100)
+            limit: Maximum number of results (1-100). Used as k_base when adaptive_k=True.
             path: Optional path prefix filter (e.g., "/docs/")
             alpha: Weight for semantic search (0.0 = all keyword, 1.0 = all semantic)
             fusion: Fusion method for hybrid search
+            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             Search results with scores and metadata
@@ -1321,6 +1326,7 @@ def _register_routes(app: FastAPI) -> None:
                 path_filter=path,
                 alpha=alpha,
                 fusion_method=fusion,
+                adaptive_k=adaptive_k,
             )
 
             latency_ms = (time.perf_counter() - start_time) * 1000

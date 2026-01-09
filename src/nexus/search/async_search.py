@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from nexus.llm.context_builder import ContextBuilder
 from nexus.search.chunking import ChunkStrategy, DocumentChunker
 from nexus.search.embeddings import EmbeddingProvider
 
@@ -421,21 +422,36 @@ class AsyncSemanticSearch:
         alpha: float = 0.5,
         fusion_method: str = "rrf",
         rrf_k: int = 60,
+        adaptive_k: bool = False,
     ) -> list[AsyncSearchResult]:
         """Search documents asynchronously.
 
         Args:
             query: Search query
-            limit: Maximum results
+            limit: Maximum results (used as k_base when adaptive_k=True)
             path_filter: Optional path prefix filter
             search_mode: "keyword", "semantic", or "hybrid"
             alpha: Weight for vector search in hybrid mode (0.0 = all BM25, 1.0 = all vector)
             fusion_method: Fusion method for hybrid: "rrf" (default), "weighted", "rrf_weighted"
             rrf_k: RRF constant (default: 60)
+            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
 
         Returns:
             List of search results
         """
+        # Apply adaptive k if enabled (Issue #1021)
+        if adaptive_k:
+            context_builder = ContextBuilder()
+            original_limit = limit
+            limit = context_builder.calculate_k_dynamic(query, k_base=limit)
+            if limit != original_limit:
+                logger.info(
+                    "[ASYNC-SEARCH] Adaptive k applied: %d -> %d for query: %s",
+                    original_limit,
+                    limit,
+                    query[:50],
+                )
+
         async with self.async_session() as session:
             if search_mode == "keyword":
                 results = await self._keyword_search(session, query, limit, path_filter)

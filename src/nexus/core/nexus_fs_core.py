@@ -2287,11 +2287,15 @@ class NexusFSCoreMixin:
             except Exception:
                 size = None
 
+        # Convert datetime to ISO string for wire compatibility with Rust FUSE client
+        # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
+        modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
+
         return {
             "size": size,
             "etag": meta.etag,
             "version": meta.version,
-            "modified_at": meta.modified_at,
+            "modified_at": modified_at_str,
             "is_directory": False,
         }
 

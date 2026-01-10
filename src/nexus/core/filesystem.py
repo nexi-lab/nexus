@@ -189,9 +189,7 @@ class NexusFilesystem(ABC):
     def edit(
         self,
         path: str,
-        edits: builtins.list[tuple[str, str]]
-        | builtins.list[dict[str, Any]]
-        | builtins.list[Any],
+        edits: builtins.list[tuple[str, str]] | builtins.list[dict[str, Any]] | builtins.list[Any],
         context: Any = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,

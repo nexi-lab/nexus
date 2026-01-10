@@ -185,6 +185,70 @@ class TestRebacCreate:
 
         assert tuple_id is not None
 
+    def test_rebac_create_normalizes_trailing_slash(self, nx: NexusFS) -> None:
+        """Test that file paths with trailing slashes are normalized.
+
+        This ensures that permissions granted on paths like /skill/pdf/ work
+        correctly with paths like /skill/pdf (without trailing slash), enabling
+        proper parent-child relationship traversal in ReBAC.
+        """
+        # Create relationship with trailing slash in path
+        tuple_id = nx.rebac_create(
+            subject=("user", "alice"),
+            relation="direct_owner",
+            object=("file", "/skill/pdf/"),  # Note trailing slash
+            tenant_id="default",
+        )
+
+        assert tuple_id is not None
+
+        # Verify permission works for path WITHOUT trailing slash
+        # because the tuple should have been created with normalized path
+        has_permission = nx.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/skill/pdf"),  # No trailing slash
+            tenant_id="default",
+        )
+        assert has_permission is True
+
+    def test_rebac_create_preserves_root_path(self, nx: NexusFS) -> None:
+        """Test that root path '/' is preserved and not converted to empty string."""
+        # Create relationship for root path
+        tuple_id = nx.rebac_create(
+            subject=("user", "admin"),
+            relation="direct_owner",
+            object=("file", "/"),  # Root path
+            tenant_id="default",
+        )
+
+        assert tuple_id is not None
+
+        # Verify permission works for root path
+        has_permission = nx.rebac_check(
+            subject=("user", "admin"),
+            permission="read",
+            object=("file", "/"),
+            tenant_id="default",
+        )
+        assert has_permission is True
+
+    def test_rebac_create_does_not_normalize_non_file_objects(self, nx: NexusFS) -> None:
+        """Test that non-file objects are not affected by trailing slash normalization."""
+        # Create relationship with trailing slash in group name (should NOT be normalized)
+        tuple_id = nx.rebac_create(
+            subject=("user", "alice"),
+            relation="member-of",
+            object=("group", "developers/"),  # Trailing slash intentionally preserved
+        )
+
+        assert tuple_id is not None
+
+        # List tuples to verify the object_id was NOT normalized
+        tuples = nx.rebac_list_tuples(object=("group", "developers/"))
+        assert len(tuples) >= 1
+        assert any(t["object_id"] == "developers/" for t in tuples)
+
 
 class TestRebacCheck:
     """Tests for rebac_check method."""

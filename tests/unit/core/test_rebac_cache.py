@@ -360,7 +360,8 @@ class TestRevisionQuantization:
 
             # Filter for the specific deprecation warning we're testing
             deprecation_warnings = [
-                warning for warning in w
+                warning
+                for warning in w
                 if issubclass(warning.category, DeprecationWarning)
                 and "quantization_interval is deprecated" in str(warning.message)
             ]

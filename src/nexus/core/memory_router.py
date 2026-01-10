@@ -7,6 +7,7 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 """
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -170,6 +171,8 @@ class MemoryViewRouter:
         before: datetime | None = None,  # #1023: Temporal filter - before this time
         entity_type: str | None = None,  # #1025: Filter by entity type
         person: str | None = None,  # #1025: Filter by person reference
+        event_after: datetime | None = None,  # #1028: Filter by event date >= value
+        event_before: datetime | None = None,  # #1028: Filter by event date <= value
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -187,6 +190,8 @@ class MemoryViewRouter:
             before: Filter memories created before this datetime. #1023
             entity_type: Filter by entity type (e.g., "PERSON", "ORG"). #1025
             person: Filter by person name reference. #1025
+            event_after: Filter by event earliest_date >= value. #1028
+            event_before: Filter by event latest_date <= value. #1028
             limit: Maximum number of results.
 
         Returns:
@@ -232,6 +237,12 @@ class MemoryViewRouter:
         if person:
             stmt = stmt.where(MemoryModel.person_refs.contains(person))
 
+        # #1028: Event date filtering (filter by extracted temporal metadata)
+        if event_after:
+            stmt = stmt.where(MemoryModel.earliest_date >= event_after)
+        if event_before:
+            stmt = stmt.where(MemoryModel.latest_date <= event_before)
+
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
 
@@ -259,6 +270,9 @@ class MemoryViewRouter:
         entities_json: str | None = None,  # #1025: Entity extraction JSON
         entity_types: str | None = None,  # #1025: Comma-separated entity types
         person_refs: str | None = None,  # #1025: Comma-separated person names
+        temporal_refs_json: str | None = None,  # #1028: Temporal refs JSON
+        earliest_date: Any = None,  # #1028: Earliest date mentioned
+        latest_date: Any = None,  # #1028: Latest date mentioned
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -279,6 +293,9 @@ class MemoryViewRouter:
             entities_json: JSON string of extracted entities. #1025
             entity_types: Comma-separated entity types (e.g., "PERSON,ORG,DATE"). #1025
             person_refs: Comma-separated person names for quick filtering. #1025
+            temporal_refs_json: JSON string of extracted temporal references. #1028
+            earliest_date: Earliest date mentioned in content. #1028
+            latest_date: Latest date mentioned in content. #1028
 
         Returns:
             MemoryModel: Created or updated memory.
@@ -329,6 +346,13 @@ class MemoryViewRouter:
                 existing_memory.entity_types = entity_types
             if person_refs is not None:
                 existing_memory.person_refs = person_refs
+            # Update temporal metadata fields (#1028)
+            if temporal_refs_json is not None:
+                existing_memory.temporal_refs_json = temporal_refs_json
+            if earliest_date is not None:
+                existing_memory.earliest_date = earliest_date
+            if latest_date is not None:
+                existing_memory.latest_date = latest_date
 
             existing_memory.validate()
             self.session.commit()
@@ -353,6 +377,9 @@ class MemoryViewRouter:
                 entities_json=entities_json,  # #1025
                 entity_types=entity_types,  # #1025
                 person_refs=person_refs,  # #1025
+                temporal_refs_json=temporal_refs_json,  # #1028
+                earliest_date=earliest_date,  # #1028
+                latest_date=latest_date,  # #1028
             )
 
             # Validate before adding

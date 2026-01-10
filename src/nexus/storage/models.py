@@ -1110,6 +1110,17 @@ class MemoryModel(Base):
         Text, nullable=True
     )  # Comma-separated person names for quick filtering
 
+    # Temporal metadata for date-based queries (#1028)
+    temporal_refs_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON: [{"original": "tomorrow", "resolved": "2025-01-11", "type": "date"}, ...]
+    earliest_date: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # Earliest date mentioned in content (indexed for queries)
+    latest_date: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # Latest date mentioned in content (indexed for queries)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -1134,6 +1145,8 @@ class MemoryModel(Base):
         Index("idx_memory_namespace", "namespace"),  # v0.8.0
         Index("idx_memory_state", "state"),  # #368 - memory state management
         Index("idx_memory_entity_types", "entity_types"),  # #1025 - entity type filtering
+        Index("idx_memory_earliest_date", "earliest_date"),  # #1028 - temporal query filtering
+        Index("idx_memory_latest_date", "latest_date"),  # #1028 - temporal query filtering
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

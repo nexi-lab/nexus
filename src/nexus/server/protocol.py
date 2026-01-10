@@ -346,6 +346,22 @@ class AppendParams:
 
 
 @dataclass
+class EditParams:
+    """Parameters for edit() method (Issue #800).
+
+    Apply surgical search/replace edits to a file without rewriting the entire file.
+    """
+
+    path: str
+    edits: list[
+        dict[str, Any]
+    ]  # List of edit operations: [{old_str, new_str, hint_line?, allow_multiple?}]
+    if_match: str | None = None  # Optimistic concurrency control
+    fuzzy_threshold: float = 0.85  # Fuzzy matching threshold (0.0-1.0)
+    preview: bool = False  # If True, return diff without applying changes
+
+
+@dataclass
 class WriteBatchParams:
     """Parameters for write_batch() method."""
 
@@ -1884,6 +1900,7 @@ METHOD_PARAMS = {
     "write": WriteParams,
     "write_batch": WriteBatchParams,
     "append": AppendParams,
+    "edit": EditParams,  # Issue #800: Surgical search/replace edits
     "delete": DeleteParams,
     "rename": RenameParams,
     "delete_bulk": DeleteBulkParams,

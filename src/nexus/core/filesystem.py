@@ -186,6 +186,80 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
+    def edit(
+        self,
+        path: str,
+        edits: builtins.list[tuple[str, str]]
+        | builtins.list[dict[str, Any]]
+        | builtins.list[Any],
+        context: Any = None,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Apply surgical search/replace edits to a file.
+
+        This enables precise file modifications without rewriting entire files,
+        reducing token cost and errors when used with LLMs.
+
+        Issue #800: Add edit engine with search/replace for surgical file edits.
+
+        Args:
+            path: Virtual path to edit
+            edits: List of edit operations. Each edit can be:
+                - Tuple: (old_str, new_str) - simple search/replace
+                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
+                         "allow_multiple": bool} - full control
+                - EditOperation: Direct EditOperation instance
+            context: Optional operation context for permission checks
+            if_match: Optional etag for optimistic concurrency control.
+                If provided, edit fails if file changed since read.
+            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
+                Default 0.85. Use 1.0 for exact matching only.
+            preview: If True, return preview without writing. Default False.
+
+        Returns:
+            Dict containing:
+                - success: bool - True if all edits applied
+                - diff: str - Unified diff of changes
+                - matches: list[dict] - Info about each match (type, line, similarity)
+                - applied_count: int - Number of edits applied
+                - etag: str - New etag (if not preview)
+                - version: int - New version (if not preview)
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only
+            ConflictError: If if_match doesn't match current etag
+            EditError: If edits cannot be applied (ambiguous match, not found)
+
+        Examples:
+            >>> # Simple search/replace
+            >>> result = fs.edit("/code/main.py", [
+            ...     ("def foo():", "def bar():"),
+            ...     ("return x", "return x + 1"),
+            ... ])
+            >>> print(result['diff'])
+
+            >>> # With optimistic concurrency
+            >>> content = fs.read("/code/main.py", return_metadata=True)
+            >>> result = fs.edit(
+            ...     "/code/main.py",
+            ...     [("old_text", "new_text")],
+            ...     if_match=content['etag']
+            ... )
+
+            >>> # Preview without writing
+            >>> result = fs.edit("/code/main.py", edits, preview=True)
+            >>> if result['success']:
+            ...     print(result['diff'])
+        """
+        ...
+
+    @abstractmethod
     def delete(self, path: str) -> None:
         """
         Delete a file.

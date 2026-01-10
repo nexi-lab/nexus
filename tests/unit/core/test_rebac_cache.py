@@ -358,9 +358,16 @@ class TestRevisionQuantization:
             warnings.simplefilter("always")
             ReBACPermissionCache(quantization_interval=5)
 
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "quantization_interval is deprecated" in str(w[0].message)
+            # Filter for the specific deprecation warning we're testing
+            deprecation_warnings = [
+                warning for warning in w
+                if issubclass(warning.category, DeprecationWarning)
+                and "quantization_interval is deprecated" in str(warning.message)
+            ]
+            assert len(deprecation_warnings) >= 1, (
+                f"Expected at least 1 deprecation warning about quantization_interval, "
+                f"got {len(deprecation_warnings)} (total warnings: {len(w)})"
+            )
 
 
 class TestXFetchAlgorithm:

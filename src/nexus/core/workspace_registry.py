@@ -310,6 +310,61 @@ class WorkspaceRegistry:
 
         return config
 
+    def update_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+    ) -> WorkspaceConfig:
+        """Update an existing workspace configuration.
+
+        Args:
+            path: Absolute path to workspace directory
+            name: Optional new friendly name (pass None to keep existing)
+            description: Optional new description (pass None to keep existing)
+            metadata: Optional new metadata (pass None to keep existing)
+
+        Returns:
+            Updated WorkspaceConfig object
+
+        Raises:
+            ValueError: If workspace not found
+        """
+        # Check if workspace exists
+        if path not in self._workspaces:
+            raise ValueError(f"Workspace not found: {path}")
+
+        # Get existing config
+        existing_config = self._workspaces[path]
+
+        # Update fields (only if provided)
+        if name is not None:
+            existing_config.name = name
+        if description is not None:
+            existing_config.description = description
+        if metadata is not None:
+            existing_config.metadata = metadata
+
+        # Update in cache
+        self._workspaces[path] = existing_config
+
+        # Update in database
+        from nexus.storage.models import WorkspaceConfigModel
+
+        with self.metadata.SessionLocal() as session:
+            ws_model = session.query(WorkspaceConfigModel).filter_by(path=path).first()
+            if ws_model:
+                if name is not None:
+                    ws_model.name = name
+                if description is not None:
+                    ws_model.description = description
+                if metadata is not None:
+                    ws_model.extra_metadata = json.dumps(metadata)
+                session.commit()
+
+        return existing_config
+
     def unregister_workspace(self, path: str) -> bool:
         """Unregister a workspace (does NOT delete files).
 

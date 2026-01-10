@@ -366,9 +366,9 @@ class ScopedFilesystem:
         """Unregister a workspace path."""
         return self._fs.unregister_workspace(self._scope_path(path))
 
-    def list_workspaces(self) -> builtins.list[dict]:
+    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
         """List all registered workspaces."""
-        result = self._fs.list_workspaces()
+        result = self._fs.list_workspaces(context=context)
         return [self._unscope_dict(r, ["path"]) for r in result]
 
     def get_workspace_info(self, path: str) -> dict | None:

@@ -461,9 +461,12 @@ class SkillService:
     ) -> PromptContext:
         """Get skill metadata formatted for system prompt injection.
 
-        Returns metadata for subscribed skills in a format suitable for
+        Returns metadata for subscribed/assigned skills in a format suitable for
         agent system prompts. Uses progressive disclosure - only metadata,
         not full content.
+
+        For users: reads from .subscribed.yaml
+        For agents: reads assigned_skills from config.yaml metadata
 
         Args:
             context: Operation context with user_id and tenant_id
@@ -475,7 +478,12 @@ class SkillService:
         self._validate_context(context)
         assert context is not None  # Validated by _validate_context
 
-        subscribed_skills = self._load_subscriptions(context)
+        # For agents: read assigned_skills from config.yaml
+        # For users: read subscriptions from .subscribed.yaml
+        if hasattr(context, "subject_type") and context.subject_type == "agent":
+            subscribed_skills = self._load_assigned_skills(context)
+        else:
+            subscribed_skills = self._load_subscriptions(context)
 
         skills_for_prompt: list[SkillInfo] = []
 
@@ -735,6 +743,54 @@ class SkillService:
                     return result
         except Exception:
             pass  # File doesn't exist or invalid
+
+        return []
+
+    def _load_assigned_skills(self, context: OperationContext) -> list[str]:
+        """Load agent's assigned skills from config.yaml metadata.
+
+        For agents, skills are assigned (not subscribed) and stored in
+        the agent's config.yaml under metadata.assigned_skills.
+
+        Args:
+            context: Operation context with subject_id as agent_id (format: user_id,agent_name)
+
+        Returns:
+            List of assigned skill paths
+        """
+        import yaml
+
+        # Extract agent_id from context (format: user_id,agent_name)
+        # For agent contexts: agent_id or subject_id contains the full agent_id
+        agent_id = context.agent_id or context.subject_id
+
+        if not agent_id or "," not in str(agent_id):
+            logger.warning(f"Invalid agent_id format: {agent_id}")
+            return []
+
+        # Parse agent_id to get user_id and agent_name
+        user_id, agent_name = agent_id.split(",", 1)
+
+        # Build path to agent's config.yaml
+        config_path = f"/tenant:{context.tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+
+        try:
+            content = self._gw.read(config_path, context=context)
+            if isinstance(content, bytes):
+                content = content.decode("utf-8")
+            if content:
+                data = yaml.safe_load(content)
+                if data and isinstance(data, dict):
+                    # Get assigned_skills from metadata
+                    metadata = data.get("metadata", {})
+                    if isinstance(metadata, dict):
+                        assigned_skills: list[str] = metadata.get("assigned_skills", [])
+                        logger.info(
+                            f"Loaded {len(assigned_skills)} assigned skills for agent {agent_id}"
+                        )
+                        return assigned_skills
+        except Exception as e:
+            logger.warning(f"Failed to load assigned skills for agent {agent_id}: {e}")
 
         return []
 

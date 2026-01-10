@@ -3376,11 +3376,40 @@ class NexusFS(  # type: ignore[misc]
         return self._workspace_registry.unregister_workspace(path)
 
     @rpc_expose()
-    def list_workspaces(self) -> list[dict]:
-        """List all registered workspaces.
+    def update_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        """Update an existing workspace configuration.
+
+        Args:
+            path: Workspace path to update
+            name: Optional new friendly name
+            description: Optional new description
+            metadata: Optional new metadata
 
         Returns:
-            List of workspace configuration dicts
+            Updated workspace configuration dict
+
+        Example:
+            >>> nx.update_workspace("/my-workspace", name="Updated Name", description="New description")
+            {'path': '/my-workspace', 'name': 'Updated Name', 'description': 'New description', ...}
+        """
+        config = self._workspace_registry.update_workspace(path, name, description, metadata)
+        return config.to_dict()
+
+    @rpc_expose()
+    def list_workspaces(self, context: Any | None = None) -> list[dict]:
+        """List all registered workspaces for the current user.
+
+        Args:
+            context: Optional operation context (passed by RPC auto-dispatch)
+
+        Returns:
+            List of workspace configuration dicts filtered by current user
 
         Example:
             >>> workspaces = nx.list_workspaces()
@@ -3388,6 +3417,18 @@ class NexusFS(  # type: ignore[misc]
             ...     print(f"{ws['path']}: {ws['name']}")
         """
         configs = self._workspace_registry.list_workspaces()
+
+        # Filter by current user if context is available
+        if context is not None:
+            user_id = getattr(context, "user_id", None)
+            tenant_id = getattr(context, "tenant_id", None)
+
+            if user_id and tenant_id:
+                # Filter workspaces that belong to the current user
+                # Workspace paths follow pattern: /tenant:{tenant_id}/user:{user_id}/workspace/...
+                user_prefix = f"/tenant:{tenant_id}/user:{user_id}/workspace/"
+                configs = [c for c in configs if c.path.startswith(user_prefix)]
+
         return [c.to_dict() for c in configs]
 
     @rpc_expose()

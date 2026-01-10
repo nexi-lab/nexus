@@ -97,19 +97,28 @@ def setup_telemetry(
         _endpoint = endpoint or os.environ.get(
             "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
         )
-        _insecure = insecure if insecure is not None else (
-            os.environ.get("OTEL_EXPORTER_OTLP_INSECURE", "true").lower() in ("true", "1", "yes")
+        _insecure = (
+            insecure
+            if insecure is not None
+            else (
+                os.environ.get("OTEL_EXPORTER_OTLP_INSECURE", "true").lower()
+                in ("true", "1", "yes")
+            )
         )
-        _sample_ratio = sample_ratio if sample_ratio is not None else float(
-            os.environ.get("OTEL_TRACES_SAMPLER_ARG", "1.0")
+        _sample_ratio = (
+            sample_ratio
+            if sample_ratio is not None
+            else float(os.environ.get("OTEL_TRACES_SAMPLER_ARG", "1.0"))
         )
 
         # Create resource with service info
-        resource = Resource.create({
-            "service.name": _service_name,
-            "service.version": _get_version(),
-            "deployment.environment": os.environ.get("OTEL_ENVIRONMENT", "development"),
-        })
+        resource = Resource.create(
+            {
+                "service.name": _service_name,
+                "service.version": _get_version(),
+                "deployment.environment": os.environ.get("OTEL_ENVIRONMENT", "development"),
+            }
+        )
 
         # Create sampler (parentbased respects parent span's sampling decision)
         sampler = ParentBasedTraceIdRatio(_sample_ratio)
@@ -155,6 +164,7 @@ def _get_version() -> str:
     """Get Nexus version for resource attributes."""
     try:
         from importlib.metadata import version
+
         return version("nexus-ai-fs")
     except Exception:
         return "unknown"
@@ -168,6 +178,7 @@ def _instrument_libraries() -> None:
     # HTTPX - async HTTP client
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         HTTPXClientInstrumentor().instrument()
         logger.debug("Instrumented: httpx")
     except ImportError:
@@ -178,6 +189,7 @@ def _instrument_libraries() -> None:
     # SQLAlchemy - database
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
         SQLAlchemyInstrumentor().instrument()
         logger.debug("Instrumented: sqlalchemy")
     except ImportError:
@@ -188,6 +200,7 @@ def _instrument_libraries() -> None:
     # Redis - cache
     try:
         from opentelemetry.instrumentation.redis import RedisInstrumentor
+
         RedisInstrumentor().instrument()
         logger.debug("Instrumented: redis")
     except ImportError:
@@ -198,6 +211,7 @@ def _instrument_libraries() -> None:
     # aiohttp - async HTTP client (used by some backends)
     try:
         from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+
         AioHttpClientInstrumentor().instrument()
         logger.debug("Instrumented: aiohttp")
     except ImportError:
@@ -256,6 +270,7 @@ def get_tracer(name: str | None = None) -> Tracer | None:
 
     try:
         from opentelemetry import trace
+
         return trace.get_tracer(name or __name__)
     except Exception:
         return None
@@ -276,6 +291,7 @@ def add_span_attribute(key: str, value: str | int | float | bool) -> None:
 
     try:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span:
             span.set_attribute(key, value)
@@ -294,6 +310,7 @@ def record_exception(exception: Exception) -> None:
 
     try:
         from opentelemetry import trace
+
         span = trace.get_current_span()
         if span:
             span.record_exception(exception)
@@ -314,6 +331,7 @@ def shutdown_telemetry() -> None:
 
     try:
         from opentelemetry import trace
+
         provider = trace.get_tracer_provider()
         if hasattr(provider, "shutdown"):
             provider.shutdown()

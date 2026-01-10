@@ -3964,6 +3964,38 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("get_workspace_info", {"path": path})
         return result  # type: ignore[no-any-return]
 
+    def update_workspace(
+        self,
+        path: str,
+        name: str | None = None,
+        description: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Update workspace name, description, or metadata.
+
+        Args:
+            path: Workspace path
+            name: New name (None = keep existing)
+            description: New description (None = keep existing)
+            metadata: New metadata dict (None = keep existing)
+
+        Returns:
+            Updated workspace configuration dict
+
+        Raises:
+            RemoteFilesystemError: If workspace not found or update fails
+        """
+        params: dict[str, Any] = {"path": path}
+        if name is not None:
+            params["name"] = name
+        if description is not None:
+            params["description"] = description
+        if metadata is not None:
+            params["metadata"] = metadata
+
+        result = self._call_rpc("update_workspace", params)
+        return result  # type: ignore[no-any-return]
+
     def register_memory(
         self,
         path: str,

@@ -282,7 +282,13 @@ class NexusFSReBACMixin:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
         # Normalize file paths by removing trailing slashes for proper parent traversal
-        if object[0] == "file" and isinstance(object[1], str) and object[1].endswith("/"):
+        # Special case: Keep root path "/" as-is to avoid empty string
+        if (
+            object[0] == "file"
+            and isinstance(object[1], str)
+            and object[1].endswith("/")
+            and object[1] != "/"
+        ):
             object = (object[0], object[1].rstrip("/"))
 
         # Use tenant_id from context if not explicitly provided

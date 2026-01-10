@@ -853,7 +853,9 @@ def extract_temporal_metadata(
     }
 
 
-def _parse_date_from_resolved(resolved: str, _reference_time: datetime | None = None) -> datetime | None:
+def _parse_date_from_resolved(
+    resolved: str, _reference_time: datetime | None = None
+) -> datetime | None:
     """Parse a datetime from a resolved temporal string.
 
     Handles various formats like:

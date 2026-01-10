@@ -479,8 +479,12 @@ class Memory:
                     "entity_types": memory.entity_types,  # #1025
                     "person_refs": memory.person_refs,  # #1025
                     "temporal_refs_json": memory.temporal_refs_json,  # #1028
-                    "earliest_date": memory.earliest_date.isoformat() if memory.earliest_date else None,  # #1028
-                    "latest_date": memory.latest_date.isoformat() if memory.latest_date else None,  # #1028
+                    "earliest_date": memory.earliest_date.isoformat()
+                    if memory.earliest_date
+                    else None,  # #1028
+                    "latest_date": memory.latest_date.isoformat()
+                    if memory.latest_date
+                    else None,  # #1028
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }

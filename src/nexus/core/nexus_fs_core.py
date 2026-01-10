@@ -1544,6 +1544,209 @@ class NexusFSCoreMixin:
             force=force,
         )
 
+    @rpc_expose(description="Apply surgical search/replace edits to a file")
+    def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
+        context: OperationContext | None = None,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Apply surgical search/replace edits to a file.
+
+        This enables precise file modifications without rewriting entire files,
+        reducing token cost and errors when used with LLMs.
+
+        Issue #800: Add edit engine with search/replace for surgical file edits.
+
+        Uses a layered matching strategy:
+        1. Exact match (fast path)
+        2. Whitespace-normalized match
+        3. Fuzzy match (Levenshtein similarity)
+
+        Args:
+            path: Virtual path to edit
+            edits: List of edit operations. Each edit can be:
+                - Tuple: (old_str, new_str) - simple search/replace
+                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
+                         "allow_multiple": bool} - full control
+                - EditOperation: Direct EditOperation instance
+            context: Optional operation context for permission checks
+            if_match: Optional etag for optimistic concurrency control.
+                If provided, edit fails if file changed since read.
+            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
+                Default 0.85. Use 1.0 for exact matching only.
+            preview: If True, return preview without writing. Default False.
+
+        Returns:
+            Dict containing:
+                - success: bool - True if all edits applied
+                - diff: str - Unified diff of changes
+                - matches: list[dict] - Info about each match (type, line, similarity)
+                - applied_count: int - Number of edits applied
+                - etag: str - New etag (if not preview)
+                - version: int - New version (if not preview)
+                - errors: list[str] - Error messages if any edits failed
+
+        Raises:
+            NexusFileNotFoundError: If file doesn't exist
+            InvalidPathError: If path is invalid
+            AccessDeniedError: If access is denied
+            PermissionError: If path is read-only
+            ConflictError: If if_match doesn't match current etag
+
+        Examples:
+            >>> # Simple search/replace
+            >>> result = nx.edit("/code/main.py", [
+            ...     ("def foo():", "def bar():"),
+            ...     ("return x", "return x + 1"),
+            ... ])
+            >>> print(result['diff'])
+
+            >>> # With optimistic concurrency
+            >>> content = nx.read("/code/main.py", return_metadata=True)
+            >>> result = nx.edit(
+            ...     "/code/main.py",
+            ...     [("old_text", "new_text")],
+            ...     if_match=content['etag']
+            ... )
+
+            >>> # Preview without writing
+            >>> result = nx.edit("/code/main.py", edits, preview=True)
+            >>> if result['success']:
+            ...     print(result['diff'])
+
+            >>> # With fuzzy matching
+            >>> result = nx.edit("/code/main.py", [
+            ...     {"old_str": "def foo():", "new_str": "def bar():", "hint_line": 42}
+            ... ], fuzzy_threshold=0.8)
+        """
+        from nexus.core.edit_engine import EditEngine
+        from nexus.core.edit_engine import EditOperation as EditOp
+
+        path = self._validate_path(path)
+
+        # Read current content with metadata
+        result = self.read(path, context=context, return_metadata=True)
+        assert isinstance(result, dict), "Expected dict when return_metadata=True"
+
+        content_bytes: bytes = result["content"]
+        current_etag = result.get("etag")
+
+        # Check etag if provided (optimistic concurrency control)
+        if if_match is not None and current_etag != if_match:
+            raise ConflictError(
+                path=path,
+                expected_etag=if_match,
+                current_etag=current_etag or "(no etag)",
+            )
+
+        # Decode content to string for editing
+        try:
+            content = content_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            return {
+                "success": False,
+                "diff": "",
+                "matches": [],
+                "applied_count": 0,
+                "errors": [f"File is not valid UTF-8 text: {e}"],
+            }
+
+        # Convert edits to EditOperation instances
+        edit_operations: list[EditOp] = []
+        for edit in edits:
+            if isinstance(edit, EditOp):
+                edit_operations.append(edit)
+            elif isinstance(edit, (tuple, list)) and len(edit) >= 2:
+                # Handle both tuple and list (JSON deserializes tuples as lists)
+                edit_operations.append(EditOp(old_str=edit[0], new_str=edit[1]))
+            elif isinstance(edit, dict):
+                edit_operations.append(
+                    EditOp(
+                        old_str=edit["old_str"],
+                        new_str=edit["new_str"],
+                        hint_line=edit.get("hint_line"),
+                        allow_multiple=edit.get("allow_multiple", False),
+                    )
+                )
+            else:
+                return {
+                    "success": False,
+                    "diff": "",
+                    "matches": [],
+                    "applied_count": 0,
+                    "errors": [
+                        f"Invalid edit format: expected tuple (old, new), dict, or EditOperation, got {type(edit)}"
+                    ],
+                }
+
+        # Apply edits
+        engine = EditEngine(
+            fuzzy_threshold=fuzzy_threshold,
+            enable_fuzzy=fuzzy_threshold < 1.0,
+        )
+        edit_result = engine.apply_edits(content, edit_operations)
+
+        # Convert matches to serializable dicts
+        matches_list = [
+            {
+                "edit_index": m.edit_index,
+                "match_type": m.match_type,
+                "similarity": m.similarity,
+                "line_start": m.line_start,
+                "line_end": m.line_end,
+                "original_text": m.original_text[:200] if m.original_text else "",
+                "search_strategy": m.search_strategy,
+                "match_count": m.match_count,
+            }
+            for m in edit_result.matches
+        ]
+
+        # If edits failed, return error without writing
+        if not edit_result.success:
+            return {
+                "success": False,
+                "diff": edit_result.diff,
+                "matches": matches_list,
+                "applied_count": edit_result.applied_count,
+                "errors": edit_result.errors,
+            }
+
+        # If preview mode, return without writing
+        if preview:
+            return {
+                "success": True,
+                "diff": edit_result.diff,
+                "matches": matches_list,
+                "applied_count": edit_result.applied_count,
+                "preview": True,
+                "new_content": edit_result.content,
+            }
+
+        # Write the edited content
+        new_content_bytes = edit_result.content.encode("utf-8")
+        write_result = self.write(
+            path,
+            new_content_bytes,
+            context=context,
+            if_match=current_etag,  # Use current etag for safety
+        )
+
+        return {
+            "success": True,
+            "diff": edit_result.diff,
+            "matches": matches_list,
+            "applied_count": edit_result.applied_count,
+            "etag": write_result.get("etag"),
+            "version": write_result.get("version"),
+            "size": write_result.get("size"),
+            "modified_at": write_result.get("modified_at"),
+        }
+
     @rpc_expose(description="Write multiple files in a single transaction")
     def write_batch(
         self, files: list[tuple[str, bytes]], context: OperationContext | None = None
@@ -2287,11 +2490,15 @@ class NexusFSCoreMixin:
             except Exception:
                 size = None
 
+        # Convert datetime to ISO string for wire compatibility with Rust FUSE client
+        # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
+        modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
+
         return {
             "size": size,
             "etag": meta.etag,
             "version": meta.version,
-            "modified_at": meta.modified_at,
+            "modified_at": modified_at_str,
             "is_directory": False,
         }
 

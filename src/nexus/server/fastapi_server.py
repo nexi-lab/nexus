@@ -1441,6 +1441,12 @@ def _register_routes(app: FastAPI) -> None:
             None, description="Filter by entity type (PERSON, ORG, LOCATION, DATE, etc.). #1025"
         ),
         person: str | None = Query(None, description="Filter by person name reference. #1025"),
+        event_after: str | None = Query(
+            None, description="Filter by event date >= value (ISO-8601). #1028"
+        ),
+        event_before: str | None = Query(
+            None, description="Filter by event date <= value (ISO-8601). #1028"
+        ),
         limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
@@ -1455,6 +1461,10 @@ def _register_routes(app: FastAPI) -> None:
         - entity_type: Filter by extracted entity type (PERSON, ORG, LOCATION, DATE, etc.)
         - person: Filter by person name reference
 
+        Supports event date filters (Issue #1028 - Temporal anchoring):
+        - event_after: Filter by earliest_date >= value (date mentioned in content)
+        - event_before: Filter by latest_date <= value (date mentioned in content)
+
         Note: 'during' cannot be used together with 'after' or 'before'.
 
         Args:
@@ -1466,6 +1476,8 @@ def _register_routes(app: FastAPI) -> None:
             during: Partial date string (year, year-month, or full date)
             entity_type: Entity type to filter by (e.g., PERSON, ORG)
             person: Person name to filter by
+            event_after: ISO-8601 date to filter by earliest_date >= value. #1028
+            event_before: ISO-8601 date to filter by latest_date <= value. #1028
             limit: Maximum number of results
 
         Returns:
@@ -1486,6 +1498,8 @@ def _register_routes(app: FastAPI) -> None:
                 during=during,
                 entity_type=entity_type,
                 person=person,
+                event_after=event_after,
+                event_before=event_before,
                 limit=limit,
                 context=context,
             )
@@ -1502,6 +1516,8 @@ def _register_routes(app: FastAPI) -> None:
                     "during": during,
                     "entity_type": entity_type,
                     "person": person,
+                    "event_after": event_after,
+                    "event_before": event_before,
                 },
             }
 
@@ -1598,7 +1614,8 @@ def _register_routes(app: FastAPI) -> None:
             "resolve_coreferences": false,
             "coreference_context": "Prior conversation context",
             "resolve_temporal": false,
-            "temporal_reference_time": "2025-01-10T12:00:00Z"
+            "temporal_reference_time": "2025-01-10T12:00:00Z",
+            "extract_temporal": true
         }
 
         Returns:
@@ -1623,6 +1640,7 @@ def _register_routes(app: FastAPI) -> None:
                 coreference_context=body.get("coreference_context"),
                 resolve_temporal=body.get("resolve_temporal", False),
                 temporal_reference_time=body.get("temporal_reference_time"),
+                extract_temporal=body.get("extract_temporal", True),
                 context=context,
             )
 

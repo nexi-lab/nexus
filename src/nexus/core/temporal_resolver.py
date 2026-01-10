@@ -786,3 +786,114 @@ def resolve_temporal(
     resolver = get_temporal_resolver(llm_provider)
     result = resolver.resolve(text, reference_time, context)
     return result.resolved_text
+
+
+def extract_temporal_metadata(
+    text: str,
+    reference_time: datetime | str | None = None,
+) -> dict[str, Any]:
+    """Extract temporal metadata from text for database storage.
+
+    Issue #1028: Extracts temporal references for date-based queries.
+    Unlike resolve_temporal(), this function returns metadata about
+    temporal references without modifying the text.
+
+    Args:
+        text: Text to extract temporal references from.
+        reference_time: Reference time for resolving relative expressions.
+                       Can be datetime or ISO-8601 string.
+                       Defaults to current time if not provided.
+
+    Returns:
+        Dictionary with:
+        - temporal_refs: List of extracted temporal references with original
+                        text and resolved dates
+        - earliest_date: Earliest datetime mentioned in content (or None)
+        - latest_date: Latest datetime mentioned in content (or None)
+
+    Example:
+        >>> from datetime import datetime
+        >>> result = extract_temporal_metadata(
+        ...     "Meeting tomorrow, follow-up in 3 days",
+        ...     reference_time=datetime(2025, 1, 10, 12, 0)
+        ... )
+        >>> result["temporal_refs"]
+        [{"original": "tomorrow", "resolved": "2025-01-11", "type": "tomorrow"},
+         {"original": "in 3 days", "resolved": "2025-01-13", "type": "in_x_days"}]
+        >>> result["earliest_date"]
+        datetime(2025, 1, 11, 0, 0)
+        >>> result["latest_date"]
+        datetime(2025, 1, 13, 0, 0)
+    """
+    # Parse reference time if string
+    if isinstance(reference_time, str):
+        reference_time = datetime.fromisoformat(reference_time.replace("Z", "+00:00"))
+
+    # Use heuristic resolver for extraction (no LLM needed)
+    resolver = HeuristicTemporalResolver()
+    result = resolver.resolve(text, reference_time)
+
+    # Extract dates from replacements
+    dates: list[datetime] = []
+    for replacement in result.replacements:
+        resolved = replacement.get("resolved", "")
+        # Try to parse date from resolved string
+        parsed_date = _parse_date_from_resolved(resolved)
+        if parsed_date:
+            dates.append(parsed_date)
+
+    # Calculate earliest and latest dates
+    earliest_date = min(dates) if dates else None
+    latest_date = max(dates) if dates else None
+
+    return {
+        "temporal_refs": result.replacements,
+        "earliest_date": earliest_date,
+        "latest_date": latest_date,
+    }
+
+
+def _parse_date_from_resolved(
+    resolved: str, _reference_time: datetime | None = None
+) -> datetime | None:
+    """Parse a datetime from a resolved temporal string.
+
+    Handles various formats like:
+    - "2025-01-11" (ISO date)
+    - "on 2025-01-11" (with prefix)
+    - "January 2025" (month year)
+    - "week of 2025-01-13" (week prefix)
+
+    Args:
+        resolved: Resolved temporal string.
+        reference_time: Reference time for year inference.
+
+    Returns:
+        Parsed datetime or None if parsing fails.
+    """
+    if not resolved:
+        return None
+
+    # Try ISO date format (YYYY-MM-DD)
+    iso_match = re.search(r"\d{4}-\d{2}-\d{2}", resolved)
+    if iso_match:
+        try:
+            return datetime.strptime(iso_match.group(), "%Y-%m-%d")
+        except ValueError:
+            pass
+
+    # Try month year format (e.g., "January 2025")
+    month_year_match = re.search(
+        r"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})",
+        resolved,
+    )
+    if month_year_match:
+        try:
+            month_name = month_year_match.group(1)
+            year = int(month_year_match.group(2))
+            month_num = list(calendar.month_name).index(month_name)
+            return datetime(year, month_num, 1)
+        except (ValueError, IndexError):
+            pass
+
+    return None

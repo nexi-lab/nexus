@@ -730,6 +730,16 @@ class UnregisterWorkspaceParams:
 
 
 @dataclass
+class UpdateWorkspaceParams:
+    """Parameters for update_workspace() method."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass
 class GetMemoryInfoParams:
     """Parameters for get_memory_info() method (v0.5.0)."""
 
@@ -1940,6 +1950,7 @@ METHOD_PARAMS = {
     "namespace_delete": NamespaceDeleteParams,
     "register_workspace": RegisterWorkspaceParams,  # v0.5.0
     "unregister_workspace": UnregisterWorkspaceParams,  # v0.5.0
+    "update_workspace": UpdateWorkspaceParams,  # Update workspace config
     "get_workspace_info": GetWorkspaceInfoParams,  # v0.5.0
     "list_workspaces": ListWorkspacesParams,  # v0.5.0
     "workspace_snapshot": WorkspaceSnapshotParams,  # v0.5.0

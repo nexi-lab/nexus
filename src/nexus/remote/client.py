@@ -1505,6 +1505,73 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         return result  # type: ignore[no-any-return]
 
+    def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
+        context: Any = None,  # noqa: ARG002
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """Apply surgical search/replace edits to a file.
+
+        Args:
+            path: Virtual path to edit
+            edits: List of edit operations (tuples, dicts, or EditOperation)
+            context: Unused in remote client (handled server-side)
+            if_match: Optional etag for optimistic concurrency control
+            fuzzy_threshold: Similarity threshold for fuzzy matching
+            preview: If True, return preview without writing
+
+        Returns:
+            Dict with success, diff, matches, applied_count, etag, version
+
+        Examples:
+            >>> result = nx.edit("/code/main.py", [
+            ...     ("def foo():", "def bar():"),
+            ... ])
+            >>> print(result['diff'])
+        """
+        # Convert EditOperation instances to dicts for serialization
+        serialized_edits: list[dict[str, Any]] = []
+        for edit in edits:
+            if isinstance(edit, (tuple, list)) and len(edit) >= 2:
+                # Handle tuple/list format: (old_str, new_str)
+                serialized_edits.append({"old_str": edit[0], "new_str": edit[1]})
+            elif isinstance(edit, dict):
+                serialized_edits.append(edit)
+            elif hasattr(edit, "old_str") and hasattr(edit, "new_str"):
+                # EditOperation instance
+                serialized_edits.append(
+                    {
+                        "old_str": edit.old_str,
+                        "new_str": edit.new_str,
+                        "hint_line": getattr(edit, "hint_line", None),
+                        "allow_multiple": getattr(edit, "allow_multiple", False),
+                    }
+                )
+            else:
+                # Unknown format - pass through as-is (server will validate)
+                serialized_edits.append({"old_str": str(edit), "new_str": ""})
+
+        result = self._call_rpc(
+            "edit",
+            {
+                "path": path,
+                "edits": serialized_edits,
+                "if_match": if_match,
+                "fuzzy_threshold": fuzzy_threshold,
+                "preview": preview,
+            },
+        )
+
+        # Invalidate negative cache after successful edit (if not preview)
+        if not preview and result.get("success"):
+            self._negative_cache_invalidate(path)
+
+        return result  # type: ignore[no-any-return]
+
     def write_batch(
         self,
         files: list[tuple[str, bytes]],

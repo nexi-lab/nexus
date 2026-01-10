@@ -476,7 +476,8 @@ class HeuristicCorefResolver(CorefResolver):
             replacement_pattern = self.PRONOUN_REPLACEMENTS.get(pronoun, "{name}")
             replacement = replacement_pattern.format(name=entity)
 
-            # Preserve capitalization
+            # Preserve capitalization for start of sentence
+            # Note: Proper nouns remain capitalized regardless of original pronoun case
             if original[0].isupper():
                 replacement = replacement[0].upper() + replacement[1:]
 

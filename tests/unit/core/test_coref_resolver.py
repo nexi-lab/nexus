@@ -93,10 +93,20 @@ class TestHeuristicCorefResolver:
         assert len(result.replacements) == 0
 
     def test_preserve_capitalization(self, resolver):
-        """Test that capitalization is preserved in replacements."""
-        text = "he went to the store."  # lowercase 'he'
+        """Test capitalization handling in replacements.
+
+        Proper nouns like 'John' remain capitalized even when replacing
+        lowercase pronouns, as this is grammatically correct in English.
+        """
+        # Uppercase pronoun at start of sentence stays capitalized
+        text = "He went to the store."
         result = resolver.resolve(text, entity_hints={"male": "John"})
-        assert result.resolved_text == "john went to the store."
+        assert result.resolved_text == "John went to the store."
+
+        # Proper nouns stay capitalized when replacing lowercase pronouns
+        text2 = "I saw him yesterday."
+        result2 = resolver.resolve(text2, entity_hints={"male": "John"})
+        assert result2.resolved_text == "I saw John yesterday."
 
     def test_multiple_pronouns(self, resolver):
         """Test multiple pronoun replacement."""

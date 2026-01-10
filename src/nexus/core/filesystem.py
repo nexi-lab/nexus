@@ -735,8 +735,11 @@ class NexusFilesystem(ABC):
         ...
 
     @abstractmethod
-    def list_workspaces(self) -> builtins.list[dict]:
+    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:
         """List all registered workspaces.
+
+        Args:
+            context: Optional operation context for filtering
 
         Returns:
             List of workspace info dicts

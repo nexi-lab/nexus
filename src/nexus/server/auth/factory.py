@@ -119,6 +119,17 @@ class DiscriminatingAuthProvider(AuthProvider):
         result = await self.authenticate(token)
         return result.authenticated
 
+    @property
+    def session_factory(self) -> Any:
+        """Get session_factory from API key provider for admin operations.
+
+        Returns:
+            Session factory from the API key provider, or None if not available
+        """
+        if self.api_key_provider and hasattr(self.api_key_provider, "session_factory"):
+            return self.api_key_provider.session_factory
+        return None
+
     def close(self) -> None:
         """Cleanup resources from both providers."""
         if self.api_key_provider:

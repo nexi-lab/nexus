@@ -3933,15 +3933,19 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("unregister_workspace", {"path": path})
         return result  # type: ignore[no-any-return]
 
-    def list_workspaces(self) -> builtins.list[dict]:
-        """List all registered workspaces.
+    def list_workspaces(self, context: Any | None = None) -> builtins.list[dict]:  # noqa: ARG002
+        """List all registered workspaces for the current user.
+
+        Args:
+            context: Optional operation context (automatically provided by RPC server)
 
         Returns:
-            List of workspace configuration dicts
+            List of workspace configuration dicts filtered by current user
 
         Raises:
             RemoteFilesystemError: If listing fails
         """
+        # Context is managed at the RPC session level, not passed explicitly
         result = self._call_rpc("list_workspaces", {})
         return result  # type: ignore[no-any-return]
 

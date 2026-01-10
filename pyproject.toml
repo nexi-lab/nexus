@@ -94,11 +94,23 @@ dependencies = [
     "bsdiff4>=1.2.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
+    # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
+    # 10-100x faster than difflib (Rust-backed)
+    "rapidfuzz>=3.0.0",
     # LZ4 compression for ContentCache 3-4x capacity (Issue #908)
     "lz4>=4.3.0",
     # Rate limiting for DoS protection (Issue #780)
     "slowapi>=0.1.9",
     "limits>=3.6.0",
+    # OpenTelemetry observability (Issue #764)
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.41b0",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.41b0",
+    "opentelemetry-instrumentation-redis>=0.41b0",
+    "opentelemetry-instrumentation-aiohttp-client>=0.41b0",
 ]
 
 [project.optional-dependencies]

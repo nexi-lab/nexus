@@ -284,6 +284,11 @@ def test_protocol_runtime_checkable() -> None:
             def append(self, path, content, context=None, if_match=None, force=False):
                 return {}
 
+            def edit(
+                self, path, edits, context=None, if_match=None, fuzzy_threshold=0.85, preview=False
+            ):
+                return {}
+
             def sandbox_create(
                 self, name, ttl_minutes=10, provider="e2b", template_id=None, context=None
             ):

@@ -102,6 +102,7 @@ class Memory:
         resolve_temporal: bool = False,  # #1027: Resolve temporal expressions to absolute dates
         temporal_reference_time: Any = None,  # #1027: Reference time for temporal resolution
         extract_entities: bool = True,  # #1025: Extract named entities
+        extract_temporal: bool = True,  # #1028: Extract temporal metadata for date queries
     ) -> str:
         """Store a memory.
 
@@ -120,6 +121,7 @@ class Memory:
             resolve_temporal: Resolve temporal expressions to absolute dates. #1027
             temporal_reference_time: Reference time for temporal resolution (datetime or ISO string). #1027
             extract_entities: Extract named entities for symbolic filtering. Defaults to True. #1025
+            extract_temporal: Extract temporal metadata for date-based queries. Defaults to True. #1028
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -277,6 +279,33 @@ class Memory:
                     entity_types_str = extractor.get_entity_types_string(text_for_entities)
                     person_refs_str = extractor.get_person_refs_string(text_for_entities)
 
+        # #1028: Extract temporal metadata for date-based queries
+        temporal_refs_json_str = None
+        earliest_date = None
+        latest_date = None
+
+        if extract_temporal:
+            # Get text content for temporal extraction
+            if isinstance(content, dict):
+                text_for_temporal = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_temporal = content
+            else:
+                text_for_temporal = None
+
+            if text_for_temporal and len(text_for_temporal.strip()) > 0:
+                from nexus.core.temporal_resolver import extract_temporal_metadata
+
+                temporal_meta = extract_temporal_metadata(
+                    text_for_temporal,
+                    reference_time=temporal_reference_time,
+                )
+
+                if temporal_meta["temporal_refs"]:
+                    temporal_refs_json_str = json.dumps(temporal_meta["temporal_refs"])
+                    earliest_date = temporal_meta["earliest_date"]
+                    latest_date = temporal_meta["latest_date"]
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -295,6 +324,9 @@ class Memory:
             entities_json=entities_json_str,  # #1025: Store entities
             entity_types=entity_types_str,  # #1025: Store entity types
             person_refs=person_refs_str,  # #1025: Store person references
+            temporal_refs_json=temporal_refs_json_str,  # #1028: Store temporal refs
+            earliest_date=earliest_date,  # #1028: Store earliest date
+            latest_date=latest_date,  # #1028: Store latest date
         )
 
         return memory.memory_id
@@ -312,6 +344,8 @@ class Memory:
         during: str | None = None,  # #1023: Temporal range (partial date)
         entity_type: str | None = None,  # #1025: Filter by entity type
         person: str | None = None,  # #1025: Filter by person reference
+        event_after: str | datetime | None = None,  # #1028: Filter by event date >= value
+        event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -329,6 +363,8 @@ class Memory:
             during: Return memories during this period (partial date: "2025", "2025-01"). #1023
             entity_type: Filter by entity type (e.g., "PERSON", "ORG", "DATE"). #1025
             person: Filter by person name reference. #1025
+            event_after: Filter by event earliest_date >= value (ISO-8601 or datetime). #1028
+            event_before: Filter by event latest_date <= value (ISO-8601 or datetime). #1028
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -351,6 +387,12 @@ class Memory:
 
             >>> # Query memories with organization entities (#1025)
             >>> memories = memory.query(entity_type="ORG")
+
+            >>> # Query memories about events after a date (#1028)
+            >>> memories = memory.query(event_after="2025-01-01")
+
+            >>> # Query memories about events in a date range (#1028)
+            >>> memories = memory.query(event_after="2025-01-01", event_before="2025-01-31")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
@@ -360,6 +402,20 @@ class Memory:
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
+
+        # #1028: Parse event date parameters if strings
+        event_after_dt = None
+        event_before_dt = None
+        if event_after:
+            if isinstance(event_after, str):
+                event_after_dt = datetime.fromisoformat(event_after.replace("Z", "+00:00"))
+            else:
+                event_after_dt = event_after
+        if event_before:
+            if isinstance(event_before, str):
+                event_before_dt = datetime.fromisoformat(event_before.replace("Z", "+00:00"))
+            else:
+                event_before_dt = event_before
 
         # Query memories
         memories = self.memory_router.query_memories(
@@ -373,6 +429,8 @@ class Memory:
             before=before_dt,
             entity_type=entity_type,  # #1025: Entity filtering
             person=person,  # #1025: Person filtering
+            event_after=event_after_dt,  # #1028: Event date filtering
+            event_before=event_before_dt,  # #1028: Event date filtering
             limit=limit,
         )
 

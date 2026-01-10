@@ -610,6 +610,14 @@ async def lifespan(_app: FastAPI) -> Any:
     """
     logger.info("Starting FastAPI Nexus server...")
 
+    # Initialize OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import setup_telemetry
+
+        setup_telemetry()
+    except ImportError:
+        logger.debug("OpenTelemetry not available")
+
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
@@ -804,6 +812,14 @@ async def lifespan(_app: FastAPI) -> Any:
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
 
+    # Shutdown OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import shutdown_telemetry
+
+        shutdown_telemetry()
+    except ImportError:
+        pass
+
 
 # ============================================================================
 # Application Factory
@@ -952,6 +968,14 @@ def create_app(
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
+    # Instrument FastAPI with OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import instrument_fastapi_app
+
+        instrument_fastapi_app(app)
+    except ImportError:
+        pass
 
     return app
 
@@ -1570,7 +1594,11 @@ def _register_routes(app: FastAPI) -> None:
             "importance": 0.8,
             "namespace": "optional/namespace",
             "path_key": "optional_key",
-            "state": "active"
+            "state": "active",
+            "resolve_coreferences": false,
+            "coreference_context": "Prior conversation context",
+            "resolve_temporal": false,
+            "temporal_reference_time": "2025-01-10T12:00:00Z"
         }
 
         Returns:
@@ -1591,6 +1619,10 @@ def _register_routes(app: FastAPI) -> None:
                 namespace=body.get("namespace"),
                 path_key=body.get("path_key"),
                 state=body.get("state", "active"),
+                resolve_coreferences=body.get("resolve_coreferences", False),
+                coreference_context=body.get("coreference_context"),
+                resolve_temporal=body.get("resolve_temporal", False),
+                temporal_reference_time=body.get("temporal_reference_time"),
                 context=context,
             )
 

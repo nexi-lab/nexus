@@ -281,6 +281,10 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
+        # Normalize file paths by removing trailing slashes for proper parent traversal
+        if object[0] == "file" and isinstance(object[1], str) and object[1].endswith("/"):
+            object = (object[0], object[1].rstrip("/"))
+
         # Use tenant_id from context if not explicitly provided
         effective_tenant_id = tenant_id
         if effective_tenant_id is None and context:

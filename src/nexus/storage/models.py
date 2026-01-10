@@ -1155,7 +1155,9 @@ class MemoryModel(Base):
         Index("idx_memory_entity_types", "entity_types"),  # #1025 - entity type filtering
         Index("idx_memory_earliest_date", "earliest_date"),  # #1028 - temporal query filtering
         Index("idx_memory_latest_date", "latest_date"),  # #1028 - temporal query filtering
-        Index("idx_memory_relationship_count", "relationship_count"),  # #1038 - relationship filtering
+        Index(
+            "idx_memory_relationship_count", "relationship_count"
+        ),  # #1038 - relationship filtering
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

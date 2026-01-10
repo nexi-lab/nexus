@@ -99,6 +99,8 @@ class Memory:
         embedding_provider: Any = None,  # #406: Optional embedding provider
         resolve_coreferences: bool = False,  # #1027: Resolve pronouns to entity names
         coreference_context: str | None = None,  # #1027: Prior conversation context
+        resolve_temporal: bool = False,  # #1027: Resolve temporal expressions to absolute dates
+        temporal_reference_time: Any = None,  # #1027: Reference time for temporal resolution
     ) -> str:
         """Store a memory.
 
@@ -114,6 +116,8 @@ class Memory:
             context: Optional operation context to override identity (v0.7.1+).
             resolve_coreferences: Resolve pronouns to entity names for context-independence. #1027
             coreference_context: Prior conversation context for pronoun resolution. #1027
+            resolve_temporal: Resolve temporal expressions to absolute dates. #1027
+            temporal_reference_time: Reference time for temporal resolution (datetime or ISO string). #1027
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -146,6 +150,14 @@ class Memory:
             ...     coreference_context="John Smith was hungry."
             ... )
             >>> # Stored as: "John Smith went to the store."
+
+            >>> # Resolve temporal expressions for context-independent storage (#1027)
+            >>> memory_id = memory.store(
+            ...     content="Meeting scheduled for tomorrow at 2pm.",
+            ...     resolve_temporal=True,
+            ...     temporal_reference_time="2025-01-10T12:00:00"
+            ... )
+            >>> # Stored as: "Meeting scheduled for on 2025-01-11 at 14:00."
         """
         import json
 
@@ -158,6 +170,18 @@ class Memory:
             content = resolve_coref(
                 text=content,
                 context=coreference_context,
+                llm_provider=self.llm_provider,
+            )
+
+        # #1027: Apply temporal resolution (Φtime from SimpleMem pipeline)
+        # This transforms "Meeting tomorrow" -> "Meeting on 2025-01-11"
+        # making memories time-independent and self-contained
+        if resolve_temporal and isinstance(content, str):
+            from nexus.core.temporal_resolver import resolve_temporal as resolve_temp
+
+            content = resolve_temp(
+                text=content,
+                reference_time=temporal_reference_time,
                 llm_provider=self.llm_provider,
             )
 

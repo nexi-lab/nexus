@@ -17,6 +17,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from nexus.backends.local import LocalBackend
 from nexus.connectors.base import ValidationError
@@ -28,7 +29,6 @@ from nexus.connectors.calendar.schemas import (
 )
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
-
 
 # ============================================================================
 # FIXTURES
@@ -136,7 +136,7 @@ class TestCreateEventSchema:
 
     def test_missing_agent_intent_fails(self):
         """Test that missing agent_intent raises validation error."""
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(PydanticValidationError) as exc_info:
             CreateEventSchema(
                 summary="Test Event",
                 start=TimeSlot(dateTime="2024-01-15T09:00:00-08:00"),
@@ -148,7 +148,7 @@ class TestCreateEventSchema:
 
     def test_short_agent_intent_fails(self):
         """Test that short agent_intent raises validation error."""
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             CreateEventSchema(
                 agent_intent="short",  # Less than 10 chars
                 summary="Test Event",
@@ -158,7 +158,7 @@ class TestCreateEventSchema:
 
     def test_invalid_datetime_format_fails(self):
         """Test that invalid datetime format raises error."""
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             CreateEventSchema(
                 agent_intent="Creating event for user request",
                 summary="Test Event",
@@ -187,7 +187,7 @@ class TestDeleteEventSchema:
 
     def test_delete_requires_confirm(self):
         """Test that delete requires confirm=true."""
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             DeleteEventSchema(
                 agent_intent="Deleting event per user request",
                 # Missing confirm=True

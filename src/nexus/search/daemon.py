@@ -353,13 +353,16 @@ class SearchDaemon:
                 await conn.execute(text(f"SET hnsw.ef_search = {self.config.vector_ef_search}"))
 
                 # Dummy query to warm index (SELECT 1 with vector operation)
-                await conn.execute(
-                    text("""
-                        SELECT 1 FROM document_chunks
-                        WHERE embedding IS NOT NULL
-                        LIMIT 1
-                    """)
-                )
+                # Check if embedding column exists first
+                # Skip if embedding column doesn't exist yet
+                with contextlib.suppress(Exception):
+                    await conn.execute(
+                        text("""
+                            SELECT 1 FROM document_chunks
+                            WHERE embedding IS NOT NULL
+                            LIMIT 1
+                        """)
+                    )
 
             self.stats.vector_warmup_time_ms = (time.perf_counter() - start) * 1000
             logger.info(f"Vector index warmed in {self.stats.vector_warmup_time_ms:.1f}ms")

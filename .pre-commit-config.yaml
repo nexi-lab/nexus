@@ -22,7 +22,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
+        exclude: ^benchmarks/
       - id: ruff-format
+        exclude: ^benchmarks/
 
   # Type checking (10-30s) - enabled for local type error detection
   - repo: https://github.com/pre-commit/mirrors-mypy
@@ -31,7 +33,7 @@ repos:
       - id: mypy
         additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
         args: [--ignore-missing-imports]
-        exclude: ^(tests/|alembic/|examples/)
+        exclude: ^(tests/|alembic/|examples/|benchmarks/)
 
   - repo: local
     hooks:

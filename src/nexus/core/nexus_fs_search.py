@@ -627,11 +627,17 @@ class NexusFSSearchMixin:
             # This avoids loading 6000+ files by using:
             # 1. Sparse index for directory names (O(1))
             # 2. Tiger bitmap prefix check for accessible descendants (O(allowed_paths))
+            # NOTE: Skip fast path when details=True because it doesn't have file sizes
             _use_fast_path = False
             logger.info(
-                f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
+                f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
             )
-            if not recursive and hasattr(self.metadata, "list_directory_entries") and context:
+            if (
+                not recursive
+                and not details
+                and hasattr(self.metadata, "list_directory_entries")
+                and context
+            ):
                 _idx_start = _time.time()
                 dir_entries = self.metadata.list_directory_entries(path, tenant_id=list_tenant_id)
                 _idx_elapsed = (_time.time() - _idx_start) * 1000

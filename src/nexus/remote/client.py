@@ -27,7 +27,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin
 
 if TYPE_CHECKING:
@@ -4969,8 +4969,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["template_id"] = template_id
         if context is not None:
             params["context"] = context
-        result = self._call_rpc("sandbox_get_or_create", params)
-        return result  # type: ignore[no-any-return]
+        return cast(dict, self._call_rpc("sandbox_get_or_create", params))
 
     def sandbox_connect(
         self,

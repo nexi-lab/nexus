@@ -214,8 +214,12 @@ def get_vector_count(session: Session, table: str = "document_chunks") -> int:
     """
     from sqlalchemy import text
 
-    result = session.execute(text(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL"))
-    return result.scalar() or 0
+    try:
+        result = session.execute(text(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL"))
+        return result.scalar() or 0
+    except Exception:
+        # embedding column doesn't exist yet
+        return 0
 
 
 def get_recommended_config(session: Session) -> HNSWConfig:

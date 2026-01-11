@@ -130,10 +130,10 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "slack": ServiceInfo(
         name="slack",
         display_name="Slack",
-        connector=None,
+        connector="slack_connector",
         klavis_mcp="slack",
         oauth_provider="slack",
-        capabilities=["tools"],
+        capabilities=["read", "write", "list", "tools"],
         description="Slack messages, channels, users",
     ),
     "notion": ServiceInfo(

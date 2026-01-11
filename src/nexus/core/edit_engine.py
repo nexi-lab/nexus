@@ -536,7 +536,7 @@ class EditEngine:
         """
         if RAPIDFUZZ_AVAILABLE:
             # rapidfuzz returns 0-100, convert to 0-1
-            return rapidfuzz_fuzz.ratio(s1, s2) / 100.0
+            return float(rapidfuzz_fuzz.ratio(s1, s2)) / 100.0
         else:
             # difflib fallback
             return difflib.SequenceMatcher(None, s1, s2).ratio()

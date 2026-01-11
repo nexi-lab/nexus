@@ -43,7 +43,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
-from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.exceptions import BackendError
+from nexus.core.response import HandlerResponse
 
 try:
     import yaml
@@ -510,7 +511,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             backend="gmail",
         )
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+    def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[bytes]":
         """
         Read email content from cache or Gmail API.
 
@@ -521,27 +524,39 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            Email content as YAML bytes
+            HandlerResponse with email content as YAML bytes in data field
 
         Raises:
             NexusFileNotFoundError: If email doesn't exist
             BackendError: If read operation fails or PyYAML not installed
         """
+        import time
+
+        start_time = time.perf_counter()
+
         if yaml is None:
-            raise BackendError(
-                "PyYAML not installed. Install with: pip install pyyaml",
-                backend="gmail",
+            return HandlerResponse.error(
+                message="PyYAML not installed. Install with: pip install pyyaml",
+                code=500,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+                path=content_hash,
             )
 
         if not context or not context.backend_path:
-            raise BackendError(
-                "Gmail connector requires backend_path in OperationContext. "
+            return HandlerResponse.error(
+                message="Gmail connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
-                backend="gmail",
+                code=400,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+                path=content_hash,
             )
 
+        backend_path = context.backend_path
+
         # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
-        path_parts = context.backend_path.split("/")
+        path_parts = backend_path.split("/")
         if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
             # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
             filename = path_parts[1]
@@ -549,34 +564,59 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             # Already just a filename
             filename = path_parts[0]
         else:
-            raise NexusFileNotFoundError(context.backend_path)
+            return HandlerResponse.not_found(
+                path=backend_path,
+                message=f"Invalid Gmail path: {backend_path}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+            )
 
         # Extract message_id from filename (format: thread_id-msg_id.yaml)
         if not filename.endswith(".yaml"):
-            raise NexusFileNotFoundError(context.backend_path)
+            return HandlerResponse.not_found(
+                path=backend_path,
+                message=f"Not a valid Gmail email file: {filename}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+            )
 
         # Split "thread_id-msg_id.yaml" to get msg_id
         filename_parts = filename.replace(".yaml", "").split("-", 1)
         if len(filename_parts) != 2:
-            raise NexusFileNotFoundError(context.backend_path)
+            return HandlerResponse.not_found(
+                path=backend_path,
+                message=f"Invalid Gmail email filename format: {filename}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+            )
 
         message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
 
         # Get cache path
-        cache_path = self._get_cache_path(context) or context.backend_path
+        cache_path = self._get_cache_path(context) or backend_path
 
         # Check cache first (if caching enabled)
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                return cached.content_binary
+                return HandlerResponse.ok(
+                    data=cached.content_binary,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name="gmail",
+                    path=backend_path,
+                )
 
         # Fetch from Gmail API
         try:
             service = self._get_gmail_service(context)
             email_data = self._fetch_email(service, message_id)
         except Exception as e:
-            raise NexusFileNotFoundError(context.backend_path) from e
+            return HandlerResponse.not_found(
+                path=backend_path,
+                message=f"Failed to fetch email: {e}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+            )
 
         # Format as YAML (includes both body_text and body_html)
         content = self._format_email_as_yaml(email_data)
@@ -594,7 +634,12 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
             except Exception:
                 pass  # Don't fail on cache write errors
 
-        return content
+        return HandlerResponse.ok(
+            data=content,
+            execution_time_ms=(time.perf_counter() - start_time) * 1000,
+            backend_name="gmail",
+            path=backend_path,
+        )
 
     def _bulk_download_contents(
         self,
@@ -774,8 +819,10 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
 
         # Fallback: Read content to get size (hits Gmail API)
         # This only happens when file is not cached
-        content = self.read_content(content_hash, context)
-        return len(content)
+        content_response = self.read_content(content_hash, context)
+        if content_response.data:
+            return len(content_response.data)
+        return 0
 
     def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
         """Get reference count (always 1 for connector backends).

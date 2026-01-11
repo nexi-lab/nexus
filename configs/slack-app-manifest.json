@@ -1,0 +1,52 @@
+{
+  "display_information": {
+    "name": "Nexus Connector",
+    "description": "AI-powered workspace integration via Nexus filesystem",
+    "background_color": "#2c2d30",
+    "long_description": "Nexus Slack Connector enables AI agents to interact with your Slack workspace through a familiar filesystem interface. Read messages, post updates, and search conversations - all through a unified API."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Nexus Bot",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "http://localhost:5173/oauth/callback",
+      "http://localhost:2026/oauth/callback"
+    ],
+    "scopes": {
+      "user": [
+        "channels:read",
+        "channels:history",
+        "channels:write",
+        "groups:read",
+        "groups:history",
+        "groups:write",
+        "im:read",
+        "im:history",
+        "im:write",
+        "mpim:read",
+        "mpim:history",
+        "mpim:write",
+        "chat:write",
+        "users:read",
+        "users:read.email",
+        "team:read"
+      ],
+      "bot": [
+        "channels:read",
+        "channels:history",
+        "chat:write",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "is_hosted": false,
+    "token_rotation_enabled": false
+  }
+}

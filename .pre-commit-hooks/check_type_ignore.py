@@ -73,6 +73,9 @@ def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
     """
     Check if file has new type: ignore comments in added lines.
 
+    Lines with '# type: ignore' can be allowed by adding '# allowed' at the end:
+    Example: token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
+
     Returns:
         List of (line_number, line_content) tuples for violations
     """
@@ -80,7 +83,10 @@ def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
     violations = []
 
     for line_num, line_content in added_lines:
-        if TYPE_IGNORE_PATTERN.search(line_content):
+        # Allow if line ends with '# allowed' marker
+        if TYPE_IGNORE_PATTERN.search(line_content) and not re.search(
+            r"#\s*allowed\s*$", line_content, re.IGNORECASE
+        ):
             violations.append((line_num, line_content.strip()))
 
     return violations

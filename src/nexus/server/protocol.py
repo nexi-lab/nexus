@@ -1424,6 +1424,16 @@ class RemoveMountParams:
 
 
 @dataclass
+class DeleteConnectorParams:
+    """Parameters for delete_connector() method."""
+
+    mount_point: str
+    revoke_oauth: bool = False
+    provider: str | None = None
+    user_email: str | None = None
+
+
+@dataclass
 class ListConnectorsParams:
     """Parameters for list_connectors() method."""
 
@@ -2015,6 +2025,7 @@ METHOD_PARAMS = {
     # Mount management methods (v0.5.6 - Issue #313)
     "add_mount": AddMountParams,
     "remove_mount": RemoveMountParams,
+    "delete_connector": DeleteConnectorParams,  # Bundled connector deletion
     "list_connectors": ListConnectorsParams,  # Issue #528 - Connector registry
     "list_mounts": ListMountsParams,
     "get_mount": GetMountParams,

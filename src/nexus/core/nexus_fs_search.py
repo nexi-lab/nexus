@@ -526,6 +526,19 @@ class NexusFSSearchMixin:
                                 and hasattr(file_meta, "mime_type")
                                 and file_meta.mime_type == "inode/directory"
                             )
+                            # FIX: For connector directories (Gmail labels, etc.) that aren't in metadata,
+                            # fall back to calling backend's is_directory() method
+                            if not is_dir:
+                                try:
+                                    # Convert virtual path to backend relative path
+                                    # e.g., "/tenant:.../connector/gmail/SENT" -> "SENT"
+                                    backend_relative = entry_path[len(path) :].lstrip("/")
+                                    is_dir = route.backend.is_directory(
+                                        backend_relative, context=list_context
+                                    )
+                                except Exception:
+                                    # If backend check fails, assume it's a file
+                                    is_dir = False
                             # Extract just the name from the full path
                             name = entry_path.rstrip("/").split("/")[-1]
 

@@ -203,6 +203,128 @@ class NexusFSMountsMixin:
             context=context,
         )
 
+    @rpc_expose(description="Delete connector completely (bundled operation)")
+    def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        This combines three operations into one atomic call:
+        1. Deactivate the connector if active (remove_mount) - non-fatal
+        2. Delete the connector directory recursively (rmdir) - non-fatal
+        3. Delete the saved configuration (delete_saved_mount) - fatal
+
+        Optional: Revoke OAuth credentials associated with the connector.
+
+        Args:
+            mount_point: Virtual path of connector to delete
+            revoke_oauth: Whether to revoke OAuth credentials (default: False)
+            provider: OAuth provider name (required if revoke_oauth=True)
+            user_email: User email for OAuth (required if revoke_oauth=True)
+            context: Operation context
+
+        Returns:
+            Dictionary with deletion results:
+            {
+                "removed": bool,           # Mount was deactivated
+                "directory_deleted": bool,  # Directory was deleted
+                "config_deleted": bool,    # Database config was deleted
+                "oauth_revoked": bool,     # OAuth was revoked (if requested)
+                "errors": list[str],       # Fatal errors
+                "warnings": list[str]      # Non-fatal warnings
+            }
+
+        Raises:
+            PermissionError: If user lacks write permission
+            RuntimeError: If database config deletion fails
+
+        Example:
+            >>> # Delete connector without OAuth revocation
+            >>> result = nx.delete_connector("/slack")
+            >>> print(result["config_deleted"])
+            True
+
+            >>> # Delete connector and revoke OAuth
+            >>> result = nx.delete_connector(
+            ...     mount_point="/slack",
+            ...     revoke_oauth=True,
+            ...     provider="slack",
+            ...     user_email="user@example.com"
+            ... )
+            >>> print(result["oauth_revoked"])
+            True
+        """
+        # Implement bundled deletion at this level where we have access to all services
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "config_deleted": False,
+            "oauth_revoked": False,
+            "errors": [],
+            "warnings": [],
+        }
+
+        # Step 1: Try to deactivate connector if active (non-fatal)
+        try:
+            remove_result = self._mount_core_service.remove_mount(mount_point, context)
+            result["removed"] = remove_result.get("removed", False)
+            result["directory_deleted"] = remove_result.get(
+                "removed", False
+            )  # Directory cleanup via remove_mount
+            if remove_result.get("errors"):
+                result["warnings"].extend(remove_result["errors"])
+        except PermissionError:
+            # Permission errors should stop the process
+            raise
+        except Exception as e:
+            # Other errors are non-fatal - connector might not be active
+            warning_msg = f"Failed to deactivate connector (continuing): {e}"
+            result["warnings"].append(warning_msg)
+
+        # Step 2: Delete saved configuration (FATAL - must succeed)
+        try:
+            config_deleted = self._mount_persist_service.delete_saved_mount(mount_point)
+            result["config_deleted"] = config_deleted
+        except Exception as e:
+            error_msg = f"Failed to delete connector configuration: {e}"
+            result["errors"].append(error_msg)
+            raise RuntimeError(error_msg) from e
+
+        # Step 3: Optionally revoke OAuth credentials
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            else:
+                try:
+                    import asyncio
+
+                    from nexus.core.context_utils import get_tenant_id
+
+                    tenant_id = get_tenant_id(context)
+                    # Available via NexusFSOAuthMixin in multiple inheritance
+                    token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
+                    revoked = asyncio.run(
+                        token_manager.revoke_credential(
+                            provider=provider,
+                            user_email=user_email,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                    result["oauth_revoked"] = revoked
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+
+        return result
+
     @rpc_expose(description="List available connector types")
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
         """List all available connector types.

@@ -189,17 +189,33 @@ def test_nexus(file_count=1000):
     start = time.time()
 
     for i, file in enumerate(files):
-        try:
-            content = file.read_bytes()
-            rel_path = file.relative_to(source_dir)
-            client.write(f"{nexus_path}/{rel_path}", content)
-            upload_count += 1
-            upload_bytes += len(content)
+        content = file.read_bytes()
+        rel_path = file.relative_to(source_dir)
 
-            if (i + 1) % 1000 == 0:
-                print(f"  Uploaded {i + 1}/{len(files)} files...")
-        except Exception as e:
-            print(f"  ⚠️ Error uploading {file.name}: {e}")
+        # Retry upload up to 3 times with exponential backoff
+        max_retries = 3
+        retry_delay = 0.1
+        uploaded = False
+
+        for attempt in range(max_retries):
+            try:
+                client.write(f"{nexus_path}/{rel_path}", content)
+                upload_count += 1
+                upload_bytes += len(content)
+                uploaded = True
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print(f"  ⚠️ Failed to upload {file.name} after {max_retries} attempts: {e}")
+
+        if not uploaded:
+            continue
+
+        if (i + 1) % 1000 == 0:
+            print(f"  Uploaded {i + 1}/{len(files)} files...")
 
     upload_duration = time.time() - start
     print(f"✓ Uploaded {upload_count} files in {upload_duration:.2f}s")

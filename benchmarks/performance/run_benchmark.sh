@@ -96,7 +96,7 @@ if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A $DATA_DIR 2>/dev/null)" ]; then
     echo "  ⚠️  Test data not found at $DATA_DIR"
     echo "  Generating performance test data..."
     cd "$SCRIPT_DIR"
-    python3 generate_perf_data.py
+    python3 -u generate_perf_data.py
     echo "  ✓ Test data generated"
 else
     echo "  ✓ Test data exists at $DATA_DIR"
@@ -110,7 +110,7 @@ cd "$SCRIPT_DIR"
 
 echo ""
 echo "  [Test 1/3] Flat directory comparison (1K and 10K files)..."
-python3 test_flat_comparison.py > "$RESULT_DIR/flat_test.log" 2>&1
+python3 -u test_flat_comparison.py > "$RESULT_DIR/flat_test.log" 2>&1
 if [ -f "flat_comparison_results.csv" ]; then
     mv flat_comparison_results.csv "$RESULT_DIR/"
     echo "    ✓ Flat test complete"
@@ -120,7 +120,7 @@ fi
 
 echo ""
 echo "  [Test 2/3] Grep comparison (1K and 10K files)..."
-python3 test_grep_comparison.py > "$RESULT_DIR/grep_test.log" 2>&1
+python3 -u test_grep_comparison.py > "$RESULT_DIR/grep_test.log" 2>&1
 if [ -f "grep_comparison_results.csv" ]; then
     mv grep_comparison_results.csv "$RESULT_DIR/"
     echo "    ✓ Grep test complete"
@@ -130,7 +130,7 @@ fi
 
 echo ""
 echo "  [Test 3/3] Nested directory comparison (1K and 10K files)..."
-python3 test_nested_comparison.py > "$RESULT_DIR/nested_test.log" 2>&1
+python3 -u test_nested_comparison.py > "$RESULT_DIR/nested_test.log" 2>&1
 if [ -f "nested_comparison_results.csv" ]; then
     mv nested_comparison_results.csv "$RESULT_DIR/"
     echo "    ✓ Nested test complete"

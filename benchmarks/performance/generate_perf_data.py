@@ -118,7 +118,7 @@ def generate_grep_medium_1k():
     start = time.time()
     for i in range(1000):
         content = generate_content(250)  # 250 lines (medium)
-        (out_dir / f"file_{i:04d}.log").write_text(content)
+        (out_dir / f"file_{i:04d}.txt").write_text(content)
         progress(i + 1, 1000, "Grep medium 1k", start)
     print()
 
@@ -132,7 +132,7 @@ def generate_grep_medium_10k():
     start = time.time()
     for i in range(10_000):
         content = generate_content(250)  # 250 lines (medium)
-        (out_dir / f"file_{i:04d}.log").write_text(content)
+        (out_dir / f"file_{i:04d}.txt").write_text(content)
         progress(i + 1, 10_000, "Grep medium 10k", start)
     print()
 

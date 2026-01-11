@@ -1615,7 +1615,9 @@ def _register_routes(app: FastAPI) -> None:
             "coreference_context": "Prior conversation context",
             "resolve_temporal": false,
             "temporal_reference_time": "2025-01-10T12:00:00Z",
-            "extract_temporal": true
+            "extract_temporal": true,
+            "extract_relationships": false,
+            "relationship_types": ["MANAGES", "WORKS_WITH", "DEPENDS_ON"]
         }
 
         Returns:
@@ -1641,6 +1643,8 @@ def _register_routes(app: FastAPI) -> None:
                 resolve_temporal=body.get("resolve_temporal", False),
                 temporal_reference_time=body.get("temporal_reference_time"),
                 extract_temporal=body.get("extract_temporal", True),
+                extract_relationships=body.get("extract_relationships", False),
+                relationship_types=body.get("relationship_types"),
                 context=context,
             )
 

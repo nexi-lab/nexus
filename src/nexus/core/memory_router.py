@@ -273,6 +273,8 @@ class MemoryViewRouter:
         temporal_refs_json: str | None = None,  # #1028: Temporal refs JSON
         earliest_date: Any = None,  # #1028: Earliest date mentioned
         latest_date: Any = None,  # #1028: Latest date mentioned
+        relationships_json: str | None = None,  # #1038: Relationship extraction JSON
+        relationship_count: int | None = None,  # #1038: Count of relationships
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -353,6 +355,11 @@ class MemoryViewRouter:
                 existing_memory.earliest_date = earliest_date
             if latest_date is not None:
                 existing_memory.latest_date = latest_date
+            # Update relationship extraction fields (#1038)
+            if relationships_json is not None:
+                existing_memory.relationships_json = relationships_json
+            if relationship_count is not None:
+                existing_memory.relationship_count = relationship_count
 
             existing_memory.validate()
             self.session.commit()
@@ -380,6 +387,8 @@ class MemoryViewRouter:
                 temporal_refs_json=temporal_refs_json,  # #1028
                 earliest_date=earliest_date,  # #1028
                 latest_date=latest_date,  # #1028
+                relationships_json=relationships_json,  # #1038
+                relationship_count=relationship_count,  # #1038
             )
 
             # Validate before adding

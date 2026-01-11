@@ -1121,6 +1121,14 @@ class MemoryModel(Base):
         DateTime, nullable=True
     )  # Latest date mentioned in content (indexed for queries)
 
+    # Relationship extraction support (#1038 - LightRAG/GraphRAG style)
+    relationships_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON: [{"subject": "Alice", "predicate": "MANAGES", "object": "team", "confidence": 0.95}, ...]
+    relationship_count: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # Count of extracted relationships for filtering
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -1147,6 +1155,9 @@ class MemoryModel(Base):
         Index("idx_memory_entity_types", "entity_types"),  # #1025 - entity type filtering
         Index("idx_memory_earliest_date", "earliest_date"),  # #1028 - temporal query filtering
         Index("idx_memory_latest_date", "latest_date"),  # #1028 - temporal query filtering
+        Index(
+            "idx_memory_relationship_count", "relationship_count"
+        ),  # #1038 - relationship filtering
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

@@ -103,6 +103,8 @@ class Memory:
         temporal_reference_time: Any = None,  # #1027: Reference time for temporal resolution
         extract_entities: bool = True,  # #1025: Extract named entities
         extract_temporal: bool = True,  # #1028: Extract temporal metadata for date queries
+        extract_relationships: bool = False,  # #1038: Extract relationships (triplets)
+        relationship_types: list[str] | None = None,  # #1038: Custom relationship types
     ) -> str:
         """Store a memory.
 
@@ -306,6 +308,42 @@ class Memory:
                     earliest_date = temporal_meta["earliest_date"]
                     latest_date = temporal_meta["latest_date"]
 
+        # #1038: Extract relationships for graph-based retrieval
+        relationships_json_str = None
+        relationship_count_val = None
+
+        if extract_relationships:
+            # Get text content for relationship extraction
+            if isinstance(content, dict):
+                text_for_relationships = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_relationships = content
+            else:
+                text_for_relationships = None
+
+            if text_for_relationships and len(text_for_relationships.strip()) > 0:
+                from nexus.core.relationship_extractor import LLMRelationshipExtractor
+
+                rel_extractor = LLMRelationshipExtractor(
+                    llm_provider=self.llm_provider,
+                    confidence_threshold=0.5,
+                )
+
+                # Get entities as hints for relationship extraction
+                entities_for_rel = None
+                if entities_json_str:
+                    entities_for_rel = json.loads(entities_json_str)
+
+                rel_result = rel_extractor.extract(
+                    text_for_relationships,
+                    entities=entities_for_rel,
+                    relationship_types=relationship_types,
+                )
+
+                if rel_result.relationships:
+                    relationships_json_str = json.dumps(rel_result.to_dicts())
+                    relationship_count_val = len(rel_result.relationships)
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -327,6 +365,8 @@ class Memory:
             temporal_refs_json=temporal_refs_json_str,  # #1028: Store temporal refs
             earliest_date=earliest_date,  # #1028: Store earliest date
             latest_date=latest_date,  # #1028: Store latest date
+            relationships_json=relationships_json_str,  # #1038: Store relationships
+            relationship_count=relationship_count_val,  # #1038: Store relationship count
         )
 
         return memory.memory_id
@@ -485,6 +525,8 @@ class Memory:
                     "latest_date": memory.latest_date.isoformat()
                     if memory.latest_date
                     else None,  # #1028
+                    "relationships_json": memory.relationships_json,  # #1038
+                    "relationship_count": memory.relationship_count,  # #1038
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }

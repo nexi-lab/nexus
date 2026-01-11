@@ -346,6 +346,22 @@ class AppendParams:
 
 
 @dataclass
+class EditParams:
+    """Parameters for edit() method (Issue #800).
+
+    Apply surgical search/replace edits to a file without rewriting the entire file.
+    """
+
+    path: str
+    edits: list[
+        dict[str, Any]
+    ]  # List of edit operations: [{old_str, new_str, hint_line?, allow_multiple?}]
+    if_match: str | None = None  # Optimistic concurrency control
+    fuzzy_threshold: float = 0.85  # Fuzzy matching threshold (0.0-1.0)
+    preview: bool = False  # If True, return diff without applying changes
+
+
+@dataclass
 class WriteBatchParams:
     """Parameters for write_batch() method."""
 
@@ -711,6 +727,16 @@ class UnregisterWorkspaceParams:
     """Parameters for unregister_workspace() method (v0.5.0)."""
 
     path: str
+
+
+@dataclass
+class UpdateWorkspaceParams:
+    """Parameters for update_workspace() method."""
+
+    path: str
+    name: str | None = None
+    description: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -1884,6 +1910,7 @@ METHOD_PARAMS = {
     "write": WriteParams,
     "write_batch": WriteBatchParams,
     "append": AppendParams,
+    "edit": EditParams,  # Issue #800: Surgical search/replace edits
     "delete": DeleteParams,
     "rename": RenameParams,
     "delete_bulk": DeleteBulkParams,
@@ -1923,6 +1950,7 @@ METHOD_PARAMS = {
     "namespace_delete": NamespaceDeleteParams,
     "register_workspace": RegisterWorkspaceParams,  # v0.5.0
     "unregister_workspace": UnregisterWorkspaceParams,  # v0.5.0
+    "update_workspace": UpdateWorkspaceParams,  # Update workspace config
     "get_workspace_info": GetWorkspaceInfoParams,  # v0.5.0
     "list_workspaces": ListWorkspacesParams,  # v0.5.0
     "workspace_snapshot": WorkspaceSnapshotParams,  # v0.5.0

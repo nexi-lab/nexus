@@ -6,13 +6,18 @@ Performance:
 - Uses optimized hierarchical merge algorithm
 - Only tokenizes merged chunks, not the full document
 - ~150ms for 250KB documents
+
+Issue #1024: Entropy-aware chunking filters redundant/low-information chunks
+before embedding, reducing storage costs and improving retrieval quality.
+Based on SimpleMem paper (arXiv:2601.02553).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import tiktoken as tiktoken_module
+
+    from nexus.search.embeddings import EmbeddingProvider
 
     TIKTOKEN_AVAILABLE: bool
 else:
@@ -647,3 +654,389 @@ class DocumentChunker:
             current_offset += len(" ".join(words[i - step_size : i])) + 1
 
         return chunks
+
+
+@dataclass
+class EntropyFilterResult:
+    """Result of entropy-aware filtering.
+
+    Issue #1024: Tracks filtering statistics for benchmarking.
+    """
+
+    chunks: list[DocumentChunk]
+    original_count: int
+    filtered_count: int
+    scores: list[float] = field(default_factory=list)
+
+    @property
+    def reduction_percent(self) -> float:
+        """Calculate chunk reduction percentage."""
+        if self.original_count == 0:
+            return 0.0
+        return ((self.original_count - self.filtered_count) / self.original_count) * 100
+
+
+def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
+    """Calculate cosine similarity between two vectors.
+
+    Args:
+        vec1: First vector
+        vec2: Second vector
+
+    Returns:
+        Cosine similarity (-1 to 1)
+    """
+    if len(vec1) != len(vec2):
+        return 0.0
+
+    dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=False))
+    norm1 = math.sqrt(sum(a * a for a in vec1))
+    norm2 = math.sqrt(sum(b * b for b in vec2))
+
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+
+    return dot_product / (norm1 * norm2)
+
+
+class EntropyAwareChunker:
+    """Entropy-aware chunker that filters redundant/low-information chunks.
+
+    Issue #1024: Implements SimpleMem's entropy-aware filtering formula:
+        H(W_t) = α · |ℰ_new|/|W_t| + (1-α) · (1 - cos(E(W_t), E(H_prev)))
+
+    Where:
+    - |ℰ_new|: New entities in current chunk not seen in history
+    - |W_t|: Current chunk size (word count)
+    - cos(E(W_t), E(H_prev)): Semantic similarity to previous chunks
+    - α: Balance between entity novelty and semantic divergence
+
+    Reference: SimpleMem paper (arXiv:2601.02553)
+
+    Usage:
+        chunker = EntropyAwareChunker(
+            redundancy_threshold=0.35,
+            alpha=0.5,
+            embedding_provider=embedding_provider,
+        )
+        result = await chunker.chunk_with_filtering(content)
+        print(f"Filtered {result.reduction_percent:.1f}% redundant chunks")
+    """
+
+    # Regex patterns for lightweight entity extraction
+    # Matches capitalized words/phrases, numbers, URLs, emails, etc.
+    ENTITY_PATTERNS = [
+        # Capitalized words (proper nouns) - at least 2 chars
+        r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b",
+        # ALL CAPS acronyms (2+ chars)
+        r"\b[A-Z]{2,}\b",
+        # Numbers with context (dates, versions, IDs)
+        r"\b\d{4}[-/]\d{2}[-/]\d{2}\b",  # Dates
+        r"\bv?\d+\.\d+(?:\.\d+)?\b",  # Versions
+        r"\b\d+(?:,\d{3})*(?:\.\d+)?\b",  # Large numbers
+        # Technical identifiers
+        r"\b[a-z_][a-z0-9_]*(?:_[a-z0-9]+)+\b",  # snake_case
+        r"\b[a-z]+(?:[A-Z][a-z]+)+\b",  # camelCase
+        # URLs and emails (simplified)
+        r"https?://[^\s]+",
+        r"\b[\w.-]+@[\w.-]+\.\w+\b",
+    ]
+
+    def __init__(
+        self,
+        redundancy_threshold: float = 0.35,
+        alpha: float = 0.5,
+        embedding_provider: EmbeddingProvider | None = None,
+        base_chunker: DocumentChunker | None = None,
+        history_window: int = 5,
+    ):
+        """Initialize entropy-aware chunker.
+
+        Args:
+            redundancy_threshold: Filter chunks with score below this (default: 0.35)
+                                  SimpleMem paper uses τ_redundant = 0.35
+            alpha: Balance between entity novelty (α) and semantic novelty (1-α)
+                   Default 0.5 gives equal weight to both signals
+            embedding_provider: Provider for semantic embeddings (optional)
+                                If None, only entity novelty is used (α=1.0 effectively)
+            base_chunker: Base chunker to use for initial chunking
+                          Default: DocumentChunker with SEMANTIC strategy
+            history_window: Number of previous chunks to consider for novelty
+                            Default: 5 chunks
+        """
+        self.redundancy_threshold = redundancy_threshold
+        self.alpha = alpha
+        self.embedding_provider = embedding_provider
+        self.history_window = history_window
+
+        # Use provided chunker or create default
+        self.base_chunker = base_chunker or DocumentChunker(
+            chunk_size=1024,
+            strategy=ChunkStrategy.SEMANTIC,
+            overlap_size=128,
+        )
+
+        # Compile regex patterns for efficiency
+        self._entity_pattern = re.compile(
+            "|".join(f"({p})" for p in self.ENTITY_PATTERNS),
+            re.MULTILINE,
+        )
+
+    def extract_entities(self, text: str) -> set[str]:
+        """Extract entities from text using lightweight regex patterns.
+
+        This is a fast, dependency-free alternative to full NER.
+        Captures proper nouns, technical terms, dates, versions, etc.
+
+        Args:
+            text: Text to extract entities from
+
+        Returns:
+            Set of extracted entity strings (normalized to lowercase)
+        """
+        entities = set()
+
+        for match in self._entity_pattern.finditer(text):
+            entity = match.group(0).strip()
+            if entity and len(entity) >= 2:
+                # Normalize to lowercase for comparison
+                entities.add(entity.lower())
+
+        return entities
+
+    def _entity_novelty_score(
+        self,
+        chunk_entities: set[str],
+        history_entities: set[str],
+        chunk_word_count: int,
+    ) -> float:
+        """Calculate entity novelty score.
+
+        Formula: |ℰ_new| / |W_t|
+
+        Args:
+            chunk_entities: Entities in current chunk
+            history_entities: Entities seen in previous chunks
+            chunk_word_count: Number of words in current chunk
+
+        Returns:
+            Entity novelty score (0.0 to 1.0)
+        """
+        if chunk_word_count == 0:
+            return 0.0
+
+        new_entities = chunk_entities - history_entities
+        # Normalize by word count, cap at 1.0
+        return min(len(new_entities) / max(chunk_word_count, 1), 1.0)
+
+    def _semantic_novelty_score(
+        self,
+        chunk_embedding: list[float],
+        history_embeddings: list[list[float]],
+    ) -> float:
+        """Calculate semantic novelty score.
+
+        Formula: 1 - max(cos(E(W_t), E(H_i)) for H_i in history)
+
+        Args:
+            chunk_embedding: Embedding of current chunk
+            history_embeddings: Embeddings of previous chunks
+
+        Returns:
+            Semantic novelty score (0.0 to 1.0)
+        """
+        if not history_embeddings:
+            return 1.0  # First chunk is fully novel
+
+        # Find maximum similarity to any history chunk
+        max_similarity = max(
+            _cosine_similarity(chunk_embedding, hist_emb) for hist_emb in history_embeddings
+        )
+
+        # Novelty = 1 - similarity
+        return 1.0 - max(0.0, min(max_similarity, 1.0))
+
+    def information_score(
+        self,
+        chunk_entities: set[str],
+        history_entities: set[str],
+        chunk_word_count: int,
+        chunk_embedding: list[float] | None = None,
+        history_embeddings: list[list[float]] | None = None,
+    ) -> float:
+        """Calculate information density score for a chunk.
+
+        Formula: H(W_t) = α · entity_novelty + (1-α) · semantic_novelty
+
+        Args:
+            chunk_entities: Entities in current chunk
+            history_entities: Entities seen in previous chunks
+            chunk_word_count: Number of words in current chunk
+            chunk_embedding: Embedding of current chunk (optional)
+            history_embeddings: Embeddings of previous chunks (optional)
+
+        Returns:
+            Information score (0.0 to 1.0), higher = more informative
+        """
+        entity_score = self._entity_novelty_score(
+            chunk_entities, history_entities, chunk_word_count
+        )
+
+        # If no embeddings, use only entity score
+        if chunk_embedding is None or history_embeddings is None:
+            return entity_score
+
+        semantic_score = self._semantic_novelty_score(chunk_embedding, history_embeddings)
+
+        # Weighted combination
+        return self.alpha * entity_score + (1 - self.alpha) * semantic_score
+
+    async def chunk_with_filtering(
+        self,
+        content: str,
+        file_path: str = "",
+        compute_lines: bool = True,
+    ) -> EntropyFilterResult:
+        """Chunk content and filter redundant chunks.
+
+        Args:
+            content: Document content to chunk
+            file_path: Path to file (for file-type specific chunking)
+            compute_lines: If True, compute line numbers for chunks
+
+        Returns:
+            EntropyFilterResult with filtered chunks and statistics
+        """
+        # First, chunk using base chunker
+        all_chunks = self.base_chunker.chunk(content, file_path, compute_lines)
+
+        if not all_chunks:
+            return EntropyFilterResult(
+                chunks=[],
+                original_count=0,
+                filtered_count=0,
+                scores=[],
+            )
+
+        # Get embeddings if provider available
+        embeddings: list[list[float]] | None = None
+        if self.embedding_provider:
+            chunk_texts = [chunk.text for chunk in all_chunks]
+            embeddings = await self.embedding_provider.embed_texts(chunk_texts)
+
+        # Filter chunks based on information score
+        filtered_chunks: list[DocumentChunk] = []
+        scores: list[float] = []
+        history_entities: set[str] = set()
+        history_embeddings: list[list[float]] = []
+
+        for i, chunk in enumerate(all_chunks):
+            # Extract entities from current chunk
+            chunk_entities = self.extract_entities(chunk.text)
+            chunk_word_count = len(chunk.text.split())
+
+            # Get embedding if available
+            chunk_embedding = embeddings[i] if embeddings else None
+
+            # Calculate information score
+            score = self.information_score(
+                chunk_entities=chunk_entities,
+                history_entities=history_entities,
+                chunk_word_count=chunk_word_count,
+                chunk_embedding=chunk_embedding,
+                history_embeddings=history_embeddings[-self.history_window :]
+                if history_embeddings
+                else None,
+            )
+            scores.append(score)
+
+            # Keep chunk if above threshold OR if it's the first chunk
+            # The first chunk is always kept since there's no history to compare against
+            is_first_chunk = i == 0
+            if is_first_chunk or score >= self.redundancy_threshold:
+                # Update chunk index to be sequential in filtered list
+                chunk.chunk_index = len(filtered_chunks)
+                filtered_chunks.append(chunk)
+
+            # Always update history (even for filtered chunks)
+            # This ensures we don't re-include similar content later
+            history_entities.update(chunk_entities)
+            if chunk_embedding:
+                history_embeddings.append(chunk_embedding)
+
+        logger.info(
+            "[ENTROPY-CHUNKER] Filtered %d/%d chunks (%.1f%% reduction), "
+            "threshold=%.2f, avg_score=%.3f",
+            len(all_chunks) - len(filtered_chunks),
+            len(all_chunks),
+            ((len(all_chunks) - len(filtered_chunks)) / len(all_chunks) * 100) if all_chunks else 0,
+            self.redundancy_threshold,
+            sum(scores) / len(scores) if scores else 0,
+        )
+
+        return EntropyFilterResult(
+            chunks=filtered_chunks,
+            original_count=len(all_chunks),
+            filtered_count=len(filtered_chunks),
+            scores=scores,
+        )
+
+    def chunk_with_filtering_sync(
+        self,
+        content: str,
+        file_path: str = "",
+        compute_lines: bool = True,
+    ) -> EntropyFilterResult:
+        """Synchronous version of chunk_with_filtering (entity-only, no embeddings).
+
+        Use this when you don't need semantic novelty scoring.
+
+        Args:
+            content: Document content to chunk
+            file_path: Path to file (for file-type specific chunking)
+            compute_lines: If True, compute line numbers for chunks
+
+        Returns:
+            EntropyFilterResult with filtered chunks and statistics
+        """
+        # First, chunk using base chunker
+        all_chunks = self.base_chunker.chunk(content, file_path, compute_lines)
+
+        if not all_chunks:
+            return EntropyFilterResult(
+                chunks=[],
+                original_count=0,
+                filtered_count=0,
+                scores=[],
+            )
+
+        # Filter chunks based on entity-only information score
+        filtered_chunks: list[DocumentChunk] = []
+        scores: list[float] = []
+        history_entities: set[str] = set()
+
+        for i, chunk in enumerate(all_chunks):
+            # Extract entities from current chunk
+            chunk_entities = self.extract_entities(chunk.text)
+            chunk_word_count = len(chunk.text.split())
+
+            # Calculate entity-only information score (no embeddings)
+            score = self._entity_novelty_score(chunk_entities, history_entities, chunk_word_count)
+            scores.append(score)
+
+            # Keep chunk if above threshold OR if it's the first chunk
+            # The first chunk is always kept since there's no history to compare against
+            is_first_chunk = i == 0
+            if is_first_chunk or score >= self.redundancy_threshold:
+                chunk.chunk_index = len(filtered_chunks)
+                filtered_chunks.append(chunk)
+
+            # Always update history
+            history_entities.update(chunk_entities)
+
+        return EntropyFilterResult(
+            chunks=filtered_chunks,
+            original_count=len(all_chunks),
+            filtered_count=len(filtered_chunks),
+            scores=scores,
+        )

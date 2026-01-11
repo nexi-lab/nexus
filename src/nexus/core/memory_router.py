@@ -7,6 +7,7 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 """
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -168,6 +169,10 @@ class MemoryViewRouter:
         state: str | None = None,  # #368: Filter by state ('inactive', 'active', 'all')
         after: datetime | None = None,  # #1023: Temporal filter - after this time
         before: datetime | None = None,  # #1023: Temporal filter - before this time
+        entity_type: str | None = None,  # #1025: Filter by entity type
+        person: str | None = None,  # #1025: Filter by person reference
+        event_after: datetime | None = None,  # #1028: Filter by event date >= value
+        event_before: datetime | None = None,  # #1028: Filter by event date <= value
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -183,6 +188,10 @@ class MemoryViewRouter:
             state: Filter by state ('inactive', 'active', 'all'). #368
             after: Filter memories created after this datetime. #1023
             before: Filter memories created before this datetime. #1023
+            entity_type: Filter by entity type (e.g., "PERSON", "ORG"). #1025
+            person: Filter by person name reference. #1025
+            event_after: Filter by event earliest_date >= value. #1028
+            event_before: Filter by event latest_date <= value. #1028
             limit: Maximum number of results.
 
         Returns:
@@ -222,6 +231,18 @@ class MemoryViewRouter:
         if before:
             stmt = stmt.where(MemoryModel.created_at <= before)
 
+        # #1025: Entity filtering (using LIKE for contains check)
+        if entity_type:
+            stmt = stmt.where(MemoryModel.entity_types.contains(entity_type))
+        if person:
+            stmt = stmt.where(MemoryModel.person_refs.contains(person))
+
+        # #1028: Event date filtering (filter by extracted temporal metadata)
+        if event_after:
+            stmt = stmt.where(MemoryModel.earliest_date >= event_after)
+        if event_before:
+            stmt = stmt.where(MemoryModel.latest_date <= event_before)
+
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
 
@@ -246,6 +267,14 @@ class MemoryViewRouter:
         embedding: str | None = None,  # #406: Embedding vector (JSON)
         embedding_model: str | None = None,  # #406: Embedding model name
         embedding_dim: int | None = None,  # #406: Embedding dimension
+        entities_json: str | None = None,  # #1025: Entity extraction JSON
+        entity_types: str | None = None,  # #1025: Comma-separated entity types
+        person_refs: str | None = None,  # #1025: Comma-separated person names
+        temporal_refs_json: str | None = None,  # #1028: Temporal refs JSON
+        earliest_date: Any = None,  # #1028: Earliest date mentioned
+        latest_date: Any = None,  # #1028: Latest date mentioned
+        relationships_json: str | None = None,  # #1038: Relationship extraction JSON
+        relationship_count: int | None = None,  # #1038: Count of relationships
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -263,6 +292,12 @@ class MemoryViewRouter:
             embedding: Vector embedding as JSON string. #406
             embedding_model: Name of embedding model used. #406
             embedding_dim: Dimension of embedding vector. #406
+            entities_json: JSON string of extracted entities. #1025
+            entity_types: Comma-separated entity types (e.g., "PERSON,ORG,DATE"). #1025
+            person_refs: Comma-separated person names for quick filtering. #1025
+            temporal_refs_json: JSON string of extracted temporal references. #1028
+            earliest_date: Earliest date mentioned in content. #1028
+            latest_date: Latest date mentioned in content. #1028
 
         Returns:
             MemoryModel: Created or updated memory.
@@ -306,6 +341,25 @@ class MemoryViewRouter:
                 existing_memory.embedding_model = embedding_model
             if embedding_dim is not None:
                 existing_memory.embedding_dim = embedding_dim
+            # Update entity extraction fields (#1025)
+            if entities_json is not None:
+                existing_memory.entities_json = entities_json
+            if entity_types is not None:
+                existing_memory.entity_types = entity_types
+            if person_refs is not None:
+                existing_memory.person_refs = person_refs
+            # Update temporal metadata fields (#1028)
+            if temporal_refs_json is not None:
+                existing_memory.temporal_refs_json = temporal_refs_json
+            if earliest_date is not None:
+                existing_memory.earliest_date = earliest_date
+            if latest_date is not None:
+                existing_memory.latest_date = latest_date
+            # Update relationship extraction fields (#1038)
+            if relationships_json is not None:
+                existing_memory.relationships_json = relationships_json
+            if relationship_count is not None:
+                existing_memory.relationship_count = relationship_count
 
             existing_memory.validate()
             self.session.commit()
@@ -327,6 +381,14 @@ class MemoryViewRouter:
                 embedding=embedding,  # #406
                 embedding_model=embedding_model,  # #406
                 embedding_dim=embedding_dim,  # #406
+                entities_json=entities_json,  # #1025
+                entity_types=entity_types,  # #1025
+                person_refs=person_refs,  # #1025
+                temporal_refs_json=temporal_refs_json,  # #1028
+                earliest_date=earliest_date,  # #1028
+                latest_date=latest_date,  # #1028
+                relationships_json=relationships_json,  # #1038
+                relationship_count=relationship_count,  # #1038
             )
 
             # Validate before adding

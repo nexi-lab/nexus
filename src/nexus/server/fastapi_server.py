@@ -610,6 +610,14 @@ async def lifespan(_app: FastAPI) -> Any:
     """
     logger.info("Starting FastAPI Nexus server...")
 
+    # Initialize OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import setup_telemetry
+
+        setup_telemetry()
+    except ImportError:
+        logger.debug("OpenTelemetry not available")
+
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
@@ -658,12 +666,20 @@ async def lifespan(_app: FastAPI) -> Any:
                     "1",
                     "yes",
                 ),
+                # Issue #1024: Entropy-aware filtering for redundant content
+                entropy_filtering=os.getenv("NEXUS_ENTROPY_FILTERING", "false").lower()
+                in ("true", "1", "yes"),
+                entropy_threshold=float(os.getenv("NEXUS_ENTROPY_THRESHOLD", "0.35")),
+                entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
             _app_state.search_daemon = SearchDaemon(config)
             await _app_state.search_daemon.startup()
             _app_state.search_daemon_enabled = True
             set_search_daemon(_app_state.search_daemon)
+
+            # Set NexusFS reference for index refresh (Issue #1024)
+            _app_state.search_daemon._nexus_fs = _app_state.nexus_fs
 
             stats = _app_state.search_daemon.get_stats()
             logger.info(
@@ -795,6 +811,14 @@ async def lifespan(_app: FastAPI) -> Any:
         await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
+
+    # Shutdown OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import shutdown_telemetry
+
+        shutdown_telemetry()
+    except ImportError:
+        pass
 
 
 # ============================================================================
@@ -944,6 +968,14 @@ def create_app(
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
+    # Instrument FastAPI with OpenTelemetry (Issue #764)
+    try:
+        from nexus.core.telemetry import instrument_fastapi_app
+
+        instrument_fastapi_app(app)
+    except ImportError:
+        pass
 
     return app
 
@@ -1405,15 +1437,33 @@ def _register_routes(app: FastAPI) -> None:
         during: str | None = Query(
             None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
         ),
+        entity_type: str | None = Query(
+            None, description="Filter by entity type (PERSON, ORG, LOCATION, DATE, etc.). #1025"
+        ),
+        person: str | None = Query(None, description="Filter by person name reference. #1025"),
+        event_after: str | None = Query(
+            None, description="Filter by event date >= value (ISO-8601). #1028"
+        ),
+        event_before: str | None = Query(
+            None, description="Filter by event date <= value (ISO-8601). #1028"
+        ),
         limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
-        """Query memories with optional temporal filters (Issue #1023).
+        """Query memories with optional temporal and entity filters.
 
-        Supports three temporal operators:
+        Supports temporal operators (Issue #1023):
         - after: Return memories created after this datetime
         - before: Return memories created before this datetime
         - during: Return memories created during this period (partial date like "2025" or "2025-01")
+
+        Supports entity filters (Issue #1025 - SimpleMem symbolic layer):
+        - entity_type: Filter by extracted entity type (PERSON, ORG, LOCATION, DATE, etc.)
+        - person: Filter by person name reference
+
+        Supports event date filters (Issue #1028 - Temporal anchoring):
+        - event_after: Filter by earliest_date >= value (date mentioned in content)
+        - event_before: Filter by latest_date <= value (date mentioned in content)
 
         Note: 'during' cannot be used together with 'after' or 'before'.
 
@@ -1424,6 +1474,10 @@ def _register_routes(app: FastAPI) -> None:
             after: ISO-8601 datetime or date string
             before: ISO-8601 datetime or date string
             during: Partial date string (year, year-month, or full date)
+            entity_type: Entity type to filter by (e.g., PERSON, ORG)
+            person: Person name to filter by
+            event_after: ISO-8601 date to filter by earliest_date >= value. #1028
+            event_before: ISO-8601 date to filter by latest_date <= value. #1028
             limit: Maximum number of results
 
         Returns:
@@ -1442,6 +1496,10 @@ def _register_routes(app: FastAPI) -> None:
                 after=after,
                 before=before,
                 during=during,
+                entity_type=entity_type,
+                person=person,
+                event_after=event_after,
+                event_before=event_before,
                 limit=limit,
                 context=context,
             )
@@ -1456,6 +1514,10 @@ def _register_routes(app: FastAPI) -> None:
                     "after": after,
                     "before": before,
                     "during": during,
+                    "entity_type": entity_type,
+                    "person": person,
+                    "event_after": event_after,
+                    "event_before": event_before,
                 },
             }
 
@@ -1548,7 +1610,14 @@ def _register_routes(app: FastAPI) -> None:
             "importance": 0.8,
             "namespace": "optional/namespace",
             "path_key": "optional_key",
-            "state": "active"
+            "state": "active",
+            "resolve_coreferences": false,
+            "coreference_context": "Prior conversation context",
+            "resolve_temporal": false,
+            "temporal_reference_time": "2025-01-10T12:00:00Z",
+            "extract_temporal": true,
+            "extract_relationships": false,
+            "relationship_types": ["MANAGES", "WORKS_WITH", "DEPENDS_ON"]
         }
 
         Returns:
@@ -1569,6 +1638,13 @@ def _register_routes(app: FastAPI) -> None:
                 namespace=body.get("namespace"),
                 path_key=body.get("path_key"),
                 state=body.get("state", "active"),
+                resolve_coreferences=body.get("resolve_coreferences", False),
+                coreference_context=body.get("coreference_context"),
+                resolve_temporal=body.get("resolve_temporal", False),
+                temporal_reference_time=body.get("temporal_reference_time"),
+                extract_temporal=body.get("extract_temporal", True),
+                extract_relationships=body.get("extract_relationships", False),
+                relationship_types=body.get("relationship_types"),
                 context=context,
             )
 

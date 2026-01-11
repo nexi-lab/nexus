@@ -97,6 +97,14 @@ class Memory:
         context: OperationContext | None = None,
         generate_embedding: bool = True,  # #406: Generate embedding for semantic search
         embedding_provider: Any = None,  # #406: Optional embedding provider
+        resolve_coreferences: bool = False,  # #1027: Resolve pronouns to entity names
+        coreference_context: str | None = None,  # #1027: Prior conversation context
+        resolve_temporal: bool = False,  # #1027: Resolve temporal expressions to absolute dates
+        temporal_reference_time: Any = None,  # #1027: Reference time for temporal resolution
+        extract_entities: bool = True,  # #1025: Extract named entities
+        extract_temporal: bool = True,  # #1028: Extract temporal metadata for date queries
+        extract_relationships: bool = False,  # #1038: Extract relationships (triplets)
+        relationship_types: list[str] | None = None,  # #1038: Custom relationship types
     ) -> str:
         """Store a memory.
 
@@ -110,6 +118,12 @@ class Memory:
             state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
+            resolve_coreferences: Resolve pronouns to entity names for context-independence. #1027
+            coreference_context: Prior conversation context for pronoun resolution. #1027
+            resolve_temporal: Resolve temporal expressions to absolute dates. #1027
+            temporal_reference_time: Reference time for temporal resolution (datetime or ISO string). #1027
+            extract_entities: Extract named entities for symbolic filtering. Defaults to True. #1025
+            extract_temporal: Extract temporal metadata for date-based queries. Defaults to True. #1028
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -134,8 +148,48 @@ class Memory:
             ...     state="inactive"  # Won't appear in queries until approved
             ... )
             >>> memory.approve(memory_id)  # Activate it later
+
+            >>> # Resolve coreferences for context-independent storage (#1027)
+            >>> memory_id = memory.store(
+            ...     content="He went to the store.",
+            ...     resolve_coreferences=True,
+            ...     coreference_context="John Smith was hungry."
+            ... )
+            >>> # Stored as: "John Smith went to the store."
+
+            >>> # Resolve temporal expressions for context-independent storage (#1027)
+            >>> memory_id = memory.store(
+            ...     content="Meeting scheduled for tomorrow at 2pm.",
+            ...     resolve_temporal=True,
+            ...     temporal_reference_time="2025-01-10T12:00:00"
+            ... )
+            >>> # Stored as: "Meeting scheduled for on 2025-01-11 at 14:00."
         """
         import json
+
+        # #1027: Apply coreference resolution before storing (write-time disambiguation)
+        # This transforms "He went to the store" -> "John Smith went to the store"
+        # making memories self-contained and context-independent
+        if resolve_coreferences and isinstance(content, str):
+            from nexus.core.coref_resolver import resolve_coreferences as resolve_coref
+
+            content = resolve_coref(
+                text=content,
+                context=coreference_context,
+                llm_provider=self.llm_provider,
+            )
+
+        # #1027: Apply temporal resolution (Φtime from SimpleMem pipeline)
+        # This transforms "Meeting tomorrow" -> "Meeting on 2025-01-11"
+        # making memories time-independent and self-contained
+        if resolve_temporal and isinstance(content, str):
+            from nexus.core.temporal_resolver import resolve_temporal as resolve_temp
+
+            content = resolve_temp(
+                text=content,
+                reference_time=temporal_reference_time,
+                llm_provider=self.llm_provider,
+            )
 
         # Convert content to bytes
         if isinstance(content, dict):
@@ -202,6 +256,94 @@ class Memory:
                         # Failed to generate embedding, continue without it
                         pass
 
+        # #1025: Extract named entities for symbolic filtering
+        entities_json_str = None
+        entity_types_str = None
+        person_refs_str = None
+
+        if extract_entities:
+            # Get text content for entity extraction
+            if isinstance(content, dict):
+                text_for_entities = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_entities = content
+            else:
+                text_for_entities = None
+
+            if text_for_entities and len(text_for_entities.strip()) > 0:
+                from nexus.core.entity_extractor import EntityExtractor
+
+                extractor = EntityExtractor(use_spacy=False)
+                entities = extractor.extract(text_for_entities)
+
+                if entities:
+                    entities_json_str = json.dumps([e.to_dict() for e in entities])
+                    entity_types_str = extractor.get_entity_types_string(text_for_entities)
+                    person_refs_str = extractor.get_person_refs_string(text_for_entities)
+
+        # #1028: Extract temporal metadata for date-based queries
+        temporal_refs_json_str = None
+        earliest_date = None
+        latest_date = None
+
+        if extract_temporal:
+            # Get text content for temporal extraction
+            if isinstance(content, dict):
+                text_for_temporal = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_temporal = content
+            else:
+                text_for_temporal = None
+
+            if text_for_temporal and len(text_for_temporal.strip()) > 0:
+                from nexus.core.temporal_resolver import extract_temporal_metadata
+
+                temporal_meta = extract_temporal_metadata(
+                    text_for_temporal,
+                    reference_time=temporal_reference_time,
+                )
+
+                if temporal_meta["temporal_refs"]:
+                    temporal_refs_json_str = json.dumps(temporal_meta["temporal_refs"])
+                    earliest_date = temporal_meta["earliest_date"]
+                    latest_date = temporal_meta["latest_date"]
+
+        # #1038: Extract relationships for graph-based retrieval
+        relationships_json_str = None
+        relationship_count_val = None
+
+        if extract_relationships:
+            # Get text content for relationship extraction
+            if isinstance(content, dict):
+                text_for_relationships = json.dumps(content)
+            elif isinstance(content, str):
+                text_for_relationships = content
+            else:
+                text_for_relationships = None
+
+            if text_for_relationships and len(text_for_relationships.strip()) > 0:
+                from nexus.core.relationship_extractor import LLMRelationshipExtractor
+
+                rel_extractor = LLMRelationshipExtractor(
+                    llm_provider=self.llm_provider,
+                    confidence_threshold=0.5,
+                )
+
+                # Get entities as hints for relationship extraction
+                entities_for_rel = None
+                if entities_json_str:
+                    entities_for_rel = json.loads(entities_json_str)
+
+                rel_result = rel_extractor.extract(
+                    text_for_relationships,
+                    entities=entities_for_rel,
+                    relationship_types=relationship_types,
+                )
+
+                if rel_result.relationships:
+                    relationships_json_str = json.dumps(rel_result.to_dicts())
+                    relationship_count_val = len(rel_result.relationships)
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -217,6 +359,14 @@ class Memory:
             embedding=embedding_json,  # #406: Store embedding
             embedding_model=embedding_model_name,  # #406: Store model name
             embedding_dim=embedding_dim,  # #406: Store dimension
+            entities_json=entities_json_str,  # #1025: Store entities
+            entity_types=entity_types_str,  # #1025: Store entity types
+            person_refs=person_refs_str,  # #1025: Store person references
+            temporal_refs_json=temporal_refs_json_str,  # #1028: Store temporal refs
+            earliest_date=earliest_date,  # #1028: Store earliest date
+            latest_date=latest_date,  # #1028: Store latest date
+            relationships_json=relationships_json_str,  # #1038: Store relationships
+            relationship_count=relationship_count_val,  # #1038: Store relationship count
         )
 
         return memory.memory_id
@@ -232,6 +382,10 @@ class Memory:
         after: str | datetime | None = None,  # #1023: Temporal filter
         before: str | datetime | None = None,  # #1023: Temporal filter
         during: str | None = None,  # #1023: Temporal range (partial date)
+        entity_type: str | None = None,  # #1025: Filter by entity type
+        person: str | None = None,  # #1025: Filter by person reference
+        event_after: str | datetime | None = None,  # #1028: Filter by event date >= value
+        event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -247,6 +401,10 @@ class Memory:
             after: Return memories created after this time (ISO-8601 or datetime). #1023
             before: Return memories created before this time (ISO-8601 or datetime). #1023
             during: Return memories during this period (partial date: "2025", "2025-01"). #1023
+            entity_type: Filter by entity type (e.g., "PERSON", "ORG", "DATE"). #1025
+            person: Filter by person name reference. #1025
+            event_after: Filter by event earliest_date >= value (ISO-8601 or datetime). #1028
+            event_before: Filter by event latest_date <= value (ISO-8601 or datetime). #1028
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -263,6 +421,18 @@ class Memory:
 
             >>> # Query memories after a specific date (#1023)
             >>> memories = memory.query(after="2025-01-01T00:00:00Z")
+
+            >>> # Query memories containing a person (#1025)
+            >>> memories = memory.query(person="John Smith")
+
+            >>> # Query memories with organization entities (#1025)
+            >>> memories = memory.query(entity_type="ORG")
+
+            >>> # Query memories about events after a date (#1028)
+            >>> memories = memory.query(event_after="2025-01-01")
+
+            >>> # Query memories about events in a date range (#1028)
+            >>> memories = memory.query(event_after="2025-01-01", event_before="2025-01-31")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
@@ -272,6 +442,20 @@ class Memory:
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
+
+        # #1028: Parse event date parameters if strings
+        event_after_dt = None
+        event_before_dt = None
+        if event_after:
+            if isinstance(event_after, str):
+                event_after_dt = datetime.fromisoformat(event_after.replace("Z", "+00:00"))
+            else:
+                event_after_dt = event_after
+        if event_before:
+            if isinstance(event_before, str):
+                event_before_dt = datetime.fromisoformat(event_before.replace("Z", "+00:00"))
+            else:
+                event_before_dt = event_before
 
         # Query memories
         memories = self.memory_router.query_memories(
@@ -283,14 +467,20 @@ class Memory:
             state=state,
             after=after_dt,
             before=before_dt,
+            entity_type=entity_type,  # #1025: Entity filtering
+            person=person,  # #1025: Person filtering
+            event_after=event_after_dt,  # #1028: Event date filtering
+            event_before=event_before_dt,  # #1028: Event date filtering
             limit=limit,
         )
 
         # Filter by permissions first (before fetching content)
+        # Use provided context or fall back to instance context
+        check_context = context or self.context
         accessible_memories = []
         for memory in memories:
             # Check read permission
-            if self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+            if self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
                 accessible_memories.append(memory)
 
         # Batch read all content hashes (optimization: single operation instead of N queries)
@@ -326,6 +516,17 @@ class Memory:
                     "state": memory.state,  # #368
                     "namespace": memory.namespace,  # v0.8.0
                     "path_key": memory.path_key,  # v0.8.0
+                    "entity_types": memory.entity_types,  # #1025
+                    "person_refs": memory.person_refs,  # #1025
+                    "temporal_refs_json": memory.temporal_refs_json,  # #1028
+                    "earliest_date": memory.earliest_date.isoformat()
+                    if memory.earliest_date
+                    else None,  # #1028
+                    "latest_date": memory.latest_date.isoformat()
+                    if memory.latest_date
+                    else None,  # #1028
+                    "relationships_json": memory.relationships_json,  # #1038
+                    "relationship_count": memory.relationship_count,  # #1038
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                 }
@@ -709,14 +910,14 @@ class Memory:
 
         # Read content
         content = None
+        import json
+
         try:
             content_bytes = self.backend.read_content(
                 memory.content_hash, context=self.context
             ).unwrap()
             try:
                 # Try to parse as JSON (structured content)
-                import json
-
                 content = json.loads(content_bytes.decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError):
                 # Fall back to text or hex

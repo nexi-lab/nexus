@@ -154,6 +154,14 @@ export NEXUS_IS_ADMIN=false
 
 # Custom parsers (comma-separated)
 export NEXUS_PARSERS="my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
+
+# OpenTelemetry Observability (Issue #764)
+export OTEL_ENABLED=true                              # Enable telemetry (default: false)
+export OTEL_SERVICE_NAME=nexus                        # Service name in traces
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317  # OTLP endpoint (SigNoz, Grafana, etc.)
+export OTEL_EXPORTER_OTLP_INSECURE=true               # Use insecure connection (default: true)
+export OTEL_TRACES_SAMPLER_ARG=1.0                    # Sampling ratio 0.0-1.0 (default: 1.0)
+export OTEL_ENVIRONMENT=production                    # Deployment environment tag
 ```
 
 ```python

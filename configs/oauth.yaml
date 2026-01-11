@@ -41,6 +41,21 @@ providers:
     icon_url: https://www.gstatic.com/images/branding/product/1x/gmail_48dp.png
     # redirect_uri: Optional - uses global redirect_uri if not specified
 
+  # Google Calendar OAuth
+  - name: gcalendar
+    display_name: Google Calendar
+    provider_class: nexus.server.auth.google_oauth.GoogleOAuthProvider
+    scopes:
+      - https://www.googleapis.com/auth/calendar
+      - https://www.googleapis.com/auth/calendar.events
+      - openid
+      - email
+    client_id_env: NEXUS_OAUTH_GOOGLE_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_GOOGLE_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://www.gstatic.com/images/branding/product/1x/calendar_48dp.png
+    # redirect_uri: Optional - uses global redirect_uri if not specified
+
   # Google Cloud Storage OAuth
   - name: google-cloud-storage
     display_name: Google Cloud Storage

@@ -3696,3 +3696,434 @@ class MigrationHistoryModel(Base):
             f"{self.from_version}->{self.to_version}, "
             f"type={self.migration_type}, status={self.status})>"
         )
+
+
+# ============================================================================
+# Graph Storage Layer for Knowledge Graph (#1039)
+# ============================================================================
+
+
+class EntityModel(Base):
+    """Entity registry for knowledge graph.
+
+    Stores canonical entities with embeddings for semantic matching/deduplication.
+    Enables cross-document entity linking without requiring a separate graph database.
+
+    Entity Resolution:
+    - Uses embedding similarity (cosine distance) for deduplication
+    - Default merge threshold: 0.85 similarity
+    - Aliases track alternative names for merged entities
+
+    Issue #1039: Graph storage layer for entities and relationships.
+    """
+
+    __tablename__ = "entities"
+
+    # Primary key
+    entity_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # P0 SECURITY: Defense-in-depth tenant isolation
+    # Issue #773: Made non-nullable for strict multi-tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+
+    # Entity identification
+    canonical_name: Mapped[str] = mapped_column(
+        String(512), nullable=False
+    )  # Normalized/canonical name
+    entity_type: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # PERSON, ORG, LOCATION, CONCEPT, DATE, etc.
+
+    # Embedding for semantic entity matching/deduplication
+    # Stored as JSON array for SQLite, vector type for PostgreSQL (like MemoryModel)
+    embedding: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Vector embedding for similarity search
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # Name of embedding model used
+    embedding_dim: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )  # Dimension of embedding vector
+
+    # Entity resolution tracking
+    aliases: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON array of alternative names for this entity
+    merge_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )  # How many mentions merged into this entity
+
+    # Metadata
+    metadata_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Additional entity attributes as JSON
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    # Relationships (ORM)
+    source_relationships: Mapped[list["RelationshipModel"]] = relationship(
+        "RelationshipModel",
+        foreign_keys="RelationshipModel.source_entity_id",
+        back_populates="source_entity",
+        cascade="all, delete-orphan",
+    )
+    target_relationships: Mapped[list["RelationshipModel"]] = relationship(
+        "RelationshipModel",
+        foreign_keys="RelationshipModel.target_entity_id",
+        back_populates="target_entity",
+        cascade="all, delete-orphan",
+    )
+    mentions: Mapped[list["EntityMentionModel"]] = relationship(
+        "EntityMentionModel",
+        back_populates="entity",
+        cascade="all, delete-orphan",
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        # Unique constraint on (tenant_id, canonical_name) for entity deduplication
+        UniqueConstraint("tenant_id", "canonical_name", name="uq_entity_tenant_name"),
+        # Tenant-scoped queries
+        Index("idx_entities_tenant", "tenant_id"),
+        # Entity type filtering
+        Index("idx_entities_type", "entity_type"),
+        # Combined tenant + type for filtered queries
+        Index("idx_entities_tenant_type", "tenant_id", "entity_type"),
+        # Name lookup (for exact matching before embedding similarity)
+        Index("idx_entities_canonical_name", "canonical_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EntityModel(entity_id={self.entity_id}, name={self.canonical_name}, type={self.entity_type})>"
+
+    def validate(self) -> None:
+        """Validate entity model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate canonical_name
+        if not self.canonical_name:
+            raise ValidationError("canonical_name is required")
+
+        if len(self.canonical_name) > 512:
+            raise ValidationError(
+                f"canonical_name must be 512 characters or less, got {len(self.canonical_name)}"
+            )
+
+        # Validate entity_type if provided
+        valid_types = [
+            "PERSON",
+            "ORG",
+            "LOCATION",
+            "DATE",
+            "TIME",
+            "NUMBER",
+            "CONCEPT",
+            "EVENT",
+            "PRODUCT",
+            "TECHNOLOGY",
+            "EMAIL",
+            "URL",
+            "OTHER",
+        ]
+        if self.entity_type is not None and self.entity_type not in valid_types:
+            raise ValidationError(
+                f"entity_type must be one of {valid_types}, got {self.entity_type}"
+            )
+
+        # Validate merge_count
+        if self.merge_count < 1:
+            raise ValidationError(f"merge_count must be at least 1, got {self.merge_count}")
+
+
+class RelationshipModel(Base):
+    """Relationships between entities (adjacency list).
+
+    Stores directed edges in the knowledge graph. Uses an adjacency list model
+    for efficient storage and PostgreSQL recursive CTEs for N-hop traversal.
+
+    Relationship Types:
+    - WORKS_WITH, MANAGES, REPORTS_TO (organizational)
+    - CREATES, MODIFIES, OWNS (ownership)
+    - DEPENDS_ON, BLOCKS, RELATES_TO (dependencies)
+    - MENTIONS, REFERENCES (informational)
+    - LOCATED_IN, PART_OF, HAS, USES (structural)
+
+    Issue #1039: Graph storage layer for entities and relationships.
+    """
+
+    __tablename__ = "relationships"
+
+    # Primary key
+    relationship_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # P0 SECURITY: Defense-in-depth tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+
+    # Source and target entities (foreign keys)
+    source_entity_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("entities.entity_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_entity_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("entities.entity_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Relationship metadata
+    relationship_type: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # MANAGES, WORKS_WITH, DEPENDS_ON, etc.
+    weight: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0
+    )  # Relationship strength (for weighted traversal)
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0
+    )  # Extraction confidence from LLM (0.0-1.0)
+
+    # Additional metadata
+    metadata_json: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Additional relationship attributes as JSON
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Relationships (ORM)
+    source_entity: Mapped["EntityModel"] = relationship(
+        "EntityModel",
+        foreign_keys=[source_entity_id],
+        back_populates="source_relationships",
+    )
+    target_entity: Mapped["EntityModel"] = relationship(
+        "EntityModel",
+        foreign_keys=[target_entity_id],
+        back_populates="target_relationships",
+    )
+
+    # Indexes and constraints
+    __table_args__ = (
+        # Unique constraint: one relationship type per source-target pair per tenant
+        UniqueConstraint(
+            "tenant_id",
+            "source_entity_id",
+            "target_entity_id",
+            "relationship_type",
+            name="uq_relationship_tuple",
+        ),
+        # Graph traversal indexes (critical for N-hop queries)
+        Index("idx_relationships_source", "source_entity_id"),
+        Index("idx_relationships_target", "target_entity_id"),
+        Index("idx_relationships_type", "relationship_type"),
+        # Composite index for outgoing edge traversal
+        Index("idx_relationships_source_type", "source_entity_id", "relationship_type"),
+        # Composite index for incoming edge traversal
+        Index("idx_relationships_target_type", "target_entity_id", "relationship_type"),
+        # Tenant-scoped queries
+        Index("idx_relationships_tenant", "tenant_id"),
+        # Confidence filtering (for filtering low-quality extractions)
+        Index("idx_relationships_confidence", "confidence"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RelationshipModel(id={self.relationship_id}, {self.source_entity_id} -{self.relationship_type}-> {self.target_entity_id})>"
+
+    def validate(self) -> None:
+        """Validate relationship model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate source_entity_id
+        if not self.source_entity_id:
+            raise ValidationError("source_entity_id is required")
+
+        # Validate target_entity_id
+        if not self.target_entity_id:
+            raise ValidationError("target_entity_id is required")
+
+        # Validate relationship_type
+        if not self.relationship_type:
+            raise ValidationError("relationship_type is required")
+
+        valid_types = [
+            "WORKS_WITH",
+            "MANAGES",
+            "REPORTS_TO",
+            "CREATES",
+            "MODIFIES",
+            "OWNS",
+            "DEPENDS_ON",
+            "BLOCKS",
+            "RELATES_TO",
+            "MENTIONS",
+            "REFERENCES",
+            "LOCATED_IN",
+            "PART_OF",
+            "HAS",
+            "USES",
+            "OTHER",
+        ]
+        if self.relationship_type not in valid_types:
+            raise ValidationError(
+                f"relationship_type must be one of {valid_types}, got {self.relationship_type}"
+            )
+
+        # Validate weight
+        if self.weight < 0.0:
+            raise ValidationError(f"weight must be non-negative, got {self.weight}")
+
+        # Validate confidence
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValidationError(f"confidence must be between 0.0 and 1.0, got {self.confidence}")
+
+        # Validate no self-loops
+        if self.source_entity_id == self.target_entity_id:
+            raise ValidationError(
+                "Self-loops are not allowed (source_entity_id == target_entity_id)"
+            )
+
+
+class EntityMentionModel(Base):
+    """Entity mentions linking entities to source chunks/memories (provenance).
+
+    Tracks where each entity was mentioned in the original documents,
+    enabling source attribution and confidence aggregation.
+
+    Issue #1039: Graph storage layer for entities and relationships.
+    """
+
+    __tablename__ = "entity_mentions"
+
+    # Primary key
+    mention_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # Foreign key to entity
+    entity_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("entities.entity_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Source references (at least one should be set)
+    chunk_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("document_chunks.chunk_id", ondelete="CASCADE"),
+        nullable=True,
+    )  # Link to document chunk
+    memory_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("memories.memory_id", ondelete="CASCADE"),
+        nullable=True,
+    )  # Link to memory
+
+    # Mention details
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0
+    )  # Extraction confidence
+    mention_text: Mapped[str | None] = mapped_column(
+        String(512), nullable=True
+    )  # Original text that matched (before normalization)
+
+    # Position in source (for highlighting)
+    char_offset_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_offset_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Relationships (ORM)
+    entity: Mapped["EntityModel"] = relationship(
+        "EntityModel",
+        back_populates="mentions",
+    )
+
+    # Indexes
+    __table_args__ = (
+        # Entity lookup (find all mentions of an entity)
+        Index("idx_entity_mentions_entity", "entity_id"),
+        # Chunk lookup (find all entities mentioned in a chunk)
+        Index("idx_entity_mentions_chunk", "chunk_id"),
+        # Memory lookup (find all entities mentioned in a memory)
+        Index("idx_entity_mentions_memory", "memory_id"),
+        # Confidence filtering
+        Index("idx_entity_mentions_confidence", "confidence"),
+    )
+
+    def __repr__(self) -> str:
+        source = f"chunk={self.chunk_id}" if self.chunk_id else f"memory={self.memory_id}"
+        return (
+            f"<EntityMentionModel(mention_id={self.mention_id}, entity={self.entity_id}, {source})>"
+        )
+
+    def validate(self) -> None:
+        """Validate entity mention model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        # Validate entity_id
+        if not self.entity_id:
+            raise ValidationError("entity_id is required")
+
+        # Validate at least one source reference
+        if self.chunk_id is None and self.memory_id is None:
+            raise ValidationError("At least one of chunk_id or memory_id must be set")
+
+        # Validate confidence
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValidationError(f"confidence must be between 0.0 and 1.0, got {self.confidence}")
+
+        # Validate offset consistency
+        if (self.char_offset_start is None) != (self.char_offset_end is None):
+            raise ValidationError(
+                "char_offset_start and char_offset_end must both be set or both be None"
+            )
+
+        if self.char_offset_start is not None and self.char_offset_end is not None:
+            if self.char_offset_start < 0:
+                raise ValidationError(
+                    f"char_offset_start must be non-negative, got {self.char_offset_start}"
+                )
+            if self.char_offset_end < self.char_offset_start:
+                raise ValidationError(
+                    f"char_offset_end must be >= char_offset_start, got {self.char_offset_end} < {self.char_offset_start}"
+                )

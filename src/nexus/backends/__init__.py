@@ -25,12 +25,13 @@ GCSConnectorBackend = None
 S3ConnectorBackend = None
 XConnectorBackend = None
 HNConnectorBackend = None
+SlackConnectorBackend = None
 
 
 def _register_optional_backends() -> None:
     """Register optional backends on first use (lazy loading)."""
     global GCSBackend, GoogleDriveConnectorBackend, GCSConnectorBackend
-    global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend
+    global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend, SlackConnectorBackend
 
     # Only register once
     if GCSBackend is not None:
@@ -78,6 +79,13 @@ def _register_optional_backends() -> None:
     except ImportError:
         pass
 
+    try:
+        from nexus.backends.slack_connector import SlackConnectorBackend as _SlackConn
+
+        SlackConnectorBackend = _SlackConn
+    except ImportError:
+        pass
+
 
 __all__ = [
     # Base classes
@@ -103,4 +111,5 @@ __all__ = [
     "S3ConnectorBackend",
     "XConnectorBackend",
     "HNConnectorBackend",
+    "SlackConnectorBackend",
 ]

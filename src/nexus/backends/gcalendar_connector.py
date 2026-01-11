@@ -35,7 +35,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
@@ -56,6 +56,7 @@ from nexus.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
+from nexus.core.response import HandlerResponse
 
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
@@ -363,7 +364,7 @@ send_notifications: true
         # Remove None values
         yaml_data = {k: v for k, v in yaml_data.items() if v is not None}
 
-        yaml_output = yaml.dump(
+        yaml_output: str = yaml.dump(
             yaml_data,
             default_flow_style=False,
             allow_unicode=True,
@@ -410,7 +411,9 @@ send_notifications: true
     # Backend Interface - Read Operations
     # =========================================================================
 
-    def read_content(self, content_hash: str, context: OperationContext | None = None) -> bytes:
+    def read_content(
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bytes]:
         """Read event content from cache or Google Calendar API.
 
         Args:
@@ -418,12 +421,13 @@ send_notifications: true
             context: Operation context with backend_path
 
         Returns:
-            Event content as YAML bytes
+            HandlerResponse with event content as YAML bytes
 
         Raises:
             NexusFileNotFoundError: If event doesn't exist
             BackendError: If read operation fails
         """
+        _ = content_hash  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
@@ -449,7 +453,11 @@ send_notifications: true
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                return cached.content_binary
+                return HandlerResponse.ok(
+                    data=cached.content_binary,
+                    backend_name="gcalendar",
+                    path=context.backend_path,
+                )
 
         # Fetch from Google Calendar API
         try:
@@ -471,13 +479,19 @@ send_notifications: true
                     tenant_id=tenant_id,
                 )
 
-        return content
+        return HandlerResponse.ok(
+            data=content,
+            backend_name="gcalendar",
+            path=context.backend_path,
+        )
 
     # =========================================================================
     # Backend Interface - Write Operations (CUD)
     # =========================================================================
 
-    def write_content(self, content: bytes, context: OperationContext | None = None) -> str:
+    def write_content(
+        self, content: bytes, context: OperationContext | None = None
+    ) -> HandlerResponse[str]:
         """Write event content - handles create and update.
 
         For create: Write to /{calendar_id}/_new.yaml
@@ -488,7 +502,7 @@ send_notifications: true
             context: Operation context with backend_path
 
         Returns:
-            Event ID (for create) or "updated" (for update)
+            HandlerResponse with Event ID (for create) or "updated" (for update)
 
         Raises:
             ValidationError: If validation fails
@@ -517,15 +531,21 @@ send_notifications: true
 
         # Determine operation
         if filename == "_new.yaml":
-            return self._create_event(calendar_id, data, context)
+            result = self._create_event(calendar_id, data, context)
         elif filename.endswith(".yaml"):
             event_id = filename.replace(".yaml", "")
-            return self._update_event(calendar_id, event_id, data, context)
+            result = self._update_event(calendar_id, event_id, data, context)
         else:
             raise BackendError(
                 f"Invalid filename: {filename}. Use _new.yaml for create or {{event_id}}.yaml for update.",
                 backend="gcalendar",
             )
+
+        return HandlerResponse.ok(
+            data=result,
+            backend_name="gcalendar",
+            path=context.backend_path,
+        )
 
     def _create_event(
         self, calendar_id: str, data: dict[str, Any], context: OperationContext | None
@@ -563,7 +583,7 @@ send_notifications: true
                 service.events().insert(calendarId=calendar_id, body=event_body).execute()
             )
 
-            event_id = created_event.get("id")
+            event_id: str = created_event.get("id", "")
 
             # Complete checkpoint with created state
             if checkpoint:
@@ -648,17 +668,23 @@ send_notifications: true
                 self.clear_checkpoint(checkpoint.checkpoint_id)
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
-    def delete_content(self, content_hash: str, context: OperationContext | None = None) -> None:
+    def delete_content(
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[None]:
         """Delete a calendar event.
 
         Args:
             content_hash: Ignored
             context: Operation context with backend_path
 
+        Returns:
+            HandlerResponse indicating success
+
         Raises:
             ValidationError: If validation fails
             BackendError: If delete fails
         """
+        _ = content_hash  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
@@ -708,6 +734,12 @@ send_notifications: true
                 self.clear_checkpoint(checkpoint.checkpoint_id)
 
             logger.info(f"Deleted calendar event: {event_id}")
+
+            return HandlerResponse.ok(
+                data=None,
+                backend_name="gcalendar",
+                path=context.backend_path,
+            )
 
         except Exception as e:
             if checkpoint:
@@ -774,35 +806,47 @@ send_notifications: true
     # Backend Interface - Directory Operations
     # =========================================================================
 
-    def content_exists(self, content_hash: str, context: OperationContext | None = None) -> bool:
+    def content_exists(
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         """Check if event exists."""
+        _ = content_hash  # Unused for connector backends
         if not context or not context.backend_path:
-            return False
+            return HandlerResponse.ok(data=False, backend_name="gcalendar")
 
         try:
-            self.read_content(content_hash, context)
-            return True
+            self.read_content("", context)
+            return HandlerResponse.ok(
+                data=True, backend_name="gcalendar", path=context.backend_path
+            )
         except Exception:
-            return False
+            return HandlerResponse.ok(
+                data=False, backend_name="gcalendar", path=context.backend_path
+            )
 
-    def get_content_size(self, content_hash: str, context: OperationContext | None = None) -> int:
+    def get_content_size(
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         """Get event content size."""
         if not context:
-            return 0
+            return HandlerResponse.ok(data=0, backend_name="gcalendar")
 
         # Check cache first
         if hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
-                return cached_size
+                return HandlerResponse.ok(data=cached_size, backend_name="gcalendar")
 
         # Read content to get size
-        content = self.read_content(content_hash, context)
-        return len(content)
+        response = self.read_content(content_hash, context)
+        return HandlerResponse.ok(data=len(response.unwrap()), backend_name="gcalendar")
 
-    def get_ref_count(self, content_hash: str, context: OperationContext | None = None) -> int:
+    def get_ref_count(
+        self, content_hash: str, context: OperationContext | None = None
+    ) -> HandlerResponse[int]:
         """Get reference count (always 1 for connector backends)."""
-        return 1
+        _, _ = content_hash, context  # Unused
+        return HandlerResponse.ok(data=1, backend_name="gcalendar")
 
     def get_version(self, path: str, context: OperationContext | None = None) -> str | None:
         """Get version for a calendar event file."""
@@ -825,15 +869,20 @@ send_notifications: true
         except Exception:
             return None
 
-    def is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    def is_directory(
+        self, path: str, context: OperationContext | None = None
+    ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
+        _ = context  # Unused
         path = path.strip("/")
         if not path:
-            return True  # Root is always a directory
+            return HandlerResponse.ok(
+                data=True, backend_name="gcalendar"
+            )  # Root is always a directory
 
         parts = path.split("/")
         # Calendar IDs (single part) are directories, event files are not
-        return len(parts) == 1
+        return HandlerResponse.ok(data=len(parts) == 1, backend_name="gcalendar")
 
     def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents.
@@ -920,8 +969,9 @@ send_notifications: true
         parents: bool = False,
         exist_ok: bool = False,
         context: OperationContext | None = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """Create directory (not supported - calendars are created via Google)."""
+        _, _, _, _ = path, parents, exist_ok, context  # Unused
         raise BackendError(
             "Cannot create calendars via Nexus. Use Google Calendar to create new calendars.",
             backend="gcalendar",
@@ -932,8 +982,9 @@ send_notifications: true
         path: str,
         recursive: bool = False,
         context: OperationContext | None = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """Remove directory (not supported)."""
+        _, _, _ = path, recursive, context  # Unused
         raise BackendError(
             "Cannot delete calendars via Nexus. Use Google Calendar to manage calendars.",
             backend="gcalendar",

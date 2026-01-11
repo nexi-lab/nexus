@@ -58,25 +58,25 @@ class ConfirmLevel(StrEnum):
         """Return numeric level for comparison."""
         return {"none": 0, "intent": 1, "explicit": 2, "user": 3}[self.value]
 
-    def __ge__(self, other: ConfirmLevel) -> bool:
+    def __ge__(self, other: object) -> bool:
         """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level >= other.level
         return NotImplemented
 
-    def __gt__(self, other: ConfirmLevel) -> bool:
+    def __gt__(self, other: object) -> bool:
         """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level > other.level
         return NotImplemented
 
-    def __le__(self, other: ConfirmLevel) -> bool:
+    def __le__(self, other: object) -> bool:
         """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level <= other.level
         return NotImplemented
 
-    def __lt__(self, other: ConfirmLevel) -> bool:
+    def __lt__(self, other: object) -> bool:
         """Compare levels by strictness."""
         if isinstance(other, ConfirmLevel):
             return self.level < other.level

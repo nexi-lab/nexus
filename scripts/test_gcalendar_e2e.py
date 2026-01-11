@@ -167,7 +167,8 @@ end:
 
     try:
         context.backend_path = "primary/_new.yaml"
-        event_id = backend.write_content(content, context)
+        response = backend.write_content(content, context)
+        event_id = response.unwrap()
 
         print_result(True, f"Event created with ID: {event_id}")
         return event_id
@@ -186,7 +187,8 @@ def test_read_event(backend, context, event_id: str) -> bool:
 
     try:
         context.backend_path = f"primary/{event_id}.yaml"
-        content = backend.read_content("", context)
+        response = backend.read_content("", context)
+        content = response.unwrap()
 
         # Parse and verify
         content_str = content.decode("utf-8")
@@ -227,12 +229,14 @@ description: This event was UPDATED by the Nexus Calendar Connector E2E test.
 
     try:
         context.backend_path = f"primary/{event_id}.yaml"
-        result = backend.write_content(content, context)
+        response = backend.write_content(content, context)
+        result = response.unwrap()
 
         print_result(result == "updated", f"Update returned: {result}")
 
         # Read back and verify
-        updated_content = backend.read_content("", context).decode("utf-8")
+        read_response = backend.read_content("", context)
+        updated_content = read_response.unwrap().decode("utf-8")
         has_updated_title = "(UPDATED)" in updated_content
 
         print_result(has_updated_title, "Event title was updated")

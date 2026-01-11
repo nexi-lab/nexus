@@ -201,6 +201,8 @@ def main():
     generate_nested_50k()
     generate_grep_short()
     generate_grep_long()
+    generate_grep_medium_1k()
+    generate_grep_medium_10k()
     generate_grep_nested()
     generate_write_1k()
 

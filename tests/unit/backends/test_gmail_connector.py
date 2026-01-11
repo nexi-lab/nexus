@@ -386,8 +386,10 @@ class TestGmailConnectorFlattenedHierarchy:
 
         # Should return not_found HandlerResponse
         assert isinstance(result, HandlerResponse)
-        assert result.is_error()
-        assert "Invalid Gmail email filename format" in result.message
+        assert not result.success
+        assert (
+            result.error_message and "Invalid Gmail email filename format" in result.error_message
+        )
 
     def test_read_content_old_thread_folder_format_raises_error(self, gmail_connector) -> None:
         """Test read_content returns error for old 3-level path format."""
@@ -399,8 +401,8 @@ class TestGmailConnectorFlattenedHierarchy:
 
         # Should return not_found HandlerResponse
         assert isinstance(result, HandlerResponse)
-        assert result.is_error()
-        assert "Invalid Gmail path" in result.message
+        assert not result.success
+        assert result.error_message and "Invalid Gmail path" in result.error_message
 
     def test_content_exists_flattened_format(self, gmail_connector) -> None:
         """Test content_exists with flattened path format."""

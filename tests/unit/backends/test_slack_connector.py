@@ -269,8 +269,8 @@ class TestSlackConnectorReadOperations:
         result = slack_connector.read_content("fake-hash", context=None)
 
         # Should return error HandlerResponse
-        assert result.is_error()
-        assert "requires backend_path" in result.message
+        assert not result.success
+        assert result.error_message and "requires backend_path" in result.error_message
 
 
 class TestSlackConnectorGetVersion:

@@ -1,0 +1,71 @@
+# Slack App Manifest for Nexus Slack Connector
+#
+# Use this manifest to quickly create a Slack app with all required permissions.
+#
+# How to use:
+# 1. Go to https://api.slack.com/apps
+# 2. Click "Create New App" → "From an app manifest"
+# 3. Select your workspace
+# 4. Paste this manifest (YAML format)
+# 5. Review permissions and create
+# 6. Copy Client ID and Client Secret to environment variables
+
+display_information:
+  name: Nexus Connector
+  description: AI-powered workspace integration via Nexus filesystem
+  background_color: "#2c2d30"
+  long_description: "Nexus Slack Connector enables AI agents to interact with your Slack workspace through a familiar filesystem interface. Read messages, post updates, and search conversations - all through a unified API."
+
+features:
+  bot_user:
+    display_name: Nexus Bot
+    always_online: true
+
+oauth_config:
+  redirect_urls:
+    - http://localhost:5173/oauth/callback
+    - http://localhost:2026/oauth/callback
+  scopes:
+    user:
+      # Channel access
+      - channels:read        # View basic channel information
+      - channels:history     # View messages in public channels
+      - channels:write       # Manage public channels (optional)
+
+      # Private channel access
+      - groups:read          # View basic information about private channels
+      - groups:history       # View messages in private channels
+      - groups:write         # Manage private channels (optional)
+
+      # Direct message access
+      - im:read              # View basic information about direct messages
+      - im:history           # View messages in direct messages
+      - im:write             # Send direct messages (optional)
+
+      # Multi-party direct message access
+      - mpim:read            # View basic information about group direct messages
+      - mpim:history         # View messages in group direct messages
+      - mpim:write           # Send messages to group direct messages (optional)
+
+      # Message posting
+      - chat:write           # Post messages to channels and conversations
+
+      # User information
+      - users:read           # View users in workspace
+      - users:read.email     # View email addresses (optional)
+
+      # Additional helpful scopes
+      - team:read            # View workspace information
+
+    bot:
+      # Bot scopes (optional - for future bot functionality)
+      - channels:read
+      - channels:history
+      - chat:write
+      - users:read
+
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  is_hosted: false
+  token_rotation_enabled: false

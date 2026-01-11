@@ -101,7 +101,8 @@ class MountCoreService:
 
         # Auto-inject token_manager_db for OAuth backends
         if (
-            backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
+            backend_type
+            in ("gdrive_connector", "gmail_connector", "x_connector", "slack_connector")
             and "token_manager_db" not in config
         ):
             try:
@@ -427,6 +428,16 @@ class MountCoreService:
                 provider=config.get("provider", "gmail"),
                 session_factory=self._gw.session_factory,
                 max_message_per_label=config.get("max_message_per_label", 2000),
+            )
+
+        elif backend_type == "slack_connector":
+            from nexus.backends.slack_connector import SlackConnectorBackend
+
+            backend = SlackConnectorBackend(
+                token_manager_db=config["token_manager_db"],
+                user_email=config.get("user_email"),
+                provider=config.get("provider", "slack"),
+                session_factory=self._gw.session_factory,
             )
 
         else:

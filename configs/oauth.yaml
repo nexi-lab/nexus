@@ -106,3 +106,24 @@ providers:
     requires_pkce: true
     icon_url: https://abs.twimg.com/favicons/twitter.3.ico
     # redirect_uri: Optional - uses global redirect_uri if not specified
+
+  # Slack OAuth
+  - name: slack
+    display_name: Slack
+    provider_class: nexus.server.auth.slack_oauth.SlackOAuthProvider
+    scopes:
+      - channels:read
+      - channels:history
+      - chat:write
+      - users:read
+      - im:read
+      - im:history
+      - groups:read
+      - groups:history
+      - mpim:read
+      - mpim:history
+    client_id_env: NEXUS_OAUTH_SLACK_CLIENT_ID
+    client_secret_env: NEXUS_OAUTH_SLACK_CLIENT_SECRET
+    requires_pkce: false
+    icon_url: https://a.slack-edge.com/80588/marketing/img/icons/icon_slack_hash_colored.png
+    # redirect_uri: Optional - uses global redirect_uri if not specified

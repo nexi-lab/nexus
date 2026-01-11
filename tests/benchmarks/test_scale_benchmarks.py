@@ -16,9 +16,7 @@ See issue #XXX for context.
 
 from __future__ import annotations
 
-import os
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -26,13 +24,12 @@ import pytest
 # Add benchmarks directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "benchmarks"))
 
-from performance_test_data.generate_data import (
+from performance.generate_data import (
     ContentGenerator,
     FilenameGenerator,
     GenerationConfig,
     PerformanceDataGenerator,
 )
-
 
 # =============================================================================
 # FIXTURES
@@ -470,7 +467,7 @@ class TestGrepRustBenchmarks:
 
     def test_grep_rust_bulk_long_content(self, benchmark, medium_scale_data):
         """Benchmark Rust grep_bulk on long content files."""
-        from nexus.core.grep_fast import RUST_AVAILABLE, grep_bulk
+        from nexus.core.grep_fast import grep_bulk
 
         grep_dir = medium_scale_data / "grep_long"
 

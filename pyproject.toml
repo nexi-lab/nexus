@@ -84,7 +84,7 @@ dependencies = [
     # MCP Server (v0.7.0)
     "fastmcp>=0.2.0", # Model Context Protocol server
     # Document parsing (Python 3.13 only - not yet compatible with 3.14)
-    "markitdown>=0.1.0; python_version < '3.14'",
+    "markitdown[all]>=0.1.0; python_version < '3.14'",
     # Fast JSON serialization (2-3x faster than stdlib json)
     "orjson>=3.10.0",
     # Roaring Bitmaps for Tiger Cache (Issue #682)

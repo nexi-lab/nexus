@@ -9,7 +9,6 @@ Focus on:
 5. 1k files for write benchmark
 """
 
-import os
 import random
 import time
 from pathlib import Path
@@ -41,8 +40,12 @@ def progress(current: int, total: int, desc: str, start_time: float):
         elapsed = time.time() - start_time
         rate = current / elapsed if elapsed > 0 else 0
         eta = (total - current) / rate if rate > 0 else 0
-        print(f"\r{desc}: {current}/{total} ({100*current/total:.1f}%) "
-              f"[{elapsed:.1f}s, ~{eta:.1f}s left]", end="", flush=True)
+        print(
+            f"\r{desc}: {current}/{total} ({100 * current / total:.1f}%) "
+            f"[{elapsed:.1f}s, ~{eta:.1f}s left]",
+            end="",
+            flush=True,
+        )
 
 
 def generate_flat_50k():
@@ -103,6 +106,34 @@ def generate_grep_long():
         content = generate_content(1000)  # 1000 lines
         (out_dir / f"file_{i:04d}.log").write_text(content)
         progress(i + 1, 1000, "Grep long", start)
+    print()
+
+
+def generate_grep_medium_1k():
+    """Generate 1k files with MEDIUM content (~250 lines each)."""
+    print("\n=== Generating grep files (MEDIUM content, 250 lines, 1K files) ===")
+    out_dir = OUTPUT_DIR / "grep_medium_1k"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    start = time.time()
+    for i in range(1000):
+        content = generate_content(250)  # 250 lines (medium)
+        (out_dir / f"file_{i:04d}.log").write_text(content)
+        progress(i + 1, 1000, "Grep medium 1k", start)
+    print()
+
+
+def generate_grep_medium_10k():
+    """Generate 10k files with MEDIUM content (~250 lines each)."""
+    print("\n=== Generating grep files (MEDIUM content, 250 lines, 10K files) ===")
+    out_dir = OUTPUT_DIR / "grep_medium_10k"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    start = time.time()
+    for i in range(10_000):
+        content = generate_content(250)  # 250 lines (medium)
+        (out_dir / f"file_{i:04d}.log").write_text(content)
+        progress(i + 1, 10_000, "Grep medium 10k", start)
     print()
 
 
@@ -181,7 +212,7 @@ def main():
         if subdir.is_dir():
             file_count = sum(1 for _ in subdir.rglob("*") if _.is_file())
             total_size = sum(f.stat().st_size for f in subdir.rglob("*") if f.is_file())
-            print(f"  {subdir.name}: {file_count:,} files, {total_size/1024/1024:.1f} MB")
+            print(f"  {subdir.name}: {file_count:,} files, {total_size / 1024 / 1024:.1f} MB")
 
 
 if __name__ == "__main__":

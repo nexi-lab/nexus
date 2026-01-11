@@ -909,7 +909,7 @@ class TigerCache:
                     (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, created_at, updated_at)
                 VALUES
                     (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, NOW(), NOW())
-                ON CONFLICT (subject_type, subject_id, permission, resource_type)
+                ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
                 DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data, revision = EXCLUDED.revision, updated_at = NOW()
             """)
         else:
@@ -1210,7 +1210,7 @@ class TigerCache:
                         VALUES
                             (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1351,7 +1351,7 @@ class TigerCache:
                         VALUES
                             (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1555,7 +1555,7 @@ class TigerCache:
                     VALUES
                         (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
                          :bitmap_data, :revision, NOW(), NOW())
-                    ON CONFLICT (subject_type, subject_id, permission, resource_type)
+                    ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
                     DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                   revision = EXCLUDED.revision,
                                   updated_at = NOW()

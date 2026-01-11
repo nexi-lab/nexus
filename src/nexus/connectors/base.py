@@ -420,9 +420,7 @@ class SkillDocMixin:
             # Handle Python 3.10+ union types (X | None)
             if isinstance(annotation, types.UnionType):
                 args = getattr(annotation, "__args__", ())
-                return any(
-                    arg is not type(None) and hasattr(arg, "model_fields") for arg in args
-                )
+                return any(arg is not type(None) and hasattr(arg, "model_fields") for arg in args)
 
             # Handle typing.Optional and typing.Union
             origin = getattr(annotation, "__origin__", None)
@@ -435,9 +433,7 @@ class SkillDocMixin:
         except Exception:
             return False
 
-    def _get_nested_example(
-        self, field_name: str, _annotation: Any, required: bool
-    ) -> list[str]:
+    def _get_nested_example(self, field_name: str, _annotation: Any, required: bool) -> list[str]:
         """Get example lines for nested model."""
         # Common nested examples
         if field_name in ("start", "end"):

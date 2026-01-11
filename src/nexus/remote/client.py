@@ -3442,6 +3442,67 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("remove_mount", {"mount_point": mount_point})
         return result  # type: ignore[no-any-return]
 
+    def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        This combines three operations into one atomic call:
+        1. Deactivate the connector if active (remove_mount) - non-fatal
+        2. Delete the connector directory recursively (rmdir) - non-fatal
+        3. Delete the saved configuration (delete_saved_mount) - fatal
+
+        Optional: Revoke OAuth credentials associated with the connector.
+
+        Args:
+            mount_point: Virtual path of connector to delete
+            revoke_oauth: Whether to revoke OAuth credentials (default: False)
+            provider: OAuth provider name (required if revoke_oauth=True)
+            user_email: User email for OAuth (required if revoke_oauth=True)
+
+        Returns:
+            Dictionary with deletion results:
+            {
+                "removed": bool,           # Mount was deactivated
+                "directory_deleted": bool,  # Directory was deleted
+                "config_deleted": bool,    # Database config was deleted
+                "oauth_revoked": bool,     # OAuth was revoked (if requested)
+                "errors": list[str],       # Fatal errors
+                "warnings": list[str]      # Non-fatal warnings
+            }
+
+        Raises:
+            PermissionError: If user lacks write permission
+            RuntimeError: If database config deletion fails
+
+        Example:
+            >>> # Delete connector without OAuth revocation
+            >>> result = nx.delete_connector("/slack")
+            >>> print(result["config_deleted"])
+            True
+
+            >>> # Delete connector and revoke OAuth
+            >>> result = nx.delete_connector(
+            ...     mount_point="/slack",
+            ...     revoke_oauth=True,
+            ...     provider="slack",
+            ...     user_email="user@example.com"
+            ... )
+        """
+        params: dict[str, Any] = {"mount_point": mount_point}
+        if revoke_oauth:
+            params["revoke_oauth"] = revoke_oauth
+        if provider is not None:
+            params["provider"] = provider
+        if user_email is not None:
+            params["user_email"] = user_email
+        result = self._call_rpc("delete_connector", params)
+        return cast(dict[str, Any], result)
+
     def list_connectors(self, category: str | None = None) -> builtins.list[dict[str, Any]]:
         """List all available connector types that can be used with add_mount().
 

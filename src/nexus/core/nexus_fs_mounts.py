@@ -259,13 +259,71 @@ class NexusFSMountsMixin:
             >>> print(result["oauth_revoked"])
             True
         """
-        return self._mount_core_service.delete_connector(
-            mount_point=mount_point,
-            revoke_oauth=revoke_oauth,
-            provider=provider,
-            user_email=user_email,
-            context=context,
-        )
+        # Implement bundled deletion at this level where we have access to all services
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "config_deleted": False,
+            "oauth_revoked": False,
+            "errors": [],
+            "warnings": [],
+        }
+
+        # Step 1: Try to deactivate connector if active (non-fatal)
+        try:
+            remove_result = self._mount_core_service.remove_mount(mount_point, context)
+            result["removed"] = remove_result.get("removed", False)
+            result["directory_deleted"] = remove_result.get(
+                "removed", False
+            )  # Directory cleanup via remove_mount
+            if remove_result.get("errors"):
+                result["warnings"].extend(remove_result["errors"])
+        except PermissionError:
+            # Permission errors should stop the process
+            raise
+        except Exception as e:
+            # Other errors are non-fatal - connector might not be active
+            warning_msg = f"Failed to deactivate connector (continuing): {e}"
+            result["warnings"].append(warning_msg)
+
+        # Step 2: Delete saved configuration (FATAL - must succeed)
+        try:
+            config_deleted = self._mount_persist_service.delete_saved_mount(mount_point)
+            result["config_deleted"] = config_deleted
+        except Exception as e:
+            error_msg = f"Failed to delete connector configuration: {e}"
+            result["errors"].append(error_msg)
+            raise RuntimeError(error_msg) from e
+
+        # Step 3: Optionally revoke OAuth credentials
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            else:
+                try:
+                    import asyncio
+
+                    from nexus.core.context_utils import get_tenant_id
+
+                    tenant_id = get_tenant_id(context)
+                    # Available via NexusFSOAuthMixin in multiple inheritance
+                    token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
+                    revoked = asyncio.run(
+                        token_manager.revoke_credential(
+                            provider=provider,
+                            user_email=user_email,
+                            tenant_id=tenant_id,
+                        )
+                    )
+                    result["oauth_revoked"] = revoked
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+
+        return result
 
     @rpc_expose(description="List available connector types")
     def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:

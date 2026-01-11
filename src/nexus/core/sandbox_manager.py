@@ -13,12 +13,19 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.core.sandbox_e2b_provider import E2BSandboxProvider
 from nexus.core.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
 )
 from nexus.storage.models import SandboxMetadataModel
+
+# Try to import E2B provider
+try:
+    from nexus.core.sandbox_e2b_provider import E2BSandboxProvider
+
+    E2B_PROVIDER_AVAILABLE = True
+except ImportError:
+    E2B_PROVIDER_AVAILABLE = False
 
 # Try to import Docker provider
 try:
@@ -65,12 +72,20 @@ class SandboxManager:
 
         # Initialize providers
         self.providers: dict[str, SandboxProvider] = {}
-        if e2b_api_key:
-            self.providers["e2b"] = E2BSandboxProvider(
-                api_key=e2b_api_key,
-                team_id=e2b_team_id,
-                default_template=e2b_template_id,
-            )
+
+        # Initialize E2B provider if available and API key provided
+        if E2B_PROVIDER_AVAILABLE and e2b_api_key:
+            try:
+                self.providers["e2b"] = E2BSandboxProvider(
+                    api_key=e2b_api_key,
+                    team_id=e2b_team_id,
+                    default_template=e2b_template_id,
+                )
+                logger.info("E2B provider initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize E2B provider: {e}")
+        elif not E2B_PROVIDER_AVAILABLE and e2b_api_key:
+            logger.info("E2B provider not available (e2b_code_interpreter package not installed)")
 
         # Initialize Docker provider if available (no API key needed)
         if DOCKER_PROVIDER_AVAILABLE:

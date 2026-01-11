@@ -370,32 +370,37 @@ class TestGmailConnectorFlattenedHierarchy:
 
             result = gmail_connector.read_content("dummy_hash", context=mock_context)
 
-            # Should successfully parse and return YAML content
-            assert isinstance(result, bytes)
-            assert b"from: test@example.com" in result
-            assert b"subject: Test" in result
+            # Should successfully parse and return YAML content in HandlerResponse
+            assert isinstance(result, HandlerResponse)
+            assert result.data is not None
+            assert b"from: test@example.com" in result.data
+            assert b"subject: Test" in result.data
 
     def test_read_content_invalid_path_format_raises_error(self, gmail_connector) -> None:
-        """Test read_content raises error for invalid path format."""
-        from nexus.core.exceptions import NexusFileNotFoundError
-
+        """Test read_content returns error for invalid path format."""
         # Invalid path: missing thread_id in filename
         mock_context = Mock()
         mock_context.backend_path = "SENT/msg456.yaml"  # Missing thread_id prefix
 
-        with pytest.raises(NexusFileNotFoundError):
-            gmail_connector.read_content("dummy_hash", context=mock_context)
+        result = gmail_connector.read_content("dummy_hash", context=mock_context)
+
+        # Should return not_found HandlerResponse
+        assert isinstance(result, HandlerResponse)
+        assert result.is_error()
+        assert "Invalid Gmail email filename format" in result.message
 
     def test_read_content_old_thread_folder_format_raises_error(self, gmail_connector) -> None:
-        """Test read_content raises error for old 3-level path format."""
-        from nexus.core.exceptions import NexusFileNotFoundError
-
+        """Test read_content returns error for old 3-level path format."""
         # Old format: SENT/thread_id/email-msg_id.yaml (no longer supported)
         mock_context = Mock()
         mock_context.backend_path = "SENT/thread123/email-msg456.yaml"
 
-        with pytest.raises(NexusFileNotFoundError):
-            gmail_connector.read_content("dummy_hash", context=mock_context)
+        result = gmail_connector.read_content("dummy_hash", context=mock_context)
+
+        # Should return not_found HandlerResponse
+        assert isinstance(result, HandlerResponse)
+        assert result.is_error()
+        assert "Invalid Gmail path" in result.message
 
     def test_content_exists_flattened_format(self, gmail_connector) -> None:
         """Test content_exists with flattened path format."""

@@ -378,8 +378,12 @@ class NexusFSOAuthMixin:
         import httpx
 
         # First check if the credential already has an email (set by provider)
-        if hasattr(credential, "user_email") and credential.user_email:
-            return credential.user_email
+        if hasattr(credential, "user_email") and isinstance(
+            getattr(credential, "user_email", None), str
+        ):
+            user_email = credential.user_email
+            if user_email:  # Check it's not empty string
+                return user_email
 
         provider_name = provider_instance.provider_name
 

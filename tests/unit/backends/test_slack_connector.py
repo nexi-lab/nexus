@@ -136,8 +136,12 @@ class TestSlackConnectorDirectoryStructure:
 
     def test_is_directory_channel_folders(self, slack_connector) -> None:
         """Test is_directory for channel folders."""
-        assert slack_connector.is_directory("channels/general") is True
-        assert slack_connector.is_directory("channels/random") is True
+        # In YAML format, channels are files not directories
+        assert slack_connector.is_directory("channels/general.yaml") is False
+        assert slack_connector.is_directory("channels/random.yaml") is False
+        # Top-level folders are directories
+        assert slack_connector.is_directory("channels") is True
+        assert slack_connector.is_directory("dms") is True
 
     def test_is_directory_message_files(self, slack_connector) -> None:
         """Test is_directory for message files."""
@@ -261,9 +265,12 @@ class TestSlackConnectorReadOperations:
     """Test read operations."""
 
     def test_read_content_without_context(self, slack_connector) -> None:
-        """Test reading content without context raises error."""
-        with pytest.raises(BackendError):
-            slack_connector.read_content("fake-hash", context=None)
+        """Test reading content without context returns error."""
+        result = slack_connector.read_content("fake-hash", context=None)
+
+        # Should return error HandlerResponse
+        assert result.is_error()
+        assert "requires backend_path" in result.message
 
 
 class TestSlackConnectorGetVersion:

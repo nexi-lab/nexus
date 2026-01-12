@@ -4,13 +4,10 @@ Tests the SimpleMem-inspired affinity scoring that combines semantic
 similarity and temporal proximity for memory clustering.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
-
-# Python 3.10 compatibility
-UTC = timezone.utc
 
 from nexus.core.ace.affinity import (
     AffinityConfig,

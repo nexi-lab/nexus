@@ -1,7 +1,7 @@
 """Add graph storage tables for knowledge graph (#1039)
 
 Revision ID: add_graph_storage_tables
-Revises: add_relationship_extraction
+Revises: 6e9842c71775
 Create Date: 2026-01-11
 
 Adds tables for graph-based entity and relationship storage:
@@ -27,7 +27,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_graph_storage_tables"
-down_revision: Union[str, Sequence[str], None] = "add_relationship_extraction"
+down_revision: Union[str, Sequence[str], None] = "6e9842c71775"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

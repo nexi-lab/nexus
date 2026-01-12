@@ -105,6 +105,7 @@ class Memory:
         extract_temporal: bool = True,  # #1028: Extract temporal metadata for date queries
         extract_relationships: bool = False,  # #1038: Extract relationships (triplets)
         relationship_types: list[str] | None = None,  # #1038: Custom relationship types
+        store_to_graph: bool = False,  # #1039: Store entities/relationships to graph tables
     ) -> str:
         """Store a memory.
 
@@ -369,7 +370,145 @@ class Memory:
             relationship_count=relationship_count_val,  # #1038: Store relationship count
         )
 
+        # #1039: Store extracted entities and relationships to graph tables
+        if store_to_graph and (entities_json_str or relationships_json_str):
+            try:
+                self._store_to_graph(
+                    memory_id=memory.memory_id,
+                    tenant_id=tenant_id,
+                    entities_json=entities_json_str,
+                    relationships_json=relationships_json_str,
+                )
+            except Exception as e:
+                # Log warning but don't fail the memory store
+                import logging
+
+                logging.getLogger(__name__).warning(f"Failed to store to graph: {e}")
+
         return memory.memory_id
+
+    def _store_to_graph(
+        self,
+        memory_id: str,
+        tenant_id: str | None,
+        entities_json: str | None,
+        relationships_json: str | None,
+    ) -> None:
+        """Store extracted entities and relationships in graph tables (#1039).
+
+        This stores entities in the `entities` table and relationships in the
+        `relationships` table, enabling GraphRAG-style retrieval.
+
+        Args:
+            memory_id: Source memory ID for provenance tracking
+            tenant_id: Tenant ID for multi-tenant isolation
+            entities_json: JSON string of extracted entities
+            relationships_json: JSON string of extracted relationships
+        """
+        import asyncio
+        import json
+        import os
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from nexus.search.graph_store import GraphStore
+
+        # Get database URL from session's engine
+        sync_url = os.environ.get("NEXUS_DATABASE_URL", "")
+        if not sync_url:
+            # Try to get from the session's engine bind
+            try:
+                bind = self.session.get_bind()
+                url = getattr(bind, "url", None)
+                if url:
+                    sync_url = str(url)
+            except Exception:
+                return
+
+        if not sync_url:
+            return
+
+        # Convert to async URL
+        if sync_url.startswith("postgresql://"):
+            async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+        elif sync_url.startswith("sqlite:///"):
+            async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+        else:
+            async_url = sync_url
+
+        # Use default tenant if not provided
+        effective_tenant_id = tenant_id or "default"
+
+        async def _do_store() -> None:
+            engine = create_async_engine(async_url)
+            async_session_factory = async_sessionmaker(
+                engine, class_=AsyncSession, expire_on_commit=False
+            )
+            try:
+                async with async_session_factory() as session:
+                    graph_store = GraphStore(session, tenant_id=effective_tenant_id)
+
+                    # Store entities
+                    entity_id_map: dict[str, str] = {}  # name -> entity_id
+                    if entities_json:
+                        entities = json.loads(entities_json)
+                        for entity in entities:
+                            entity_id, _ = await graph_store.add_entity(
+                                name=entity.get("text", entity.get("name", "Unknown")),
+                                entity_type=entity.get("label", entity.get("type", "CONCEPT")),
+                                metadata=entity.get("metadata"),
+                            )
+                            entity_id_map[entity.get("text", entity.get("name", ""))] = entity_id
+
+                            # Add mention linking back to source memory
+                            await graph_store.add_mention(
+                                entity_id=entity_id,
+                                memory_id=memory_id,
+                                confidence=entity.get("confidence", 0.9),
+                                mention_text=entity.get("text", entity.get("name", "")),
+                            )
+
+                    # Store relationships
+                    if relationships_json:
+                        relationships = json.loads(relationships_json)
+                        for rel in relationships:
+                            # Get or create source and target entities
+                            source_name = rel.get("subject") or rel.get("source", "")
+                            target_name = rel.get("object") or rel.get("target", "")
+
+                            source_id = entity_id_map.get(source_name)
+                            target_id = entity_id_map.get(target_name)
+
+                            # Create entities if not already in map
+                            if not source_id and source_name:
+                                source_id, _ = await graph_store.add_entity(
+                                    name=source_name,
+                                    entity_type="CONCEPT",
+                                )
+                                entity_id_map[source_name] = source_id
+
+                            if not target_id and target_name:
+                                target_id, _ = await graph_store.add_entity(
+                                    name=target_name,
+                                    entity_type="CONCEPT",
+                                )
+                                entity_id_map[target_name] = target_id
+
+                            # Add relationship
+                            if source_id and target_id:
+                                rel_type = rel.get("predicate") or rel.get("type", "RELATED_TO")
+                                await graph_store.add_relationship(
+                                    source_entity_id=source_id,
+                                    target_entity_id=target_id,
+                                    relationship_type=rel_type.upper().replace(" ", "_"),
+                                    confidence=rel.get("confidence", 0.8),
+                                )
+
+                    await session.commit()
+            finally:
+                await engine.dispose()
+
+        asyncio.run(_do_store())
 
     def query(
         self,

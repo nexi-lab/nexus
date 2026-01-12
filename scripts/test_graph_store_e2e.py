@@ -69,7 +69,7 @@ class GraphStoreE2ETest:
         if async_url.startswith("postgresql://"):
             async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
 
-        logger.info("Connecting to database...")
+        logger.info(f"Connecting to database...")
         self.engine = create_async_engine(async_url, echo=False)
 
         # Create tables if they don't exist
@@ -91,9 +91,7 @@ class GraphStoreE2ETest:
             # Clean up test data
             logger.info("Cleaning up test data...")
             await self.session.execute(
-                text(
-                    "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
-                ),
+                text("DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"),
                 {"tenant": self.tenant_id},
             )
             await self.session.execute(
@@ -229,9 +227,7 @@ class GraphStoreE2ETest:
         team_id, _ = await self.store.add_entity(name="AI Team", entity_type="ORG")
         await self.session.commit()
 
-        logger.info(
-            f"  Created entities: Alice={alice_id[:8]}, Bob={bob_id[:8]}, Team={team_id[:8]}"
-        )
+        logger.info(f"  Created entities: Alice={alice_id[:8]}, Bob={bob_id[:8]}, Team={team_id[:8]}")
 
         # Create relationships
         start = time.time()
@@ -294,10 +290,12 @@ class GraphStoreE2ETest:
 
         # Create chain
         for i in range(len(entity_ids) - 1):
-            await self.store.add_relationship(entity_ids[i], entity_ids[i + 1], "CONNECTS_TO")
+            await self.store.add_relationship(
+                entity_ids[i], entity_ids[i + 1], "CONNECTS_TO"
+            )
         await self.session.commit()
 
-        logger.info("  Created chain: A -> B -> C -> D -> E")
+        logger.info(f"  Created chain: A -> B -> C -> D -> E")
 
         # Test 1-hop
         start = time.time()
@@ -427,7 +425,7 @@ class GraphStoreE2ETest:
         self.log_result(
             "Bulk create 10 entities",
             created_count == 10,
-            f"created {created_count} in {bulk_time:.2f}ms ({bulk_time / 10:.2f}ms/entity)",
+            f"created {created_count} in {bulk_time:.2f}ms ({bulk_time/10:.2f}ms/entity)",
         )
 
         # Bulk create relationships (chain)
@@ -450,7 +448,7 @@ class GraphStoreE2ETest:
         self.log_result(
             "Bulk create 9 relationships",
             rel_created == 9,
-            f"created {rel_created} in {rel_time:.2f}ms ({rel_time / 9:.2f}ms/relationship)",
+            f"created {rel_created} in {rel_time:.2f}ms ({rel_time/9:.2f}ms/relationship)",
         )
 
         # Clean up
@@ -500,8 +498,7 @@ async def main():
         help="PostgreSQL database URL (default: NEXUS_DATABASE_URL env var)",
     )
     parser.add_argument(
-        "-v",
-        "--verbose",
+        "-v", "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

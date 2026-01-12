@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -44,7 +45,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.storage.models import Base
 
@@ -88,9 +89,7 @@ class MemoryGraphPipelineE2ETest:
             try:
                 # Delete in correct order (respecting foreign keys)
                 self.sync_session.execute(
-                    text(
-                        "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
-                    ),
+                    text("DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"),
                     {"tenant": self.tenant_id},
                 )
                 self.sync_session.execute(
@@ -130,18 +129,16 @@ class MemoryGraphPipelineE2ETest:
             class MockResult:
                 def __init__(self, value):
                     self._value = value
-
                 def unwrap(self):
                     return self._value
 
             class MockBackend:
-                def write_content(self, content, _context=None):
+                def write_content(self, content, context=None):
                     import hashlib
-
                     content_hash = hashlib.sha256(content).hexdigest()
                     return MockResult(content_hash)
 
-                def read_content(self, _content_hash, _context=None):
+                def read_content(self, content_hash, context=None):
                     return MockResult(b"test content")
 
             backend = MockBackend()
@@ -201,13 +198,12 @@ class MemoryGraphPipelineE2ETest:
         except Exception as e:
             error_msg = str(e)
             if "does not exist" in error_msg or "UndefinedColumn" in error_msg:
-                logger.warning("  [SKIP] Memory API test - database needs migrations")
-                logger.warning("  Run: alembic upgrade head")
+                logger.warning(f"  [SKIP] Memory API test - database needs migrations")
+                logger.warning(f"  Run: alembic upgrade head")
                 # Don't count as failure - infrastructure issue, not code issue
                 return True
             logger.error(f"Test failed: {e}")
             import traceback
-
             traceback.print_exc()
             self.failed += 1
             return False
@@ -262,7 +258,7 @@ class MemoryGraphPipelineE2ETest:
                     entity_type="ORG",
                 )
 
-                logger.info("  Created 5 entities")
+                logger.info(f"  Created 5 entities")
                 self.passed += 1
 
                 # Create relationships
@@ -292,14 +288,12 @@ class MemoryGraphPipelineE2ETest:
                 )
 
                 await session.commit()
-                logger.info("  Created 4 relationships")
+                logger.info(f"  Created 4 relationships")
                 self.passed += 1
 
                 # Note: Entity mentions require a real memory_id due to foreign key constraint
                 # Skip mention test in direct graph test - tested via Memory API integration
-                logger.info(
-                    "  [SKIP] Entity mentions (requires real memory - tested via Memory API)"
-                )
+                logger.info("  [SKIP] Entity mentions (requires real memory - tested via Memory API)")
 
                 # Test graph traversal
                 logger.info("Testing graph traversal...")
@@ -317,9 +311,7 @@ class MemoryGraphPipelineE2ETest:
                 # Test subgraph extraction
                 logger.info("Testing subgraph extraction...")
                 subgraph = await graph_store.get_subgraph([alice_id], max_hops=2)
-                logger.info(
-                    f"  Subgraph: {len(subgraph.entities)} entities, {len(subgraph.relationships)} relationships"
-                )
+                logger.info(f"  Subgraph: {len(subgraph.entities)} entities, {len(subgraph.relationships)} relationships")
 
                 if len(subgraph.entities) >= 4 and len(subgraph.relationships) >= 3:
                     logger.info("  [PASS] Subgraph extraction works")
@@ -333,7 +325,6 @@ class MemoryGraphPipelineE2ETest:
         except Exception as e:
             logger.error(f"Test failed: {e}")
             import traceback
-
             traceback.print_exc()
             self.failed += 1
             return False
@@ -378,8 +369,7 @@ def main():
         help="Database URL (default: SQLite in temp dir)",
     )
     parser.add_argument(
-        "-v",
-        "--verbose",
+        "-v", "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

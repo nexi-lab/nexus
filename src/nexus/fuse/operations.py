@@ -947,6 +947,32 @@ class NexusFUSEOperations(Operations):
         # Use shared virtual view logic
         return parse_virtual_path(path, self.nexus_fs.exists)
 
+    def _has_connector_cache(self, path: str) -> bool:
+        """Check if path is backed by a connector with its own caching.
+
+        Connectors using CacheConnectorMixin have L1/L2 caching, so we skip
+        FUSE-level content caching to avoid redundant caching overhead.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            True if backend has connector-level caching, False otherwise
+        """
+        try:
+            # Check if nexus_fs has a router (local NexusFS)
+            if hasattr(self.nexus_fs, "router"):
+                from nexus.backends.cache_mixin import CacheConnectorMixin
+
+                # Route the path to get the backend
+                route = self.nexus_fs.router.route(path.rstrip("/"))
+                # Check if backend inherits from CacheConnectorMixin
+                return isinstance(route.backend, CacheConnectorMixin)
+        except Exception:
+            # If routing fails, assume no connector cache (safe default)
+            pass
+        return False
+
     def _get_file_content(self, path: str, view_type: str | None) -> bytes:
         """Get file content with appropriate view transformation.
 
@@ -963,15 +989,20 @@ class NexusFUSEOperations(Operations):
             if cached_parsed is not None:
                 return cached_parsed
 
-        # Check content cache for raw content
-        content = self.cache.get_content(path)
+        # Check if backend has connector-level caching (skip FUSE cache if so)
+        skip_fuse_cache = self._has_connector_cache(path)
+
+        # Check content cache for raw content (skip for connector-backed paths)
+        content = None if skip_fuse_cache else self.cache.get_content(path)
         if content is None:
-            # Read from filesystem and cache
+            # Read from filesystem
             raw_content = self.nexus_fs.read(path)
             # Type narrowing: when return_metadata=False (default), result is bytes
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content
-            self.cache.cache_content(path, content)
+            # Only cache in FUSE if backend doesn't have its own caching
+            if not skip_fuse_cache:
+                self.cache.cache_content(path, content)
 
         # In binary mode or raw access, return as-is
         if self.mode.value == "binary" or view_type is None:

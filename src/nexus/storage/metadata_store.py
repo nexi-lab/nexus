@@ -31,6 +31,18 @@ except ImportError:
 from nexus.core.exceptions import MetadataError
 from nexus.core.metadata import FileMetadata, MetadataStore, PaginatedResult
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
+from nexus.storage.models import (
+    Base,
+    ContentCacheModel,
+    DirectoryEntryModel,
+    FileMetadataModel,
+    FilePathModel,
+    VersionHistoryModel,
+)
+from nexus.storage.query_builder import WorkQueryBuilder
+from nexus.storage.version_manager import VersionManager
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_utc(dt: datetime | None) -> datetime | None:
@@ -52,20 +64,6 @@ def _ensure_utc(dt: datetime | None) -> datetime | None:
         # Naive datetime - assume it's UTC
         return dt.replace(tzinfo=UTC)
     return dt
-
-
-from nexus.storage.models import (
-    Base,
-    ContentCacheModel,
-    DirectoryEntryModel,
-    FileMetadataModel,
-    FilePathModel,
-    VersionHistoryModel,
-)
-from nexus.storage.query_builder import WorkQueryBuilder
-from nexus.storage.version_manager import VersionManager
-
-logger = logging.getLogger(__name__)
 
 
 class SQLAlchemyMetadataStore(MetadataStore):

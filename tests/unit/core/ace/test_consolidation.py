@@ -502,9 +502,7 @@ class TestSyncConsolidate:
 class TestConsolidateByAffinityAsync:
     """Test consolidate_by_affinity_async method (Issue #1026)."""
 
-    async def test_returns_empty_for_less_than_two_memories(
-        self, consolidation_engine, session
-    ):
+    async def test_returns_empty_for_less_than_two_memories(self, consolidation_engine, session):
         """Should return empty results if less than 2 memories."""
         # Create only one memory
         mem1 = MemoryModel(
@@ -517,9 +515,7 @@ class TestConsolidateByAffinityAsync:
         session.add(mem1)
         session.commit()
 
-        result = await consolidation_engine.consolidate_by_affinity_async(
-            memory_ids=["mem1"]
-        )
+        result = await consolidation_engine.consolidate_by_affinity_async(memory_ids=["mem1"])
 
         assert result["clusters_formed"] == 0
         assert result["total_consolidated"] == 0
@@ -527,9 +523,7 @@ class TestConsolidateByAffinityAsync:
 
     async def test_returns_empty_for_no_memories(self, consolidation_engine):
         """Should return empty results if no memories found."""
-        result = await consolidation_engine.consolidate_by_affinity_async(
-            memory_ids=[]
-        )
+        result = await consolidation_engine.consolidate_by_affinity_async(memory_ids=[])
 
         assert result["clusters_formed"] == 0
         assert result["total_consolidated"] == 0
@@ -571,9 +565,7 @@ class TestConsolidateByAffinityAsync:
         assert vectors[1].memory_id == "mem2"
         assert vectors[1].embedding == [0.95, 0.05, 0.0]
 
-    async def test_handles_missing_embeddings(
-        self, consolidation_engine, session, mock_backend
-    ):
+    async def test_handles_missing_embeddings(self, consolidation_engine, session, mock_backend):
         """Should handle memories without embeddings gracefully."""
         # Create memory without embedding
         mem1 = MemoryModel(
@@ -594,9 +586,7 @@ class TestConsolidateByAffinityAsync:
         assert len(vectors) == 1
         assert vectors[0].embedding == []  # Empty list for missing embedding
 
-    async def test_queries_candidate_memories(
-        self, consolidation_engine, session, mock_backend
-    ):
+    async def test_queries_candidate_memories(self, consolidation_engine, session, mock_backend):
         """Should query candidate memories based on criteria."""
         import json
 
@@ -623,9 +613,7 @@ class TestConsolidateByAffinityAsync:
 
         assert len(vectors) == 3
 
-    async def test_respects_config_parameters(
-        self, consolidation_engine, session, mock_backend
-    ):
+    async def test_respects_config_parameters(self, consolidation_engine, session, mock_backend):
         """Should use provided config parameters."""
         import json
 
@@ -663,9 +651,7 @@ class TestConsolidateByAffinityAsync:
         # Should complete without error
         assert "clusters_formed" in result
 
-    async def test_returns_cluster_statistics(
-        self, consolidation_engine, session, mock_backend
-    ):
+    async def test_returns_cluster_statistics(self, consolidation_engine, session, mock_backend):
         """Should return cluster statistics."""
         import json
 

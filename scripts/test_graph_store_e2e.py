@@ -69,7 +69,7 @@ class GraphStoreE2ETest:
         if async_url.startswith("postgresql://"):
             async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
 
-        logger.info(f"Connecting to database...")
+        logger.info("Connecting to database...")
         self.engine = create_async_engine(async_url, echo=False)
 
         # Create tables if they don't exist
@@ -295,7 +295,7 @@ class GraphStoreE2ETest:
             )
         await self.session.commit()
 
-        logger.info(f"  Created chain: A -> B -> C -> D -> E")
+        logger.info("  Created chain: A -> B -> C -> D -> E")
 
         # Test 1-hop
         start = time.time()

@@ -107,6 +107,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
     # This makes Gmail use fast database queries instead of Gmail API calls for list operations
     use_metadata_listing = True
 
+    # Virtual filesystem flag - this connector has virtual directories
+    has_virtual_filesystem = True
+
     def __init__(
         self,
         token_manager_db: str,
@@ -543,30 +546,60 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                 path=content_hash,
             )
 
-        if not context or not context.backend_path:
+        if not context:
             return HandlerResponse.error(
-                message="Gmail connector requires backend_path in OperationContext. "
-                "This backend reads files from actual paths, not CAS hashes.",
+                message="Gmail connector requires OperationContext",
                 code=400,
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
                 path=content_hash,
             )
 
-        backend_path = context.backend_path
+        # backend_path can be empty (root directory) or a path
+        backend_path = context.backend_path if context.backend_path else ""
 
         # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
-        path_parts = backend_path.split("/")
-        if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-            # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
-            filename = path_parts[1]
-        elif len(path_parts) == 1:
-            # Already just a filename
+        path_parts = (
+            backend_path.strip("/").split("/") if backend_path and backend_path.strip("/") else []
+        )
+
+        # Handle empty path or root (virtual directory)
+        if len(path_parts) == 0:
+            return HandlerResponse.not_found(
+                path=backend_path or "/",
+                message=f"Gmail connector root is a virtual directory. Use label folders: {', '.join(self.LABEL_FOLDERS)}",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="gmail",
+            )
+
+        # Handle label folder paths (virtual directories like "SENT", "INBOX", etc.)
+        if len(path_parts) == 1:
+            potential_label = path_parts[0].upper()
+            if potential_label in self.LABEL_FOLDERS or path_parts[0] in self.LABEL_FOLDERS:
+                return HandlerResponse.not_found(
+                    path=backend_path,
+                    message=f"Gmail label '{path_parts[0]}' is a virtual directory. List it to see available emails.",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name="gmail",
+                )
+            # Single part that's not a label folder - treat as a filename (for backward compatibility)
             filename = path_parts[0]
+
+        elif len(path_parts) == 2:
+            # Path is "LABEL/thread_id-msg_id.yaml"
+            label = path_parts[0]
+            if label not in self.LABEL_FOLDERS:
+                return HandlerResponse.not_found(
+                    path=backend_path,
+                    message=f"Invalid label folder: {label}. Valid labels: {', '.join(self.LABEL_FOLDERS)}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name="gmail",
+                )
+            filename = path_parts[1]
         else:
             return HandlerResponse.not_found(
                 path=backend_path,
-                message=f"Invalid Gmail path: {backend_path}",
+                message=f"Invalid Gmail path: {backend_path}. Expected format: LABEL/thread_id-msg_id.yaml",
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
@@ -621,7 +654,7 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
         # Format as YAML (includes both body_text and body_html)
         content = self._format_email_as_yaml(email_data)
 
-        # Cache the result
+        # Cache the result (auto-creates file_paths entry if needed)
         if self._has_caching():
             try:
                 tenant_id = getattr(context, "tenant_id", None)
@@ -631,8 +664,9 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
                     backend_version=IMMUTABLE_VERSION,  # Emails are immutable, use fixed version
                     tenant_id=tenant_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                # Don't fail on cache write errors, but log for debugging
+                logger.warning(f"[GMAIL] Failed to cache {cache_path}: {e}")
 
         return HandlerResponse.ok(
             data=content,

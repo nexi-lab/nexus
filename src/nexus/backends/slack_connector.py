@@ -94,6 +94,9 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
     # Enable metadata-based listing (use file_paths table)
     use_metadata_listing = True
 
+    # Virtual filesystem flag - this connector has virtual directories
+    has_virtual_filesystem = True
+
     def __init__(
         self,
         token_manager_db: str,
@@ -525,24 +528,55 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
 
         start_time = time.perf_counter()
 
-        if not context or not context.backend_path:
+        if not context:
             return HandlerResponse.error(
-                message="Slack connector requires backend_path in OperationContext",
+                message="Slack connector requires OperationContext",
                 code=400,
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
                 path=content_hash,
             )
 
-        backend_path = context.backend_path
+        # backend_path can be empty (root directory) or a path
+        backend_path = context.backend_path if context.backend_path else ""
 
         # Parse path: channels/general.jsonl
-        path_parts = backend_path.strip("/").split("/")
+        path_parts = (
+            backend_path.strip("/").split("/") if backend_path and backend_path.strip("/") else []
+        )
 
+        # Handle empty path or root (virtual directory)
+        if len(path_parts) == 0:
+            return HandlerResponse.not_found(
+                path=backend_path or "/",
+                message="Slack connector root is a virtual directory. Use subdirectories: channels/, private-channels/, dms/",
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name="slack",
+            )
+
+        # Handle folder type paths (virtual directories)
+        if len(path_parts) == 1:
+            folder_type = path_parts[0]
+            if folder_type in self.FOLDER_TYPES:
+                return HandlerResponse.not_found(
+                    path=backend_path,
+                    message=f"Slack connector folder '{folder_type}' is a virtual directory. List it to see available channels.",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name="slack",
+                )
+            else:
+                return HandlerResponse.not_found(
+                    path=backend_path,
+                    message=f"Invalid folder type: {folder_type}. Valid types: {', '.join(self.FOLDER_TYPES)}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name="slack",
+                )
+
+        # Path should be: folder_type/filename.jsonl
         if len(path_parts) != 2:
             return HandlerResponse.not_found(
                 path=backend_path,
-                message=f"Invalid Slack path format: {backend_path}",
+                message=f"Invalid Slack path format: {backend_path}. Expected format: folder_type/channel_name.jsonl",
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
             )
@@ -654,7 +688,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         # Format as JSONL
         content = self._format_messages_as_jsonl(messages)
 
-        # Cache the result
+        # Cache the result (auto-creates file_paths entry if needed)
         if self._has_caching():
             try:
                 tenant_id = getattr(context, "tenant_id", None)
@@ -664,8 +698,9 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                     backend_version=IMMUTABLE_VERSION,  # Messages are immutable
                     tenant_id=tenant_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                # Don't fail on cache write errors, but log for debugging
+                logger.warning(f"[SLACK] Failed to cache {cache_path}: {e}")
 
         return HandlerResponse.ok(
             data=content,

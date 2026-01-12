@@ -750,6 +750,20 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Generate cache key with tenant isolation."""
         return f"{self._tenant_id or 'default'}:{path}"
 
+    def _is_dynamic_connector_path(self, path: str) -> bool:
+        """Check if path is from a dynamic connector (fetch-on-demand).
+
+        Dynamic connectors (Slack, Gmail) fetch content from external APIs
+        on-demand rather than pre-existing files. Negative caching these paths
+        causes cache coherency issues when files are fetched and cached later.
+
+        Returns:
+            True if path is from a dynamic connector, False otherwise
+        """
+        return "/connector/" in path and any(
+            connector in path for connector in ["/slack/", "/gmail/"]
+        )
+
     def _negative_cache_check(self, path: str) -> bool:
         """Check if path is known to not exist (in negative cache).
 
@@ -757,6 +771,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             True if path is definitely non-existent (skip RPC)
             False if path might exist (need to check server)
         """
+        # Skip negative cache for dynamic connector paths (they fetch on-demand)
+        if self._is_dynamic_connector_path(path):
+            return False
+
         if self._negative_bloom is None:
             return False
         key = self._negative_cache_key(path)
@@ -764,6 +782,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
     def _negative_cache_add(self, path: str) -> None:
         """Add path to negative cache (file confirmed to not exist)."""
+        # Skip negative cache for dynamic connector paths (they fetch on-demand)
+        if self._is_dynamic_connector_path(path):
+            return
+
         if self._negative_bloom is None:
             return
         key = self._negative_cache_key(path)
@@ -790,6 +812,23 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             return
         self._negative_bloom.clear()
         logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
+
+    def clear_negative_cache(self) -> None:
+        """Clear the entire negative cache (public API).
+
+        This should be called when:
+        1. Files are cached/created outside the normal write path
+        2. The server state has changed significantly
+        3. You suspect stale negative cache entries
+
+        Note: Clearing the cache is safe but will cause a temporary increase
+        in RPC calls as the cache repopulates.
+        """
+        if self._negative_bloom is None:
+            logger.debug("Negative cache not initialized, nothing to clear")
+            return
+        self._negative_bloom.clear()
+        logger.info("Negative cache manually cleared")
 
     @property
     def agent_id(self) -> str | None:

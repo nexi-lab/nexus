@@ -182,16 +182,68 @@ class NexusFUSEOperations(Operations):
                     if isinstance(metadata, dict)
                     else getattr(metadata, "size", 0)
                 )
+                logger.critical(
+                    f"[FUSE-GETATTR] Got metadata size: {meta_size} for {original_path}"
+                )
                 if meta_size and meta_size > 0:
                     file_size = meta_size
+                    logger.critical(f"[FUSE-GETATTR] Using metadata size: {file_size}")
                 else:
                     # Fallback: fetch content to get size
-                    content = self._get_file_content(original_path, None)
-                    file_size = len(content)
+                    logger.critical(
+                        f"[FUSE-GETATTR] No size in metadata, fetching content for: {original_path}"
+                    )
+                    try:
+                        content = self._get_file_content(original_path, None)
+                        file_size = len(content)
+                        logger.critical(
+                            f"[FUSE-GETATTR] Successfully got content, size: {file_size}"
+                        )
+                    except Exception as e:
+                        logger.critical(
+                            f"[FUSE-GETATTR] Exception during content fetch: {type(e).__name__}: {str(e)}"
+                        )
+                        # If read fails with connector errors, this is likely a directory
+                        error_str = str(e)
+                        if (
+                            "requires backend_path" in error_str
+                            or "Invalid Slack path format" in error_str
+                            or "Invalid Gmail path format" in error_str
+                            or "is a virtual directory" in error_str
+                        ):
+                            logger.critical(
+                                f"[FUSE-GETATTR] Treating as directory due to connector error: {original_path}"
+                            )
+                            return self._dir_attrs(metadata)
+                        logger.critical(f"[FUSE-GETATTR] Re-raising exception: {e}")
+                        raise
             else:
                 # No metadata: fetch content to get size (for backward compatibility)
-                content = self._get_file_content(original_path, None)
-                file_size = len(content)
+                logger.critical(
+                    f"[FUSE-GETATTR] No metadata, fetching content for: {original_path}"
+                )
+                try:
+                    content = self._get_file_content(original_path, None)
+                    file_size = len(content)
+                    logger.critical(f"[FUSE-GETATTR] Successfully got content, size: {file_size}")
+                except Exception as e:
+                    logger.critical(
+                        f"[FUSE-GETATTR] Exception during content fetch: {type(e).__name__}: {str(e)}"
+                    )
+                    # If read fails with connector errors, this is likely a directory
+                    error_str = str(e)
+                    if (
+                        "requires backend_path" in error_str
+                        or "Invalid Slack path format" in error_str
+                        or "Invalid Gmail path format" in error_str
+                        or "is a virtual directory" in error_str
+                    ):
+                        logger.critical(
+                            f"[FUSE-GETATTR] Treating as directory due to connector error: {original_path}"
+                        )
+                        return self._dir_attrs()
+                    logger.critical(f"[FUSE-GETATTR] Re-raising exception: {e}")
+                    raise
 
             # Return file attributes
             now = time.time()

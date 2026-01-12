@@ -496,3 +496,244 @@ class TestSyncConsolidate:
 
         assert result is not None
         assert "consolidated_memory_id" in result
+
+
+@pytest.mark.asyncio
+class TestConsolidateByAffinityAsync:
+    """Test consolidate_by_affinity_async method (Issue #1026)."""
+
+    async def test_returns_empty_for_less_than_two_memories(
+        self, consolidation_engine, session
+    ):
+        """Should return empty results if less than 2 memories."""
+        # Create only one memory
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+        )
+        session.add(mem1)
+        session.commit()
+
+        result = await consolidation_engine.consolidate_by_affinity_async(
+            memory_ids=["mem1"]
+        )
+
+        assert result["clusters_formed"] == 0
+        assert result["total_consolidated"] == 0
+        assert result["results"] == []
+
+    async def test_returns_empty_for_no_memories(self, consolidation_engine):
+        """Should return empty results if no memories found."""
+        result = await consolidation_engine.consolidate_by_affinity_async(
+            memory_ids=[]
+        )
+
+        assert result["clusters_formed"] == 0
+        assert result["total_consolidated"] == 0
+
+    async def test_loads_memory_vectors(self, consolidation_engine, session, mock_backend):
+        """Should load memory vectors with content and embeddings."""
+        import json
+
+        # Create memories with embeddings
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([1.0, 0.0, 0.0]),
+            embedding_dim=3,
+        )
+        mem2 = MemoryModel(
+            memory_id="mem2",
+            content_hash="hash2",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([0.95, 0.05, 0.0]),
+            embedding_dim=3,
+        )
+        session.add_all([mem1, mem2])
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
+
+        # Load memory vectors
+        vectors = await consolidation_engine._load_memory_vectors(["mem1", "mem2"])
+
+        assert len(vectors) == 2
+        assert vectors[0].memory_id == "mem1"
+        assert vectors[0].embedding == [1.0, 0.0, 0.0]
+        assert vectors[1].memory_id == "mem2"
+        assert vectors[1].embedding == [0.95, 0.05, 0.0]
+
+    async def test_handles_missing_embeddings(
+        self, consolidation_engine, session, mock_backend
+    ):
+        """Should handle memories without embeddings gracefully."""
+        # Create memory without embedding
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=None,
+        )
+        session.add(mem1)
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
+
+        vectors = await consolidation_engine._load_memory_vectors(["mem1"])
+
+        assert len(vectors) == 1
+        assert vectors[0].embedding == []  # Empty list for missing embedding
+
+    async def test_queries_candidate_memories(
+        self, consolidation_engine, session, mock_backend
+    ):
+        """Should query candidate memories based on criteria."""
+        import json
+
+        # Create memories matching criteria
+        for i in range(3):
+            mem = MemoryModel(
+                memory_id=f"mem{i}",
+                content_hash=f"hash{i}",
+                user_id="alice",
+                agent_id="agent1",
+                importance=0.3,
+                embedding=json.dumps([1.0, 0.0, 0.0]),
+                embedding_dim=3,
+            )
+            session.add(mem)
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
+
+        vectors = await consolidation_engine._query_candidate_memories(
+            importance_max=0.5,
+            limit=10,
+        )
+
+        assert len(vectors) == 3
+
+    async def test_respects_config_parameters(
+        self, consolidation_engine, session, mock_backend
+    ):
+        """Should use provided config parameters."""
+        import json
+
+        # Create memories with embeddings
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([1.0, 0.0, 0.0]),
+            embedding_dim=3,
+        )
+        mem2 = MemoryModel(
+            memory_id="mem2",
+            content_hash="hash2",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([0.0, 1.0, 0.0]),  # Orthogonal
+            embedding_dim=3,
+        )
+        session.add_all([mem1, mem2])
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
+
+        # With very high threshold, orthogonal vectors shouldn't cluster
+        result = await consolidation_engine.consolidate_by_affinity_async(
+            memory_ids=["mem1", "mem2"],
+            beta=0.7,
+            affinity_threshold=0.99,  # Very high
+        )
+
+        # Should complete without error
+        assert "clusters_formed" in result
+
+    async def test_returns_cluster_statistics(
+        self, consolidation_engine, session, mock_backend
+    ):
+        """Should return cluster statistics."""
+        import json
+
+        # Create similar memories
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([1.0, 0.0, 0.0]),
+            embedding_dim=3,
+        )
+        mem2 = MemoryModel(
+            memory_id="mem2",
+            content_hash="hash2",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([0.95, 0.05, 0.0]),
+            embedding_dim=3,
+        )
+        session.add_all([mem1, mem2])
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test content")
+
+        result = await consolidation_engine.consolidate_by_affinity_async(
+            memory_ids=["mem1", "mem2"],
+            affinity_threshold=0.5,  # Low threshold to ensure clustering
+        )
+
+        assert "cluster_statistics" in result
+
+
+class TestSyncConsolidateByAffinity:
+    """Test sync_consolidate_by_affinity method."""
+
+    def test_sync_wrapper(self, consolidation_engine, session, mock_backend):
+        """Test synchronous wrapper for affinity consolidation."""
+        import json
+
+        mem1 = MemoryModel(
+            memory_id="mem1",
+            content_hash="hash1",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([1.0, 0.0, 0.0]),
+        )
+        mem2 = MemoryModel(
+            memory_id="mem2",
+            content_hash="hash2",
+            user_id="alice",
+            agent_id="agent1",
+            importance=0.3,
+            embedding=json.dumps([0.9, 0.1, 0.0]),
+        )
+        session.add_all([mem1, mem2])
+        session.commit()
+
+        mock_backend.read_content.return_value = HandlerResponse.ok(b"test")
+
+        result = consolidation_engine.sync_consolidate_by_affinity(
+            memory_ids=["mem1", "mem2"],
+            affinity_threshold=0.5,
+        )
+
+        assert result is not None
+        assert "clusters_formed" in result
+        assert "total_consolidated" in result

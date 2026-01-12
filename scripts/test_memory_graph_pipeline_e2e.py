@@ -88,7 +88,9 @@ class MemoryGraphPipelineE2ETest:
             try:
                 # Delete in correct order (respecting foreign keys)
                 self.sync_session.execute(
-                    text("DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"),
+                    text(
+                        "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
+                    ),
                     {"tenant": self.tenant_id},
                 )
                 self.sync_session.execute(
@@ -128,12 +130,14 @@ class MemoryGraphPipelineE2ETest:
             class MockResult:
                 def __init__(self, value):
                     self._value = value
+
                 def unwrap(self):
                     return self._value
 
             class MockBackend:
                 def write_content(self, content, _context=None):
                     import hashlib
+
                     content_hash = hashlib.sha256(content).hexdigest()
                     return MockResult(content_hash)
 
@@ -203,6 +207,7 @@ class MemoryGraphPipelineE2ETest:
                 return True
             logger.error(f"Test failed: {e}")
             import traceback
+
             traceback.print_exc()
             self.failed += 1
             return False
@@ -292,7 +297,9 @@ class MemoryGraphPipelineE2ETest:
 
                 # Note: Entity mentions require a real memory_id due to foreign key constraint
                 # Skip mention test in direct graph test - tested via Memory API integration
-                logger.info("  [SKIP] Entity mentions (requires real memory - tested via Memory API)")
+                logger.info(
+                    "  [SKIP] Entity mentions (requires real memory - tested via Memory API)"
+                )
 
                 # Test graph traversal
                 logger.info("Testing graph traversal...")
@@ -310,7 +317,9 @@ class MemoryGraphPipelineE2ETest:
                 # Test subgraph extraction
                 logger.info("Testing subgraph extraction...")
                 subgraph = await graph_store.get_subgraph([alice_id], max_hops=2)
-                logger.info(f"  Subgraph: {len(subgraph.entities)} entities, {len(subgraph.relationships)} relationships")
+                logger.info(
+                    f"  Subgraph: {len(subgraph.entities)} entities, {len(subgraph.relationships)} relationships"
+                )
 
                 if len(subgraph.entities) >= 4 and len(subgraph.relationships) >= 3:
                     logger.info("  [PASS] Subgraph extraction works")
@@ -324,6 +333,7 @@ class MemoryGraphPipelineE2ETest:
         except Exception as e:
             logger.error(f"Test failed: {e}")
             import traceback
+
             traceback.print_exc()
             self.failed += 1
             return False
@@ -368,7 +378,8 @@ def main():
         help="Database URL (default: SQLite in temp dir)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

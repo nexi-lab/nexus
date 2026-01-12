@@ -428,6 +428,7 @@ class MountCoreService:
                 provider=config.get("provider", "gmail"),
                 session_factory=self._gw.session_factory,
                 max_message_per_label=config.get("max_message_per_label", 2000),
+                metadata_store=self._gw._fs.metadata,
             )
 
         elif backend_type == "slack_connector":
@@ -438,6 +439,7 @@ class MountCoreService:
                 user_email=config.get("user_email"),
                 provider=config.get("provider", "slack"),
                 session_factory=self._gw.session_factory,
+                metadata_store=self._gw._fs.metadata,
             )
 
         else:

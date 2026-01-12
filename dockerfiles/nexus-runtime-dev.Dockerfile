@@ -1,7 +1,7 @@
 # Nexus Runtime Docker Image - DEVELOPMENT VERSION
 #
 # A pre-configured Docker image for Nexus sandboxes with:
-# - Python 3.11 with data science packages (pandas, numpy, matplotlib, scikit-learn, etc.)
+# - Python 3.12 with data science packages (pandas, numpy, matplotlib, scikit-learn, etc.)
 # - Node.js 20
 # - Nexus CLI FROM LOCAL SOURCE (for testing optimizations)
 # - Non-root user with sudo access
@@ -14,7 +14,7 @@
 #   Used automatically by DockerSandboxProvider when image is set to nexus-runtime:dev
 #   Or manually: docker run -it --cap-add SYS_ADMIN nexus-runtime:dev
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Metadata
 ARG NEXUS_VERSION=dev

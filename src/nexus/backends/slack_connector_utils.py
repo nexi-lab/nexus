@@ -112,6 +112,8 @@ def list_messages_from_channel(
     oldest: str | None = None,
     latest: str | None = None,
     silent: bool = False,
+    enrich_users: bool = True,
+    user_cache: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """List messages from a specific Slack channel.
 
@@ -123,6 +125,8 @@ def list_messages_from_channel(
         oldest: Only messages after this Unix timestamp (inclusive)
         latest: Only messages before this Unix timestamp (exclusive)
         silent: If True, suppress progress output
+        enrich_users: If True, add user names to messages (default: True)
+        user_cache: Optional cache dict for user info lookups
 
     Returns:
         List of message objects with channel context:
@@ -130,6 +134,8 @@ def list_messages_from_channel(
             {
                 "type": "message",
                 "user": "U1234567890",
+                "user_name": "johndoe",  # Added if enrich_users=True
+                "user_real_name": "John Doe",  # Added if enrich_users=True
                 "text": "Hello world",
                 "ts": "1234567890.123456",
                 "channel_id": "C1234567890",
@@ -211,6 +217,10 @@ def list_messages_from_channel(
         except Exception as e:
             logger.error(f"[LIST-MESSAGES] Error listing messages from #{channel_name}: {e}")
             break
+
+    # Enrich messages with user names
+    if enrich_users and messages:
+        enrich_messages_with_user_info(client, messages, user_cache)
 
     if not silent:
         print(f"   Found {len(messages)} messages in #{channel_name}")
@@ -306,6 +316,49 @@ def get_user_info(
     except Exception as e:
         logger.warning(f"[GET-USER-INFO] Error fetching user {user_id}: {e}")
         return None
+
+
+def enrich_messages_with_user_info(
+    client: Any,
+    messages: list[dict[str, Any]],
+    user_cache: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Enrich messages with user names and real names.
+
+    Modifies messages in-place to add user_name and user_real_name fields.
+    Also enriches inviter field if present (for channel_join events).
+
+    Args:
+        client: Slack API client (slack_sdk.WebClient)
+        messages: List of message dicts to enrich
+        user_cache: Optional cache dict for user info lookups
+    """
+    # Collect unique user IDs from messages
+    user_ids = set()
+    for msg in messages:
+        if "user" in msg:
+            user_ids.add(msg["user"])
+        if "inviter" in msg:
+            user_ids.add(msg["inviter"])
+
+    # Fetch user info for all unique users
+    for user_id in user_ids:
+        user_info = get_user_info(client, user_id, user_cache)
+        if user_info:
+            # Enrich all messages from this user
+            for msg in messages:
+                if msg.get("user") == user_id:
+                    msg["user_name"] = user_info.get("name")
+                    msg["user_real_name"] = user_info.get("real_name")
+                    # Also add display name if available
+                    display_name = user_info.get("profile", {}).get("display_name")
+                    if display_name:
+                        msg["user_display_name"] = display_name
+
+                # Enrich inviter field if present
+                if msg.get("inviter") == user_id:
+                    msg["inviter_name"] = user_info.get("name")
+                    msg["inviter_real_name"] = user_info.get("real_name")
 
 
 def fetch_messages_batch(

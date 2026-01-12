@@ -738,7 +738,35 @@ class CacheConnectorMixin:
 
         path_id = self._get_path_id(path, session)
         if not path_id:
-            raise ValueError(f"Path not found in file_paths: {path}")
+            # Auto-create file_paths entry if missing (for dynamic connectors)
+            # This allows connectors like Slack/Gmail to work with FUSE without manual registration
+            logger.debug(f"[CACHE] Auto-creating file_paths entry for: {path}")
+
+            import uuid
+            from datetime import UTC, datetime
+
+            from nexus.storage.models import FilePathModel
+
+            # Get backend name from connector (all connectors have self.name)
+            backend_name = getattr(self, "name", "unknown")
+
+            # Create new file_paths entry
+            file_path_model = FilePathModel(
+                path_id=str(uuid.uuid4()),
+                virtual_path=path,
+                backend_id=backend_name,
+                physical_path=path,  # Use virtual path as fallback
+                size_bytes=len(content),
+                content_hash=None,  # Will be set below
+                file_type=None,  # Will be inferred if needed
+                tenant_id=tenant_id,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+            session.add(file_path_model)
+            session.flush()  # Get the path_id
+            path_id = file_path_model.path_id
+            logger.debug(f"[CACHE] Created file_paths entry: {path_id} for {path}")
 
         # Compute content hash (BLAKE3, Rust-accelerated)
         content_hash = hash_content(content)

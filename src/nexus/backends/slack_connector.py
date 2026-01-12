@@ -1,35 +1,36 @@
 """Slack connector backend with OAuth 2.0 authentication.
 
 This is a connector backend that provides read-write access to Slack workspace messages,
-organizing them by channel-based folders and thread structure.
+organizing them by channel-based folders with JSONL format.
 
 Use case: Access Slack messages through Nexus mount for search, analysis, and automation.
 
 Storage structure (2-level hierarchy):
     /
     ├── channels/                      # Public channels
-    │   ├── general/
-    │   │   └── {ts}-{message_id}.json # Message content as JSON
-    │   └── random/
+    │   ├── general.jsonl              # All messages in #general (one JSON per line)
+    │   └── random.jsonl               # All messages in #random
     ├── private-channels/              # Private channels
-    │   └── team-internal/
+    │   └── team-internal.jsonl
     └── dms/                          # Direct messages
-        └── {user_id}/
+        └── {user_id}.jsonl
 
 Key features:
 - OAuth 2.0 authentication (user-scoped)
 - Channel-based organization (public, private, DMs)
-- Thread-based conversation structure
+- JSONL format (JSON Lines) - one message per line
+- Enriched with user names (user_name, user_real_name, user_display_name)
 - Read and write operations (read messages, post messages)
 - On-demand message fetching from Slack API
-- Full message metadata and content in JSON format
+- Full message metadata and content
 - Automatic token management via TokenManager
 - Database-backed caching via CacheConnectorMixin for fast search
 
 Fetching strategy:
 - Uses conversations.list() and conversations.history() APIs
 - Fetches messages on-demand when accessed
-- Each message is a unique JSON file with timestamp-based naming
+- Each channel is a JSONL file with all messages
+- User information automatically enriched
 
 Authentication:
     Uses OAuth 2.0 flow via TokenManager:
@@ -42,6 +43,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
@@ -76,15 +78,14 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
     Folder Structure (2-level hierarchy):
     - / - Root directory (lists channel type folders)
     - /channels/ - Public channels
-      - /channels/general/ - Messages in #general channel
-        - {ts}-{msg_id}.json - Message files (timestamp-based naming)
+      - /channels/general.jsonl - All messages in #general (JSONL format)
     - /private-channels/ - Private channels
     - /dms/ - Direct messages
 
     Limitations:
     - Requires OAuth tokens for each user
     - Rate limited by Slack API quotas
-    - Messages stored as JSON files
+    - Messages stored as JSONL files (one JSON per line)
     """
 
     # Top-level folder types
@@ -298,26 +299,113 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         json_output = json.dumps(message, indent=2, ensure_ascii=False)
         return json_output.encode("utf-8")
 
-    def _format_messages_as_yaml(self, messages: list[dict[str, Any]]) -> bytes:
-        """Format messages as YAML bytes.
+    def _filter_message_for_llm(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Filter message to keep only LLM-friendly fields.
+
+        Removes redundant fields like blocks, file thumbnails, and internal Slack metadata
+        to make the data more compact and useful for AI agents.
+
+        Args:
+            msg: Full message dictionary from Slack API
+
+        Returns:
+            Filtered message with only useful fields
+        """
+        # Core message fields
+        filtered = {
+            "text": msg.get("text", ""),
+            "type": msg.get("type"),
+        }
+
+        # Convert Slack timestamp to human-readable PST format
+        if "ts" in msg:
+            try:
+                # Slack ts is like "1748443378.529809" (Unix epoch with microseconds)
+                ts_float = float(msg["ts"])
+                dt_utc = datetime.fromtimestamp(ts_float, tz=UTC)
+                dt_pst = dt_utc.astimezone(ZoneInfo("America/Los_Angeles"))
+                filtered["timestamp"] = dt_pst.strftime("%Y-%m-%d %H:%M:%S PST")
+                # Keep original ts for reference
+                filtered["ts"] = msg["ts"]
+            except (ValueError, OSError):
+                # If conversion fails, just keep the original ts
+                filtered["ts"] = msg.get("ts")
+
+        # User information (if available)
+        if "user" in msg:
+            filtered["user"] = msg["user"]
+        if "user_name" in msg:
+            filtered["user_name"] = msg["user_name"]
+        if "user_real_name" in msg:
+            filtered["user_real_name"] = msg["user_real_name"]
+        if "user_display_name" in msg:
+            filtered["user_display_name"] = msg["user_display_name"]
+
+        # Channel information (if available)
+        if "channel_id" in msg:
+            filtered["channel_id"] = msg["channel_id"]
+        if "channel_name" in msg:
+            filtered["channel_name"] = msg["channel_name"]
+
+        # Message subtype (e.g., channel_join, file_share)
+        if "subtype" in msg:
+            filtered["subtype"] = msg["subtype"]
+
+        # Thread information (if it's a thread)
+        if "thread_ts" in msg:
+            filtered["thread_ts"] = msg["thread_ts"]
+        if "reply_count" in msg:
+            filtered["reply_count"] = msg["reply_count"]
+
+        # For join messages, include inviter info
+        if "inviter" in msg:
+            filtered["inviter"] = msg["inviter"]
+        if "inviter_name" in msg:
+            filtered["inviter_name"] = msg["inviter_name"]
+        if "inviter_real_name" in msg:
+            filtered["inviter_real_name"] = msg["inviter_real_name"]
+
+        # Simplify file attachments - keep only essential info
+        if "files" in msg and msg["files"]:
+            filtered["files"] = [
+                {
+                    "name": f.get("name"),
+                    "title": f.get("title"),
+                    "filetype": f.get("filetype"),
+                    "size": f.get("size"),
+                    "url_private": f.get("url_private"),
+                }
+                for f in msg["files"]
+            ]
+
+        # Reactions (if any)
+        if "reactions" in msg:
+            filtered["reactions"] = msg["reactions"]
+
+        return filtered
+
+    def _format_messages_as_jsonl(self, messages: list[dict[str, Any]]) -> bytes:
+        """Format messages as JSONL (JSON Lines) bytes.
 
         Args:
             messages: List of message dictionaries
 
         Returns:
-            Formatted YAML as bytes
+            Formatted JSONL as bytes (one JSON object per line)
         """
-        import yaml
+        # Convert messages to JSONL format (one JSON per line)
+        lines = []
+        for msg in messages:
+            # Filter message to keep only LLM-friendly fields
+            filtered_msg = self._filter_message_for_llm(msg)
+            json_line = json.dumps(filtered_msg, ensure_ascii=False)
+            lines.append(json_line)
 
-        # Convert messages to YAML format
-        yaml_output = yaml.dump(
-            messages,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-            indent=2,
-        )
-        return yaml_output.encode("utf-8")
+        jsonl_output = "\n".join(lines)
+        if lines:
+            jsonl_output += "\n"  # End with newline
+
+        return jsonl_output.encode("utf-8")
 
     def _get_channel_by_name(
         self, channel_name: str, context: "OperationContext | None" = None
@@ -418,7 +506,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> "HandlerResponse[bytes]":
         """
-        Read channel content as YAML file from cache or Slack API.
+        Read channel content as JSONL file from cache or Slack API.
 
         For connector backends, content_hash is ignored - we use backend_path instead.
 
@@ -427,7 +515,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            HandlerResponse with channel messages as YAML bytes in data field
+            HandlerResponse with channel messages as JSONL bytes in data field
 
         Raises:
             NexusFileNotFoundError: If channel doesn't exist
@@ -448,7 +536,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
 
         backend_path = context.backend_path
 
-        # Parse path: channels/general.yaml
+        # Parse path: channels/general.jsonl
         path_parts = backend_path.strip("/").split("/")
 
         if len(path_parts) != 2:
@@ -469,16 +557,16 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                 backend_name="slack",
             )
 
-        if not filename.endswith(".yaml"):
+        if not filename.endswith(".jsonl"):
             return HandlerResponse.not_found(
                 path=backend_path,
-                message=f"Not a valid YAML file: {filename}",
+                message=f"Not a valid JSONL file: {filename}",
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="slack",
             )
 
         # Extract channel name from filename
-        channel_name = filename.replace(".yaml", "")
+        channel_name = filename.replace(".jsonl", "")
 
         # Get cache path
         cache_path = self._get_cache_path(context) or backend_path
@@ -516,6 +604,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                 channel_name=channel_name,
                 limit=self.max_messages_per_channel,
                 silent=True,
+                enrich_users=True,
+                user_cache=self._user_cache,
             )
 
             # Add channel context to each message
@@ -561,8 +651,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                 backend_name="slack",
             )
 
-        # Format as YAML
-        content = self._format_messages_as_yaml(messages)
+        # Format as JSONL
+        content = self._format_messages_as_jsonl(messages)
 
         # Cache the result
         if self._has_caching():
@@ -685,8 +775,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
             else:
                 backend_path = path.lstrip("/")
 
-            # Check if this is a message file (ends with .json)
-            if not backend_path.endswith(".json"):
+            # Check if this is a message file (ends with .jsonl)
+            if not backend_path.endswith(".jsonl"):
                 return None  # Not a file (likely a directory)
 
             # Return fixed version for immutable Slack messages
@@ -760,9 +850,9 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         if len(path_parts) == 1:
             return path in self.FOLDER_TYPES
 
-        # Channel YAML files (channels/general.yaml) - these are files now
+        # Channel JSONL files (channels/general.jsonl) - these are files now
         if len(path_parts) == 2:
-            return False  # All paths at this level are YAML files
+            return False  # All paths at this level are JSONL files
 
         return False
 
@@ -821,8 +911,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                 for channel in channels:
                     self._channel_cache[channel["id"]] = channel
 
-                # Return channel names as YAML files (not directories)
-                return [f"{channel.get('name', channel['id'])}.yaml" for channel in channels]
+                # Return channel names as JSONL files (not directories)
+                return [f"{channel.get('name', channel['id'])}.jsonl" for channel in channels]
 
             # Invalid path - channels are now files, not directories
             raise FileNotFoundError(f"Directory not found: {path}")

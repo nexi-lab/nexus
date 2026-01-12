@@ -323,6 +323,16 @@ class NexusFSMountsMixin:
                         f"Failed to revoke OAuth credentials (non-fatal): {e}"
                     )
 
+        # Step 4: Delete mount point directory
+        try:
+            self.rmdir(mount_point, recursive=True, context=context)  # type: ignore[attr-defined]  # allowed
+            result["directory_deleted"] = True
+            logger.info(f"Deleted mount point directory: {mount_point}")
+        except Exception as e:
+            # Directory deletion is non-fatal
+            result["warnings"].append(f"Failed to delete mount point directory (non-fatal): {e}")
+            logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+
         return result
 
     @rpc_expose(description="List available connector types")
@@ -337,7 +347,7 @@ class NexusFSMountsMixin:
         """
         return self._mount_core_service.list_connectors(category)
 
-    @rpc_expose(description="List all backend mounts")
+    @rpc_expose(description="List all active mounts")
     def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts.
 

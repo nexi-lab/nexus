@@ -164,6 +164,14 @@ class MountPersistService:
         """
         self._check_manager()
 
+        # Check if mount is already active
+        if self._mounts.has_mount(mount_point):
+            logger.info(f"[LOAD_MOUNT] Mount already active: {mount_point}")
+            # Return the mount_id from database
+            assert self._manager is not None
+            config = self._manager.get_mount(mount_point)
+            return str(config["mount_id"]) if config else mount_point
+
         assert self._manager is not None
         config = self._manager.get_mount(mount_point)
         if not config:

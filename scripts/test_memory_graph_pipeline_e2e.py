@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
 import os
 import sys
@@ -45,7 +44,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models import Base
 
@@ -133,12 +132,12 @@ class MemoryGraphPipelineE2ETest:
                     return self._value
 
             class MockBackend:
-                def write_content(self, content, context=None):
+                def write_content(self, content, _context=None):
                     import hashlib
                     content_hash = hashlib.sha256(content).hexdigest()
                     return MockResult(content_hash)
 
-                def read_content(self, content_hash, context=None):
+                def read_content(self, _content_hash, _context=None):
                     return MockResult(b"test content")
 
             backend = MockBackend()
@@ -198,8 +197,8 @@ class MemoryGraphPipelineE2ETest:
         except Exception as e:
             error_msg = str(e)
             if "does not exist" in error_msg or "UndefinedColumn" in error_msg:
-                logger.warning(f"  [SKIP] Memory API test - database needs migrations")
-                logger.warning(f"  Run: alembic upgrade head")
+                logger.warning("  [SKIP] Memory API test - database needs migrations")
+                logger.warning("  Run: alembic upgrade head")
                 # Don't count as failure - infrastructure issue, not code issue
                 return True
             logger.error(f"Test failed: {e}")
@@ -258,7 +257,7 @@ class MemoryGraphPipelineE2ETest:
                     entity_type="ORG",
                 )
 
-                logger.info(f"  Created 5 entities")
+                logger.info("  Created 5 entities")
                 self.passed += 1
 
                 # Create relationships
@@ -288,7 +287,7 @@ class MemoryGraphPipelineE2ETest:
                 )
 
                 await session.commit()
-                logger.info(f"  Created 4 relationships")
+                logger.info("  Created 4 relationships")
                 self.passed += 1
 
                 # Note: Entity mentions require a real memory_id due to foreign key constraint

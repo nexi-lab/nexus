@@ -1645,6 +1645,7 @@ def _register_routes(app: FastAPI) -> None:
                 extract_temporal=body.get("extract_temporal", True),
                 extract_relationships=body.get("extract_relationships", False),
                 relationship_types=body.get("relationship_types"),
+                store_to_graph=body.get("store_to_graph", False),  # #1039
                 context=context,
             )
 
@@ -1653,6 +1654,244 @@ def _register_routes(app: FastAPI) -> None:
         except Exception as e:
             logger.error(f"Memory store error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
+
+    # =========================================================================
+    # Graph API Endpoints (Issue #1039)
+    # =========================================================================
+
+    @app.get("/api/graph/entity/{entity_id}", tags=["graph"])
+    async def get_graph_entity(
+        entity_id: str,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get an entity by ID from the knowledge graph.
+
+        Args:
+            entity_id: The entity UUID
+
+        Returns:
+            Entity details or null if not found
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from nexus.search.graph_store import GraphStore
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            sync_url = _app_state.database_url or ""
+            if sync_url.startswith("postgresql://"):
+                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+            elif sync_url.startswith("sqlite:///"):
+                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+            else:
+                async_url = sync_url
+
+            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+
+            async def _get_entity() -> dict[str, Any] | None:
+                engine = create_async_engine(async_url)
+                async_session_factory = async_sessionmaker(
+                    engine, class_=AsyncSession, expire_on_commit=False
+                )
+                try:
+                    async with async_session_factory() as session:
+                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        entity = await graph_store.get_entity(entity_id)
+                        return entity.to_dict() if entity else None
+                finally:
+                    await engine.dispose()
+
+            return {"entity": asyncio.run(_get_entity())}
+
+        except Exception as e:
+            logger.error(f"Graph entity error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Graph entity error: {e}") from e
+
+    @app.get("/api/graph/entity/{entity_id}/neighbors", tags=["graph"])
+    async def get_graph_neighbors(
+        entity_id: str,
+        hops: int = Query(1, ge=1, le=5, description="Number of hops (1-5)"),
+        direction: str = Query("both", description="Direction: outgoing, incoming, both"),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get N-hop neighbors of an entity.
+
+        Args:
+            entity_id: Starting entity UUID
+            hops: Number of hops (1-5)
+            direction: Relationship direction to follow
+
+        Returns:
+            List of neighbor entities with depth and path info
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from nexus.search.graph_store import GraphStore
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            sync_url = _app_state.database_url or ""
+            if sync_url.startswith("postgresql://"):
+                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+            elif sync_url.startswith("sqlite:///"):
+                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+            else:
+                async_url = sync_url
+
+            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+
+            async def _get_neighbors() -> list[dict[str, Any]]:
+                engine = create_async_engine(async_url)
+                async_session_factory = async_sessionmaker(
+                    engine, class_=AsyncSession, expire_on_commit=False
+                )
+                try:
+                    async with async_session_factory() as session:
+                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        neighbors = await graph_store.get_neighbors(
+                            entity_id, hops=hops, direction=direction
+                        )
+                        return [
+                            {
+                                "entity": n.entity.to_dict(),
+                                "depth": n.depth,
+                                "path": n.path,
+                            }
+                            for n in neighbors
+                        ]
+                finally:
+                    await engine.dispose()
+
+            return {"neighbors": asyncio.run(_get_neighbors())}
+
+        except Exception as e:
+            logger.error(f"Graph neighbors error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Graph neighbors error: {e}") from e
+
+    @app.post("/api/graph/subgraph", tags=["graph"])
+    async def get_graph_subgraph(
+        request: Request,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Extract a subgraph for GraphRAG context building.
+
+        Request body:
+        {
+            "entity_ids": ["entity-id-1", "entity-id-2"],
+            "max_hops": 2
+        }
+
+        Returns:
+            Subgraph with entities and relationships
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from nexus.search.graph_store import GraphStore
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            body = await request.json()
+            entity_ids = body.get("entity_ids", [])
+            max_hops = body.get("max_hops", 2)
+
+            sync_url = _app_state.database_url or ""
+            if sync_url.startswith("postgresql://"):
+                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+            elif sync_url.startswith("sqlite:///"):
+                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+            else:
+                async_url = sync_url
+
+            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+
+            async def _get_subgraph() -> dict[str, Any]:
+                engine = create_async_engine(async_url)
+                async_session_factory = async_sessionmaker(
+                    engine, class_=AsyncSession, expire_on_commit=False
+                )
+                try:
+                    async with async_session_factory() as session:
+                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        subgraph = await graph_store.get_subgraph(entity_ids, max_hops=max_hops)
+                        return subgraph.to_dict()
+                finally:
+                    await engine.dispose()
+
+            return asyncio.run(_get_subgraph())
+
+        except Exception as e:
+            logger.error(f"Graph subgraph error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Graph subgraph error: {e}") from e
+
+    @app.get("/api/graph/search", tags=["graph"])
+    async def search_graph_entities(
+        name: str = Query(..., description="Entity name to search for"),
+        entity_type: str | None = Query(None, description="Filter by entity type"),
+        fuzzy: bool = Query(False, description="Search in aliases as well"),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Search for entities by name.
+
+        Args:
+            name: Entity name to search for
+            entity_type: Optional entity type filter (PERSON, ORG, CONCEPT, etc.)
+            fuzzy: If true, search aliases as well
+
+        Returns:
+            Matching entity or null
+        """
+        import asyncio
+
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+        from nexus.search.graph_store import GraphStore
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            sync_url = _app_state.database_url or ""
+            if sync_url.startswith("postgresql://"):
+                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+            elif sync_url.startswith("sqlite:///"):
+                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+            else:
+                async_url = sync_url
+
+            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+
+            async def _find_entity() -> dict[str, Any] | None:
+                engine = create_async_engine(async_url)
+                async_session_factory = async_sessionmaker(
+                    engine, class_=AsyncSession, expire_on_commit=False
+                )
+                try:
+                    async with async_session_factory() as session:
+                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        entity = await graph_store.find_entity(
+                            name=name, entity_type=entity_type, fuzzy=fuzzy
+                        )
+                        return entity.to_dict() if entity else None
+                finally:
+                    await engine.dispose()
+
+            return {"entity": asyncio.run(_find_entity())}
+
+        except Exception as e:
+            logger.error(f"Graph search error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Graph search error: {e}") from e
 
     # =========================================================================
     # Hotspot Detection API Endpoints (Issue #921)

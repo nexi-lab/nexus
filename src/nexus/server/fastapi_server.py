@@ -1692,7 +1692,7 @@ def _register_routes(app: FastAPI) -> None:
 
             tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
 
-            async def _get_entity():
+            async def _get_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
                 async_session_factory = async_sessionmaker(
                     engine, class_=AsyncSession, expire_on_commit=False
@@ -1748,7 +1748,7 @@ def _register_routes(app: FastAPI) -> None:
 
             tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
 
-            async def _get_neighbors():
+            async def _get_neighbors() -> list[dict[str, Any]]:
                 engine = create_async_engine(async_url)
                 async_session_factory = async_sessionmaker(
                     engine, class_=AsyncSession, expire_on_commit=False
@@ -1816,7 +1816,7 @@ def _register_routes(app: FastAPI) -> None:
 
             tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
 
-            async def _get_subgraph():
+            async def _get_subgraph() -> dict[str, Any]:
                 engine = create_async_engine(async_url)
                 async_session_factory = async_sessionmaker(
                     engine, class_=AsyncSession, expire_on_commit=False
@@ -1872,7 +1872,7 @@ def _register_routes(app: FastAPI) -> None:
 
             tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
 
-            async def _find_entity():
+            async def _find_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
                 async_session_factory = async_sessionmaker(
                     engine, class_=AsyncSession, expire_on_commit=False

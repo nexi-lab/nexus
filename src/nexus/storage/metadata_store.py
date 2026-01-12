@@ -45,6 +45,27 @@ from nexus.storage.version_manager import VersionManager
 logger = logging.getLogger(__name__)
 
 
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    """Ensure datetime is UTC-aware.
+
+    SQLite stores datetimes without timezone info. When retrieving,
+    we assume they're UTC and make them timezone-aware for consistent
+    comparisons.
+
+    Args:
+        dt: A datetime (may be naive or already aware)
+
+    Returns:
+        UTC-aware datetime, or None if input is None
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # Naive datetime - assume it's UTC
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
 class SQLAlchemyMetadataStore(MetadataStore):
     """
     SQLAlchemy-based metadata store supporting multiple database backends.
@@ -578,8 +599,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     size=file_path.size_bytes,
                     etag=file_path.content_hash,
                     mime_type=file_path.file_type,
-                    created_at=file_path.created_at,
-                    modified_at=file_path.updated_at,
+                    created_at=_ensure_utc(file_path.created_at),
+                    modified_at=_ensure_utc(file_path.updated_at),
                     version=file_path.current_version,  # Version tracking (v0.3.5)
                     tenant_id=file_path.tenant_id,  # P0 SECURITY: Defense-in-depth (v0.7.0)
                     owner_id=file_path.posix_uid,  # Issue #920: O(1) owner permission checks
@@ -1248,8 +1269,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             size=file_path.size_bytes,
                             etag=file_path.content_hash,
                             mime_type=file_path.file_type,
-                            created_at=file_path.created_at,
-                            modified_at=file_path.updated_at,
+                            created_at=_ensure_utc(file_path.created_at),
+                            modified_at=_ensure_utc(file_path.updated_at),
                             version=file_path.current_version,  # Version tracking (v0.3.5)
                             tenant_id=file_path.tenant_id,  # P0 SECURITY: Defense-in-depth (v0.7.0)
                         )
@@ -1381,8 +1402,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         size=row.size_bytes,
                         etag=row.content_hash,
                         mime_type=row.file_type,
-                        created_at=row.created_at,
-                        modified_at=row.updated_at,
+                        created_at=_ensure_utc(row.created_at),
+                        modified_at=_ensure_utc(row.updated_at),
                         version=row.current_version,
                         tenant_id=row.tenant_id,
                     )
@@ -1451,8 +1472,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             size=file_path.size_bytes,
                             etag=file_path.content_hash,
                             mime_type=file_path.file_type,
-                            created_at=file_path.created_at,
-                            modified_at=file_path.updated_at,
+                            created_at=_ensure_utc(file_path.created_at),
+                            modified_at=_ensure_utc(file_path.updated_at),
                             version=file_path.current_version,
                         )
                     )
@@ -1631,8 +1652,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         size=file_path.size_bytes,
                         etag=file_path.content_hash,
                         mime_type=file_path.file_type,
-                        created_at=file_path.created_at,
-                        modified_at=file_path.updated_at,
+                        created_at=_ensure_utc(file_path.created_at),
+                        modified_at=_ensure_utc(file_path.updated_at),
                         version=file_path.current_version,  # Version tracking (v0.3.5)
                     )
                     result[file_path.virtual_path] = metadata

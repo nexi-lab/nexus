@@ -188,8 +188,8 @@ class CompactFileMetadata:
     size: int
     hash_id: int  # -1 for None
     mime_id: int  # -1 for None
-    created_ts: int  # Unix timestamp, 0 for None
-    modified_ts: int  # Unix timestamp, 0 for None
+    created_ts: float  # Unix timestamp with microseconds, 0.0 for None
+    modified_ts: float  # Unix timestamp with microseconds, 0.0 for None
     version: int
     tenant_id: int  # -1 for None
     user_id: int  # -1 for None
@@ -214,9 +214,9 @@ class CompactFileMetadata:
         tenant_id = _tenant_pool.intern(metadata.tenant_id) if metadata.tenant_id else -1
         user_id = _user_pool.intern(metadata.created_by) if metadata.created_by else -1
 
-        # Convert datetimes to Unix timestamps
-        created_ts = int(metadata.created_at.timestamp()) if metadata.created_at else 0
-        modified_ts = int(metadata.modified_at.timestamp()) if metadata.modified_at else 0
+        # Convert datetimes to Unix timestamps (preserve microseconds as float)
+        created_ts = metadata.created_at.timestamp() if metadata.created_at else 0.0
+        modified_ts = metadata.modified_at.timestamp() if metadata.modified_at else 0.0
 
         # Pack boolean flags
         flags = 0

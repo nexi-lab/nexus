@@ -2,8 +2,22 @@
 
 Implements trajectory tracking, reflection, curation, and consolidation
 for continuous agent learning.
+
+Affinity-based consolidation (Issue #1026):
+    The ConsolidationEngine now supports SimpleMem-inspired affinity scoring
+    that combines semantic similarity and temporal proximity for smarter
+    memory clustering. Use `consolidate_by_affinity_async()` for this approach.
 """
 
+from nexus.core.ace.affinity import (
+    AffinityConfig,
+    ClusterResult,
+    MemoryVector,
+    cluster_by_affinity,
+    compute_affinity,
+    compute_affinity_matrix,
+    get_cluster_statistics,
+)
 from nexus.core.ace.consolidation import ConsolidationEngine
 from nexus.core.ace.curation import Curator
 from nexus.core.ace.feedback import FeedbackManager
@@ -13,6 +27,7 @@ from nexus.core.ace.reflection import Reflector
 from nexus.core.ace.trajectory import TrajectoryManager
 
 __all__ = [
+    # Core ACE components
     "TrajectoryManager",
     "Reflector",
     "Curator",
@@ -20,4 +35,12 @@ __all__ = [
     "ConsolidationEngine",
     "FeedbackManager",
     "LearningLoop",
+    # Affinity scoring (Issue #1026)
+    "AffinityConfig",
+    "MemoryVector",
+    "ClusterResult",
+    "compute_affinity",
+    "compute_affinity_matrix",
+    "cluster_by_affinity",
+    "get_cluster_statistics",
 ]

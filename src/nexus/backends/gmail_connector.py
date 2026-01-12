@@ -43,6 +43,16 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.connectors.base import (
+    CheckpointMixin,
+    ConfirmLevel,
+    OpTraits,
+    Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
+)
+from nexus.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.core.exceptions import BackendError
 from nexus.core.response import HandlerResponse
 
@@ -62,7 +72,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GmailConnectorBackend(Backend, CacheConnectorMixin):
+class GmailConnectorBackend(
+    Backend,
+    CacheConnectorMixin,
+    SkillDocMixin,
+    ValidatedMixin,
+    TraitBasedMixin,
+    CheckpointMixin,
+):
     """
     Gmail connector backend with OAuth 2.0 authentication.
 
@@ -106,6 +123,40 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
     # Enable metadata-based listing (use file_paths table like GCS)
     # This makes Gmail use fast database queries instead of Gmail API calls for list operations
     use_metadata_listing = True
+
+    # Skill documentation settings
+    SKILL_NAME = "gmail"
+
+    # Operation traits for trait-based validation
+    OPERATION_TRAITS = {
+        "send_email": OpTraits(
+            reversibility=Reversibility.NONE,  # Cannot unsend
+            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+        "reply_email": OpTraits(
+            reversibility=Reversibility.NONE,  # Cannot unsend
+            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+        "forward_email": OpTraits(
+            reversibility=Reversibility.NONE,  # Cannot unsend
+            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+        "create_draft": OpTraits(
+            reversibility=Reversibility.FULL,  # Can delete draft
+            confirm=ConfirmLevel.INTENT,  # Only needs agent_intent
+            checkpoint=True,
+            intent_min_length=10,
+        ),
+    }
+
+    # Error registry for self-correcting messages
+    ERROR_REGISTRY = ERROR_REGISTRY
 
     def __init__(
         self,
@@ -205,6 +256,34 @@ class GmailConnectorBackend(Backend, CacheConnectorMixin):
     def user_scoped(self) -> bool:
         """This backend requires per-user OAuth credentials."""
         return True
+
+    def generate_skill_doc(self, mount_path: str) -> str:
+        """Load SKILL.md from static file with mount path replacement.
+
+        Args:
+            mount_path: The mount path for this connector (e.g., "/mnt/gmail/")
+
+        Returns:
+            SKILL.md content with mount path updated
+        """
+        import importlib.resources as resources
+
+        try:
+            # Load static SKILL.md from package resources
+            skill_md_content = (
+                resources.files("nexus.connectors.gmail")
+                .joinpath("SKILL.md")
+                .read_text(encoding="utf-8")
+            )
+
+            # Replace mount path placeholders
+            skill_md_content = skill_md_content.replace("`/mnt/gmail/`", f"`{mount_path}`")
+            skill_md_content = skill_md_content.replace("/mnt/gmail/", mount_path.rstrip("/") + "/")
+
+            return skill_md_content
+        except Exception as e:
+            logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
+            return super().generate_skill_doc(mount_path)
 
     def _get_gmail_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Gmail service with user's OAuth credentials.

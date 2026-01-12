@@ -121,12 +121,12 @@ def nexus_server(isolated_db, tmp_path):
     # Start nexus serve process
     # Using python -c to invoke the CLI entry point from source
     # --data-dir sets both storage path and database location
-    # --no-async uses sync ThreadingHTTPServer (doesn't require uvicorn)
+    # Uses FastAPI async server (default) for full API support including Graph API
     process = subprocess.Popen(
         [
             sys.executable,
             "-c",
-            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_path}', '--no-async'])",
+            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_path}'])",
         ],
         env=env,
         stdout=subprocess.PIPE,

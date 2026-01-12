@@ -1672,8 +1672,6 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Entity details or null if not found
         """
-        import asyncio
-
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
         from nexus.search.graph_store import GraphStore
@@ -1705,7 +1703,7 @@ def _register_routes(app: FastAPI) -> None:
                 finally:
                     await engine.dispose()
 
-            return {"entity": asyncio.run(_get_entity())}
+            return {"entity": await _get_entity()}
 
         except Exception as e:
             logger.error(f"Graph entity error: {e}", exc_info=True)
@@ -1728,8 +1726,6 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             List of neighbor entities with depth and path info
         """
-        import asyncio
-
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
         from nexus.search.graph_store import GraphStore
@@ -1770,7 +1766,7 @@ def _register_routes(app: FastAPI) -> None:
                 finally:
                     await engine.dispose()
 
-            return {"neighbors": asyncio.run(_get_neighbors())}
+            return {"neighbors": await _get_neighbors()}
 
         except Exception as e:
             logger.error(f"Graph neighbors error: {e}", exc_info=True)
@@ -1792,8 +1788,6 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Subgraph with entities and relationships
         """
-        import asyncio
-
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
         from nexus.search.graph_store import GraphStore
@@ -1829,7 +1823,7 @@ def _register_routes(app: FastAPI) -> None:
                 finally:
                     await engine.dispose()
 
-            return asyncio.run(_get_subgraph())
+            return await _get_subgraph()
 
         except Exception as e:
             logger.error(f"Graph subgraph error: {e}", exc_info=True)
@@ -1852,8 +1846,6 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Matching entity or null
         """
-        import asyncio
-
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
         from nexus.search.graph_store import GraphStore
@@ -1887,7 +1879,7 @@ def _register_routes(app: FastAPI) -> None:
                 finally:
                     await engine.dispose()
 
-            return {"entity": asyncio.run(_find_entity())}
+            return {"entity": await _find_entity()}
 
         except Exception as e:
             logger.error(f"Graph search error: {e}", exc_info=True)

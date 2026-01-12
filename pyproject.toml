@@ -112,6 +112,9 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.41b0",
     "opentelemetry-instrumentation-redis>=0.41b0",
     "opentelemetry-instrumentation-aiohttp-client>=0.41b0",
+    # Affinity-based memory consolidation (Issue #1026 - SimpleMem-inspired)
+    "numpy>=1.26.0",
+    "scikit-learn>=1.4.0",
 ]
 
 [project.optional-dependencies]

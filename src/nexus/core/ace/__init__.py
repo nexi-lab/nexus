@@ -7,6 +7,11 @@ Affinity-based consolidation (Issue #1026):
     The ConsolidationEngine now supports SimpleMem-inspired affinity scoring
     that combines semantic similarity and temporal proximity for smarter
     memory clustering. Use `consolidate_by_affinity_async()` for this approach.
+
+Hierarchical memory abstraction (Issue #1029):
+    The HierarchicalMemoryManager enables multi-level memory hierarchies
+    where atomic memories are progressively consolidated into higher-level
+    abstractions (atoms → clusters → abstracts).
 """
 
 from nexus.core.ace.affinity import (
@@ -22,6 +27,13 @@ from nexus.core.ace.consolidation import ConsolidationEngine
 from nexus.core.ace.curation import Curator
 from nexus.core.ace.feedback import FeedbackManager
 from nexus.core.ace.learning_loop import LearningLoop
+from nexus.core.ace.memory_hierarchy import (
+    HierarchicalMemoryManager,
+    HierarchyLevel,
+    HierarchyResult,
+    HierarchyRetrievalResult,
+    build_hierarchy,
+)
 from nexus.core.ace.playbook import PlaybookManager
 from nexus.core.ace.reflection import Reflector
 from nexus.core.ace.trajectory import TrajectoryManager
@@ -43,4 +55,10 @@ __all__ = [
     "compute_affinity_matrix",
     "cluster_by_affinity",
     "get_cluster_statistics",
+    # Hierarchical memory (Issue #1029)
+    "HierarchicalMemoryManager",
+    "HierarchyLevel",
+    "HierarchyResult",
+    "HierarchyRetrievalResult",
+    "build_hierarchy",
 ]

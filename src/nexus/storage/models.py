@@ -1131,21 +1131,13 @@ class MemoryModel(Base):
 
     # Hierarchical memory abstraction (#1029 - SimpleMem recursive consolidation)
     # Level 0 = atomic, 1 = cluster, 2 = abstract, 3+ = meta-abstract
-    abstraction_level: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
+    abstraction_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Points to higher-level abstraction (parent in hierarchy)
-    parent_memory_id: Mapped[str | None] = mapped_column(
-        String(36), nullable=True
-    )
+    parent_memory_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     # JSON array of lower-level memory IDs (children in hierarchy)
-    child_memory_ids: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )
+    child_memory_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     # True if consolidated into higher level (still queryable but lower priority)
-    is_archived: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

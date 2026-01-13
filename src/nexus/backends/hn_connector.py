@@ -47,6 +47,7 @@ import httpx
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
+from nexus.connectors.base import SkillDocMixin
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse
 
@@ -84,7 +85,7 @@ MAX_COMMENTS_TOTAL = 100
     category="api",
     requires=["httpx"],
 )
-class HNConnectorBackend(Backend, CacheConnectorMixin):
+class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     """
     HackerNews connector backend with virtual filesystem mapping.
 
@@ -107,6 +108,9 @@ class HNConnectorBackend(Backend, CacheConnectorMixin):
     - Fixed virtual directory structure
     - External article content not included (just URLs)
     """
+
+    # Skill documentation settings
+    SKILL_NAME = "hn"
 
     user_scoped = False  # Public API, no per-user auth
     has_virtual_filesystem = True  # Uses virtual directory structure, not metadata-backed
@@ -161,6 +165,29 @@ class HNConnectorBackend(Backend, CacheConnectorMixin):
     def name(self) -> str:
         """Backend identifier name."""
         return "hn"
+
+    def generate_skill_doc(self, mount_path: str) -> str:
+        """Load SKILL.md from static file.
+
+        Args:
+            mount_path: The mount path for this connector instance
+
+        Returns:
+            SKILL.md content with mount path substituted
+        """
+        import importlib.resources as resources
+
+        try:
+            content = (
+                resources.files("nexus.connectors.hn")
+                .joinpath("SKILL.md")
+                .read_text(encoding="utf-8")
+            )
+            # Replace mount path placeholder
+            content = content.replace("/mnt/hn/", mount_path)
+            return content
+        except Exception:
+            return super().generate_skill_doc(mount_path)
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""

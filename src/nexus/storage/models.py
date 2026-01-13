@@ -1129,6 +1129,16 @@ class MemoryModel(Base):
         Integer, nullable=True
     )  # Count of extracted relationships for filtering
 
+    # Hierarchical memory abstraction (#1029 - SimpleMem recursive consolidation)
+    # Level 0 = atomic, 1 = cluster, 2 = abstract, 3+ = meta-abstract
+    abstraction_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Points to higher-level abstraction (parent in hierarchy)
+    parent_memory_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # JSON array of lower-level memory IDs (children in hierarchy)
+    child_memory_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # True if consolidated into higher level (still queryable but lower priority)
+    is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -1158,6 +1168,9 @@ class MemoryModel(Base):
         Index(
             "idx_memory_relationship_count", "relationship_count"
         ),  # #1038 - relationship filtering
+        Index("idx_memory_abstraction_level", "abstraction_level"),  # #1029 - hierarchy level
+        Index("idx_memory_parent", "parent_memory_id"),  # #1029 - parent lookup
+        Index("idx_memory_archived", "is_archived"),  # #1029 - archived filtering
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

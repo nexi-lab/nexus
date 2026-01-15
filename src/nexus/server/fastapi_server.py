@@ -1128,9 +1128,7 @@ async def _graph_enhanced_search(
 
     # Create async engine and session
     engine = create_async_engine(async_url, echo=False)
-    async_session_factory = async_sessionmaker(
-        engine, class_=AsyncSession, expire_on_commit=False
-    )
+    async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     try:
         async with async_session_factory() as session:

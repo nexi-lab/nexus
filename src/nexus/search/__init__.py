@@ -74,6 +74,13 @@ from nexus.search.fusion import (
     rrf_weighted_fusion,
     weighted_fusion,
 )
+from nexus.search.graph_retrieval import (
+    GraphContext,
+    GraphEnhancedRetriever,
+    GraphEnhancedSearchResult,
+    GraphRetrievalConfig,
+    graph_enhanced_fusion,
+)
 from nexus.search.hnsw_config import (
     DatasetScale,
     HNSWConfig,
@@ -126,6 +133,12 @@ __all__ = [
     "rrf_fusion",
     "rrf_weighted_fusion",
     "weighted_fusion",
+    # Graph-Enhanced Retrieval (Issue #1040)
+    "GraphEnhancedRetriever",
+    "GraphRetrievalConfig",
+    "GraphEnhancedSearchResult",
+    "GraphContext",
+    "graph_enhanced_fusion",
     # BM25S Fast Text Search (Issue #796)
     "BM25SIndex",
     "BM25SSearchResult",

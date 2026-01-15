@@ -492,8 +492,40 @@ class NexusFSSkillsMixin:
 
                 if rel_path and not rel_path.endswith("/"):  # Skip empty paths and folder entries
                     file_path = f"{target_path}{rel_path}"
-                    service._gw.write(file_path, content, context=context)
-                    files_imported.append(file_path)
+                    logger.info(
+                        f"[skills_import] Writing file: {file_path}, context.user_id={context.user_id if context else None}, context.tenant_id={context.tenant_id if context else None}"
+                    )
+                    try:
+                        service._gw.write(file_path, content, context=context)
+                        files_imported.append(file_path)
+                        logger.info(f"[skills_import] Successfully wrote: {file_path}")
+                    except Exception as e:
+                        logger.error(
+                            f"[skills_import] Failed to write {file_path}: {e}", exc_info=True
+                        )
+                        raise
+
+            # Invalidate cache for the skill directory and parent directory
+            # This ensures skills_discover will see the newly imported skill immediately
+            try:
+                if (
+                    hasattr(service._gw, "_fs")
+                    and hasattr(service._gw._fs, "metadata")
+                    and hasattr(service._gw._fs.metadata, "_cache")
+                    and service._gw._fs.metadata._cache
+                ):
+                    # Invalidate cache for the skill directory
+                    service._gw._fs.metadata._cache.invalidate_path(target_path)
+                    # Also invalidate parent directory to refresh list cache
+                    parent_dir = (
+                        target_path.rsplit("/", 2)[0] + "/" if "/" in target_path else base_path
+                    )
+                    service._gw._fs.metadata._cache.invalidate_path(parent_dir)
+                    logger.info(
+                        f"[skills_import] Invalidated cache for {target_path} and parent {parent_dir}"
+                    )
+            except Exception as e:
+                logger.warning(f"[skills_import] Failed to invalidate cache: {e}")
 
         # Return format expected by frontend
         return {

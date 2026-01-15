@@ -1078,6 +1078,139 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
     return exposed
 
 
+async def _graph_enhanced_search(
+    query: str,
+    search_type: str,
+    limit: int,
+    path_filter: str | None,
+    alpha: float,
+    graph_mode: str,
+) -> list:
+    """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
+
+    Creates a GraphEnhancedRetriever on-the-fly and executes the search.
+    This helper is called when graph_mode is not "none".
+
+    Args:
+        query: Search query text
+        search_type: Base search type (keyword, semantic, hybrid)
+        limit: Maximum results
+        path_filter: Optional path prefix filter
+        alpha: Semantic vs keyword weight
+        graph_mode: Graph enhancement mode (low, high, dual)
+
+    Returns:
+        List of GraphEnhancedSearchResult
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from nexus.search.graph_retrieval import (
+        GraphEnhancedRetriever,
+        GraphRetrievalConfig,
+    )
+    from nexus.search.graph_store import GraphStore
+    from nexus.search.semantic import SemanticSearchResult
+
+    if not _app_state.nexus_fs:
+        raise RuntimeError("NexusFS not initialized")
+
+    # Get database URL
+    db_url = _app_state.database_url
+    if not db_url:
+        db_url = _app_state.nexus_fs.metadata.database_url
+
+    # Convert to async URL
+    async_url = db_url
+    if async_url.startswith("postgresql://"):
+        async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
+    elif async_url.startswith("sqlite:///"):
+        async_url = async_url.replace("sqlite:///", "sqlite+aiosqlite:///")
+
+    # Create async engine and session
+    engine = create_async_engine(async_url, echo=False)
+    async_session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    try:
+        async with async_session_factory() as session:
+            # Initialize components
+            graph_store = GraphStore(session, tenant_id="default")
+
+            # Create a wrapper for SemanticSearch that uses the search daemon
+            class DaemonSemanticSearchWrapper:
+                """Wraps search daemon as SemanticSearch interface."""
+
+                def __init__(self, daemon):
+                    self.daemon = daemon
+                    self.embedding_provider = getattr(daemon, "_embedding_provider", None)
+
+                async def search(
+                    self,
+                    query: str,
+                    path: str = "/",
+                    limit: int = 10,
+                    search_mode: str = "hybrid",
+                    alpha: float = 0.5,
+                ) -> list[SemanticSearchResult]:
+                    # Map search_mode to daemon's search_type
+                    results = await self.daemon.search(
+                        query=query,
+                        search_type=search_mode,
+                        limit=limit,
+                        path_filter=path if path != "/" else None,
+                        alpha=alpha,
+                    )
+                    # Convert daemon results to SemanticSearchResult
+                    return [
+                        SemanticSearchResult(
+                            path=r.path,
+                            chunk_index=r.chunk_index,
+                            chunk_text=r.chunk_text,
+                            score=r.score,
+                            start_offset=r.start_offset,
+                            end_offset=r.end_offset,
+                            line_start=r.line_start,
+                            line_end=r.line_end,
+                            keyword_score=r.keyword_score,
+                            vector_score=r.vector_score,
+                        )
+                        for r in results
+                    ]
+
+            # Create wrapper and retriever
+            semantic_wrapper = DaemonSemanticSearchWrapper(_app_state.search_daemon)
+            embedding_provider = getattr(_app_state.search_daemon, "_embedding_provider", None)
+
+            config = GraphRetrievalConfig(
+                graph_mode=graph_mode,
+                entity_similarity_threshold=0.75,
+                neighbor_hops=2,
+            )
+
+            retriever = GraphEnhancedRetriever(
+                semantic_search=semantic_wrapper,  # type: ignore
+                graph_store=graph_store,
+                embedding_provider=embedding_provider,
+                config=config,
+            )
+
+            # Execute search
+            results = await retriever.search(
+                query=query,
+                path=path_filter or "/",
+                limit=limit,
+                graph_mode=graph_mode,
+                search_mode=search_type,
+                alpha=alpha,
+                include_graph_context=True,
+            )
+
+            return results
+    finally:
+        await engine.dispose()
+
+
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
@@ -1302,6 +1435,10 @@ def _register_routes(app: FastAPI) -> None:
             False,
             description="Adaptive retrieval: dynamically adjust limit based on query complexity",
         ),
+        graph_mode: str = Query(
+            "none",
+            description="Graph enhancement mode (Issue #1040): none, low, high, or dual",
+        ),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
         """Execute a fast search query using the search daemon.
@@ -1316,6 +1453,11 @@ def _register_routes(app: FastAPI) -> None:
             alpha: Weight for semantic search (0.0 = all keyword, 1.0 = all semantic)
             fusion: Fusion method for hybrid search
             adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
+            graph_mode: Graph enhancement mode (Issue #1040):
+                - "none": Traditional search only (default)
+                - "low": Entity matching + N-hop neighbor expansion
+                - "high": Theme/cluster context from hierarchical memory
+                - "dual": Full LightRAG-style dual-level search
 
         Returns:
             Search results with scores and metadata
@@ -1350,7 +1492,50 @@ def _register_routes(app: FastAPI) -> None:
                 detail=f"Invalid fusion method: {fusion}. Must be 'rrf', 'weighted', or 'rrf_weighted'",
             )
 
+        # Validate graph mode (Issue #1040)
+        if graph_mode not in ("none", "low", "high", "dual"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', or 'dual'",
+            )
+
         try:
+            # Use graph-enhanced search if graph_mode is not "none" (Issue #1040)
+            if graph_mode != "none":
+                results = await _graph_enhanced_search(
+                    query=q,
+                    search_type=type,
+                    limit=limit,
+                    path_filter=path,
+                    alpha=alpha,
+                    graph_mode=graph_mode,
+                )
+                latency_ms = (time.perf_counter() - start_time) * 1000
+
+                return {
+                    "query": q,
+                    "search_type": type,
+                    "graph_mode": graph_mode,
+                    "results": [
+                        {
+                            "path": r.path,
+                            "chunk_text": r.chunk_text,
+                            "score": round(r.score, 4),
+                            "chunk_index": r.chunk_index,
+                            "line_start": r.line_start,
+                            "line_end": r.line_end,
+                            "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
+                            "vector_score": round(r.vector_score, 4) if r.vector_score else None,
+                            "graph_score": round(r.graph_score, 4) if r.graph_score else None,
+                            "graph_context": r.graph_context.to_dict() if r.graph_context else None,
+                        }
+                        for r in results
+                    ],
+                    "total": len(results),
+                    "latency_ms": round(latency_ms, 2),
+                }
+
+            # Standard search (graph_mode="none")
             results = await _app_state.search_daemon.search(
                 query=q,
                 search_type=type,
@@ -1366,6 +1551,7 @@ def _register_routes(app: FastAPI) -> None:
             return {
                 "query": q,
                 "search_type": type,
+                "graph_mode": "none",
                 "results": [
                     {
                         "path": r.path,

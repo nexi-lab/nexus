@@ -1435,7 +1435,7 @@ def _register_routes(app: FastAPI) -> None:
         ),
         graph_mode: str = Query(
             "none",
-            description="Graph enhancement mode (Issue #1040): none, low, high, or dual",
+            description="Graph enhancement mode (Issue #1040): none, low, high, dual, or auto",
         ),
         _auth_result: dict[str, Any] = Depends(require_auth),
     ) -> dict[str, Any]:
@@ -1456,6 +1456,7 @@ def _register_routes(app: FastAPI) -> None:
                 - "low": Entity matching + N-hop neighbor expansion
                 - "high": Theme/cluster context from hierarchical memory
                 - "dual": Full LightRAG-style dual-level search
+                - "auto": Automatically select based on query complexity (Issue #1041)
 
         Returns:
             Search results with scores and metadata
@@ -1491,29 +1492,49 @@ def _register_routes(app: FastAPI) -> None:
             )
 
         # Validate graph mode (Issue #1040)
-        if graph_mode not in ("none", "low", "high", "dual"):
+        if graph_mode not in ("none", "low", "high", "dual", "auto"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', or 'dual'",
+                detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
+            )
+
+        # Query routing for auto mode (Issue #1041)
+        routing_info: dict[str, Any] | None = None
+        effective_graph_mode = graph_mode
+        effective_limit = limit
+
+        if graph_mode == "auto":
+            from nexus.search.query_router import QueryRouter, RoutingConfig
+
+            router = QueryRouter(config=RoutingConfig())
+            routed = router.route(q, base_limit=limit)
+
+            effective_graph_mode = routed.graph_mode
+            effective_limit = routed.adjusted_limit
+            routing_info = routed.to_dict()
+
+            logger.info(
+                f"[QUERY-ROUTER] {routed.reasoning}, "
+                f"graph_mode={effective_graph_mode}, limit={effective_limit}"
             )
 
         try:
-            # Use graph-enhanced search if graph_mode is not "none" (Issue #1040)
-            if graph_mode != "none":
+            # Use graph-enhanced search if effective_graph_mode is not "none" (Issue #1040)
+            if effective_graph_mode != "none":
                 results = await _graph_enhanced_search(
                     query=q,
                     search_type=type,
-                    limit=limit,
+                    limit=effective_limit,
                     path_filter=path,
                     alpha=alpha,
-                    graph_mode=graph_mode,
+                    graph_mode=effective_graph_mode,
                 )
                 latency_ms = (time.perf_counter() - start_time) * 1000
 
-                return {
+                response: dict[str, Any] = {
                     "query": q,
                     "search_type": type,
-                    "graph_mode": graph_mode,
+                    "graph_mode": effective_graph_mode,
                     "results": [
                         {
                             "path": r.path,
@@ -1532,12 +1553,15 @@ def _register_routes(app: FastAPI) -> None:
                     "total": len(results),
                     "latency_ms": round(latency_ms, 2),
                 }
+                if routing_info:
+                    response["routing"] = routing_info
+                return response
 
-            # Standard search (graph_mode="none")
+            # Standard search (effective_graph_mode="none")
             results = await _app_state.search_daemon.search(
                 query=q,
                 search_type=type,
-                limit=limit,
+                limit=effective_limit,
                 path_filter=path,
                 alpha=alpha,
                 fusion_method=fusion,
@@ -1546,7 +1570,7 @@ def _register_routes(app: FastAPI) -> None:
 
             latency_ms = (time.perf_counter() - start_time) * 1000
 
-            return {
+            response = {
                 "query": q,
                 "search_type": type,
                 "graph_mode": "none",
@@ -1566,6 +1590,9 @@ def _register_routes(app: FastAPI) -> None:
                 "total": len(results),
                 "latency_ms": round(latency_ms, 2),
             }
+            if routing_info:
+                response["routing"] = routing_info
+            return response
 
         except Exception as e:
             logger.error(f"Search error: {e}", exc_info=True)

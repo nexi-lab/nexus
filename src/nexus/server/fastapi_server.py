@@ -1139,7 +1139,7 @@ async def _graph_enhanced_search(
             class DaemonSemanticSearchWrapper:
                 """Wraps search daemon as SemanticSearch interface."""
 
-                def __init__(self, daemon):
+                def __init__(self, daemon: Any) -> None:
                     self.daemon = daemon
                     self.embedding_provider = getattr(daemon, "_embedding_provider", None)
 

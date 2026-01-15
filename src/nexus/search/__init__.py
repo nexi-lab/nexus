@@ -87,6 +87,12 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.query_router import (
+    QueryRouter,
+    RoutedQuery,
+    RoutingConfig,
+    create_query_router,
+)
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase
 from nexus.search.zoekt_client import (
@@ -139,6 +145,11 @@ __all__ = [
     "GraphEnhancedSearchResult",
     "GraphContext",
     "graph_enhanced_fusion",
+    # Query Router (Issue #1041)
+    "QueryRouter",
+    "RoutedQuery",
+    "RoutingConfig",
+    "create_query_router",
     # BM25S Fast Text Search (Issue #796)
     "BM25SIndex",
     "BM25SSearchResult",

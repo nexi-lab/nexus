@@ -28,7 +28,7 @@ from nexus.storage.models import APIKeyModel  # noqa: E402
 
 
 def setup_admin_api_key(
-    database_url: str, admin_api_key: str, tenant_id: str = "default", user_id: str = "admin"
+    database_url: str, admin_api_key: str, tenant_id: str = "system", user_id: str = "admin"
 ) -> bool:
     """
     Setup admin user and API key in the database.
@@ -36,7 +36,7 @@ def setup_admin_api_key(
     Args:
         database_url: Database connection URL (postgresql://, sqlite://, etc.)
         admin_api_key: Admin API key to create/verify
-        tenant_id: Tenant ID (default: "default")
+        tenant_id: Tenant ID (default: "system")
         user_id: User ID (default: "admin")
 
     Returns:
@@ -121,14 +121,14 @@ def main() -> None:
         )
         print("\nExample:", file=sys.stderr)
         print(
-            '  python setup_admin_api_key.py "postgresql://localhost/nexus" "sk-admin_key" "default" "admin"',
+            '  python setup_admin_api_key.py "postgresql://localhost/nexus" "sk-admin_key" "system" "admin"',
             file=sys.stderr,
         )
         sys.exit(1)
 
     database_url = sys.argv[1]
     admin_api_key = sys.argv[2]
-    tenant_id = sys.argv[3] if len(sys.argv) > 3 else "default"
+    tenant_id = sys.argv[3] if len(sys.argv) > 3 else "system"
     user_id = sys.argv[4] if len(sys.argv) > 4 else "admin"
 
     if not database_url:

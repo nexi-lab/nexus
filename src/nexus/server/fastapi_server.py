@@ -3621,6 +3621,7 @@ def _require_admin(context: Any) -> None:
 
 def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
+    import uuid
     from datetime import UTC, datetime, timedelta
 
     from nexus.core.entity_registry import EntityRegistry
@@ -3632,12 +3633,17 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
+    # Auto-generate user_id if not provided
+    user_id = params.user_id
+    if not user_id:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+
     # Register user in entity registry (for agent permission inheritance)
     if params.subject_type == "user" or not params.subject_type:
         entity_registry = EntityRegistry(auth_provider.session_factory)
         entity_registry.register_entity(
             entity_type="user",
-            entity_id=params.user_id,
+            entity_id=user_id,
             parent_type="tenant",
             parent_id=params.tenant_id,
         )
@@ -3651,7 +3657,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     with auth_provider.session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
             session,
-            user_id=params.user_id,
+            user_id=user_id,
             name=params.name,
             subject_type=params.subject_type,
             subject_id=params.subject_id,
@@ -3664,10 +3670,10 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
         return {
             "key_id": key_id,
             "api_key": raw_key,
-            "user_id": params.user_id,
+            "user_id": user_id,
             "name": params.name,
             "subject_type": params.subject_type,
-            "subject_id": params.subject_id or params.user_id,
+            "subject_id": params.subject_id or user_id,
             "tenant_id": params.tenant_id,
             "is_admin": params.is_admin,
             "expires_at": expires_at.isoformat() if expires_at else None,

@@ -980,12 +980,8 @@ init_database() {
     # This matches docker-integration.yml for consistency
 
     # Create admin user and API key using the extracted Python script
-    # Extract tenant from API key format: sk-<tenant>_<user>_<id>_<random-hex>
-    # Default to "default" if extraction fails
-    TENANT_ID="default"
-    if [[ "$ADMIN_API_KEY" =~ ^sk-([^_]+)_ ]]; then
-        TENANT_ID="${BASH_REMATCH[1]}"
-    fi
+    # Always use "system" tenant for admin API keys created via --init
+    TENANT_ID="system"
     python3 "${SCRIPT_DIR}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
 
     if [ $? -ne 0 ]; then

@@ -238,7 +238,7 @@ def instrument_fastapi_app(app: object) -> bool:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)  # type: ignore[arg-type]
+        FastAPIInstrumentor.instrument_app(app)
         logger.debug("Instrumented: FastAPI app")
         return True
     except ImportError:

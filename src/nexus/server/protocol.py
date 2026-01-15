@@ -1184,13 +1184,14 @@ class AdminCreateKeyParams:
     """Parameters for admin_create_key() method.
 
     Admin-only API to create API keys for users without requiring SSH access.
+    Can auto-generate user_id and create full user if user doesn't exist.
     """
 
-    user_id: str
     name: str
+    tenant_id: str
+    user_id: str | None = None  # Auto-generate if not provided
     is_admin: bool = False
     expires_days: int | None = None
-    tenant_id: str = "default"
     subject_type: str = "user"
     subject_id: str | None = None
 

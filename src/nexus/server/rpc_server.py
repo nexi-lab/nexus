@@ -469,6 +469,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Dictionary with key details and raw API key
         """
+        import uuid
         from datetime import timedelta
 
         from nexus.core.entity_registry import EntityRegistry
@@ -477,13 +478,18 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
 
+        # Auto-generate user_id if not provided
+        user_id = params.user_id
+        if not user_id:
+            user_id = f"user_{uuid.uuid4().hex[:12]}"
+
         # Register user in entity registry (for agent permission inheritance)
         # This is safe to call multiple times - it returns existing entity if already registered
         if params.subject_type == "user" or not params.subject_type:
             entity_registry = EntityRegistry(self.auth_provider.session_factory)
             entity_registry.register_entity(
                 entity_type="user",
-                entity_id=params.user_id,
+                entity_id=user_id,
                 parent_type="tenant",
                 parent_id=params.tenant_id,
             )
@@ -499,7 +505,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         with self.auth_provider.session_factory() as session:
             key_id, raw_key = DatabaseAPIKeyAuth.create_key(
                 session,
-                user_id=params.user_id,
+                user_id=user_id,
                 name=params.name,
                 subject_type=params.subject_type,
                 subject_id=params.subject_id,
@@ -513,10 +519,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {
                 "key_id": key_id,
                 "api_key": raw_key,
-                "user_id": params.user_id,
+                "user_id": user_id,
                 "name": params.name,
                 "subject_type": params.subject_type,
-                "subject_id": params.subject_id or params.user_id,
+                "subject_id": params.subject_id or user_id,
                 "tenant_id": params.tenant_id,
                 "is_admin": params.is_admin,
                 "expires_at": expires_at.isoformat() if expires_at else None,

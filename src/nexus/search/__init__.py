@@ -74,18 +74,18 @@ from nexus.search.fusion import (
     rrf_weighted_fusion,
     weighted_fusion,
 )
-from nexus.search.hnsw_config import (
-    DatasetScale,
-    HNSWConfig,
-    get_recommended_config,
-    get_vector_count,
-)
 from nexus.search.graph_retrieval import (
     GraphContext,
     GraphEnhancedRetriever,
     GraphEnhancedSearchResult,
     GraphRetrievalConfig,
     graph_enhanced_fusion,
+)
+from nexus.search.hnsw_config import (
+    DatasetScale,
+    HNSWConfig,
+    get_recommended_config,
+    get_vector_count,
 )
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase

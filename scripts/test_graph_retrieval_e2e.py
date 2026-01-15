@@ -47,7 +47,7 @@ from nexus.search.graph_retrieval import (
     graph_enhanced_fusion,
 )
 from nexus.search.graph_store import GraphStore
-from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.search.semantic import SemanticSearchResult
 from nexus.storage.models import Base
 
 logging.basicConfig(
@@ -223,6 +223,7 @@ class GraphRetrievalE2ETest:
         # Clean up temp directory
         if self.temp_dir:
             import shutil
+
             shutil.rmtree(self.temp_dir, ignore_errors=True)
             logger.info("Cleaned up temp directory")
 
@@ -269,12 +270,36 @@ class GraphRetrievalE2ETest:
 
         # Test data
         keyword_results = [
-            {"chunk_id": "c1", "path": "/a.md", "chunk_index": 0, "chunk_text": "test1", "score": 0.8},
-            {"chunk_id": "c2", "path": "/b.md", "chunk_index": 0, "chunk_text": "test2", "score": 0.6},
+            {
+                "chunk_id": "c1",
+                "path": "/a.md",
+                "chunk_index": 0,
+                "chunk_text": "test1",
+                "score": 0.8,
+            },
+            {
+                "chunk_id": "c2",
+                "path": "/b.md",
+                "chunk_index": 0,
+                "chunk_text": "test2",
+                "score": 0.6,
+            },
         ]
         vector_results = [
-            {"chunk_id": "c1", "path": "/a.md", "chunk_index": 0, "chunk_text": "test1", "score": 0.7},
-            {"chunk_id": "c3", "path": "/c.md", "chunk_index": 0, "chunk_text": "test3", "score": 0.9},
+            {
+                "chunk_id": "c1",
+                "path": "/a.md",
+                "chunk_index": 0,
+                "chunk_text": "test1",
+                "score": 0.7,
+            },
+            {
+                "chunk_id": "c3",
+                "path": "/c.md",
+                "chunk_index": 0,
+                "chunk_text": "test3",
+                "score": 0.9,
+            },
         ]
 
         # Test without graph boost
@@ -354,7 +379,9 @@ class GraphRetrievalE2ETest:
                     target_entity_id=created_ids[target],
                     relationship_type=rel_type,
                 )
-                self._check(f"Created relationship {source}->{rel_type}->{target}", rel_id is not None)
+                self._check(
+                    f"Created relationship {source}->{rel_type}->{target}", rel_id is not None
+                )
 
         # Test neighbor traversal
         auth_id = created_ids.get("AuthService")
@@ -388,7 +415,7 @@ class GraphRetrievalE2ETest:
         class MockSemanticSearch:
             embedding_provider = None
 
-            async def search(self, query, path="/", limit=10, search_mode="hybrid", alpha=0.5):
+            async def search(self, _query, _path="/", _limit=10, _search_mode="hybrid", _alpha=0.5):
                 return [
                     SemanticSearchResult(
                         path="/docs/auth.md",
@@ -408,7 +435,10 @@ class GraphRetrievalE2ETest:
 
         results = await retriever.search("authentication")
         self._check("Mode 'none' returns results", len(results) > 0)
-        self._check("Results are GraphEnhancedSearchResult", isinstance(results[0], GraphEnhancedSearchResult))
+        self._check(
+            "Results are GraphEnhancedSearchResult",
+            isinstance(results[0], GraphEnhancedSearchResult),
+        )
         self._check("Graph score is None (mode=none)", results[0].graph_score is None)
 
     async def test_retriever_mode_low(self):
@@ -424,7 +454,7 @@ class GraphRetrievalE2ETest:
         class MockSemanticSearch:
             embedding_provider = MockEmbeddingProvider()
 
-            async def search(self, query, path="/", limit=10, search_mode="hybrid", alpha=0.5):
+            async def search(self, _query, _path="/", _limit=10, _search_mode="hybrid", _alpha=0.5):
                 return [
                     SemanticSearchResult(
                         path="/docs/auth.md",
@@ -470,7 +500,7 @@ class GraphRetrievalE2ETest:
         class MockSemanticSearch:
             embedding_provider = MockEmbeddingProvider()
 
-            async def search(self, query, path="/", limit=10, search_mode="hybrid", alpha=0.5):
+            async def search(self, _query, _path="/", limit=10, _search_mode="hybrid", _alpha=0.5):
                 return [
                     SemanticSearchResult(
                         path="/docs/auth.md",
@@ -505,7 +535,7 @@ class GraphRetrievalE2ETest:
         avg_latency = sum(latencies) / len(latencies)
         max_latency = max(latencies)
 
-        logger.info(f"  Latencies: {[f'{l:.2f}ms' for l in latencies]}")
+        logger.info(f"  Latencies: {[f'{lat:.2f}ms' for lat in latencies]}")
         logger.info(f"  Average: {avg_latency:.2f}ms, Max: {max_latency:.2f}ms")
 
         self._check("Average latency < 500ms", avg_latency < 500)
@@ -540,7 +570,8 @@ async def main():
         help="Database URL (default: NEXUS_DATABASE_URL env or SQLite)",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )

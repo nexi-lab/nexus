@@ -103,6 +103,10 @@ auth:
   token_expiry_hours: 24
   api_key_expiry_days: 365
 
+# Permission and Security Settings
+enforce_permissions: true            # Enable permission enforcement by default (use --no-permissions to disable)
+enforce_tenant_isolation: true       # Enable tenant isolation by default (use --no-tenant-isolation to disable)
+
 # Features
 features:
   semantic_search: false  # Disabled for demo

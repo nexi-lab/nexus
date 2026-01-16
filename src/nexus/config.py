@@ -186,6 +186,15 @@ class NexusConfig(BaseModel):
         description="Allow admin keys to bypass permission checks (default True for dev experience)",
     )
 
+    # Tenant isolation setting (P0-2)
+    # Default: True for multi-tenant security
+    # Set to False ONLY for single-tenant environments or development
+    # WARNING: Disabling tenant isolation allows cross-tenant data access
+    enforce_tenant_isolation: bool = Field(
+        default=True,
+        description="Enable tenant isolation enforcement (default True for security)",
+    )
+
     # Workspace and Memory registry (v0.7.0)
     workspaces: list[dict[str, Any]] | None = Field(
         default=None,
@@ -397,6 +406,7 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
         "NEXUS_ALLOW_ADMIN_BYPASS": "allow_admin_bypass",
+        "NEXUS_ENFORCE_TENANT_ISOLATION": "enforce_tenant_isolation",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
@@ -441,6 +451,7 @@ def _load_from_environment() -> NexusConfig:
                 "is_admin",
                 "enforce_permissions",
                 "allow_admin_bypass",
+                "enforce_tenant_isolation",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

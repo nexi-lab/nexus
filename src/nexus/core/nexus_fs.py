@@ -107,6 +107,7 @@ class NexusFS(  # type: ignore[misc]
         enforce_permissions: bool = True,  # P0-6: ENABLED by default for security
         inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
         allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
+        enforce_tenant_isolation: bool = True,  # P0-2: Enable tenant isolation (DEFAULT ON for security)
         audit_strict_mode: bool = True,  # P0 COMPLIANCE: Fail writes if audit logging fails (DEFAULT ON)
         enable_workflows: bool = True,  # v0.7.0: Enable automatic workflow triggering (DEFAULT ON)
         workflow_engine: Any
@@ -140,6 +141,7 @@ class NexusFS(  # type: ignore[misc]
             enforce_permissions: Enable permission enforcement on file operations (default: True)
             inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
             allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
+            enforce_tenant_isolation: Enable tenant isolation to prevent cross-tenant access (default: True for security, P0-2)
             enable_workflows: Enable automatic workflow triggering on file operations (default: True, v0.7.0)
             workflow_engine: Optional workflow engine instance. If None and enable_workflows=True, auto-creates engine (v0.7.0)
 
@@ -286,7 +288,7 @@ class NexusFS(  # type: ignore[misc]
             engine=self.metadata.engine,  # Use SQLAlchemy engine (supports SQLite + PostgreSQL)
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
-            enforce_tenant_isolation=True,  # P0-2: Tenant scoping
+            enforce_tenant_isolation=enforce_tenant_isolation,  # P0-2: Tenant scoping (configurable)
             enable_graph_limits=True,  # P0-5: DoS protection
             enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
         )
@@ -337,6 +339,10 @@ class NexusFS(  # type: ignore[misc]
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
         self._enforce_permissions = enforce_permissions
+
+        # P0-2: Tenant isolation enforcement
+        # Set enforce_tenant_isolation=False ONLY for single-tenant environments
+        self._enforce_tenant_isolation = enforce_tenant_isolation
 
         # P0-3: Initialize HierarchyManager for automatic parent tuple creation
         from nexus.core.hierarchy_manager import HierarchyManager

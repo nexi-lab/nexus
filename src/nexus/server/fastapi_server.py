@@ -86,6 +86,9 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str
+    enforce_permissions: bool | None = None
+    enforce_tenant_isolation: bool | None = None
+    has_auth: bool | None = None
 
 
 class WhoamiResponse(BaseModel):
@@ -1216,7 +1219,27 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/health", response_model=HealthResponse)
     @limiter.exempt
     async def health_check() -> HealthResponse:
-        return HealthResponse(status="healthy", service="nexus-rpc")
+        # Include configuration status for debugging
+        enforce_permissions = None
+        enforce_tenant_isolation = None
+        has_auth = None
+
+        if _app_state.nexus_fs:
+            enforce_permissions = getattr(_app_state.nexus_fs, "_enforce_permissions", None)
+            enforce_tenant_isolation = getattr(
+                _app_state.nexus_fs, "_enforce_tenant_isolation", None
+            )
+
+        # Check if authentication is configured
+        has_auth = bool(_app_state.api_key or _app_state.auth_provider)
+
+        return HealthResponse(
+            status="healthy",
+            service="nexus-rpc",
+            enforce_permissions=enforce_permissions,
+            enforce_tenant_isolation=enforce_tenant_isolation,
+            has_auth=has_auth,
+        )
 
     # Extended health check with component status (Issue #951)
     @app.get("/health/detailed", tags=["health"])

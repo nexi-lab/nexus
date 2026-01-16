@@ -536,9 +536,27 @@ def serve(
         # Determine authentication configuration first (needed for permissions logic)
         has_auth = bool(auth_type or api_key)
 
+        # Load config file early if specified to read permission settings
+        cfg = None
+        if backend_config.config_path:
+            from pathlib import Path as PathlibPath
+
+            from nexus.config import load_config
+
+            try:
+                cfg = load_config(PathlibPath(backend_config.config_path))
+                console.print(f"[dim]→ Config loaded from {backend_config.config_path}[/dim]")
+                console.print(
+                    f"[dim]  enforce_permissions={getattr(cfg, 'enforce_permissions', 'NOT SET')}[/dim]"
+                )
+                console.print(
+                    f"[dim]  enforce_tenant_isolation={getattr(cfg, 'enforce_tenant_isolation', 'NOT SET')}[/dim]"
+                )
+            except Exception as e:
+                console.print(f"[yellow]⚠️  Warning: Failed to load config file: {e}[/yellow]")
+
         # Server mode permissions logic:
-        # - Check NEXUS_ENFORCE_PERMISSIONS environment variable first
-        # - If not set, default: No auth → False, With auth → True
+        # Priority: 1. Environment variable, 2. Config file, 3. Default (has_auth)
         enforce_permissions_env = os.getenv("NEXUS_ENFORCE_PERMISSIONS", "").lower()
         if enforce_permissions_env in ("false", "0", "no", "off"):
             enforce_permissions = False
@@ -551,6 +569,14 @@ def serve(
             console.print(
                 "[green]✓ Permissions ENABLED by NEXUS_ENFORCE_PERMISSIONS "
                 "environment variable[/green]"
+            )
+        elif cfg and hasattr(cfg, "enforce_permissions"):
+            # Use config file value
+            enforce_permissions = cfg.enforce_permissions
+            console.print(
+                f"[{'yellow' if not enforce_permissions else 'green'}]"
+                f"{'⚠️  Permissions DISABLED' if not enforce_permissions else '✓ Permissions ENABLED'} "
+                f"by config file[/{'yellow' if not enforce_permissions else 'green'}]"
             )
         else:
             # Default: enable permissions when auth is configured (secure by default)
@@ -569,6 +595,36 @@ def serve(
                 "[yellow]⚠️  Admin bypass DISABLED by NEXUS_ALLOW_ADMIN_BYPASS=false[/yellow]"
             )
 
+        # Check NEXUS_ENFORCE_TENANT_ISOLATION environment variable
+        # Priority: 1. Environment variable, 2. Config file, 3. Default (True)
+        enforce_tenant_isolation_env = os.getenv("NEXUS_ENFORCE_TENANT_ISOLATION", "").lower()
+        if enforce_tenant_isolation_env in ("false", "0", "no", "off"):
+            enforce_tenant_isolation = False
+            console.print(
+                "[yellow]⚠️  Tenant isolation DISABLED by NEXUS_ENFORCE_TENANT_ISOLATION=false[/yellow]"
+            )
+            console.print("[yellow]   WARNING: Cross-tenant data access is now possible![/yellow]")
+        elif enforce_tenant_isolation_env in ("true", "1", "yes", "on"):
+            enforce_tenant_isolation = True
+            console.print(
+                "[green]✓ Tenant isolation ENABLED by NEXUS_ENFORCE_TENANT_ISOLATION[/green]"
+            )
+        elif cfg and hasattr(cfg, "enforce_tenant_isolation"):
+            # Use config file value
+            enforce_tenant_isolation = cfg.enforce_tenant_isolation
+            console.print(
+                f"[{'yellow' if not enforce_tenant_isolation else 'green'}]"
+                f"{'⚠️  Tenant isolation DISABLED' if not enforce_tenant_isolation else '✓ Tenant isolation ENABLED'} "
+                f"by config file[/{'yellow' if not enforce_tenant_isolation else 'green'}]"
+            )
+            if not enforce_tenant_isolation:
+                console.print(
+                    "[yellow]   WARNING: Cross-tenant data access is now possible![/yellow]"
+                )
+        else:
+            # Default: enable tenant isolation for security
+            enforce_tenant_isolation = True
+
         # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
         # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
         nx = get_filesystem(
@@ -576,6 +632,7 @@ def serve(
             enforce_permissions=enforce_permissions,
             force_local=True,  # Force local mode to prevent RemoteNexusFS
             allow_admin_bypass=allow_admin_bypass,
+            enforce_tenant_isolation=enforce_tenant_isolation,
         )
 
         # Load backends from config file if specified

@@ -185,6 +185,7 @@ def get_filesystem(
     enforce_permissions: bool | None = None,
     force_local: bool = False,
     allow_admin_bypass: bool | None = None,
+    enforce_tenant_isolation: bool | None = None,
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 
@@ -193,6 +194,7 @@ def get_filesystem(
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
         force_local: If True, always use local NexusFS even if NEXUS_URL is set (for server mode)
         allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
+        enforce_tenant_isolation: Whether to enforce tenant isolation (None = use default True)
 
     Returns:
         NexusFilesystem instance
@@ -221,6 +223,8 @@ def get_filesystem(
                     config_dict["enforce_permissions"] = enforce_permissions
                 if allow_admin_bypass is not None:
                     config_dict["allow_admin_bypass"] = allow_admin_bypass
+                if enforce_tenant_isolation is not None:
+                    config_dict["enforce_tenant_isolation"] = enforce_tenant_isolation
                 nx_fs = nexus.connect(config=config_dict)
                 # Store full config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
@@ -250,6 +254,8 @@ def get_filesystem(
                 config["enforce_permissions"] = enforce_permissions
             if allow_admin_bypass is not None:
                 config["allow_admin_bypass"] = allow_admin_bypass
+            if enforce_tenant_isolation is not None:
+                config["enforce_tenant_isolation"] = enforce_tenant_isolation
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
@@ -263,6 +269,8 @@ def get_filesystem(
                 config["enforce_permissions"] = enforce_permissions
             if allow_admin_bypass is not None:
                 config["allow_admin_bypass"] = allow_admin_bypass
+            if enforce_tenant_isolation is not None:
+                config["enforce_tenant_isolation"] = enforce_tenant_isolation
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs

@@ -119,6 +119,9 @@ parse_args() {
     SQLITE=false         # default to PostgreSQL
     START_UI=true            # default to start UI
     START_LANGGRAPH=true     # default to start LangGraph
+    DISABLE_PERMISSIONS=false
+    DISABLE_TENANT_ISOLATION=false
+    NO_AUTH=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -153,6 +156,18 @@ parse_args() {
                 ;;
             --no-langgraph|--nolanggraph)
                 START_LANGGRAPH=false
+                shift
+                ;;
+            --no-permissions)
+                DISABLE_PERMISSIONS=true
+                shift
+                ;;
+            --no-tenant-isolation)
+                DISABLE_TENANT_ISOLATION=true
+                shift
+                ;;
+            --no-auth)
+                NO_AUTH=true
                 shift
                 ;;
             *)
@@ -669,6 +684,19 @@ start_server() {
     export TOKEN_MANAGER_DB="$POSTGRES_URL"
     export NEXUS_DATA_DIR="$DATA_PATH"
 
+    # Configure permissions and tenant isolation
+    if [ "$DISABLE_PERMISSIONS" = true ]; then
+        export NEXUS_ENFORCE_PERMISSIONS=false
+    else
+        export NEXUS_ENFORCE_PERMISSIONS=true
+    fi
+
+    if [ "$DISABLE_TENANT_ISOLATION" = true ]; then
+        export NEXUS_ENFORCE_TENANT_ISOLATION=false
+    else
+        export NEXUS_ENFORCE_TENANT_ISOLATION=true
+    fi
+
     # Ensure Python environment is ready (first-time install support)
     ensure_core_python_env
 
@@ -699,6 +727,22 @@ start_server() {
     fi
     if [ "$START_LANGGRAPH" = true ]; then
         echo "  Langgraph:    Enabled"
+    fi
+    echo ""
+    if [ "$NO_AUTH" = true ]; then
+        echo -e "  Auth:         ${YELLOW}Disabled${NC}"
+    else
+        echo -e "  Auth:         ${GREEN}Enabled (database)${NC}"
+    fi
+    if [ "$DISABLE_PERMISSIONS" = true ]; then
+        echo -e "  Permissions:  ${YELLOW}Disabled${NC}"
+    else
+        echo -e "  Permissions:  ${GREEN}Enabled${NC}"
+    fi
+    if [ "$DISABLE_TENANT_ISOLATION" = true ]; then
+        echo -e "  Tenant Isol:  ${YELLOW}Disabled${NC}"
+    else
+        echo -e "  Tenant Isol:  ${GREEN}Enabled${NC}"
     fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -802,10 +846,16 @@ start_server() {
     fi
 
     # Start the Nexus server in background and capture PID
-    nexus serve \
-        --config ./configs/config.demo.yaml \
-        --auth-type database \
-        --async &
+    if [ "$NO_AUTH" = true ]; then
+        nexus serve \
+            --config ./configs/config.demo.yaml \
+            --async &
+    else
+        nexus serve \
+            --config ./configs/config.demo.yaml \
+            --auth-type database \
+            --async &
+    fi
     NEXUS_PID=$!
 
     echo "Nexus server started (PID: $NEXUS_PID)"
@@ -1176,10 +1226,16 @@ EOF
     fi
 
     # Start the Nexus server in background and capture PID
-    nexus serve \
-        --config ./configs/config.demo.yaml \
-        --auth-type database \
-        --async &
+    if [ "$NO_AUTH" = true ]; then
+        nexus serve \
+            --config ./configs/config.demo.yaml \
+            --async &
+    else
+        nexus serve \
+            --config ./configs/config.demo.yaml \
+            --auth-type database \
+            --async &
+    fi
     NEXUS_PID=$!
 
     echo "Nexus server started (PID: $NEXUS_PID)"

@@ -343,6 +343,16 @@ def connect(
             # Dict config without explicit enforce_permissions - use embedded default
             enforce_permissions = False
 
+        # Handle tenant isolation configuration
+        # Default: enabled for security unless explicitly disabled
+        enforce_tenant_isolation = cfg.enforce_tenant_isolation
+        if config is None:
+            # No explicit config - use secure default (enabled)
+            enforce_tenant_isolation = True
+        elif isinstance(config, dict) and "enforce_tenant_isolation" not in config:
+            # Dict config without explicit setting - use secure default
+            enforce_tenant_isolation = True
+
         # Create NexusFS instance
         nx_fs = NexusFS(
             backend=backend,
@@ -360,6 +370,7 @@ def connect(
             parse_providers=cfg.parse_providers,
             enforce_permissions=enforce_permissions,
             allow_admin_bypass=cfg.allow_admin_bypass,  # P0-4: Admin bypass setting
+            enforce_tenant_isolation=enforce_tenant_isolation,  # P0-2: Tenant isolation setting
             enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
         )
 

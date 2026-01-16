@@ -94,6 +94,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      dragonfly:
+        condition: service_healthy
     environment:
       # Server configuration
       NEXUS_HOST: 0.0.0.0
@@ -171,6 +173,12 @@ services:
       ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
       ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
+
+      # Dragonfly embedding cache (Issue #950)
+      # High-performance Redis-compatible cache for embeddings
+      # Reduces embedding API calls by ~90%
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
     volumes:
       # Persistent data directory (local backend) - shared with local development
       - ./nexus-data:/app/data
@@ -419,17 +427,11 @@ services:
   # - Embedding cache (reduces API calls by 90%)
   # - Permission cache
   # - Tiger cache
-  #
-  # Usage:
-  #   docker compose --profile cache up        # Start with caching
-  #   Set NEXUS_DRAGONFLY_URL=redis://dragonfly:6379 in nexus service
   # ============================================
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
     container_name: nexus-dragonfly
     restart: unless-stopped
-    profiles:
-      - cache  # Only starts with: docker compose --profile cache up
     # Dragonfly optimizations:
     # --cache_mode=true: Smart eviction for cache workloads
     # --maxmemory=512mb: Memory limit for cache

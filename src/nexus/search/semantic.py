@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 
 from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 from nexus.search.chunking import (
@@ -179,11 +179,13 @@ class SemanticSearch:
                 and file_model.indexed_content_hash == current_content_hash
             ):
                 # Content unchanged - no need to re-embed
-                # Return existing chunk count
-                chunk_count_stmt = select(DocumentChunkModel).where(
-                    DocumentChunkModel.path_id == path_id
+                # Return existing chunk count (projection pushdown - only count, skip embedding)
+                chunk_count_stmt = (
+                    select(func.count())
+                    .select_from(DocumentChunkModel)
+                    .where(DocumentChunkModel.path_id == path_id)
                 )
-                existing_count = len(session.execute(chunk_count_stmt).scalars().all())
+                existing_count = session.execute(chunk_count_stmt).scalar() or 0
                 return existing_count
 
         # Try to get searchable text from cache first (content_cache or file_metadata)
@@ -197,15 +199,9 @@ class SemanticSearch:
             else:
                 content = str(content_raw)  # Handle dict or other types
 
-        # Delete existing chunks for this file
+        # Delete existing chunks for this file (bulk DELETE - skip object hydration)
         with self.nx.metadata.SessionLocal() as session:
-            chunk_stmt = select(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id)
-            chunk_result = session.execute(chunk_stmt)
-            existing_chunks = chunk_result.scalars().all()
-
-            for existing_chunk in existing_chunks:
-                session.delete(existing_chunk)
-
+            session.execute(delete(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id))
             session.commit()
 
         # Chunk document (with optional entropy filtering - Issue #1024)
@@ -535,16 +531,20 @@ class SemanticSearch:
         Returns:
             Dictionary with statistics
         """
-        # Count total chunks
+        # Count total chunks (projection pushdown - COUNT() instead of loading 3KB embeddings)
+        # For 100K chunks, this saves ~300-600MB of memory/transfer
         with self.nx.metadata.SessionLocal() as session:
-            chunk_stmt = select(DocumentChunkModel)
-            chunk_result = session.execute(chunk_stmt)
-            total_chunks = len(chunk_result.scalars().all())
+            total_chunks = (
+                session.execute(select(func.count()).select_from(DocumentChunkModel)).scalar() or 0
+            )
 
-            # Count indexed files
-            path_stmt = select(DocumentChunkModel.path_id).distinct()
-            path_result = session.execute(path_stmt)
-            indexed_files = len(path_result.scalars().all())
+            # Count indexed files (distinct path_ids)
+            indexed_files = (
+                session.execute(
+                    select(func.count(func.distinct(DocumentChunkModel.path_id)))
+                ).scalar()
+                or 0
+            )
 
         has_embeddings = self.embedding_provider is not None
 

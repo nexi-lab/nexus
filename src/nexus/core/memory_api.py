@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
@@ -21,6 +21,63 @@ from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import validate_temporal_params
+
+# Importance decay configuration (Issue #1030)
+DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
+DEFAULT_MIN_IMPORTANCE = 0.1  # Minimum importance floor
+
+
+def get_effective_importance(
+    importance_original: float | None,
+    importance_current: float | None,
+    last_accessed_at: datetime | None,
+    created_at: datetime | None,
+    decay_factor: float = DEFAULT_DECAY_FACTOR,
+    min_importance: float = DEFAULT_MIN_IMPORTANCE,
+) -> float:
+    """Calculate current importance with time-based decay.
+
+    Formula: importance_decayed = importance_original * decay_factor^(days_since_access)
+
+    Args:
+        importance_original: Original importance score (preserved)
+        importance_current: Current importance (may already be decayed)
+        last_accessed_at: Last time memory was accessed
+        created_at: Memory creation time (fallback if never accessed)
+        decay_factor: Decay multiplier per day (default: 0.95 = 5% decay/day)
+        min_importance: Minimum importance floor (default: 0.1)
+
+    Returns:
+        Effective importance score after decay (clamped to min_importance)
+
+    Example:
+        >>> # Memory with original importance 0.8, not accessed for 10 days
+        >>> effective = get_effective_importance(0.8, 0.8, None, created_10_days_ago)
+        >>> # effective ≈ 0.8 * 0.95^10 ≈ 0.48
+    """
+
+    # Use original importance if available, otherwise current, otherwise default 0.5
+    original = importance_original or importance_current or 0.5
+
+    # Calculate days since last access
+    now = datetime.now(UTC)
+    if last_accessed_at:
+        # Ensure timezone aware comparison
+        if last_accessed_at.tzinfo is None:
+            last_accessed_at = last_accessed_at.replace(tzinfo=UTC)
+        days_since = (now - last_accessed_at).days
+    elif created_at:
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=UTC)
+        days_since = (now - created_at).days
+    else:
+        days_since = 0
+
+    # Apply exponential decay
+    decayed = original * (decay_factor ** max(0, days_since))
+
+    # Clamp to minimum importance
+    return max(min_importance, decayed)
 
 
 class Memory:
@@ -640,6 +697,14 @@ class Memory:
             else:
                 content = f"<content not available: {memory.content_hash}>"
 
+            # Calculate effective importance with decay (Issue #1030)
+            effective_importance = get_effective_importance(
+                importance_original=memory.importance_original,
+                importance_current=memory.importance,
+                last_accessed_at=memory.last_accessed_at,
+                created_at=memory.created_at,
+            )
+
             results.append(
                 {
                     "memory_id": memory.memory_id,
@@ -652,6 +717,7 @@ class Memory:
                     "visibility": memory.visibility,
                     "memory_type": memory.memory_type,
                     "importance": memory.importance,
+                    "importance_effective": effective_importance,  # #1030
                     "state": memory.state,  # #368
                     "namespace": memory.namespace,  # v0.8.0
                     "path_key": memory.path_key,  # v0.8.0
@@ -940,11 +1006,126 @@ class Memory:
 
         return dot_product / (mag1 * mag2)
 
-    def get(self, memory_id: str) -> dict[str, Any] | None:
+    def _track_memory_access(self, memory: Any) -> None:
+        """Update access tracking when memory is retrieved (Issue #1030).
+
+        Args:
+            memory: MemoryModel instance to update.
+        """
+
+        try:
+            # Update access count and timestamp
+            memory.last_accessed_at = datetime.now(UTC)
+            memory.access_count = (memory.access_count or 0) + 1
+
+            # Preserve original importance on first access
+            if memory.importance_original is None and memory.importance is not None:
+                memory.importance_original = memory.importance
+
+            self.session.commit()
+        except Exception:
+            # Don't fail the read operation if tracking fails
+            self.session.rollback()
+
+    def apply_decay_batch(
+        self,
+        decay_factor: float = DEFAULT_DECAY_FACTOR,
+        min_importance: float = DEFAULT_MIN_IMPORTANCE,
+        batch_size: int = 1000,
+    ) -> dict[str, Any]:
+        """Batch update importance scores with decay (Issue #1030).
+
+        Run periodically (e.g., daily cron) to apply decay to all memories.
+        This updates the stored importance values based on time since last access.
+
+        Args:
+            decay_factor: Decay multiplier per day (default: 0.95)
+            min_importance: Minimum importance floor (default: 0.1)
+            batch_size: Number of memories to process per batch
+
+        Returns:
+            Summary of the batch operation.
+
+        Example:
+            >>> # Run as daily maintenance job
+            >>> result = memory.apply_decay_batch()
+            >>> print(f"Updated {result['updated']} memories")
+        """
+        from nexus.storage.models import MemoryModel
+
+        updated_count = 0
+        skipped_count = 0
+        total_processed = 0
+
+        try:
+            # Query memories that haven't hit minimum importance yet
+            memories = (
+                self.session.query(MemoryModel)
+                .filter(
+                    MemoryModel.tenant_id == self.tenant_id,
+                    MemoryModel.importance > min_importance,
+                )
+                .limit(batch_size)
+                .all()
+            )
+
+            for memory in memories:
+                total_processed += 1
+
+                # Calculate effective importance
+                effective = get_effective_importance(
+                    importance_original=memory.importance_original,
+                    importance_current=memory.importance,
+                    last_accessed_at=memory.last_accessed_at,
+                    created_at=memory.created_at,
+                    decay_factor=decay_factor,
+                    min_importance=min_importance,
+                )
+
+                # Only update if decay has occurred
+                if memory.importance is not None and effective < memory.importance:
+                    # Preserve original importance if not already set
+                    if memory.importance_original is None:
+                        memory.importance_original = memory.importance
+                    memory.importance = effective
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+
+            self.session.commit()
+
+        except Exception as e:
+            self.session.rollback()
+            return {
+                "success": False,
+                "error": str(e),
+                "updated": 0,
+                "skipped": 0,
+                "processed": 0,
+            }
+
+        return {
+            "success": True,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "processed": total_processed,
+            "decay_factor": decay_factor,
+            "min_importance": min_importance,
+        }
+
+    def get(
+        self,
+        memory_id: str,
+        track_access: bool = True,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
         """Get a specific memory by ID.
 
         Args:
             memory_id: Memory ID.
+            track_access: Whether to update access tracking (default: True).
+                Set to False for internal lookups that shouldn't affect decay.
+            context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
             Memory dictionary or None if not found or no permission.
@@ -957,9 +1138,16 @@ class Memory:
         if not memory:
             return None
 
+        # Use provided context or fall back to instance context
+        check_context = context or self.context
+
         # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+        if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
             return None
+
+        # Track access (Issue #1030)
+        if track_access:
+            self._track_memory_access(memory)
 
         # Read content
         content = None
@@ -974,6 +1162,14 @@ class Memory:
         except Exception:
             content = f"<content not available: {memory.content_hash}>"
 
+        # Calculate effective importance with decay (Issue #1030)
+        effective_importance = get_effective_importance(
+            importance_original=memory.importance_original,
+            importance_current=memory.importance,
+            last_accessed_at=memory.last_accessed_at,
+            created_at=memory.created_at,
+        )
+
         return {
             "memory_id": memory.memory_id,
             "content": content,
@@ -985,6 +1181,12 @@ class Memory:
             "visibility": memory.visibility,
             "memory_type": memory.memory_type,
             "importance": memory.importance,
+            "importance_original": memory.importance_original,  # #1030
+            "importance_effective": effective_importance,  # #1030
+            "access_count": memory.access_count,  # #1030
+            "last_accessed_at": (
+                memory.last_accessed_at.isoformat() if memory.last_accessed_at else None
+            ),  # #1030
             "state": memory.state,  # #368
             "namespace": memory.namespace,
             "path_key": memory.path_key,

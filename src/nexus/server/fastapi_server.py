@@ -1866,6 +1866,45 @@ def _register_routes(app: FastAPI) -> None:
             logger.error(f"Memory store error: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
 
+    @app.get("/api/memory/{memory_id}", tags=["memory"])
+    async def memory_get(
+        memory_id: str,
+        track_access: bool = Query(True, description="Track this access for decay calculation"),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get a specific memory by ID.
+
+        Returns memory with effective importance calculated based on time decay (Issue #1030).
+
+        Args:
+            memory_id: The memory UUID
+            track_access: Whether to track this access for decay calculation (default: True)
+
+        Returns:
+            Memory details including:
+            - importance: Current stored importance
+            - importance_original: Original importance (before any decay)
+            - importance_effective: Calculated importance with time decay applied
+            - access_count: Number of times this memory has been accessed
+            - last_accessed_at: Last access timestamp
+        """
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        try:
+            context = get_operation_context(_auth_result)
+            result = _app_state.nexus_fs.memory.get(
+                memory_id, track_access=track_access, context=context
+            )
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+            return {"memory": result}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Memory get error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Memory get error: {e}") from e
+
     # =========================================================================
     # Graph API Endpoints (Issue #1039)
     # =========================================================================

@@ -66,8 +66,10 @@ class TestSetupAdminAPIKey:
     def test_setup_admin_api_key_creates_new_key(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key creates a new admin API key."""
         admin_key = "sk-admin_test_key_12345"
+        # Use explicit tenant_id to avoid test pollution from parallel tests
+        tenant_id = "test_tenant_create"
 
-        result = setup_admin_api_key(database_url, admin_key)
+        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id)
 
         assert result is True
 
@@ -82,7 +84,7 @@ class TestSetupAdminAPIKey:
             assert existing.user_id == "admin"
             assert existing.subject_type == "user"
             assert existing.subject_id == "admin"
-            assert existing.tenant_id == "default"
+            assert existing.tenant_id == tenant_id
             assert existing.is_admin == 1
             assert existing.name == "Admin Bootstrap Key"
             assert existing.revoked == 0
@@ -112,18 +114,21 @@ class TestSetupAdminAPIKey:
         from nexus.core.entity_registry import EntityRegistry
 
         admin_key = "sk-admin_register_test"
+        # Use explicit tenant_id and user_id to avoid test pollution from parallel tests
+        tenant_id = "test_tenant_register"
+        user_id = "test_admin_register"
 
-        result = setup_admin_api_key(database_url, admin_key)
+        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id, user_id=user_id)
 
         assert result is True
 
         # Verify user was registered
         registry = EntityRegistry(session_factory)
-        entity = registry.get_entity("user", "admin")
+        entity = registry.get_entity("user", user_id)
         assert entity is not None
-        assert entity.entity_id == "admin"
+        assert entity.entity_id == user_id
         assert entity.parent_type == "tenant"
-        assert entity.parent_id == "default"
+        assert entity.parent_id == tenant_id
 
     def test_setup_admin_api_key_with_custom_tenant_id(self, engine, session_factory, database_url):
         """Test setup_admin_api_key with custom tenant_id."""

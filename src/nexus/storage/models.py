@@ -1059,7 +1059,18 @@ class MemoryModel(Base):
     )  # 'fact', 'preference', 'experience', 'strategy', 'anti_pattern', 'observation', 'trajectory', 'reflection', 'consolidated'
     importance: Mapped[float | None] = mapped_column(
         Float, nullable=True
-    )  # 0.0-1.0 importance score
+    )  # 0.0-1.0 importance score (may be decayed)
+
+    # Importance decay tracking (#1030 - SimpleMem importance decay)
+    importance_original: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )  # Original importance before decay (preserved for recalculation)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )  # Last time memory was retrieved (for decay calculation)
+    access_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # Number of times memory was accessed
 
     # State management (#368)
     # Note: Index defined in __table_args__ (idx_memory_state)
@@ -1171,6 +1182,7 @@ class MemoryModel(Base):
         Index("idx_memory_abstraction_level", "abstraction_level"),  # #1029 - hierarchy level
         Index("idx_memory_parent", "parent_memory_id"),  # #1029 - parent lookup
         Index("idx_memory_archived", "is_archived"),  # #1029 - archived filtering
+        Index("idx_memory_last_accessed", "last_accessed_at"),  # #1030 - decay calculation
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

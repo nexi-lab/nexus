@@ -236,9 +236,12 @@ def instrument_fastapi_app(app: object) -> bool:
         return False
 
     try:
+        from typing import cast
+
+        from fastapi import FastAPI
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(cast(FastAPI, app))
         logger.debug("Instrumented: FastAPI app")
         return True
     except ImportError:

@@ -139,8 +139,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop tiger_directory_grants table and indexes."""
-    bind = op.get_bind()
-
     op.drop_index("idx_tiger_dir_grants_lookup", table_name="tiger_directory_grants")
     op.drop_index("idx_tiger_dir_grants_pending", table_name="tiger_directory_grants")
     op.drop_index("idx_tiger_dir_grants_subject", table_name="tiger_directory_grants")

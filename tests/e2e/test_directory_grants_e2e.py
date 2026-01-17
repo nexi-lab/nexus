@@ -439,7 +439,7 @@ class TestDirectoryGrantWorker:
             )
 
         # Process the grant
-        expanded = expander.process_pending_grants(limit=1)
+        expander.process_pending_grants(limit=1)
 
         # Should complete with 0 files (empty directory)
         with standalone_engine.connect() as conn:

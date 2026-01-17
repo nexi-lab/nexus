@@ -31,14 +31,14 @@ def test_individual_writes(client, test_dir):
         if (i + 1) % 10 == 0:
             elapsed = time.time() - start
             rate = (i + 1) / elapsed
-            print(f"  Progress: {i+1}/{NUM_FILES} ({rate:.1f} files/sec)")
+            print(f"  Progress: {i + 1}/{NUM_FILES} ({rate:.1f} files/sec)")
 
     total_time = time.time() - start
     per_file = (total_time / NUM_FILES) * 1000  # ms
 
     print(f"\n  Total: {total_time:.2f}s")
     print(f"  Per file: {per_file:.1f}ms")
-    print(f"  Rate: {NUM_FILES/total_time:.1f} files/sec")
+    print(f"  Rate: {NUM_FILES / total_time:.1f} files/sec")
 
     return total_time, per_file
 
@@ -61,7 +61,7 @@ def test_batch_writes(client, test_dir):
 
     print(f"\n  Total: {total_time:.2f}s")
     print(f"  Per file: {per_file:.1f}ms")
-    print(f"  Rate: {NUM_FILES/total_time:.1f} files/sec")
+    print(f"  Rate: {NUM_FILES / total_time:.1f} files/sec")
     print(f"  Files written: {len(results)}")
 
     return total_time, per_file
@@ -97,8 +97,12 @@ def main():
         print("=" * 70)
         print(f"\n{'Method':<20} {'Total Time':<15} {'Per File':<15} {'Rate':<15}")
         print("-" * 70)
-        print(f"{'Individual':<20} {individual_total:>10.2f}s    {individual_per_file:>10.1f}ms   {NUM_FILES/individual_total:>10.1f}/sec")
-        print(f"{'Batch':<20} {batch_total:>10.2f}s    {batch_per_file:>10.1f}ms   {NUM_FILES/batch_total:>10.1f}/sec")
+        print(
+            f"{'Individual':<20} {individual_total:>10.2f}s    {individual_per_file:>10.1f}ms   {NUM_FILES / individual_total:>10.1f}/sec"
+        )
+        print(
+            f"{'Batch':<20} {batch_total:>10.2f}s    {batch_per_file:>10.1f}ms   {NUM_FILES / batch_total:>10.1f}/sec"
+        )
         print("-" * 70)
         print(f"\nSpeedup: {speedup:.1f}x faster with batch!")
 

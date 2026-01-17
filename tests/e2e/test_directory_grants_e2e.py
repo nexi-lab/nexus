@@ -554,7 +554,9 @@ class TestHTTPAPIIntegration:
             files = result.get("files", result.get("entries", []))
 
         # Should list both files
-        assert len(files) >= 2, f"Expected at least 2 files, got {len(files)}: {files}. Full response: {data}"
+        assert len(files) >= 2, (
+            f"Expected at least 2 files, got {len(files)}: {files}. Full response: {data}"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.e2e

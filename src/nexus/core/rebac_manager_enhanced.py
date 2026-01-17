@@ -2138,15 +2138,70 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             extension = last_component.rsplit(".", 1)[-1].lower()
             # Common file extensions that indicate NOT a directory
             file_extensions = {
-                "txt", "md", "json", "yaml", "yml", "xml", "csv", "tsv",
-                "py", "js", "ts", "jsx", "tsx", "html", "css", "scss",
-                "java", "c", "cpp", "h", "hpp", "go", "rs", "rb", "php",
-                "sql", "sh", "bash", "zsh", "ps1", "bat", "cmd",
-                "png", "jpg", "jpeg", "gif", "svg", "ico", "webp",
-                "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
-                "zip", "tar", "gz", "bz2", "7z", "rar",
-                "mp3", "mp4", "wav", "avi", "mov", "mkv",
-                "log", "ini", "conf", "cfg", "env", "lock",
+                "txt",
+                "md",
+                "json",
+                "yaml",
+                "yml",
+                "xml",
+                "csv",
+                "tsv",
+                "py",
+                "js",
+                "ts",
+                "jsx",
+                "tsx",
+                "html",
+                "css",
+                "scss",
+                "java",
+                "c",
+                "cpp",
+                "h",
+                "hpp",
+                "go",
+                "rs",
+                "rb",
+                "php",
+                "sql",
+                "sh",
+                "bash",
+                "zsh",
+                "ps1",
+                "bat",
+                "cmd",
+                "png",
+                "jpg",
+                "jpeg",
+                "gif",
+                "svg",
+                "ico",
+                "webp",
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "zip",
+                "tar",
+                "gz",
+                "bz2",
+                "7z",
+                "rar",
+                "mp3",
+                "mp4",
+                "wav",
+                "avi",
+                "mov",
+                "mkv",
+                "log",
+                "ini",
+                "conf",
+                "cfg",
+                "env",
+                "lock",
             }
             if extension in file_extensions:
                 return False
@@ -2224,8 +2279,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
                 # Mark as completed immediately (empty directory)
                 self._tiger_cache._update_grant_status(
-                    subject[0], subject[1], permission, directory_path, tenant_id,
-                    status="completed", expanded_count=0, total_count=0
+                    subject[0],
+                    subject[1],
+                    permission,
+                    directory_path,
+                    tenant_id,
+                    status="completed",
+                    expanded_count=0,
+                    total_count=0,
                 )
             return
 
@@ -2279,9 +2340,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     f"{expanded} files for {subject[0]}:{subject[1]}"
                 )
             else:
-                logger.error(
-                    f"[LEOPARD] Failed to expand {permission} on {directory_path}"
-                )
+                logger.error(f"[LEOPARD] Failed to expand {permission} on {directory_path}")
 
     def _get_tenant_revision_for_grant(self, tenant_id: str) -> int:
         """Get current tenant revision for consistency during expansion.
@@ -2354,8 +2413,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             with self._engine.connect() as conn:
                 result = conn.execute(
-                    query,
-                    {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
+                    query, {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
                 )
                 return [row.virtual_path for row in result]
         except Exception as e:

@@ -1246,6 +1246,7 @@ class NexusFSCoreMixin:
                     )
                     if added_count > 0:
                         import logging
+
                         logger = logging.getLogger(__name__)
                         logger.debug(
                             f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
@@ -1253,6 +1254,7 @@ class NexusFSCoreMixin:
             except Exception as e:
                 # Log but don't fail the write operation
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
 
@@ -2561,7 +2563,9 @@ class NexusFSCoreMixin:
         grants_to_add = new_grant_keys - old_grant_keys
 
         if not grants_to_remove and not grants_to_add:
-            logger.debug(f"[LEOPARD] No permission changes needed for move: {old_path} -> {new_path}")
+            logger.debug(
+                f"[LEOPARD] No permission changes needed for move: {old_path} -> {new_path}"
+            )
             return
 
         # Get files to update (single file or all descendants for directory)

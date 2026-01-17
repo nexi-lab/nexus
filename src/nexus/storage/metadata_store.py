@@ -1225,9 +1225,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         return []
                     # Use IN clause for predicate pushdown
                     # For large sets (>10k), SQLite/Postgres handle this efficiently
-                    base_conditions.append(
-                        FilePathModel.virtual_path.in_(accessible_paths)
-                    )
+                    base_conditions.append(FilePathModel.virtual_path.in_(accessible_paths))
                     logger.debug(
                         f"[PREDICATE-PUSHDOWN] Filtering by {len(accessible_paths)} accessible paths at DB level"
                     )

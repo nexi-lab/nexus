@@ -721,9 +721,7 @@ class TigerCache:
         Returns:
             Set of paths the subject can access, or None if no bitmap cached.
         """
-        int_ids = self.get_accessible_int_ids(
-            subject_type, subject_id, permission, resource_type
-        )
+        int_ids = self.get_accessible_int_ids(subject_type, subject_id, permission, resource_type)
         if int_ids is None:
             return None
 
@@ -735,9 +733,7 @@ class TigerCache:
                 if key and key[0] == resource_type:
                     paths.add(key[1])  # key is (type, path)
 
-        logger.debug(
-            f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths"
-        )
+        logger.debug(f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths")
         return paths
 
     def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
@@ -1820,15 +1816,17 @@ class TigerCache:
             with self._engine.connect() as conn:
                 result = conn.execute(query, params)
                 for row in result:
-                    grants.append({
-                        "grant_id": row.grant_id,
-                        "subject_type": row.subject_type,
-                        "subject_id": row.subject_id,
-                        "permission": row.permission,
-                        "directory_path": row.directory_path,
-                        "grant_revision": row.grant_revision,
-                        "include_future_files": row.include_future_files,
-                    })
+                    grants.append(
+                        {
+                            "grant_id": row.grant_id,
+                            "subject_type": row.subject_type,
+                            "subject_id": row.subject_id,
+                            "permission": row.permission,
+                            "directory_path": row.directory_path,
+                            "grant_revision": row.grant_revision,
+                            "include_future_files": row.include_future_files,
+                        }
+                    )
 
             return grants
 
@@ -1894,22 +1892,33 @@ class TigerCache:
 
         if not descendants:
             self._update_grant_status(
-                subject_type, subject_id, permission, directory_path, tenant_id,
-                status="completed", expanded_count=0, total_count=0
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="completed",
+                expanded_count=0,
+                total_count=0,
             )
             return (0, True)
 
         # Update total count
         self._update_grant_status(
-            subject_type, subject_id, permission, directory_path, tenant_id,
-            status="in_progress", total_count=len(descendants)
+            subject_type,
+            subject_id,
+            permission,
+            directory_path,
+            tenant_id,
+            status="in_progress",
+            total_count=len(descendants),
         )
 
         total_expanded = 0
         try:
             # Process in batches to avoid memory issues
             for i in range(0, len(descendants), batch_size):
-                batch = descendants[i:i + batch_size]
+                batch = descendants[i : i + batch_size]
 
                 # Get/create int IDs for all files in batch
                 resources = [("file", path) for path in batch]
@@ -1919,9 +1928,7 @@ class TigerCache:
                 # Create IDs for resources that don't exist yet
                 for resource, int_id in int_ids.items():
                     if int_id is None:
-                        new_id = self._resource_map.get_or_create_int_id(
-                            resource[0], resource[1]
-                        )
+                        new_id = self._resource_map.get_or_create_int_id(resource[0], resource[1])
                         if new_id > 0:
                             int_ids[resource] = new_id
 
@@ -1931,20 +1938,24 @@ class TigerCache:
                 if valid_int_ids:
                     # Add to in-memory bitmap
                     self.add_to_bitmap_bulk(
-                        subject_type, subject_id, permission, "file",
-                        tenant_id, valid_int_ids
+                        subject_type, subject_id, permission, "file", tenant_id, valid_int_ids
                     )
 
                 total_expanded += len(valid_int_ids)
 
                 # Update progress
                 self._update_grant_status(
-                    subject_type, subject_id, permission, directory_path, tenant_id,
-                    status="in_progress", expanded_count=total_expanded
+                    subject_type,
+                    subject_id,
+                    permission,
+                    directory_path,
+                    tenant_id,
+                    status="in_progress",
+                    expanded_count=total_expanded,
                 )
 
                 logger.debug(
-                    f"[TIGER] Expanded batch {i//batch_size + 1}: "
+                    f"[TIGER] Expanded batch {i // batch_size + 1}: "
                     f"{len(valid_int_ids)} files, total {total_expanded}/{len(descendants)}"
                 )
 
@@ -1955,14 +1966,18 @@ class TigerCache:
                     bitmap, revision, _ = self._cache[key]
                     all_int_ids = set(bitmap.to_array())
                     self.persist_bitmap_bulk(
-                        subject_type, subject_id, permission, "file",
-                        all_int_ids, tenant_id
+                        subject_type, subject_id, permission, "file", all_int_ids, tenant_id
                     )
 
             # Mark as completed
             self._update_grant_status(
-                subject_type, subject_id, permission, directory_path, tenant_id,
-                status="completed", expanded_count=total_expanded
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="completed",
+                expanded_count=total_expanded,
             )
 
             logger.info(
@@ -1975,8 +1990,13 @@ class TigerCache:
         except Exception as e:
             logger.error(f"[TIGER] expand_directory_grant failed: {e}")
             self._update_grant_status(
-                subject_type, subject_id, permission, directory_path, tenant_id,
-                status="failed", error_message=str(e)
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="failed",
+                error_message=str(e),
             )
             return (total_expanded, False)
 
@@ -2035,7 +2055,7 @@ class TigerCache:
 
         query = text(f"""
             UPDATE tiger_directory_grants
-            SET {', '.join(updates)}
+            SET {", ".join(updates)}
             WHERE subject_type = :subject_type
               AND subject_id = :subject_id
               AND permission = :permission
@@ -2168,14 +2188,10 @@ class TigerCache:
                 )
 
             except Exception as e:
-                logger.error(
-                    f"[TIGER] Failed to add file to grant: {e}"
-                )
+                logger.error(f"[TIGER] Failed to add file to grant: {e}")
 
         if added_count > 0:
-            logger.info(
-                f"[TIGER] New file {file_path} added to {added_count} ancestor grants"
-            )
+            logger.info(f"[TIGER] New file {file_path} added to {added_count} ancestor grants")
 
         return added_count
 
@@ -2711,18 +2727,20 @@ class DirectoryGrantExpander:
                 result = conn.execute(query, {"limit": limit})
                 grants = []
                 for row in result:
-                    grants.append({
-                        "grant_id": row.grant_id,
-                        "subject_type": row.subject_type,
-                        "subject_id": row.subject_id,
-                        "permission": row.permission,
-                        "directory_path": row.directory_path,
-                        "tenant_id": row.tenant_id,
-                        "grant_revision": row.grant_revision,
-                        "include_future_files": row.include_future_files,
-                        "expanded_count": row.expanded_count or 0,
-                        "total_count": row.total_count,
-                    })
+                    grants.append(
+                        {
+                            "grant_id": row.grant_id,
+                            "subject_type": row.subject_type,
+                            "subject_id": row.subject_id,
+                            "permission": row.permission,
+                            "directory_path": row.directory_path,
+                            "tenant_id": row.tenant_id,
+                            "grant_revision": row.grant_revision,
+                            "include_future_files": row.include_future_files,
+                            "expanded_count": row.expanded_count or 0,
+                            "total_count": row.total_count,
+                        }
+                    )
                 return grants
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to get pending grants: {e}")
@@ -2751,10 +2769,13 @@ class DirectoryGrantExpander:
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(query, {
-                    "grant_id": grant_id,
-                    "total_count": total_count,
-                })
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "total_count": total_count,
+                    },
+                )
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark in_progress: {e}")
@@ -2781,10 +2802,13 @@ class DirectoryGrantExpander:
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(query, {
-                    "grant_id": grant_id,
-                    "expanded_count": expanded_count,
-                })
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "expanded_count": expanded_count,
+                    },
+                )
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to update progress: {e}")
@@ -2813,10 +2837,13 @@ class DirectoryGrantExpander:
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(query, {
-                    "grant_id": grant_id,
-                    "expanded_count": expanded_count,
-                })
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "expanded_count": expanded_count,
+                    },
+                )
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark completed: {e}")
@@ -2844,10 +2871,13 @@ class DirectoryGrantExpander:
 
         try:
             with self._engine.begin() as conn:
-                result = conn.execute(query, {
-                    "grant_id": grant_id,
-                    "error_message": error_message[:1000],  # Truncate long errors
-                })
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "error_message": error_message[:1000],  # Truncate long errors
+                    },
+                )
                 return result.rowcount > 0
         except Exception as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark failed: {e}")

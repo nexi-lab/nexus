@@ -1232,6 +1232,30 @@ class NexusFSCoreMixin:
 
         self.metadata.put(metadata)
 
+        # Leopard-style: Add new file to ancestor directory grants
+        # When a file is created in a directory that has been granted to users,
+        # the file should inherit those permissions (if include_future_files=True)
+        is_new_file = meta is None
+        if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+                if tiger_cache:
+                    added_count = tiger_cache.add_file_to_ancestor_grants(
+                        file_path=path,
+                        tenant_id=tenant_id or "default",
+                    )
+                    if added_count > 0:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.debug(
+                            f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
+                        )
+            except Exception as e:
+                # Log but don't fail the write operation
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
+
         # Invalidate cached parsed_text when file is updated
         # This ensures read(parsed=True) re-parses the new content
         if meta is not None:  # File existed before (update, not create)
@@ -2397,6 +2421,25 @@ class NexusFSCoreMixin:
         else:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
+        # Leopard-style: Update Tiger Cache bitmaps for moved files
+        # When a file moves between directories, permissions may change:
+        # - If old directory had grants, file should be removed from those users' bitmaps
+        # - If new directory has grants, file should be added to those users' bitmaps
+        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+                if tiger_cache:
+                    self._update_tiger_cache_on_move(
+                        tiger_cache=tiger_cache,
+                        old_path=old_path,
+                        new_path=new_path,
+                        is_directory=bool(is_directory),
+                        tenant_id=tenant_id or "default",
+                    )
+            except Exception as e:
+                # Log but don't fail the rename operation
+                logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
+
         # Log operation for audit trail and undo capability
         try:
             from nexus.storage.operation_logger import OperationLogger
@@ -2477,6 +2520,168 @@ class NexusFSCoreMixin:
                         logger.error(f"Rename event error for {event_context.get('old_path')}: {e}")
 
                 threading.Thread(target=run_rename_events, daemon=True).start()
+
+    def _update_tiger_cache_on_move(
+        self,
+        tiger_cache: Any,
+        old_path: str,
+        new_path: str,
+        is_directory: bool,
+        tenant_id: str,
+    ) -> None:
+        """Update Tiger Cache bitmaps when a file/directory is moved.
+
+        Leopard-style optimization: When a file moves between directories,
+        permissions may change based on ancestor directory grants:
+        - If old directory had grants, file should be removed from those users' bitmaps
+        - If new directory has grants, file should be added to those users' bitmaps
+        - Grants in both paths need no change (permission still applies)
+
+        Args:
+            tiger_cache: The TigerCache instance
+            old_path: Original file path
+            new_path: New file path
+            is_directory: Whether this is a directory move
+            tenant_id: Tenant ID
+        """
+        # Get grants that apply to old and new paths
+        old_grants = tiger_cache.get_directory_grants_for_path(old_path, tenant_id)
+        new_grants = tiger_cache.get_directory_grants_for_path(new_path, tenant_id)
+
+        # Create grant keys for comparison (subject_type, subject_id, permission)
+        def grant_key(g: dict) -> tuple:
+            return (g["subject_type"], g["subject_id"], g["permission"])
+
+        old_grant_keys = {grant_key(g) for g in old_grants}
+        new_grant_keys = {grant_key(g) for g in new_grants}
+
+        # Grants only in old path -> remove file from those bitmaps
+        grants_to_remove = old_grant_keys - new_grant_keys
+        # Grants only in new path -> add file to those bitmaps
+        grants_to_add = new_grant_keys - old_grant_keys
+
+        if not grants_to_remove and not grants_to_add:
+            logger.debug(f"[LEOPARD] No permission changes needed for move: {old_path} -> {new_path}")
+            return
+
+        # Get files to update (single file or all descendants for directory)
+        if is_directory:
+            files_to_update = self._get_directory_files_for_move(old_path, new_path, tenant_id)
+        else:
+            files_to_update = [(old_path, new_path)]
+
+        logger.info(
+            f"[LEOPARD] Updating permissions for move: {old_path} -> {new_path}, "
+            f"files={len(files_to_update)}, grants_to_remove={len(grants_to_remove)}, "
+            f"grants_to_add={len(grants_to_add)}"
+        )
+
+        # Process each file
+        resource_map = getattr(tiger_cache, "_resource_map", None)
+        if not resource_map:
+            logger.warning("[LEOPARD] No resource map available, skipping bitmap updates")
+            return
+
+        for _old_file_path, new_file_path in files_to_update:
+            # Get int_id for the file (use new path since file was already renamed)
+            int_id = resource_map.get_or_create_int_id("file", new_file_path)
+            if int_id <= 0:
+                logger.warning(f"[LEOPARD] Failed to get int_id for: {new_file_path}")
+                continue
+
+            # Remove from old grants' bitmaps
+            for subject_type, subject_id, permission in grants_to_remove:
+                try:
+                    tiger_cache.remove_from_bitmap(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type="file",
+                        tenant_id=tenant_id,
+                        resource_int_id=int_id,
+                    )
+                    logger.debug(
+                        f"[LEOPARD] Removed {new_file_path} from bitmap: "
+                        f"{subject_type}:{subject_id} ({permission})"
+                    )
+                except Exception as e:
+                    logger.warning(f"[LEOPARD] Failed to remove from bitmap: {e}")
+
+            # Add to new grants' bitmaps
+            for grant in new_grants:
+                key = grant_key(grant)
+                if key not in grants_to_add:
+                    continue
+
+                # Check if grant includes future files (moved files count as "new" to this path)
+                if not grant.get("include_future_files", True):
+                    continue
+
+                try:
+                    tiger_cache.add_to_bitmap(
+                        grant["subject_type"],
+                        grant["subject_id"],
+                        grant["permission"],
+                        "file",
+                        tenant_id,
+                        int_id,
+                    )
+
+                    # Persist immediately (write-through)
+                    tiger_cache.persist_single_grant(
+                        grant["subject_type"],
+                        grant["subject_id"],
+                        grant["permission"],
+                        "file",
+                        new_file_path,
+                        tenant_id,
+                    )
+
+                    logger.debug(
+                        f"[LEOPARD] Added {new_file_path} to bitmap: "
+                        f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
+                    )
+                except Exception as e:
+                    logger.warning(f"[LEOPARD] Failed to add to bitmap: {e}")
+
+        logger.info(f"[LEOPARD] Completed permission updates for move: {old_path} -> {new_path}")
+
+    def _get_directory_files_for_move(
+        self,
+        old_dir_path: str,
+        new_dir_path: str,
+        tenant_id: str,
+    ) -> list[tuple[str, str]]:
+        """Get all files under a directory for move permission updates.
+
+        Args:
+            old_dir_path: Original directory path
+            new_dir_path: New directory path
+            tenant_id: Tenant ID
+
+        Returns:
+            List of (old_file_path, new_file_path) tuples
+        """
+        # Normalize paths
+        old_prefix = old_dir_path.rstrip("/") + "/"
+        new_prefix = new_dir_path.rstrip("/") + "/"
+
+        try:
+            # Query all files under directory (using new path since already renamed)
+            # The files have already been renamed via metadata update, so query new paths
+            files = self.metadata.list(prefix=new_prefix, recursive=True, tenant_id=tenant_id)
+            result = []
+            for file_meta in files:
+                new_file_path = file_meta.path
+                if new_file_path:
+                    # Compute what the old path would have been
+                    relative_path = new_file_path[len(new_prefix) :]
+                    old_file_path = old_prefix + relative_path
+                    result.append((old_file_path, new_file_path))
+            return result
+        except Exception as e:
+            logger.warning(f"[LEOPARD] Failed to list directory files: {e}")
+            return []
 
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:

@@ -2211,7 +2211,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if hasattr(self, "_metadata_store") and self._metadata_store:
             try:
                 # Check if any files exist under this path
-                return self._metadata_store.is_implicit_directory(path)
+                return bool(self._metadata_store.is_implicit_directory(path))
             except Exception as e:
                 logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
 
@@ -2362,7 +2362,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 SELECT revision FROM tenant_revisions
                 WHERE tenant_id = :tenant_id
             """)
-            with self._engine.connect() as conn:
+            with self.engine.connect() as conn:
                 result = conn.execute(query, {"tenant_id": tenant_id})
                 row = result.fetchone()
                 return int(row.revision) if row else 0
@@ -2411,7 +2411,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                   AND (tenant_id = :tenant_id OR tenant_id = 'default' OR tenant_id IS NULL)
             """)
 
-            with self._engine.connect() as conn:
+            with self.engine.connect() as conn:
                 result = conn.execute(
                     query, {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
                 )

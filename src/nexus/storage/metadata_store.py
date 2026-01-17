@@ -1161,6 +1161,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         cache_key = f"{prefix}:{'r' if recursive else 'nr'}:t={tenant_key}"
         use_cache = self._cache_enabled and self._cache and accessible_paths is None
         if use_cache:
+            assert self._cache is not None  # mypy: guarded by use_cache check
             cached = self._cache.get_list(cache_key)
             if cached is not None:
                 logger.debug(

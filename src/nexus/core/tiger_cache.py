@@ -2015,8 +2015,8 @@ class TigerCache:
         """Update the status of a directory grant expansion."""
         from sqlalchemy import text
 
-        updates = []
-        params = {
+        updates: list[str] = []
+        params: dict[str, str | int] = {
             "subject_type": subject_type,
             "subject_id": subject_id,
             "permission": permission,

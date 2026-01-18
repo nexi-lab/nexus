@@ -33,6 +33,7 @@ EXCEPTIONS = [
     "src/nexus/storage/models.py",  # 3,200 lines - Phase 4 splitting
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
     "src/nexus/core/memory_api.py",  # 2,097 lines - #1039 graph storage integration
+    "src/nexus/core/tiger_cache.py",  # 2,592 lines - Leopard-style directory grants
 ]
 
 

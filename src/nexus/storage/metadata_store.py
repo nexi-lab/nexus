@@ -1113,6 +1113,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         prefix: str = "",
         recursive: bool = True,
         tenant_id: str | None = None,
+        accessible_paths: set[str] | None = None,
     ) -> list[FileMetadata]:
         """
         List all files with given path prefix.
@@ -1124,12 +1125,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
         When tenant_id is provided, filters by tenant at the database level (indexed),
         reducing rows loaded by 30-90% in multi-tenant deployments.
 
+        PERFORMANCE OPTIMIZATION (Issue #1030): Polars-style predicate pushdown for permissions.
+        When accessible_paths is provided, filters at DB level instead of post-filtering in Python.
+        This reduces rows loaded from database by filtering on the allowed paths using SQL IN clause.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files. If False, only direct children.
             tenant_id: Optional tenant ID to filter by (PREWHERE optimization).
                       When provided, only files belonging to this tenant are returned.
                       When None, all files are returned (backward compatible).
+            accessible_paths: Optional set of paths the user can access (predicate pushdown).
+                      When provided, only files in this set are returned (DB-level filter).
+                      When None, all files are returned (permission filtering done elsewhere).
 
         Returns:
             List of file metadata
@@ -1148,9 +1156,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
             ['/workspace/acme_file.txt']  # Only org_acme's files
         """
         # Check cache first (note: cache key includes recursive flag and tenant_id)
+        # Skip caching when accessible_paths is provided (predicate pushdown) as results vary per user
         tenant_key = tenant_id or "all"
         cache_key = f"{prefix}:{'r' if recursive else 'nr'}:t={tenant_key}"
-        if self._cache_enabled and self._cache:
+        use_cache = self._cache_enabled and self._cache and accessible_paths is None
+        if use_cache:
+            assert self._cache is not None  # mypy: guarded by use_cache check
             cached = self._cache.get_list(cache_key)
             if cached is not None:
                 logger.debug(
@@ -1162,6 +1173,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # OPTIMIZATION: Check if a PARENT prefix is cached and filter locally
             # This avoids DB queries for /skills/system/ when /skills/ is already cached
             # Note: Parent cache lookup must also match tenant_id
+            # Note: Skip this optimization when accessible_paths is provided (handled above)
             if recursive and prefix and prefix != "/":
                 parent_prefix = prefix.rstrip("/")
                 prev_prefix = None  # Track previous to detect infinite loop
@@ -1203,6 +1215,20 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             FilePathModel.tenant_id == "default",  # Include default tenant files
                             FilePathModel.tenant_id.is_(None),
                         )
+                    )
+
+                # Issue #1030: Polars-style predicate pushdown for permissions
+                # Filter at DB level using IN clause instead of post-filtering in Python
+                if accessible_paths is not None:
+                    if len(accessible_paths) == 0:
+                        # No accessible paths = empty result
+                        logger.debug("[PREDICATE-PUSHDOWN] Empty accessible_paths, returning []")
+                        return []
+                    # Use IN clause for predicate pushdown
+                    # For large sets (>10k), SQLite/Postgres handle this efficiently
+                    base_conditions.append(FilePathModel.virtual_path.in_(accessible_paths))
+                    logger.debug(
+                        f"[PREDICATE-PUSHDOWN] Filtering by {len(accessible_paths)} accessible paths at DB level"
                     )
 
                 if prefix:
@@ -1277,7 +1303,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     )
 
                 # Cache the results (use cache_key that includes recursive flag)
-                if self._cache_enabled and self._cache:
+                # Skip caching when accessible_paths is provided (predicate pushdown results vary per user)
+                if use_cache and self._cache:
                     self._cache.set_list(cache_key, results)
                     logger.debug(
                         f"[METADATA-CACHE] SET for list({prefix}, recursive={recursive}), {len(results)} items"

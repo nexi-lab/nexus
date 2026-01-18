@@ -1365,6 +1365,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     tenant_id=effective_tenant,
                 )
 
+            # Leopard-style Directory Grant Expansion
+            # When permission is granted on a directory, expand to all descendants
+            if object_type == "file" and permissions and self._is_directory_path(object_id):
+                self._expand_directory_permission_grant(
+                    subject=subject_tuple,
+                    permissions=permissions,
+                    directory_path=object_id,
+                    tenant_id=effective_tenant,
+                )
+
         # Issue #922: Notify boundary cache invalidators
         self._notify_boundary_cache_invalidators(effective_tenant, subject, relation, object)
 
@@ -2087,6 +2097,336 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             resource_type=resource_type,
             resource_id=resource_id,
         )
+
+    # =========================================================================
+    # Leopard-style Directory Permission Pre-materialization
+    # =========================================================================
+
+    # Write amplification limit: max files to expand synchronously
+    # Beyond this, expansion is queued for async processing
+    DIRECTORY_EXPANSION_LIMIT = 10_000
+
+    def _is_directory_path(self, path: str) -> bool:
+        """Check if a path represents a directory.
+
+        Uses heuristics since NexusFS uses implicit directories:
+        1. Path ends with /
+        2. Path has no file extension in the last component
+        3. Files exist under this path (queried from metadata store if available)
+
+        Args:
+            path: File path to check
+
+        Returns:
+            True if path appears to be a directory
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Explicit directory marker
+        if path.endswith("/"):
+            return True
+
+        # Root is always a directory
+        if path == "/":
+            return True
+
+        # Check for common file extensions (not a directory)
+        last_component = path.rsplit("/", 1)[-1]
+        if "." in last_component:
+            extension = last_component.rsplit(".", 1)[-1].lower()
+            # Common file extensions that indicate NOT a directory
+            file_extensions = {
+                "txt",
+                "md",
+                "json",
+                "yaml",
+                "yml",
+                "xml",
+                "csv",
+                "tsv",
+                "py",
+                "js",
+                "ts",
+                "jsx",
+                "tsx",
+                "html",
+                "css",
+                "scss",
+                "java",
+                "c",
+                "cpp",
+                "h",
+                "hpp",
+                "go",
+                "rs",
+                "rb",
+                "php",
+                "sql",
+                "sh",
+                "bash",
+                "zsh",
+                "ps1",
+                "bat",
+                "cmd",
+                "png",
+                "jpg",
+                "jpeg",
+                "gif",
+                "svg",
+                "ico",
+                "webp",
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "zip",
+                "tar",
+                "gz",
+                "bz2",
+                "7z",
+                "rar",
+                "mp3",
+                "mp4",
+                "wav",
+                "avi",
+                "mov",
+                "mkv",
+                "log",
+                "ini",
+                "conf",
+                "cfg",
+                "env",
+                "lock",
+            }
+            if extension in file_extensions:
+                return False
+
+        # If we have a metadata store reference, check for children
+        # This is the most accurate but requires a DB query
+        if hasattr(self, "_metadata_store") and self._metadata_store:
+            try:
+                # Check if any files exist under this path
+                return bool(self._metadata_store.is_implicit_directory(path))
+            except Exception as e:
+                logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
+
+        # Default: treat paths without extensions as potential directories
+        # The expansion will be a no-op if there are no descendants
+        return "." not in last_component
+
+    def _expand_directory_permission_grant(
+        self,
+        subject: tuple[str, str],
+        permissions: list[str],
+        directory_path: str,
+        tenant_id: str,
+    ) -> None:
+        """Expand a directory permission grant to all descendants (Leopard-style).
+
+        This is the core of pre-materialization. When a permission is granted
+        on a directory, expand it to ALL descendant files so that permission
+        checks become O(1) bitmap lookups instead of O(depth) tree walks.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permissions: List of permissions granted (e.g., ["read", "write"])
+            directory_path: Directory path that was granted
+            tenant_id: Tenant ID
+
+        Trade-offs (Zanzibar Leopard pattern):
+            - Write amplification: 1 grant -> N bitmap updates
+            - Read optimization: O(depth) -> O(1) per file
+            - Storage: O(grants) -> O(grants * avg_descendants)
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not self._tiger_cache:
+            return
+
+        # Normalize directory path
+        if not directory_path.endswith("/"):
+            directory_path = directory_path + "/"
+
+        # Get current revision for consistency (prevents "new enemy" problem)
+        grant_revision = self._get_tenant_revision_for_grant(tenant_id)
+
+        # Get all descendants of the directory
+        descendants = self._get_directory_descendants(directory_path, tenant_id)
+
+        logger.info(
+            f"[LEOPARD] Directory grant expansion: {directory_path} "
+            f"-> {len(descendants)} descendants for {subject[0]}:{subject[1]}"
+        )
+
+        if not descendants:
+            # No descendants - just record the grant for future file integration
+            for permission in permissions:
+                self._tiger_cache.record_directory_grant(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    directory_path=directory_path,
+                    tenant_id=tenant_id,
+                    grant_revision=grant_revision,
+                    include_future_files=True,
+                )
+                # Mark as completed immediately (empty directory)
+                self._tiger_cache._update_grant_status(
+                    subject[0],
+                    subject[1],
+                    permission,
+                    directory_path,
+                    tenant_id,
+                    status="completed",
+                    expanded_count=0,
+                    total_count=0,
+                )
+            return
+
+        # Check write amplification limit
+        if len(descendants) > self.DIRECTORY_EXPANSION_LIMIT:
+            logger.warning(
+                f"[LEOPARD] Directory {directory_path} has {len(descendants)} files, "
+                f"exceeds limit {self.DIRECTORY_EXPANSION_LIMIT}. Using async expansion."
+            )
+            # Queue for async expansion
+            for permission in permissions:
+                self._tiger_cache.record_directory_grant(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    directory_path=directory_path,
+                    tenant_id=tenant_id,
+                    grant_revision=grant_revision,
+                    include_future_files=True,
+                )
+                # Status remains "pending" - background worker will process
+            return
+
+        # Synchronous expansion for small directories
+        for permission in permissions:
+            # Record the directory grant first
+            self._tiger_cache.record_directory_grant(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                permission=permission,
+                directory_path=directory_path,
+                tenant_id=tenant_id,
+                grant_revision=grant_revision,
+                include_future_files=True,
+            )
+
+            # Expand to all descendants
+            expanded, completed = self._tiger_cache.expand_directory_grant(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                permission=permission,
+                directory_path=directory_path,
+                tenant_id=tenant_id,
+                grant_revision=grant_revision,
+                descendants=descendants,
+            )
+
+            if completed:
+                logger.info(
+                    f"[LEOPARD] Expanded {permission} on {directory_path}: "
+                    f"{expanded} files for {subject[0]}:{subject[1]}"
+                )
+            else:
+                logger.error(f"[LEOPARD] Failed to expand {permission} on {directory_path}")
+
+    def _get_tenant_revision_for_grant(self, tenant_id: str) -> int:
+        """Get current tenant revision for consistency during expansion.
+
+        This prevents the "new enemy" problem: files created after the grant
+        revision are not automatically included (user must explicitly include
+        future files or re-grant).
+
+        Args:
+            tenant_id: Tenant ID
+
+        Returns:
+            Current revision number
+        """
+        from sqlalchemy import text
+
+        try:
+            query = text("""
+                SELECT revision FROM tenant_revisions
+                WHERE tenant_id = :tenant_id
+            """)
+            with self.engine.connect() as conn:
+                result = conn.execute(query, {"tenant_id": tenant_id})
+                row = result.fetchone()
+                return int(row.revision) if row else 0
+        except Exception:
+            return 0
+
+    def _get_directory_descendants(
+        self,
+        directory_path: str,
+        tenant_id: str,
+    ) -> list[str]:
+        """Get all file paths under a directory.
+
+        Args:
+            directory_path: Directory path (with trailing /)
+            tenant_id: Tenant ID
+
+        Returns:
+            List of descendant file paths
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Try using metadata store if available
+        if hasattr(self, "_metadata_store") and self._metadata_store:
+            try:
+                files = self._metadata_store.list(
+                    prefix=directory_path,
+                    recursive=True,
+                    tenant_id=tenant_id,
+                )
+                return [f.path for f in files]
+            except Exception as e:
+                logger.warning(f"[LEOPARD] Metadata store query failed: {e}")
+
+        # Fallback: query file_paths table directly
+        from sqlalchemy import text
+
+        try:
+            query = text("""
+                SELECT virtual_path
+                FROM file_paths
+                WHERE virtual_path LIKE :prefix
+                  AND deleted_at IS NULL
+                  AND (tenant_id = :tenant_id OR tenant_id = 'default' OR tenant_id IS NULL)
+            """)
+
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    query, {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
+                )
+                return [row.virtual_path for row in result]
+        except Exception as e:
+            logger.error(f"[LEOPARD] Failed to query descendants: {e}")
+            return []
+
+    def set_metadata_store(self, metadata_store: Any) -> None:
+        """Set the metadata store reference for directory queries.
+
+        Args:
+            metadata_store: MetadataStore instance
+        """
+        self._metadata_store = metadata_store
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.

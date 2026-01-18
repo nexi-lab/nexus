@@ -294,6 +294,8 @@ class AppState:
         # Hot Search Daemon (Issue #951)
         self.search_daemon: Any = None
         self.search_daemon_enabled: bool = False
+        # Directory Grant Expander for large folder grants (Leopard-style)
+        self.directory_grant_expander: Any = None
 
 
 # Global state (set during app creation)
@@ -737,6 +739,27 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Issue #913: Store task reference for proper shutdown
                 warm_task = asyncio.create_task(_warm_tiger_cache())
                 logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
+
+                # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
+                # This processes pending directory grants asynchronously in background
+                try:
+                    from nexus.core.tiger_cache import DirectoryGrantExpander
+
+                    expander = DirectoryGrantExpander(
+                        engine=_app_state.nexus_fs._rebac_manager.engine,
+                        tiger_cache=tiger_cache,
+                        metadata_store=_app_state.nexus_fs.metadata,
+                    )
+                    _app_state.directory_grant_expander = expander
+
+                    async def _run_grant_expander() -> None:
+                        await expander.run_worker()
+
+                    asyncio.create_task(_run_grant_expander())
+                    logger.info("DirectoryGrantExpander worker started for large folder grants")
+                except Exception as e:
+                    logger.debug(f"DirectoryGrantExpander startup skipped: {e}")
+
         except Exception as e:
             logger.debug(f"Tiger Cache warm-up skipped: {e}")
 
@@ -780,6 +803,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("Search Daemon stopped")
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
+
+    # Stop DirectoryGrantExpander worker
+    if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:
+        try:
+            _app_state.directory_grant_expander.stop()
+            logger.info("DirectoryGrantExpander worker stopped")
+        except Exception as e:
+            logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:

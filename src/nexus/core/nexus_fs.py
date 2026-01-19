@@ -113,6 +113,8 @@ class NexusFS(  # type: ignore[misc]
         workflow_engine: Any
         | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
         enable_tiger_cache: bool = True,  # Enable Tiger Cache for materialized permissions (default: True)
+        enable_deferred_permissions: bool = True,  # Issue #1071: Defer permission ops for faster writes (default: True)
+        deferred_flush_interval: float = 0.05,  # Flush interval in seconds (50ms default - balance latency vs batching)
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -351,6 +353,20 @@ class NexusFS(  # type: ignore[misc]
             rebac_manager=self._rebac_manager,
             enable_inheritance=inherit_permissions,
         )
+
+        # Issue #1071: Initialize DeferredPermissionBuffer for async write optimization
+        # When enabled, permission ops (rebac_write, ensure_parent_tuples) are batched
+        # in the background. Owner can still access files immediately via owner_id fast-path.
+        from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
+
+        self._deferred_permission_buffer: DeferredPermissionBuffer | None = None
+        if enable_deferred_permissions:
+            self._deferred_permission_buffer = DeferredPermissionBuffer(
+                rebac_manager=self._rebac_manager,
+                hierarchy_manager=self._hierarchy_manager,
+                flush_interval_sec=deferred_flush_interval,
+            )
+            self._deferred_permission_buffer.start()
 
         # Initialize workspace registry for managing registered workspaces/memories
         from nexus.core.workspace_registry import WorkspaceRegistry
@@ -7441,6 +7457,10 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Stop DeferredPermissionBuffer first to flush pending permissions
+        if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
+            self._deferred_permission_buffer.stop()
+
         # Stop Tiger Cache background worker first
         self.stop_tiger_cache_worker()
 

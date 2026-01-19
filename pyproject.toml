@@ -93,6 +93,8 @@ dependencies = [
     "blake3>=1.0.0",
     # Binary delta sync for rsync-style incremental updates (Issue #869)
     "bsdiff4>=1.2.0",
+    # Content-Defined Chunking for large file deduplication (Issue #1074)
+    "fastcdc>=1.5.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)

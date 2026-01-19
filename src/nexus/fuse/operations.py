@@ -24,6 +24,16 @@ from nexus.core.virtual_views import (
 )
 from nexus.fuse.cache import FUSECacheManager
 
+# Import LocalDiskCache for L2 caching (Issue #1072)
+try:
+    from nexus.storage.local_disk_cache import LocalDiskCache, get_local_disk_cache
+
+    HAS_LOCAL_DISK_CACHE = True
+except ImportError:
+    HAS_LOCAL_DISK_CACHE = False
+    LocalDiskCache = None  # type: ignore[misc,assignment]
+    get_local_disk_cache = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.fuse.mount import MountMode
@@ -115,6 +125,24 @@ class NexusFUSEOperations(Operations):
             parsed_cache_size=cache_config.get("parsed_cache_size", 50),
             enable_metrics=cache_config.get("enable_metrics", False),
         )
+
+        # Initialize L2 local disk cache (Issue #1072)
+        # Provides persistent SSD caching for 10-50x faster reads
+        self._local_disk_cache: LocalDiskCache | None = None
+        self._enable_local_disk_cache = cache_config.get("enable_local_disk_cache", True)
+        if (
+            self._enable_local_disk_cache
+            and HAS_LOCAL_DISK_CACHE
+            and get_local_disk_cache is not None
+        ):
+            try:
+                self._local_disk_cache = get_local_disk_cache(
+                    cache_dir=cache_config.get("local_disk_cache_dir"),
+                    max_size_gb=cache_config.get("local_disk_cache_size_gb"),
+                )
+                logger.info("[FUSE] L2 LocalDiskCache enabled for faster reads")
+            except Exception as e:
+                logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
 
     # ============================================================
     # Filesystem Metadata Operations
@@ -950,6 +978,17 @@ class NexusFUSEOperations(Operations):
     def _get_file_content(self, path: str, view_type: str | None) -> bytes:
         """Get file content with appropriate view transformation.
 
+        Cache hierarchy (Issue #1072):
+            L1: In-memory cache (FUSECacheManager) - fastest, limited size
+            L2: LocalDiskCache (SSD) - 10-50x faster than network
+            L3/L4: Backend storage (nexus_fs.read) - network/remote
+
+        Security model:
+            - Permission is checked at open() time via nexus_fs.exists()
+            - FUSE caches permission decision for the lifetime of the file handle
+            - L1/L2 caches are safe because they're per-mount (single user context)
+            - Content is keyed by hash (CAS), not path, enabling deduplication
+
         Args:
             path: Original file path
             view_type: View type ("txt", "md", or None for binary)
@@ -963,14 +1002,24 @@ class NexusFUSEOperations(Operations):
             if cached_parsed is not None:
                 return cached_parsed
 
-        # Check content cache for raw content
+        # L1: Check in-memory content cache
         content = self.cache.get_content(path)
+
         if content is None:
-            # Read from filesystem and cache
-            raw_content = self.nexus_fs.read(path)
-            # Type narrowing: when return_metadata=False (default), result is bytes
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            content = raw_content
+            # L2: Check local disk cache (Issue #1072)
+            content = self._get_from_local_disk_cache(path)
+
+            if content is None:
+                # L3/L4: Read from backend filesystem (includes permission check)
+                raw_content = self.nexus_fs.read(path)
+                # Type narrowing: when return_metadata=False (default), result is bytes
+                assert isinstance(raw_content, bytes), "Expected bytes from read()"
+                content = raw_content
+
+                # Populate L2 disk cache
+                self._put_to_local_disk_cache(path, content)
+
+            # Populate L1 memory cache
             self.cache.cache_content(path, content)
 
         # In binary mode or raw access, return as-is
@@ -987,6 +1036,103 @@ class NexusFUSEOperations(Operations):
 
         # Fallback to raw content
         return content
+
+    def _get_content_hash(self, path: str) -> str | None:
+        """Get content hash for a file from metadata.
+
+        Args:
+            path: File path
+
+        Returns:
+            Content hash (SHA-256) if available, None otherwise
+        """
+        try:
+            metadata = self._get_metadata(path)
+            if metadata is None:
+                return None
+
+            # Handle both dict and object metadata
+            if isinstance(metadata, dict):
+                return metadata.get("content_hash") or metadata.get("hash")
+            return getattr(metadata, "content_hash", None) or getattr(metadata, "hash", None)
+        except Exception:
+            return None
+
+    def _get_tenant_id(self) -> str | None:
+        """Get tenant ID from the nexus_fs context.
+
+        Returns:
+            Tenant ID for multi-tenant cache isolation
+        """
+        try:
+            return getattr(self.nexus_fs, "tenant_id", None)
+        except Exception:
+            return None
+
+    def _get_from_local_disk_cache(self, path: str) -> bytes | None:
+        """Get content from L2 local disk cache.
+
+        Uses content_hash + tenant_id as cache key for CAS deduplication
+        with multi-tenant isolation.
+
+        Args:
+            path: File path
+
+        Returns:
+            Content bytes if cached, None otherwise
+        """
+        if self._local_disk_cache is None:
+            return None
+
+        try:
+            # Get content hash for cache lookup
+            content_hash = self._get_content_hash(path)
+            if content_hash is None:
+                return None
+
+            # Get tenant_id for multi-tenant isolation
+            tenant_id = self._get_tenant_id()
+
+            # Check L2 disk cache (tenant-isolated)
+            content = self._local_disk_cache.get(content_hash, tenant_id=tenant_id)
+            if content is not None:
+                logger.debug(f"[FUSE-L2] HIT: {path} (tenant={tenant_id})")
+            return content
+        except Exception as e:
+            logger.debug(f"[FUSE-L2] Error reading {path}: {e}")
+            return None
+
+    def _put_to_local_disk_cache(self, path: str, content: bytes) -> None:
+        """Store content in L2 local disk cache.
+
+        Args:
+            path: File path (used to get content_hash)
+            content: Content bytes to cache
+        """
+        if self._local_disk_cache is None:
+            return
+
+        try:
+            # Get or compute content hash
+            content_hash = self._get_content_hash(path)
+            if content_hash is None:
+                # Compute hash if not available in metadata
+                from nexus.core.hash_fast import hash_content
+
+                content_hash = hash_content(content)
+
+            # Get tenant_id for multi-tenant isolation
+            tenant_id = self._get_tenant_id()
+
+            # Store in L2 disk cache (uses CLOCK eviction if full)
+            # Store blocks for files > 4MB for efficient partial reads
+            store_blocks = len(content) > self._local_disk_cache.block_size
+            self._local_disk_cache.put(
+                content_hash, content, tenant_id=tenant_id, store_blocks=store_blocks
+            )
+            logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, tenant={tenant_id})")
+        except Exception as e:
+            logger.debug(f"[FUSE-L2] Error caching {path}: {e}")
 
     def _get_metadata(self, path: str) -> Any:
         """Get file/directory metadata from filesystem.

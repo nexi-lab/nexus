@@ -63,9 +63,9 @@ logger = logging.getLogger(__name__)
 CDC_THRESHOLD_BYTES = 16 * 1024 * 1024
 
 # FastCDC chunk size parameters
-CDC_MIN_CHUNK_SIZE = 256 * 1024        # 256KB minimum
-CDC_AVG_CHUNK_SIZE = 1 * 1024 * 1024   # 1MB average target
-CDC_MAX_CHUNK_SIZE = 4 * 1024 * 1024   # 4MB maximum
+CDC_MIN_CHUNK_SIZE = 256 * 1024  # 256KB minimum
+CDC_AVG_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB average target
+CDC_MAX_CHUNK_SIZE = 4 * 1024 * 1024  # 4MB maximum
 
 # Parallel I/O configuration
 CDC_PARALLEL_WORKERS = 8  # Optimal for SSD, reduce for HDD
@@ -85,6 +85,7 @@ class ChunkInfo:
         offset: Byte offset in the original file
         length: Size of the chunk in bytes
     """
+
     chunk_hash: str
     offset: int
     length: int
@@ -137,6 +138,7 @@ class ChunkedReference:
             ]
         }
     """
+
     type: Literal["chunked_manifest_v1"] = "chunked_manifest_v1"
     total_size: int = 0
     chunk_count: int = 0
@@ -194,10 +196,7 @@ class ChunkedReference:
 
         try:
             parsed = json.loads(data)
-            return (
-                isinstance(parsed, dict)
-                and parsed.get("type") == "chunked_manifest_v1"
-            )
+            return isinstance(parsed, dict) and parsed.get("type") == "chunked_manifest_v1"
         except (json.JSONDecodeError, UnicodeDecodeError):
             return False
 
@@ -390,11 +389,14 @@ class ChunkedStorageMixin:
                 os.replace(str(tmp_path), str(chunk_path))
 
                 # Create metadata
-                self._write_metadata(chunk_hash, {
-                    "ref_count": 1,
-                    "size": len(chunk_bytes),
-                    "is_chunk": True,
-                })
+                self._write_metadata(
+                    chunk_hash,
+                    {
+                        "ref_count": 1,
+                        "size": len(chunk_bytes),
+                        "is_chunk": True,
+                    },
+                )
 
                 # Update Bloom filter if available
                 if hasattr(self, "_cas_bloom_add"):
@@ -502,12 +504,15 @@ class ChunkedStorageMixin:
                 os.replace(str(tmp_path), str(manifest_path))
 
                 # Create manifest metadata
-                self._write_metadata(manifest_hash, {
-                    "ref_count": 1,
-                    "size": len(content),  # Store ORIGINAL size, not manifest size
-                    "is_chunked_manifest": True,
-                    "chunk_count": len(chunk_infos),
-                })
+                self._write_metadata(
+                    manifest_hash,
+                    {
+                        "ref_count": 1,
+                        "size": len(content),  # Store ORIGINAL size, not manifest size
+                        "is_chunked_manifest": True,
+                        "chunk_count": len(chunk_infos),
+                    },
+                )
 
                 if hasattr(self, "_cas_bloom_add"):
                     self._cas_bloom_add(manifest_hash)
@@ -579,8 +584,7 @@ class ChunkedStorageMixin:
         actual_hash = hash_content(content)
         if actual_hash != manifest.content_hash:
             raise ValueError(
-                f"Content hash mismatch: expected {manifest.content_hash}, "
-                f"got {actual_hash}"
+                f"Content hash mismatch: expected {manifest.content_hash}, got {actual_hash}"
             )
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -630,9 +634,7 @@ class ChunkedStorageMixin:
                 # Decrement ref_count
                 metadata["ref_count"] = ref_count - 1
                 self._write_metadata(chunk_hash, metadata)
-                logger.debug(
-                    f"Decremented chunk {chunk_hash[:16]}... ref_count to {ref_count - 1}"
-                )
+                logger.debug(f"Decremented chunk {chunk_hash[:16]}... ref_count to {ref_count - 1}")
 
     def _delete_chunked(
         self,

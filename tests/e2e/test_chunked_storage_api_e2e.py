@@ -60,10 +60,14 @@ class TestChunkedStorageHTTPAPI:
         path = "/api_test_small.txt"
 
         # Write via HTTP API - use proper bytes encoding
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(content),
-        })
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(content),
+            },
+        )
         assert response.status_code == 200, f"Write failed: {response.text}"
         result = response.json()
         assert result.get("error") is None, f"Write error: {result.get('error')}"
@@ -87,10 +91,15 @@ class TestChunkedStorageHTTPAPI:
         path = "/api_test_large.bin"
 
         # Write large file via HTTP API
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(large_content),
-        }, timeout=120.0)
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(large_content),
+            },
+            timeout=120.0,
+        )
         assert response.status_code == 200, f"Write failed: {response.text}"
         result = response.json()
         assert result.get("error") is None, f"Write error: {result.get('error')}"
@@ -114,10 +123,15 @@ class TestChunkedStorageHTTPAPI:
         path = "/api_test_size.bin"
 
         # Write
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(large_content),
-        }, timeout=120.0)
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(large_content),
+            },
+            timeout=120.0,
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
@@ -132,7 +146,9 @@ class TestChunkedStorageHTTPAPI:
         if isinstance(metadata, dict) and "metadata" in metadata:
             metadata = metadata["metadata"]
         if metadata is not None:
-            assert metadata["size"] == original_size, "Metadata size should match original content size"
+            assert metadata["size"] == original_size, (
+                "Metadata size should match original content size"
+            )
 
         # Clean up
         rpc_call(test_app, "delete", {"path": path}, timeout=60.0)
@@ -146,11 +162,15 @@ class TestChunkedStorageHTTPAPI:
         encoded_content = encode_bytes_param(large_content)
 
         # Write same content twice
-        response = rpc_call(test_app, "write", {"path": path_a, "content": encoded_content}, timeout=120.0)
+        response = rpc_call(
+            test_app, "write", {"path": path_a, "content": encoded_content}, timeout=120.0
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
-        response = rpc_call(test_app, "write", {"path": path_b, "content": encoded_content}, timeout=120.0)
+        response = rpc_call(
+            test_app, "write", {"path": path_b, "content": encoded_content}, timeout=120.0
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
@@ -192,17 +212,26 @@ class TestChunkedStorageHTTPAPI:
         large_path = "/api_mixed_large.bin"
 
         # Write both
-        response = rpc_call(test_app, "write", {
-            "path": small_path,
-            "content": encode_bytes_param(small_content),
-        })
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": small_path,
+                "content": encode_bytes_param(small_content),
+            },
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
-        response = rpc_call(test_app, "write", {
-            "path": large_path,
-            "content": encode_bytes_param(large_content),
-        }, timeout=120.0)
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": large_path,
+                "content": encode_bytes_param(large_content),
+            },
+            timeout=120.0,
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
@@ -235,10 +264,14 @@ class TestChunkedStorageHTTPAPI:
         path = "/api_overwrite.bin"
 
         # Write small
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(small_content),
-        })
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(small_content),
+            },
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
@@ -247,10 +280,15 @@ class TestChunkedStorageHTTPAPI:
         assert decode_bytes_result(response.json()["result"]) == small_content
 
         # Overwrite with large
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(large_content),
-        }, timeout=120.0)
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(large_content),
+            },
+            timeout=120.0,
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 
@@ -268,10 +306,15 @@ class TestChunkedStorageHTTPAPI:
         path = "/api_delete_test.bin"
 
         # Write
-        response = rpc_call(test_app, "write", {
-            "path": path,
-            "content": encode_bytes_param(large_content),
-        }, timeout=120.0)
+        response = rpc_call(
+            test_app,
+            "write",
+            {
+                "path": path,
+                "content": encode_bytes_param(large_content),
+            },
+            timeout=120.0,
+        )
         assert response.status_code == 200
         assert response.json().get("error") is None
 

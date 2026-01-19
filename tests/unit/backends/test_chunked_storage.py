@@ -80,7 +80,9 @@ class TestChunkedReference:
             chunk_count=5,
             avg_chunk_size=20000,
             content_hash="hash123",
-            chunks=[ChunkInfo(chunk_hash=f"c{i}", offset=i * 20000, length=20000) for i in range(5)],
+            chunks=[
+                ChunkInfo(chunk_hash=f"c{i}", offset=i * 20000, length=20000) for i in range(5)
+            ],
         )
         json_bytes = ref.to_json()
         ref2 = ChunkedReference.from_json(json_bytes)
@@ -410,7 +412,9 @@ class TestCDCChunking:
 
         # Chunks should be within bounds
         for size in chunk_sizes:
-            assert size >= backend.cdc_min_chunk or size == chunk_sizes[-1]  # Last chunk can be smaller
+            assert (
+                size >= backend.cdc_min_chunk or size == chunk_sizes[-1]
+            )  # Last chunk can be smaller
             assert size <= backend.cdc_max_chunk
 
     def test_cdc_chunk_offsets_contiguous(self, backend: LocalBackend) -> None:
@@ -425,7 +429,9 @@ class TestCDCChunking:
         # Verify offsets are contiguous
         expected_offset = 0
         for chunk in manifest.chunks:
-            assert chunk.offset == expected_offset, f"Expected offset {expected_offset}, got {chunk.offset}"
+            assert chunk.offset == expected_offset, (
+                f"Expected offset {expected_offset}, got {chunk.offset}"
+            )
             expected_offset += chunk.length
 
         # Final offset should equal total size

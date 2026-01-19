@@ -31,7 +31,7 @@ try:
     HAS_LOCAL_DISK_CACHE = True
 except ImportError:
     HAS_LOCAL_DISK_CACHE = False
-    LocalDiskCache = None  # type: ignore[assignment]
+    LocalDiskCache = None  # type: ignore[misc,assignment]
     get_local_disk_cache = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:

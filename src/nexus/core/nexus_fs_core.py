@@ -1274,42 +1274,58 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
 
-        if hasattr(self, "_hierarchy_manager"):
-            try:
-                ctx = context if context is not None else self._default_context
-                logger.info(
-                    f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
-                )
-                created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, tenant_id=ctx.tenant_id or "default"
-                )
-                logger.info(f"write: Created {created_count} parent tuples for {path}")
-            except Exception as e:
-                # Log the error but don't fail the write operation
-                logger.warning(
-                    f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                )
+        # Issue #1071: Use deferred buffer for async permission operations if available
+        # This reduces single-file write latency from ~36ms to ~10ms by batching
+        # permission operations in the background. Owner access is guaranteed by
+        # owner_id in metadata (fast-path check).
+        ctx = context if context is not None else self._default_context
+        deferred_buffer = getattr(self, "_deferred_permission_buffer", None)
 
-        # Issue #548: Grant direct_owner permission to the user who created the file
-        # For new files only (meta is None means file didn't exist before)
-        # Note: Use ctx.user (human user) so agents inherit via agent->user relationship
-        if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if deferred_buffer is not None:
+            # DEFERRED PATH: Queue permission operations for background batch processing
+            # Owner can still access file immediately via owner_id fast-path
             try:
-                ctx = context if context is not None else self._default_context
-                if ctx.user and not ctx.is_system:
-                    logger.debug(
-                        f"write: Granting direct_owner permission to {ctx.user} for {path}"
-                    )
-                    self._rebac_manager.rebac_write(
-                        subject=("user", ctx.user),
-                        relation="direct_owner",
-                        object=("file", path),
-                        tenant_id=ctx.tenant_id or "default",
-                    )
-                    logger.debug(f"write: Granted direct_owner permission to {ctx.user} for {path}")
+                deferred_buffer.queue_hierarchy(path, ctx.tenant_id or "default")
+                if meta is None and ctx.user and not ctx.is_system:
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.tenant_id or "default")
             except Exception as e:
-                # Log but don't fail the write operation
-                logger.warning(f"write: Failed to grant direct_owner permission for {path}: {e}")
+                logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
+        else:
+            # SYNC PATH: Execute permission operations immediately (original behavior)
+            if hasattr(self, "_hierarchy_manager"):
+                try:
+                    logger.info(
+                        f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
+                    )
+                    created_count = self._hierarchy_manager.ensure_parent_tuples(
+                        path, tenant_id=ctx.tenant_id or "default"
+                    )
+                    logger.info(f"write: Created {created_count} parent tuples for {path}")
+                except Exception as e:
+                    logger.warning(
+                        f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                    )
+
+            # Issue #548: Grant direct_owner permission to the user who created the file
+            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+                try:
+                    if ctx.user and not ctx.is_system:
+                        logger.debug(
+                            f"write: Granting direct_owner permission to {ctx.user} for {path}"
+                        )
+                        self._rebac_manager.rebac_write(
+                            subject=("user", ctx.user),
+                            relation="direct_owner",
+                            object=("file", path),
+                            tenant_id=ctx.tenant_id or "default",
+                        )
+                        logger.debug(
+                            f"write: Granted direct_owner permission to {ctx.user} for {path}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"write: Failed to grant direct_owner permission for {path}: {e}"
+                    )
 
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:

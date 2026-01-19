@@ -42,6 +42,7 @@ import logging
 import os
 import tempfile
 import time
+from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -242,6 +243,44 @@ class ChunkedStorageMixin:
 
     # Configuration (can be overridden in subclass or __init__)
     cdc_threshold: int = CDC_THRESHOLD_BYTES
+
+    # Abstract methods that must be implemented by the backend
+    # These stubs satisfy mypy and define the expected interface
+
+    @abstractmethod
+    def _hash_to_path(self, content_hash: str) -> Path:
+        """Convert content hash to CAS file path."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _get_lock_path(self, content_hash: str) -> Path:
+        """Get lock file path for a content hash."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _get_meta_path(self, content_hash: str) -> Path:
+        """Get metadata file path for a content hash."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _read_metadata(self, content_hash: str) -> dict[str, Any]:
+        """Read metadata for content hash."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
+        """Write metadata for content hash."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _lock_file(self, lock_path: Path) -> Any:
+        """Context manager for file locking. Returns a context manager."""
+        raise NotImplementedError
+
+    def _cas_bloom_add(self, content_hash: str) -> None:
+        """Add hash to Bloom filter. Optional - override in subclass if available."""
+        pass  # Default no-op, override in backends with Bloom filter
+
     cdc_min_chunk: int = CDC_MIN_CHUNK_SIZE
     cdc_avg_chunk: int = CDC_AVG_CHUNK_SIZE
     cdc_max_chunk: int = CDC_MAX_CHUNK_SIZE
@@ -322,19 +361,19 @@ class ChunkedStorageMixin:
             BLAKE3 hash of the chunk
         """
         chunk_hash = hash_content(chunk_bytes)
-        chunk_path: Path = self._hash_to_path(chunk_hash)  # type: ignore[attr-defined]
-        lock_path: Path = self._get_lock_path(chunk_hash)  # type: ignore[attr-defined]
+        chunk_path: Path = self._hash_to_path(chunk_hash)
+        lock_path: Path = self._get_lock_path(chunk_hash)
 
         # Ensure directories exist
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         chunk_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with self._lock_file(lock_path):  # type: ignore[attr-defined]
+        with self._lock_file(lock_path):
             if chunk_path.exists():
                 # Chunk exists - increment ref_count (deduplication!)
-                metadata = self._read_metadata(chunk_hash)  # type: ignore[attr-defined]
+                metadata = self._read_metadata(chunk_hash)
                 metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                self._write_metadata(chunk_hash, metadata)  # type: ignore[attr-defined]
+                self._write_metadata(chunk_hash, metadata)
                 logger.debug(
                     f"Chunk {chunk_hash[:16]}... exists, ref_count={metadata['ref_count']}"
                 )
@@ -351,7 +390,7 @@ class ChunkedStorageMixin:
                 os.replace(str(tmp_path), str(chunk_path))
 
                 # Create metadata
-                self._write_metadata(chunk_hash, {  # type: ignore[attr-defined]
+                self._write_metadata(chunk_hash, {
                     "ref_count": 1,
                     "size": len(chunk_bytes),
                     "is_chunk": True,
@@ -437,19 +476,19 @@ class ChunkedStorageMixin:
         manifest_bytes = manifest.to_json()
         manifest_hash = hash_content(manifest_bytes)
 
-        manifest_path: Path = self._hash_to_path(manifest_hash)  # type: ignore[attr-defined]
-        lock_path: Path = self._get_lock_path(manifest_hash)  # type: ignore[attr-defined]
+        manifest_path: Path = self._hash_to_path(manifest_hash)
+        lock_path: Path = self._get_lock_path(manifest_hash)
 
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with self._lock_file(lock_path):  # type: ignore[attr-defined]
+        with self._lock_file(lock_path):
             if manifest_path.exists():
                 # Same exact chunking already stored (rare but possible)
                 # Just increment manifest ref_count
-                metadata = self._read_metadata(manifest_hash)  # type: ignore[attr-defined]
+                metadata = self._read_metadata(manifest_hash)
                 metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                self._write_metadata(manifest_hash, metadata)  # type: ignore[attr-defined]
+                self._write_metadata(manifest_hash, metadata)
             else:
                 # Write manifest atomically
                 with tempfile.NamedTemporaryFile(
@@ -463,7 +502,7 @@ class ChunkedStorageMixin:
                 os.replace(str(tmp_path), str(manifest_path))
 
                 # Create manifest metadata
-                self._write_metadata(manifest_hash, {  # type: ignore[attr-defined]
+                self._write_metadata(manifest_hash, {
                     "ref_count": 1,
                     "size": len(content),  # Store ORIGINAL size, not manifest size
                     "is_chunked_manifest": True,
@@ -494,7 +533,7 @@ class ChunkedStorageMixin:
         Returns:
             Chunk content bytes
         """
-        chunk_path: Path = self._hash_to_path(chunk_hash)  # type: ignore[attr-defined]
+        chunk_path: Path = self._hash_to_path(chunk_hash)
         return chunk_path.read_bytes()
 
     def _read_chunked(
@@ -517,7 +556,7 @@ class ChunkedStorageMixin:
         start_time = time.perf_counter()
 
         # Read manifest
-        manifest_path: Path = self._hash_to_path(content_hash)  # type: ignore[attr-defined]
+        manifest_path: Path = self._hash_to_path(content_hash)
         manifest = ChunkedReference.from_json(manifest_path.read_bytes())
 
         # Read chunks in parallel
@@ -564,7 +603,7 @@ class ChunkedStorageMixin:
             True if this is a chunked manifest
         """
         try:
-            metadata = self._read_metadata(content_hash)  # type: ignore[attr-defined]
+            metadata = self._read_metadata(content_hash)
             return bool(metadata.get("is_chunked_manifest", False))
         except Exception:
             return False
@@ -575,22 +614,22 @@ class ChunkedStorageMixin:
         Args:
             chunk_hash: Hash of chunk to unreference
         """
-        lock_path: Path = self._get_lock_path(chunk_hash)  # type: ignore[attr-defined]
+        lock_path: Path = self._get_lock_path(chunk_hash)
 
-        with self._lock_file(lock_path):  # type: ignore[attr-defined]
-            metadata = self._read_metadata(chunk_hash)  # type: ignore[attr-defined]
+        with self._lock_file(lock_path):
+            metadata = self._read_metadata(chunk_hash)
             ref_count = metadata.get("ref_count", 1)
 
             if ref_count <= 1:
                 # Delete chunk
-                chunk_path: Path = self._hash_to_path(chunk_hash)  # type: ignore[attr-defined]
+                chunk_path: Path = self._hash_to_path(chunk_hash)
                 chunk_path.unlink(missing_ok=True)
-                self._get_meta_path(chunk_hash).unlink(missing_ok=True)  # type: ignore[attr-defined]
+                self._get_meta_path(chunk_hash).unlink(missing_ok=True)
                 logger.debug(f"Deleted chunk {chunk_hash[:16]}... (ref_count=0)")
             else:
                 # Decrement ref_count
                 metadata["ref_count"] = ref_count - 1
-                self._write_metadata(chunk_hash, metadata)  # type: ignore[attr-defined]
+                self._write_metadata(chunk_hash, metadata)
                 logger.debug(
                     f"Decremented chunk {chunk_hash[:16]}... ref_count to {ref_count - 1}"
                 )
@@ -612,17 +651,17 @@ class ChunkedStorageMixin:
             content_hash: Hash of the manifest
             context: Operation context (unused)
         """
-        manifest_path: Path = self._hash_to_path(content_hash)  # type: ignore[attr-defined]
-        lock_path: Path = self._get_lock_path(content_hash)  # type: ignore[attr-defined]
+        manifest_path: Path = self._hash_to_path(content_hash)
+        lock_path: Path = self._get_lock_path(content_hash)
 
-        with self._lock_file(lock_path):  # type: ignore[attr-defined]
-            metadata = self._read_metadata(content_hash)  # type: ignore[attr-defined]
+        with self._lock_file(lock_path):
+            metadata = self._read_metadata(content_hash)
             ref_count = metadata.get("ref_count", 1)
 
             if ref_count > 1:
                 # Other references exist - just decrement
                 metadata["ref_count"] = ref_count - 1
-                self._write_metadata(content_hash, metadata)  # type: ignore[attr-defined]
+                self._write_metadata(content_hash, metadata)
                 logger.debug(
                     f"Decremented manifest {content_hash[:16]}... ref_count to {ref_count - 1}"
                 )
@@ -637,7 +676,7 @@ class ChunkedStorageMixin:
 
             # Delete manifest
             manifest_path.unlink(missing_ok=True)
-            self._get_meta_path(content_hash).unlink(missing_ok=True)  # type: ignore[attr-defined]
+            self._get_meta_path(content_hash).unlink(missing_ok=True)
 
             logger.info(
                 f"Deleted chunked content {content_hash[:16]}... "
@@ -656,6 +695,6 @@ class ChunkedStorageMixin:
         Returns:
             Original file size in bytes
         """
-        metadata = self._read_metadata(content_hash)  # type: ignore[attr-defined]
+        metadata = self._read_metadata(content_hash)
         # We store the original size in metadata, not the manifest size
         return int(metadata.get("size", 0))

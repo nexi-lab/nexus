@@ -405,8 +405,6 @@ class TestCDCChunking:
 
         # With CDC, sizes should vary (not all identical)
         # Note: With random content, CDC should find natural boundaries
-        unique_sizes = set(chunk_sizes)
-
         # Should have multiple chunks
         assert len(chunk_sizes) > 1
 

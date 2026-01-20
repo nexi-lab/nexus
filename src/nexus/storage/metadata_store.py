@@ -1114,6 +1114,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         recursive: bool = True,
         tenant_id: str | None = None,
         accessible_paths: set[str] | None = None,
+        accessible_int_ids: set[int] | None = None,
     ) -> list[FileMetadata]:
         """
         List all files with given path prefix.
@@ -1129,6 +1130,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
         When accessible_paths is provided, filters at DB level instead of post-filtering in Python.
         This reduces rows loaded from database by filtering on the allowed paths using SQL IN clause.
 
+        PERFORMANCE OPTIMIZATION (Issue #1030 v2): Integer-based predicate pushdown via Tiger Cache.
+        When accessible_int_ids is provided, uses JOIN with tiger_resource_map for O(1) filtering.
+        This is faster than string-based IN clause because integers are compared more efficiently.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files. If False, only direct children.
@@ -1138,6 +1143,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
             accessible_paths: Optional set of paths the user can access (predicate pushdown).
                       When provided, only files in this set are returned (DB-level filter).
                       When None, all files are returned (permission filtering done elsewhere).
+            accessible_int_ids: Optional set of Tiger resource map int IDs (predicate pushdown v2).
+                      When provided, uses JOIN with tiger_resource_map for efficient filtering.
+                      Takes precedence over accessible_paths if both are provided.
 
         Returns:
             List of file metadata
@@ -1217,9 +1225,22 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         )
                     )
 
-                # Issue #1030: Polars-style predicate pushdown for permissions
+                # Issue #1030 v2: Integer-based predicate pushdown via Tiger Cache
+                # JOIN with tiger_resource_map for efficient filtering (faster than string IN clause)
+                # Takes precedence over accessible_paths if both are provided
+                use_int_id_join = False
+                if accessible_int_ids is not None:
+                    if len(accessible_int_ids) == 0:
+                        # No accessible int IDs = empty result
+                        logger.debug("[PREDICATE-PUSHDOWN-INT] Empty accessible_int_ids, returning []")
+                        return []
+                    use_int_id_join = True
+                    logger.debug(
+                        f"[PREDICATE-PUSHDOWN-INT] Will JOIN with tiger_resource_map for {len(accessible_int_ids)} int IDs"
+                    )
+                # Issue #1030: Polars-style predicate pushdown for permissions (string-based fallback)
                 # Filter at DB level using IN clause instead of post-filtering in Python
-                if accessible_paths is not None:
+                elif accessible_paths is not None:
                     if len(accessible_paths) == 0:
                         # No accessible paths = empty result
                         logger.debug("[PREDICATE-PUSHDOWN] Empty accessible_paths, returning []")
@@ -1284,6 +1305,21 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             )
                             .order_by(FilePathModel.virtual_path)
                         )
+
+                # Issue #1030 v2: Apply JOIN with tiger_resource_map for int_id filtering
+                if use_int_id_join and accessible_int_ids is not None:
+                    from nexus.storage.models import TigerResourceMapModel
+
+                    # JOIN: file_paths.virtual_path = tiger_resource_map.resource_id
+                    # WHERE: resource_type = 'file' AND resource_int_id IN (accessible_int_ids)
+                    stmt = stmt.join(
+                        TigerResourceMapModel,
+                        (FilePathModel.virtual_path == TigerResourceMapModel.resource_id)
+                        & (TigerResourceMapModel.resource_type == "file"),
+                    ).where(TigerResourceMapModel.resource_int_id.in_(accessible_int_ids))
+                    logger.info(
+                        f"[PREDICATE-PUSHDOWN-INT] Applied JOIN filter for {len(accessible_int_ids)} int IDs"
+                    )
 
                 results = []
                 for file_path in session.scalars(stmt):

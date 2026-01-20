@@ -16,6 +16,7 @@ Connection Pool Optimizations (Issue #1075):
 
 import logging
 import socket
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +92,8 @@ class DragonflyClient:
         self._pool_timeout = pool_timeout
         self._socket_keepalive = socket_keepalive
         self._retry_on_timeout = retry_on_timeout
-        self._pool = None  # BlockingConnectionPool | None
-        self._client = None  # redis.Redis | None
+        self._pool: Any = None
+        self._client: Any = None
         self._connected = False
 
     async def connect(self) -> None:

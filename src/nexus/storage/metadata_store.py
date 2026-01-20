@@ -1338,6 +1338,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 if use_int_id_join:
                     from nexus.storage.models import TigerResourceMapModel
 
+                    assert accessible_int_ids is not None  # mypy: guarded by use_int_id_join
                     # JOIN: file_paths.virtual_path = tiger_resource_map.resource_id
                     # WHERE: resource_type = 'file' AND resource_int_id IN (accessible_int_ids)
                     stmt = stmt.join(

@@ -172,16 +172,26 @@ ALTER SYSTEM SET work_mem = '16MB';
 ALTER SYSTEM SET maintenance_work_mem = '512MB';
 ```
 
-### Connection Pooling
+### Connection Pooling (Issue #1075)
 
-```python
-nx = nexus.connect(config={
-    "backend": "postgresql",
-    "db_url": "postgresql://...",
-    "pool_size": 20,
-    "max_overflow": 10,
-    "pool_timeout": 30
-})
+Configure PostgreSQL and Redis/Dragonfly connection pools via environment variables:
+
+**PostgreSQL:**
+```bash
+export NEXUS_DB_POOL_SIZE=20          # Base connections
+export NEXUS_DB_MAX_OVERFLOW=30       # Burst capacity
+export NEXUS_DB_POOL_TIMEOUT=30       # Wait timeout (seconds)
+export NEXUS_DB_POOL_RECYCLE=1800     # Recycle interval (seconds)
+export NEXUS_DB_STATEMENT_TIMEOUT=60000  # Query timeout (ms)
+```
+
+**Redis/Dragonfly:**
+```bash
+export NEXUS_DRAGONFLY_URL=redis://localhost:6379
+export NEXUS_DRAGONFLY_POOL_SIZE=50   # Max connections
+export NEXUS_DRAGONFLY_TIMEOUT=30     # Socket timeout (seconds)
+export NEXUS_DRAGONFLY_KEEPALIVE=true # TCP keepalive for cloud
+export NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT=true
 ```
 
 ### Caching
@@ -204,8 +214,11 @@ nx = nexus.connect(config={
 # Health endpoint
 curl http://localhost:2026/health
 
-# Detailed metrics
-curl http://localhost:2026/metrics
+# Detailed health with component status
+curl http://localhost:2026/health/detailed
+
+# Connection pool metrics (Issue #1075)
+curl http://localhost:2026/metrics/pool
 ```
 
 ### Logging

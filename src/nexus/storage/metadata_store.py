@@ -232,6 +232,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         Returns:
             Dictionary of engine kwargs for create_engine()
+
+        Environment Variables (PostgreSQL):
+            NEXUS_DB_POOL_SIZE: Base pool size (default: 20)
+            NEXUS_DB_MAX_OVERFLOW: Burst capacity above pool_size (default: 30)
+            NEXUS_DB_POOL_TIMEOUT: Seconds to wait for connection (default: 30)
+            NEXUS_DB_POOL_RECYCLE: Seconds before recycling connections (default: 1800)
+            NEXUS_DB_STATEMENT_TIMEOUT: Query timeout in ms (default: 60000)
         """
         config: dict[str, Any] = {
             "pool_pre_ping": True,  # Check connections before using them
@@ -251,9 +258,28 @@ class SQLAlchemyMetadataStore(MetadataStore):
             config["poolclass"] = pool.QueuePool
             config["pool_size"] = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
             config["max_overflow"] = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
-            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "10"))
-            config["pool_recycle"] = 1800  # Recycle connections every 30 min
+            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "30"))
+            config["pool_recycle"] = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
             config["pool_pre_ping"] = True  # Verify connections are alive before use
+
+            # LIFO mode: reuse most recently returned connections first
+            # This allows idle connections to be closed by server-side timeouts
+            # while keeping active connections warm
+            config["pool_use_lifo"] = True
+
+            # TCP keepalive settings for cloud/NAT environments
+            # Cloud NAT gateways (AWS, GCP) have ~350s idle timeouts
+            # Default Linux TCP keepalive is 2 hours - too long for cloud
+            statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
+            config["connect_args"] = {
+                # TCP Keepalive: detect dead connections through firewalls/NAT
+                "keepalives": 1,  # Enable TCP keepalive
+                "keepalives_idle": 60,  # Start probes after 60s idle
+                "keepalives_interval": 10,  # Probe every 10s
+                "keepalives_count": 3,  # 3 failed probes = dead connection
+                # Server settings
+                "options": f"-c statement_timeout={statement_timeout}",
+            }
 
         return config
 
@@ -1232,7 +1258,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 if accessible_int_ids is not None:
                     if len(accessible_int_ids) == 0:
                         # No accessible int IDs = empty result
-                        logger.debug("[PREDICATE-PUSHDOWN-INT] Empty accessible_int_ids, returning []")
+                        logger.debug(
+                            "[PREDICATE-PUSHDOWN-INT] Empty accessible_int_ids, returning []"
+                        )
                         return []
                     use_int_id_join = True
                     logger.debug(
@@ -1307,9 +1335,10 @@ class SQLAlchemyMetadataStore(MetadataStore):
                         )
 
                 # Issue #1030 v2: Apply JOIN with tiger_resource_map for int_id filtering
-                if use_int_id_join and accessible_int_ids is not None:
+                if use_int_id_join:
                     from nexus.storage.models import TigerResourceMapModel
 
+                    assert accessible_int_ids is not None  # mypy: guarded by use_int_id_join
                     # JOIN: file_paths.virtual_path = tiger_resource_map.resource_id
                     # WHERE: resource_type = 'file' AND resource_int_id IN (accessible_int_ids)
                     stmt = stmt.join(

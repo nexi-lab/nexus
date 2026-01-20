@@ -7,21 +7,30 @@ Dragonfly is a Redis-compatible in-memory datastore that provides:
 - Smart eviction with cache_mode=true
 
 This module provides the client connection manager and cache implementations.
+
+Connection Pool Optimizations (Issue #1075):
+- BlockingConnectionPool: Waits for available connections instead of erroring
+- TCP keepalive: Prevents NAT/firewall from dropping idle connections
+- Retry on timeout: Automatic retry for transient network issues
 """
 
 import logging
+import socket
 
 logger = logging.getLogger(__name__)
 
 # Redis client is optional - only imported if Dragonfly is configured
 try:
     import redis.asyncio as redis
-    from redis.asyncio import ConnectionPool
+    from redis.asyncio import BlockingConnectionPool, ConnectionPool
+    from redis.backoff import ExponentialBackoff
+    from redis.retry import Retry
 
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
     redis = None  # type: ignore
+    BlockingConnectionPool = None  # type: ignore
     ConnectionPool = None  # type: ignore
 
 
@@ -31,24 +40,46 @@ class DragonflyClient:
     Provides a connection pool and health monitoring for Dragonfly connections.
     Uses redis-py async client which is compatible with Dragonfly.
 
+    Connection Pool Features (Issue #1075):
+    - BlockingConnectionPool: Waits for connections instead of raising errors
+    - TCP keepalive: Detects dead connections through firewalls/NAT
+    - Automatic retry: Retries on timeout and connection errors
+    - Configurable via environment variables
+
     Example:
         async with DragonflyClient("redis://localhost:6379") as client:
             await client.client.set("key", "value")
             value = await client.client.get("key")
+
+    Environment Variables:
+        NEXUS_REDIS_POOL_SIZE: Max connections in pool (default: 50)
+        NEXUS_REDIS_SOCKET_TIMEOUT: Socket timeout in seconds (default: 30)
+        NEXUS_REDIS_CONNECT_TIMEOUT: Connection timeout in seconds (default: 5)
+        NEXUS_REDIS_POOL_TIMEOUT: Wait time for available connection (default: 20)
+        NEXUS_REDIS_KEEPALIVE: Enable TCP keepalive (default: true)
+        NEXUS_REDIS_RETRY_ON_TIMEOUT: Retry on timeout errors (default: true)
     """
 
     def __init__(
         self,
         url: str,
-        pool_size: int = 10,
-        timeout: float = 5.0,
+        pool_size: int = 50,
+        timeout: float = 30.0,
+        connect_timeout: float = 5.0,
+        pool_timeout: float = 20.0,
+        socket_keepalive: bool = True,
+        retry_on_timeout: bool = True,
     ):
         """Initialize Dragonfly client.
 
         Args:
             url: Redis-compatible URL (e.g., redis://localhost:6379)
-            pool_size: Maximum connections in pool
-            timeout: Socket timeout in seconds
+            pool_size: Maximum connections in pool (default: 50)
+            timeout: Socket timeout in seconds (default: 30)
+            connect_timeout: Connection timeout in seconds (default: 5)
+            pool_timeout: Seconds to wait for available connection (default: 20)
+            socket_keepalive: Enable TCP keepalive (default: True)
+            retry_on_timeout: Retry on timeout errors (default: True)
         """
         if not REDIS_AVAILABLE:
             raise ImportError("redis package not installed. Install with: pip install redis")
@@ -56,8 +87,12 @@ class DragonflyClient:
         self._url = url
         self._pool_size = pool_size
         self._timeout = timeout
-        self._pool: ConnectionPool | None = None
-        self._client: redis.Redis | None = None
+        self._connect_timeout = connect_timeout
+        self._pool_timeout = pool_timeout
+        self._socket_keepalive = socket_keepalive
+        self._retry_on_timeout = retry_on_timeout
+        self._pool = None  # BlockingConnectionPool | None
+        self._client = None  # redis.Redis | None
         self._connected = False
 
     async def connect(self) -> None:
@@ -65,20 +100,53 @@ class DragonflyClient:
         if self._connected:
             return
 
-        self._pool = redis.ConnectionPool.from_url(
-            self._url,
-            max_connections=self._pool_size,
-            socket_timeout=self._timeout,
-            socket_connect_timeout=self._timeout,
-            decode_responses=False,  # Binary data for bitmaps
-        )
-        self._client = redis.Redis(connection_pool=self._pool)
+        # Build pool kwargs
+        pool_kwargs: dict = {
+            "max_connections": self._pool_size,
+            "socket_timeout": self._timeout,
+            "socket_connect_timeout": self._connect_timeout,
+            "timeout": self._pool_timeout,  # BlockingConnectionPool wait timeout
+            "decode_responses": False,  # Binary data for bitmaps
+            "retry_on_timeout": self._retry_on_timeout,
+        }
+
+        # TCP keepalive settings for cloud/NAT environments
+        # Cloud NAT gateways (AWS, GCP) have ~350s idle timeouts
+        if self._socket_keepalive:
+            pool_kwargs["socket_keepalive"] = True
+            # Platform-specific keepalive options
+            try:
+                pool_kwargs["socket_keepalive_options"] = {
+                    socket.TCP_KEEPIDLE: 60,  # Start probes after 60s idle
+                    socket.TCP_KEEPINTVL: 10,  # Probe every 10s
+                    socket.TCP_KEEPCNT: 3,  # 3 failed probes = dead
+                }
+            except AttributeError:
+                # Some platforms (e.g., macOS) may not have all options
+                logger.debug("TCP keepalive options not fully supported on this platform")
+
+        # Use BlockingConnectionPool to wait for available connections
+        # instead of raising "Too many connections" errors
+        self._pool = BlockingConnectionPool.from_url(self._url, **pool_kwargs)
+
+        # Configure retry strategy
+        client_kwargs: dict = {"connection_pool": self._pool}
+        if self._retry_on_timeout:
+            # Exponential backoff retry: 3 retries with backoff
+            retry = Retry(ExponentialBackoff(), retries=3)
+            client_kwargs["retry"] = retry
+            client_kwargs["retry_on_error"] = [ConnectionError, TimeoutError]
+
+        self._client = redis.Redis(**client_kwargs)
 
         # Verify connection
         try:
             await self._client.ping()  # type: ignore[misc]
             self._connected = True
-            logger.info(f"Connected to Dragonfly at {self._safe_url}")
+            logger.info(
+                f"Connected to Dragonfly at {self._safe_url} "
+                f"(pool_size={self._pool_size}, keepalive={self._socket_keepalive})"
+            )
         except Exception as e:
             await self.disconnect()
             raise ConnectionError(f"Failed to connect to Dragonfly: {e}") from e
@@ -138,14 +206,52 @@ class DragonflyClient:
             return {"status": "disconnected"}
         try:
             info = await self._client.info()
-            return {
+            result = {
                 "status": "connected",
                 "version": info.get("redis_version", "unknown"),
                 "used_memory_human": info.get("used_memory_human", "unknown"),
                 "connected_clients": info.get("connected_clients", 0),
             }
+            # Add pool stats
+            result.update(self.get_pool_stats())
+            return result
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    def get_pool_stats(self) -> dict:
+        """Get connection pool statistics.
+
+        Returns:
+            Dict with pool statistics including:
+            - pool_max_connections: Maximum connections configured
+            - pool_current_connections: Current connections in pool
+            - pool_available_connections: Available connections
+            - pool_in_use_connections: Connections currently in use
+        """
+        if not self._pool:
+            return {"pool_status": "not_initialized"}
+
+        try:
+            # BlockingConnectionPool attributes
+            stats = {
+                "pool_status": "active",
+                "pool_max_connections": self._pool_size,
+                "pool_timeout": self._pool_timeout,
+                "socket_keepalive": self._socket_keepalive,
+                "retry_on_timeout": self._retry_on_timeout,
+            }
+
+            # Try to get connection counts (implementation-specific)
+            if hasattr(self._pool, "_available_connections"):
+                stats["pool_available_connections"] = len(self._pool._available_connections)
+            if hasattr(self._pool, "_in_use_connections"):
+                stats["pool_in_use_connections"] = len(self._pool._in_use_connections)
+            if hasattr(self._pool, "max_connections"):
+                stats["pool_max_connections"] = self._pool.max_connections
+
+            return stats
+        except Exception as e:
+            return {"pool_status": "error", "error": str(e)}
 
     async def __aenter__(self) -> "DragonflyClient":
         """Async context manager entry."""

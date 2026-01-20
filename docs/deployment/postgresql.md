@@ -205,18 +205,83 @@ store = SQLAlchemyMetadataStore(
 
 ## Performance Tuning
 
-### Connection Pool Settings
+### Connection Pool Settings (Issue #1075)
 
-Nexus automatically configures connection pooling for PostgreSQL:
+Nexus automatically configures connection pooling for PostgreSQL with production-ready defaults:
 
 ```python
 # Default settings (configured automatically)
 {
-    "pool_size": 5,           # Base pool size
-    "max_overflow": 10,       # Max additional connections
+    "pool_size": 20,          # Base pool size
+    "max_overflow": 30,       # Max additional connections (burst capacity)
     "pool_timeout": 30,       # Seconds to wait for connection
-    "pool_recycle": 3600,     # Recycle connections after 1 hour
+    "pool_recycle": 1800,     # Recycle connections every 30 min
     "pool_pre_ping": True,    # Test connections before use
+    "pool_use_lifo": True,    # LIFO mode for better connection reuse
+}
+```
+
+### Environment Variables
+
+Configure connection pooling via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXUS_DB_POOL_SIZE` | 20 | Base number of connections |
+| `NEXUS_DB_MAX_OVERFLOW` | 30 | Burst capacity above pool_size |
+| `NEXUS_DB_POOL_TIMEOUT` | 30 | Seconds to wait for available connection |
+| `NEXUS_DB_POOL_RECYCLE` | 1800 | Seconds before recycling connections |
+| `NEXUS_DB_STATEMENT_TIMEOUT` | 60000 | Query timeout in milliseconds |
+
+### TCP Keepalive for Cloud Environments
+
+For deployments behind NAT gateways (AWS, GCP), Nexus automatically configures TCP keepalive:
+
+```python
+# Automatically configured for cloud compatibility
+{
+    "keepalives": 1,           # Enable TCP keepalive
+    "keepalives_idle": 60,     # Start probes after 60s idle
+    "keepalives_interval": 10, # Probe every 10s
+    "keepalives_count": 3,     # 3 failed probes = dead connection
+}
+```
+
+This prevents connections from being silently dropped by cloud NAT gateways (which typically have ~350s idle timeouts).
+
+### Pool Sizing Guidelines
+
+The optimal pool size depends on your workload:
+
+```
+optimal_pool_size = (CPU_cores × 2) + spindle_count
+```
+
+For a 4-core server with SSD: ~9-10 active connections is optimal.
+
+For multiple application instances:
+```
+max_per_instance = (database_max_connections × 0.8) / num_instances
+```
+
+### Monitoring Pool Health
+
+Use the `/metrics/pool` endpoint to monitor connection pool utilization:
+
+```bash
+curl http://localhost:2026/metrics/pool
+```
+
+Returns:
+```json
+{
+  "postgres": {
+    "pool_class": "QueuePool",
+    "pool_size": 20,
+    "checked_out": 5,
+    "overflow": 0,
+    "checked_in": 15
+  }
 }
 ```
 

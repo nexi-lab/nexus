@@ -15,8 +15,13 @@ Environment variables:
     NEXUS_CACHE_TIGER_TTL: TTL for Tiger cache entries (default: 3600s)
     NEXUS_CACHE_EMBEDDING_TTL: TTL for embedding cache entries (default: 86400s / 24h)
 
-    NEXUS_DRAGONFLY_POOL_SIZE: Connection pool size (default: 10)
-    NEXUS_DRAGONFLY_TIMEOUT: Connection timeout in seconds (default: 5.0)
+    # Connection Pool Settings (Issue #1075)
+    NEXUS_DRAGONFLY_POOL_SIZE: Max connections in pool (default: 50)
+    NEXUS_DRAGONFLY_TIMEOUT: Socket timeout in seconds (default: 30.0)
+    NEXUS_DRAGONFLY_CONNECT_TIMEOUT: Connection timeout in seconds (default: 5.0)
+    NEXUS_DRAGONFLY_POOL_TIMEOUT: Wait time for available connection (default: 20.0)
+    NEXUS_DRAGONFLY_KEEPALIVE: Enable TCP keepalive (default: true)
+    NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT: Retry on timeout errors (default: true)
 """
 
 import os
@@ -56,14 +61,36 @@ class CacheSettings:
         default_factory=lambda: int(os.environ.get("NEXUS_CACHE_EMBEDDING_TTL", "86400"))
     )
 
-    # Dragonfly connection pool size
+    # Dragonfly connection pool size (Issue #1075: increased from 10 to 50)
     dragonfly_pool_size: int = field(
-        default_factory=lambda: int(os.environ.get("NEXUS_DRAGONFLY_POOL_SIZE", "10"))
+        default_factory=lambda: int(os.environ.get("NEXUS_DRAGONFLY_POOL_SIZE", "50"))
     )
 
-    # Dragonfly connection timeout (seconds)
+    # Dragonfly socket timeout in seconds (Issue #1075: increased from 5 to 30)
     dragonfly_timeout: float = field(
-        default_factory=lambda: float(os.environ.get("NEXUS_DRAGONFLY_TIMEOUT", "5.0"))
+        default_factory=lambda: float(os.environ.get("NEXUS_DRAGONFLY_TIMEOUT", "30.0"))
+    )
+
+    # Dragonfly connection timeout in seconds (Issue #1075)
+    dragonfly_connect_timeout: float = field(
+        default_factory=lambda: float(os.environ.get("NEXUS_DRAGONFLY_CONNECT_TIMEOUT", "5.0"))
+    )
+
+    # Dragonfly pool timeout - wait time for available connection (Issue #1075)
+    dragonfly_pool_timeout: float = field(
+        default_factory=lambda: float(os.environ.get("NEXUS_DRAGONFLY_POOL_TIMEOUT", "20.0"))
+    )
+
+    # Enable TCP keepalive for cloud/NAT environments (Issue #1075)
+    dragonfly_keepalive: bool = field(
+        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_KEEPALIVE", "true").lower()
+        == "true"
+    )
+
+    # Retry on timeout errors (Issue #1075)
+    dragonfly_retry_on_timeout: bool = field(
+        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT", "true").lower()
+        == "true"
     )
 
     # Enable L1 in-memory cache (optional layer before Dragonfly)
@@ -116,6 +143,12 @@ class CacheSettings:
         if self.dragonfly_timeout <= 0:
             raise ValueError("NEXUS_DRAGONFLY_TIMEOUT must be positive")
 
+        if self.dragonfly_connect_timeout <= 0:
+            raise ValueError("NEXUS_DRAGONFLY_CONNECT_TIMEOUT must be positive")
+
+        if self.dragonfly_pool_timeout <= 0:
+            raise ValueError("NEXUS_DRAGONFLY_POOL_TIMEOUT must be positive")
+
     @classmethod
     def from_env(cls) -> "CacheSettings":
         """Create settings from environment variables."""
@@ -140,5 +173,7 @@ class CacheSettings:
             f"tiger_ttl={self.tiger_ttl}s, "
             f"embedding_ttl={self.embedding_ttl}s, "
             f"pool_size={self.dragonfly_pool_size}, "
+            f"pool_timeout={self.dragonfly_pool_timeout}s, "
+            f"keepalive={self.dragonfly_keepalive}, "
             f"l1_enabled={self.enable_l1_cache})"
         )

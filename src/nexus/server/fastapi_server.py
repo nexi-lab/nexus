@@ -296,6 +296,8 @@ class AppState:
         self.search_daemon_enabled: bool = False
         # Directory Grant Expander for large folder grants (Leopard-style)
         self.directory_grant_expander: Any = None
+        # Cache factory for Dragonfly/Redis (Issue #1075)
+        self.cache_factory: Any = None
 
 
 # Global state (set during app creation)
@@ -643,6 +645,24 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
+    # Initialize cache factory for Dragonfly/Redis (Issue #1075)
+    # Provides optimized connection pooling for permission/tiger caches
+    dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
+    if dragonfly_url:
+        try:
+            from nexus.core.cache.factory import init_cache_factory
+            from nexus.core.cache.settings import CacheSettings
+
+            cache_settings = CacheSettings.from_env()
+            _app_state.cache_factory = await init_cache_factory(cache_settings)
+            logger.info(
+                f"Cache factory initialized with Dragonfly "
+                f"(pool_size={cache_settings.dragonfly_pool_size}, "
+                f"keepalive={cache_settings.dragonfly_keepalive})"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to initialize cache factory: {e}")
+
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
     # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
@@ -845,6 +865,14 @@ async def lifespan(_app: FastAPI) -> Any:
         await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
+
+    # Shutdown cache factory (Issue #1075)
+    if hasattr(_app_state, "cache_factory") and _app_state.cache_factory:
+        try:
+            await _app_state.cache_factory.shutdown()
+            logger.info("Cache factory stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down cache factory: {e}")
 
     # Shutdown OpenTelemetry (Issue #764)
     try:
@@ -1351,6 +1379,55 @@ def _register_routes(app: FastAPI) -> None:
             health["unhealthy_backends"] = unhealthy_backends
 
         return health
+
+    # Connection pool metrics endpoint (Issue #1075)
+    @app.get("/metrics/pool", tags=["health"])
+    @limiter.exempt
+    async def pool_metrics() -> dict[str, Any]:
+        """Get database connection pool metrics.
+
+        Returns metrics for PostgreSQL and Redis/Dragonfly connection pools:
+        - pool_size: Base number of connections
+        - checked_out: Connections currently in use
+        - overflow: Connections beyond pool_size
+        - available: Connections ready to use
+
+        Useful for monitoring pool utilization and identifying
+        connection exhaustion issues.
+        """
+        metrics: dict[str, Any] = {}
+
+        # PostgreSQL pool stats from metadata store
+        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+            try:
+                pg_stats = _app_state.nexus_fs.metadata.get_pool_stats()
+                metrics["postgres"] = pg_stats
+            except Exception as e:
+                metrics["postgres"] = {"error": str(e)}
+        else:
+            metrics["postgres"] = {"status": "not_available"}
+
+        # Redis/Dragonfly pool stats from cache factory
+        try:
+            from nexus.core.cache.factory import get_cache_factory
+
+            cache_factory = get_cache_factory()
+            if cache_factory.is_using_dragonfly and cache_factory._dragonfly_client:
+                dragonfly_stats = cache_factory._dragonfly_client.get_pool_stats()
+                dragonfly_info = await cache_factory._dragonfly_client.get_info()
+                metrics["dragonfly"] = {
+                    **dragonfly_stats,
+                    "server_info": dragonfly_info,
+                }
+            else:
+                metrics["dragonfly"] = {"status": "not_configured"}
+        except RuntimeError:
+            # Cache factory not initialized
+            metrics["dragonfly"] = {"status": "not_initialized"}
+        except Exception as e:
+            metrics["dragonfly"] = {"error": str(e)}
+
+        return metrics
 
     # Authentication routes
     try:

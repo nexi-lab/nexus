@@ -746,10 +746,19 @@ class NexusFSSearchMixin:
                                 resource_type="file",
                             )
                             if _accessible_int_ids is not None:
-                                logger.info(
-                                    f"[PREDICATE-PUSHDOWN] Got {len(_accessible_int_ids)} accessible int IDs "
-                                    f"from Tiger cache in {(_time.time() - _pushdown_start) * 1000:.1f}ms"
-                                )
+                                if len(_accessible_int_ids) > 0:
+                                    logger.info(
+                                        f"[PREDICATE-PUSHDOWN] Got {len(_accessible_int_ids)} accessible int IDs "
+                                        f"from Tiger cache in {(_time.time() - _pushdown_start) * 1000:.1f}ms"
+                                    )
+                                else:
+                                    # Empty set could mean no cache data - fall back to normal filtering
+                                    # to avoid incorrectly returning empty results for newly written files
+                                    logger.info(
+                                        "[PREDICATE-PUSHDOWN] Empty int IDs from Tiger cache, "
+                                        "falling back to filter_list()"
+                                    )
+                                    _accessible_int_ids = None
                         except Exception as e:
                             logger.warning(f"[PREDICATE-PUSHDOWN] Failed to get int IDs: {e}")
                             _accessible_int_ids = None

@@ -720,9 +720,10 @@ class NexusFSSearchMixin:
                 # This filters at DB level instead of loading all 16k+ files and filtering in Python
                 import os as _os
 
-                _pushdown_disabled = _os.getenv(
-                    "NEXUS_DISABLE_PREDICATE_PUSHDOWN", ""
-                ).lower() in ("1", "true")
+                _pushdown_disabled = _os.getenv("NEXUS_DISABLE_PREDICATE_PUSHDOWN", "").lower() in (
+                    "1",
+                    "true",
+                )
 
                 if (
                     self._enforce_permissions

@@ -177,6 +177,9 @@ class BM25SSearchResult:
     path_id: str
     score: float
     content_preview: str = ""
+    matched_field: str = (
+        "content"  # Issue #1092: Track which field matched (filename, path, content)
+    )
 
 
 @dataclass
@@ -628,6 +631,43 @@ class BM25SIndex:
             path_filter,
         )
 
+    def _detect_matched_field(self, query: str, path: str, content: str) -> str:  # noqa: ARG002
+        """Detect which field the query primarily matched in.
+
+        Issue #1092: Used for attribute-based ranking.
+
+        Args:
+            query: Search query
+            path: File path
+            content: File content
+
+        Returns:
+            Name of matched field: "filename", "path", or "content"
+        """
+        query_lower = query.lower().strip()
+        query_terms = query_lower.split()
+
+        # Extract filename from path
+        filename = path.split("/")[-1].lower() if path else ""
+        filename_without_ext = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+        # Check filename (highest priority)
+        if query_lower in filename or query_lower in filename_without_ext:
+            return "filename"
+
+        # Check if all query terms appear in filename
+        if query_terms and all(term in filename for term in query_terms):
+            return "filename"
+
+        # Check path (excluding filename)
+        path_lower = path.lower() if path else ""
+        path_without_filename = "/".join(path_lower.split("/")[:-1]) if "/" in path_lower else ""
+        if query_lower in path_without_filename:
+            return "path"
+
+        # Default to content
+        return "content"
+
     def _search_sync(
         self,
         query: str,
@@ -677,12 +717,16 @@ class BM25SIndex:
                     content = self._corpus[idx]
                     preview = content[:200] + "..." if len(content) > 200 else content
 
+                    # Issue #1092: Detect which field matched for attribute ranking
+                    matched_field = self._detect_matched_field(query, path, content)
+
                     search_results.append(
                         BM25SSearchResult(
                             path=path,
                             path_id=path_id,
                             score=float(score),
                             content_preview=preview,
+                            matched_field=matched_field,
                         )
                     )
 

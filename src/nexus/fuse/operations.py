@@ -24,6 +24,16 @@ from nexus.core.virtual_views import (
 )
 from nexus.fuse.cache import FUSECacheManager
 
+# Import readahead for sequential read optimization (Issue #1073)
+try:
+    from nexus.fuse.readahead import ReadaheadConfig, ReadaheadManager
+
+    HAS_READAHEAD = True
+except ImportError:
+    HAS_READAHEAD = False
+    ReadaheadConfig = None  # type: ignore[misc,assignment]
+    ReadaheadManager = None  # type: ignore[misc,assignment]
+
 # Import LocalDiskCache for L2 caching (Issue #1072)
 try:
     from nexus.storage.local_disk_cache import LocalDiskCache, get_local_disk_cache
@@ -143,6 +153,27 @@ class NexusFUSEOperations(Operations):
                 logger.info("[FUSE] L2 LocalDiskCache enabled for faster reads")
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
+
+        # Initialize readahead manager for sequential read optimization (Issue #1073)
+        # Proactively prefetches data to warm L1/L2 caches
+        self._readahead: ReadaheadManager | None = None
+        self._enable_readahead = cache_config.get("readahead_enabled", True)
+        if self._enable_readahead and HAS_READAHEAD and ReadaheadConfig is not None:
+            try:
+                readahead_config = ReadaheadConfig.from_dict(cache_config)
+                self._readahead = ReadaheadManager(
+                    config=readahead_config,
+                    read_func=self._read_range_from_backend,
+                    local_disk_cache=self._local_disk_cache,
+                    content_hash_func=self._get_content_hash,
+                    tenant_id=self._get_tenant_id(),
+                )
+                logger.info(
+                    f"[FUSE] Readahead enabled: buffer={readahead_config.buffer_pool_mb}MB, "
+                    f"workers={readahead_config.prefetch_workers}"
+                )
+            except Exception as e:
+                logger.warning(f"[FUSE] Failed to initialize ReadaheadManager: {e}")
 
     # ============================================================
     # Filesystem Metadata Operations
@@ -426,6 +457,20 @@ class NexusFUSEOperations(Operations):
                 "flags": flags,
             }
 
+            # Trigger prefetch-on-open for readahead (Issue #1073)
+            # This starts fetching file content in parallel before first read
+            if self._readahead and view_type is None:
+                try:
+                    # Get file size for smarter prefetch decisions
+                    file_size = None
+                    if hasattr(self.nexus_fs, "stat"):
+                        stat_result = self.nexus_fs.stat(original_path)
+                        if stat_result:
+                            file_size = stat_result.get("st_size")
+                    self._readahead.on_open(fd, original_path, file_size)
+                except Exception as e:
+                    logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
+
             return fd
         except FuseOSError:
             raise
@@ -439,6 +484,11 @@ class NexusFUSEOperations(Operations):
 
     def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
         """Read file content.
+
+        Read path with readahead optimization (Issue #1073):
+            1. Check readahead buffer for prefetched data (fast path)
+            2. Fall back to cache hierarchy (L1 → L2 → backend)
+            3. Trigger async prefetch if sequential access detected
 
         Args:
             path: File path
@@ -458,8 +508,18 @@ class NexusFUSEOperations(Operations):
             if not file_info:
                 raise FuseOSError(errno.EBADF)
 
-            # Get file content
-            content = self._get_file_content(file_info["path"], file_info["view_type"])
+            original_path = file_info["path"]
+            view_type = file_info["view_type"]
+
+            # Issue #1073: Check readahead buffer first (fast path for sequential reads)
+            # Only use readahead for raw/binary reads (not parsed views)
+            if self._readahead and view_type is None:
+                prefetched = self._readahead.on_read(fh, original_path, offset, size)
+                if prefetched is not None:
+                    return prefetched
+
+            # Standard path: get from cache hierarchy
+            content = self._get_file_content(original_path, view_type)
 
             # Return requested slice
             return content[offset : offset + size]
@@ -531,6 +591,10 @@ class NexusFUSEOperations(Operations):
             if path != original_path:
                 self.cache.invalidate_path(path)
 
+            # Issue #1073: Invalidate readahead buffers (prefetched data is now stale)
+            if self._readahead:
+                self._readahead.invalidate_path(original_path)
+
             return len(data)
         except FuseOSError:
             raise
@@ -544,9 +608,13 @@ class NexusFUSEOperations(Operations):
         """Release (close) a file.
 
         Args:
-            path: File path
+            path: File path (unused, required by FUSE interface)
             fh: File descriptor
         """
+        # Issue #1073: Clean up readahead session for this file handle
+        if self._readahead:
+            self._readahead.on_release(fh)
+
         # Remove from open files
         self.open_files.pop(fh, None)
 
@@ -1068,6 +1136,31 @@ class NexusFUSEOperations(Operations):
             return getattr(self.nexus_fs, "tenant_id", None)
         except Exception:
             return None
+
+    def _read_range_from_backend(self, path: str, offset: int, size: int) -> bytes:
+        """Read a specific range of bytes from the backend.
+
+        Used by ReadaheadManager for prefetching blocks.
+        Reads the full file and returns the requested range.
+
+        Args:
+            path: File path
+            offset: Start offset
+            size: Number of bytes to read
+
+        Returns:
+            Requested bytes (may be less than size if EOF)
+        """
+        try:
+            # Read full file content (uses cache hierarchy)
+            content = self._get_file_content(path, None)
+
+            # Return requested range
+            end = min(offset + size, len(content))
+            return content[offset:end]
+        except Exception as e:
+            logger.warning(f"[FUSE-READAHEAD] Failed to read {path}:{offset}+{size}: {e}")
+            return b""
 
     def _get_from_local_disk_cache(self, path: str) -> bytes | None:
         """Get content from L2 local disk cache.

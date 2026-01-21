@@ -614,6 +614,7 @@ class NexusFSSearchMixin:
         _preapproved_dirs: set[str] = (
             set()
         )  # Dirs approved by has_accessible_descendants() in fast path
+        _accessible_int_ids: set[int] | None = None  # Issue #1030: Predicate pushdown int IDs
 
         if prefix is not None:
             # Old API: list(prefix="/path") - always recursive
@@ -715,11 +716,68 @@ class NexusFSSearchMixin:
                     )
 
             if not _use_fast_path:
+                # Issue #1030: Predicate pushdown - get accessible int IDs from Tiger cache BEFORE DB query
+                # This filters at DB level instead of loading all 16k+ files and filtering in Python
+                import os as _os
+
+                _pushdown_disabled = _os.getenv("NEXUS_DISABLE_PREDICATE_PUSHDOWN", "").lower() in (
+                    "1",
+                    "true",
+                )
+
+                if (
+                    self._enforce_permissions
+                    and subject_type
+                    and subject_id
+                    and not _pushdown_disabled
+                ):
+                    _pushdown_start = _time.time()
+                    tiger_cache = getattr(
+                        getattr(self._permission_enforcer, "rebac_manager", None),
+                        "_tiger_cache",
+                        None,
+                    )
+                    if tiger_cache is not None:
+                        try:
+                            _accessible_int_ids = tiger_cache.get_accessible_int_ids(
+                                subject_type=subject_type,
+                                subject_id=subject_id,
+                                permission="read",
+                                resource_type="file",
+                            )
+                            if _accessible_int_ids is not None:
+                                if len(_accessible_int_ids) > 0:
+                                    logger.info(
+                                        f"[PREDICATE-PUSHDOWN] Got {len(_accessible_int_ids)} accessible int IDs "
+                                        f"from Tiger cache in {(_time.time() - _pushdown_start) * 1000:.1f}ms"
+                                    )
+                                else:
+                                    # Empty set could mean no cache data - fall back to normal filtering
+                                    # to avoid incorrectly returning empty results for newly written files
+                                    logger.info(
+                                        "[PREDICATE-PUSHDOWN] Empty int IDs from Tiger cache, "
+                                        "falling back to filter_list()"
+                                    )
+                                    _accessible_int_ids = None
+                        except Exception as e:
+                            logger.warning(f"[PREDICATE-PUSHDOWN] Failed to get int IDs: {e}")
+                            _accessible_int_ids = None
+
                 # Fallback: full recursive scan for permission filtering
                 _meta_start = _time.time()
-                all_files = self.metadata.list(list_prefix, tenant_id=list_tenant_id)
+                all_files = self.metadata.list(
+                    list_prefix,
+                    tenant_id=list_tenant_id,
+                    accessible_int_ids=_accessible_int_ids,
+                )
+                _pushdown_info = (
+                    f" (pushdown: {len(_accessible_int_ids)} int IDs)"
+                    if _accessible_int_ids
+                    else ""
+                )
                 logger.info(
-                    f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                    f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
+                    f"{len(all_files)} files{_pushdown_info}"
                 )
                 # Debug: show sample paths from fallback
                 sample_paths = [m.path for m in all_files[:5]]
@@ -807,9 +865,19 @@ class NexusFSSearchMixin:
             )
 
             # Step 2: SINGLE permission filter call
+            # Issue #1030: Skip filter_list() if predicate pushdown was used (already filtered at DB level)
             filter_start = time.time()
-            allowed_list = self._permission_enforcer.filter_list(list(candidate_paths), ctx)
-            allowed_set = set(allowed_list)
+            if _accessible_int_ids is not None:
+                # Predicate pushdown was used - all_files is already filtered
+                # Just use all paths from the DB query as allowed
+                allowed_set = {meta.path for meta in all_files}
+                logger.info(
+                    f"[PREDICATE-PUSHDOWN] Skipped filter_list() - using {len(allowed_set)} pre-filtered paths from DB"
+                )
+            else:
+                # No predicate pushdown - use filter_list() for permission check
+                allowed_list = self._permission_enforcer.filter_list(list(candidate_paths), ctx)
+                allowed_set = set(allowed_list)
             filter_elapsed = time.time() - filter_start
 
             # Add pre-approved directories from fast path (already checked has_accessible_descendants)

@@ -3503,6 +3503,91 @@ class TigerCacheQueueModel(Base):
         )
 
 
+class TigerDirectoryGrantsModel(Base):
+    """Tracks directory-level permission grants for Leopard-style expansion.
+
+    When permission is granted on a directory, this table records it so:
+    1. Pre-materialization: Expand grant to all descendants
+    2. New file integration: When file created, inherit from ancestor directories
+    3. Move handling: When file moves, update based on old/new ancestors
+
+    Related: Issue #1089 (Leopard-style directory grant pre-materialization)
+    """
+
+    __tablename__ = "tiger_directory_grants"
+
+    # Primary key (BigInteger for PostgreSQL compatibility)
+    grant_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Subject (who has access)
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Permission type (read, write, execute)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Directory path that was granted (e.g., /workspace/project/)
+    directory_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Revision at time of grant (for consistency)
+    grant_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    # Whether to include files created after the grant
+    include_future_files: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Expansion status: pending, in_progress, completed, failed
+    expansion_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+
+    # Progress tracking
+    expanded_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Error info if expansion failed
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        # Unique constraint: one grant per (subject, permission, directory, tenant)
+        UniqueConstraint(
+            "tenant_id",
+            "directory_path",
+            "permission",
+            "subject_type",
+            "subject_id",
+            name="uq_tiger_directory_grants",
+        ),
+        # Index for finding grants by path prefix (for new file integration)
+        Index("idx_tiger_dir_grants_path_prefix", "tenant_id", "directory_path"),
+        # Index for finding grants by subject (for cache invalidation)
+        Index("idx_tiger_dir_grants_subject", "tenant_id", "subject_type", "subject_id"),
+        # Index for pending expansions (for background worker)
+        Index("idx_tiger_dir_grants_pending", "expansion_status", "created_at"),
+        # Index for permission lookups
+        Index("idx_tiger_dir_grants_lookup", "tenant_id", "directory_path", "permission"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TigerDirectoryGrantsModel(grant_id={self.grant_id}, "
+            f"{self.subject_type}:{self.subject_id}, "
+            f"dir={self.directory_path}, status={self.expansion_status})>"
+        )
+
+
 # ==============================================================================
 # Share Link Models (Issue #227)
 # ==============================================================================

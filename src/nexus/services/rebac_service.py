@@ -113,8 +113,8 @@ class ReBACService:
         tenant_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
-    ) -> str:
-        """Create a ReBAC relationship tuple.
+    ) -> dict[str, Any]:
+        """Create a ReBAC relationship tuple (Issue #1081).
 
         Args:
             subject: Subject tuple (type, id) e.g., ("user", "alice")
@@ -132,7 +132,8 @@ class ReBACService:
                           }
 
         Returns:
-            Tuple ID (UUID string)
+            Dict with tuple_id, revision, and consistency_token (Issue #1081).
+            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
 
         Raises:
             PermissionError: If caller lacks permission to grant
@@ -171,7 +172,7 @@ class ReBACService:
             - Logged for audit trail
         """
 
-        def _create_sync() -> str:
+        def _create_sync() -> dict[str, Any]:
             """Synchronous implementation for thread pool execution."""
             if not self._rebac_manager:
                 raise RuntimeError(
@@ -310,7 +311,12 @@ class ReBACService:
                     expires_at,
                 )
 
-            return result
+            # Issue #1081: Return dict with WriteResult fields for API serialization
+            return {
+                "tuple_id": result.tuple_id,
+                "revision": result.revision,
+                "consistency_token": result.consistency_token,
+            }
 
         # Run in thread pool since _rebac_manager operations may block
         import asyncio
@@ -325,13 +331,16 @@ class ReBACService:
         object: tuple[str, str],
         context: Any = None,
         tenant_id: str | None = None,
+        consistency_mode: str | None = None,  # Issue #1081
+        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object.
+        """Check if subject has permission on object (Issue #1081).
 
         Uses relationship graph traversal to determine access, supporting both
         direct relationships and inherited permissions through group membership.
 
-        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.).
+        Supports ABAC-style contextual conditions (time windows, IP allowlists, etc.)
+        and per-request consistency modes aligned with SpiceDB/Zanzibar.
 
         Args:
             subject: Subject tuple e.g., ("user", "alice")
@@ -339,6 +348,11 @@ class ReBACService:
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
             tenant_id: Tenant ID for multi-tenant isolation
+            consistency_mode: Per-request consistency mode (Issue #1081):
+                - "minimize_latency" (default): Use cache for fastest response
+                - "at_least_as_fresh": Cache must be >= min_revision
+                - "fully_consistent": Bypass cache entirely
+            min_revision: Minimum acceptable revision (required for at_least_as_fresh)
 
         Returns:
             True if permission granted, False otherwise
@@ -348,26 +362,28 @@ class ReBACService:
             RuntimeError: If ReBAC manager not available
 
         Examples:
-            # Check read access
+            # Check read access (default: minimize_latency)
             can_read = await rebac.rebac_check(
                 subject=("user", "alice"),
                 permission="read",
                 object=("file", "/doc.txt")
             )
 
-            # Check ownership
-            is_owner = await rebac.rebac_check(
-                subject=("user", "bob"),
-                permission="owner",
-                object=("workspace", "/ws")
+            # Check after a write with read-your-writes guarantee
+            can_read = await rebac.rebac_check(
+                subject=("user", "alice"),
+                permission="read",
+                object=("file", "/doc.txt"),
+                consistency_mode="at_least_as_fresh",
+                min_revision=123  # From previous write result
             )
 
-            # ABAC check with time window
+            # Security audit: bypass all caches
             can_read = await rebac.rebac_check(
-                subject=("user", "contractor"),
+                subject=("user", "alice"),
                 permission="read",
-                object=("file", "/sensitive.txt"),
-                context={"time": "14:30", "ip": "10.0.1.5"}
+                object=("file", "/doc.txt"),
+                consistency_mode="fully_consistent"
             )
         """
 
@@ -393,13 +409,30 @@ class ReBACService:
                 elif hasattr(context, "tenant_id"):
                     effective_tenant_id = context.tenant_id
 
-            # Check permission with optional ABAC context
+            # Issue #1081: Build consistency requirement from API params
+            consistency = None
+            if consistency_mode or min_revision is not None:
+                from nexus.core.rebac_manager_enhanced import (
+                    ConsistencyMode,
+                    ConsistencyRequirement,
+                )
+
+                mode = ConsistencyMode.MINIMIZE_LATENCY
+                if consistency_mode == "at_least_as_fresh":
+                    mode = ConsistencyMode.AT_LEAST_AS_FRESH
+                elif consistency_mode == "fully_consistent":
+                    mode = ConsistencyMode.FULLY_CONSISTENT
+
+                consistency = ConsistencyRequirement(mode=mode, min_revision=min_revision)
+
+            # Check permission with optional ABAC context and consistency
             result = self._rebac_manager.rebac_check(
                 subject=subject,
                 permission=permission,
                 object=object,
                 context=context,
                 tenant_id=effective_tenant_id,
+                consistency=consistency,
             )
 
             # TODO: Unix-like TRAVERSE behavior fallback

@@ -552,12 +552,56 @@ class RebacCreateParams:
 
 @dataclass
 class RebacCheckParams:
-    """Parameters for rebac_check() method."""
+    """Parameters for rebac_check() method (Issue #1081).
+
+    Supports per-request consistency modes aligned with SpiceDB/Zanzibar.
+    """
 
     subject: tuple[str, str]
     permission: str
     object: tuple[str, str]
     tenant_id: str | None = None
+    # Issue #1081: Per-request consistency control
+    consistency_mode: str | None = (
+        None  # "minimize_latency" | "at_least_as_fresh" | "fully_consistent"
+    )
+    min_revision: int | None = None  # Required for at_least_as_fresh mode
+
+
+@dataclass
+class RebacCheckResult:
+    """Result of rebac_check() with consistency metadata (Issue #1081).
+
+    Following the SpiceDB/Zanzibar pattern, check results include
+    consistency metadata for debugging and verification.
+    """
+
+    allowed: bool
+    consistency_token: str  # Opaque token (e.g., "v123")
+    cached: bool  # Whether result came from cache
+    decision_time_ms: float  # Time to compute decision
+
+
+@dataclass
+class RebacCreateResult:
+    """Result of rebac_create() with consistency metadata (Issue #1081).
+
+    Following the Zanzibar zookie pattern, writes return a consistency token
+    that can be used for subsequent read-your-writes queries.
+
+    Example:
+        result = nx.rebac_create(subject, relation, object)
+        # Use result.revision for immediate verification
+        allowed = nx.rebac_check(
+            subject, permission, object,
+            consistency_mode="at_least_as_fresh",
+            min_revision=result.revision
+        )
+    """
+
+    tuple_id: str  # UUID of created relationship
+    revision: int  # Revision number (for min_revision in subsequent checks)
+    consistency_token: str  # Opaque token (e.g., "v123")
 
 
 @dataclass

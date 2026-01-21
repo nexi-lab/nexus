@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.rebac_manager_enhanced import WriteResult
 
 PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
 
@@ -114,14 +115,15 @@ class TestRebacCreate:
 
     def test_rebac_create_basic(self, nx: NexusFS) -> None:
         """Test creating a basic relationship tuple."""
-        tuple_id = nx.rebac_create(
+        result = nx.rebac_create(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
         )
 
-        assert tuple_id is not None
-        assert isinstance(tuple_id, str)
+        assert result is not None
+        assert isinstance(result, WriteResult)
+        assert isinstance(result.tuple_id, str)
 
     def test_rebac_create_with_tenant(self, nx: NexusFS) -> None:
         """Test creating relationship with tenant_id."""
@@ -320,14 +322,14 @@ class TestRebacDelete:
 
     def test_rebac_delete_existing_tuple(self, nx: NexusFS) -> None:
         """Test deleting an existing tuple."""
-        tuple_id = nx.rebac_create(
+        write_result = nx.rebac_create(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
         )
 
         # Delete the tuple
-        deleted = nx.rebac_delete(tuple_id)
+        deleted = nx.rebac_delete(write_result.tuple_id)
         assert deleted is True
 
         # Check permission should now fail

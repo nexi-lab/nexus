@@ -23,6 +23,7 @@ import click
 from nexus.cli.commands import (
     admin,
     agent,
+    cache,
     connectors,
     directory,
     file_ops,
@@ -71,6 +72,7 @@ def register_all_commands(cli: click.Group) -> None:
     connectors.register_commands(cli)  # Issue #528: Connector registry
     llm.register_commands(cli)  # v0.4.0: LLM document reading commands
     mcp.register_commands(cli)  # v0.7.0: MCP server commands
+    cache.register_commands(cli)  # Issue #1076: Cache warmup commands
     cli.add_command(memory.memory)  # v0.4.0: Memory API commands (includes ACE trajectory/playbook)
     cli.add_command(agent.agent)  # v0.5.0: Agent management commands
     cli.add_command(admin.admin)  # v0.5.1: Admin API commands for user management
@@ -83,6 +85,7 @@ __all__ = [
     "register_all_commands",
     "admin",
     "agent",
+    "cache",
     "connectors",
     "file_ops",
     "directory",

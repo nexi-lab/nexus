@@ -520,6 +520,25 @@ class DockerSandboxProvider(SandboxProvider):
                 "files_visible": 0,
             }
 
+        # Enable user_allow_other in /etc/fuse.conf for --allow-other to work
+        # Note: Use ^user_allow_other to only match uncommented lines
+        logger.info("[MOUNT-STEP-2b] Configuring FUSE to allow other users...")
+        fuse_conf_cmd = (
+            "grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || "
+            "echo 'user_allow_other' | sudo tee -a /etc/fuse.conf > /dev/null"
+        )
+        fuse_conf_result = await asyncio.to_thread(
+            container.exec_run,
+            ["sh", "-c", fuse_conf_cmd],
+        )
+        if fuse_conf_result.exit_code != 0:
+            logger.warning(
+                f"[MOUNT-STEP-2b] Failed to configure FUSE (continuing anyway): "
+                f"{fuse_conf_result.output.decode() if fuse_conf_result.output else ''}"
+            )
+        else:
+            logger.info("[MOUNT-STEP-2b] FUSE configured for user_allow_other")
+
         # Check if nexus CLI is available
         logger.info("[MOUNT-STEP-3] Checking for nexus CLI...")
         start_time = time.time()
@@ -568,12 +587,15 @@ class DockerSandboxProvider(SandboxProvider):
             f"sudo NEXUS_API_KEY={api_key} "
             f"nexus mount {mount_path} "
             f"--remote-url {nexus_url} "
-            f"--allow-other"
+            f"--allow-other "
+            f"--daemon"  # Run in daemon mode so it doesn't block
         )
         # Add agent-id for version attribution (issue #418)
         if agent_id:
             base_mount += f" --agent-id {agent_id}"
-        mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
+        # Note: --daemon flag handles proper daemonization with double-fork
+        # The daemon writes its own log file, so we just capture any startup output
+        mount_cmd = f"{base_mount} 2>&1"
         logger.info(f"[MOUNT-STEP-4] Mount command: {mount_cmd}")
 
         # Run mount in background (wrap in shell)
@@ -655,10 +677,11 @@ class DockerSandboxProvider(SandboxProvider):
             ls_result = None
 
         # Check mount log for success message
+        # Note: --daemon mode creates timestamped log files like /tmp/nexus-mount-*.log
         logger.info("[MOUNT-STEP-6] Checking mount log for success message...")
         log_check = await asyncio.to_thread(
             container.exec_run,
-            "cat /tmp/nexus-mount.log 2>/dev/null || echo 'log not found'",  # Use cat instead of tail, handle missing file
+            "cat /tmp/nexus-mount-*.log 2>/dev/null | tail -50 || echo 'log not found'",
         )
         mount_log_shows_success = False
         if log_check.exit_code == 0 and log_check.output:

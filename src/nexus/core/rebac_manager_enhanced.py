@@ -57,11 +57,114 @@ class ConsistencyLevel(Enum):
     - EVENTUAL: Use cache (up to 5min staleness), fastest
     - BOUNDED: Max 1s staleness
     - STRONG: Bypass cache, fresh read, slowest but most accurate
+
+    Note: For new code, prefer ConsistencyMode with ConsistencyRequirement
+    which aligns with SpiceDB/Zanzibar naming conventions.
     """
 
     EVENTUAL = "eventual"  # Use cache (5min staleness)
     BOUNDED = "bounded"  # Max 1s staleness
     STRONG = "strong"  # Bypass cache, fresh read
+
+
+class ConsistencyMode(Enum):
+    """Per-request consistency modes aligned with SpiceDB/Zanzibar (Issue #1081).
+
+    Provides fine-grained control over cache behavior on a per-request basis,
+    following industry best practices from Google Zanzibar and SpiceDB.
+
+    Modes:
+    - MINIMIZE_LATENCY: Use cache for fastest response (~99% of requests)
+    - AT_LEAST_AS_FRESH: Cache must be >= min_revision (read-after-write)
+    - FULLY_CONSISTENT: Bypass cache entirely (security audits, <1% of requests)
+
+    See:
+    - https://authzed.com/docs/spicedb/concepts/consistency
+    - https://www.usenix.org/system/files/atc19-pang.pdf (Zanzibar paper)
+    """
+
+    MINIMIZE_LATENCY = "minimize_latency"  # Default: use cache, fastest
+    AT_LEAST_AS_FRESH = "at_least_as_fresh"  # Cache if revision >= min_revision
+    FULLY_CONSISTENT = "fully_consistent"  # Bypass cache, slowest but freshest
+
+
+@dataclass(slots=True)
+class ConsistencyRequirement:
+    """Per-request consistency requirement (Issue #1081).
+
+    Combines a consistency mode with optional parameters like min_revision.
+    This follows the SpiceDB/Zanzibar pattern for per-request consistency control.
+
+    Examples:
+        # Default: maximize cache usage (99% of requests)
+        ConsistencyRequirement()
+
+        # Read-after-write: ensure we see a recent write
+        ConsistencyRequirement(
+            mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+            min_revision=write_result.revision
+        )
+
+        # Security audit: bypass all caches
+        ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
+
+    Attributes:
+        mode: The consistency mode to use
+        min_revision: Required for AT_LEAST_AS_FRESH - minimum acceptable revision
+    """
+
+    mode: ConsistencyMode = ConsistencyMode.MINIMIZE_LATENCY
+    min_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate consistency requirement."""
+        if self.mode == ConsistencyMode.AT_LEAST_AS_FRESH and self.min_revision is None:
+            raise ValueError(
+                "min_revision is required for AT_LEAST_AS_FRESH mode. "
+                "Pass the revision from a previous write operation."
+            )
+
+    def to_legacy_level(self) -> ConsistencyLevel:
+        """Convert to legacy ConsistencyLevel for backward compatibility."""
+        if self.mode == ConsistencyMode.FULLY_CONSISTENT:
+            return ConsistencyLevel.STRONG
+        elif self.mode == ConsistencyMode.AT_LEAST_AS_FRESH:
+            return ConsistencyLevel.BOUNDED
+        else:
+            return ConsistencyLevel.EVENTUAL
+
+
+@dataclass(slots=True)
+class WriteResult:
+    """Result of a permission write with consistency metadata (Issue #1081).
+
+    Following the Zanzibar zookie pattern, writes return a consistency token
+    that can be used for subsequent read-your-writes queries.
+
+    Example:
+        # Write a permission
+        result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+
+        # Immediately check with read-your-writes guarantee
+        allowed = manager.rebac_check(
+            subject, permission, object,
+            consistency=ConsistencyRequirement(
+                mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                min_revision=result.revision
+            )
+        )
+
+    Attributes:
+        tuple_id: UUID of the created relationship tuple
+        revision: The revision number after this write (for AT_LEAST_AS_FRESH)
+        consistency_token: Opaque token encoding the revision (for clients)
+        written_at_ms: Timestamp when write was persisted (epoch ms)
+    """
+
+    tuple_id: str
+    revision: int
+    consistency_token: str
+    written_at_ms: float
 
 
 @dataclass(slots=True)
@@ -283,9 +386,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
+        consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
-        """Check permission with explicit consistency level (P0-1).
+        """Check permission with explicit consistency control (P0-1, Issue #1081).
+
+        Supports both legacy ConsistencyLevel and new ConsistencyRequirement.
+        The new ConsistencyRequirement enables SpiceDB/Zanzibar-style per-request
+        consistency modes including AT_LEAST_AS_FRESH for read-your-writes.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -293,14 +400,55 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             tenant_id: Tenant ID to scope check
-            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
+            consistency: Consistency control, one of:
+                - None: Uses EVENTUAL/MINIMIZE_LATENCY (default, fastest)
+                - ConsistencyLevel.EVENTUAL: Use cache (up to 5min staleness)
+                - ConsistencyLevel.BOUNDED: Max 1s staleness
+                - ConsistencyLevel.STRONG: Bypass cache entirely
+                - ConsistencyRequirement(mode=MINIMIZE_LATENCY): Same as EVENTUAL
+                - ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=N):
+                    Use cache only if revision >= N (for read-your-writes)
+                - ConsistencyRequirement(mode=FULLY_CONSISTENT): Same as STRONG
 
         Returns:
             True if permission is granted, False otherwise
 
         Raises:
             GraphLimitExceeded: If graph traversal exceeds limits (P0-5)
+
+        Example:
+            # Default: maximize cache usage
+            result = manager.rebac_check(subject, permission, object)
+
+            # After a write, ensure we see the new permission
+            write_result = manager.rebac_write(subject, relation, object, ...)
+            result = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(
+                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                    min_revision=write_result.revision
+                )
+            )
+
+            # Security audit: bypass all caches
+            result = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
+            )
         """
+        # Issue #1081: Normalize consistency parameter
+        consistency_level: ConsistencyLevel
+        min_revision: int | None = None
+
+        if consistency is None:
+            consistency_level = ConsistencyLevel.EVENTUAL
+        elif isinstance(consistency, ConsistencyRequirement):
+            # New-style ConsistencyRequirement
+            consistency_level = consistency.to_legacy_level()
+            min_revision = consistency.min_revision
+        else:
+            # Legacy ConsistencyLevel
+            consistency_level = consistency
         import logging
 
         logger = logging.getLogger(__name__)
@@ -375,7 +523,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger.debug("  -> Using rebac_check_detailed")
         detailed_result = self.rebac_check_detailed(
-            subject, permission, object, context, tenant_id, consistency
+            subject, permission, object, context, tenant_id, consistency_level, min_revision
         )
         logger.debug(
             f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
@@ -544,8 +692,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         context: dict[str, Any] | None = None,
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
+        min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
-        """Check permission with detailed result metadata (P0-1).
+        """Check permission with detailed result metadata (P0-1, Issue #1081).
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -553,7 +702,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             tenant_id: Tenant ID to scope check
-            consistency: Consistency level
+            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
+            min_revision: Minimum acceptable revision for AT_LEAST_AS_FRESH mode.
+                When provided with BOUNDED consistency, cache will only be used
+                if the cached entry was created at revision >= min_revision.
 
         Returns:
             CheckResult with consistency metadata and traversal stats
@@ -638,10 +790,29 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
 
         elif consistency == ConsistencyLevel.BOUNDED:
-            # Bounded consistency: Max 1s staleness
-            cached = self._get_cached_check_tenant_aware_bounded(
-                subject_entity, permission, object_entity, tenant_id, max_age_seconds=1
-            )
+            # Bounded consistency: Max 1s staleness OR revision-based (Issue #1081)
+            # If min_revision is provided, use revision-based check (AT_LEAST_AS_FRESH)
+            # Otherwise fall back to time-based check
+            cached = None
+            cached_revision = 0
+
+            if min_revision is not None and self._l1_cache:
+                # Issue #1081: AT_LEAST_AS_FRESH mode - check cache with revision constraint
+                cached, cached_revision = self._l1_cache.get_with_revision_check(
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    permission,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    tenant_id,
+                    min_revision,
+                )
+            else:
+                # Legacy time-based bounded check
+                cached = self._get_cached_check_tenant_aware_bounded(
+                    subject_entity, permission, object_entity, tenant_id, max_age_seconds=1
+                )
+
             if cached is not None:
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
@@ -649,11 +820,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     consistency_token=self._get_version_token(tenant_id),
                     decision_time_ms=decision_time_ms,
                     cached=True,
-                    cache_age_ms=None,  # Within 1s bound
+                    cache_age_ms=None,  # Within staleness bound
                     traversal_stats=None,
                 )
 
-            # Cache miss or too old - compute fresh
+            # Cache miss or too old/stale - compute fresh
             stats = TraversalStats()
             limit_error = None
             try:
@@ -1230,7 +1401,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             except Exception as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
 
-    def rebac_write(
+    def rebac_write(  # type: ignore[override]  # Issue #1081: Returns WriteResult instead of str
         self,
         subject: tuple[str, str] | tuple[str, str, str],
         relation: str,
@@ -1240,10 +1411,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
         object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
-    ) -> str:
-        """Create a relationship tuple with cache invalidation.
+    ) -> WriteResult:
+        """Create a relationship tuple with cache invalidation (Issue #1081).
 
         Overrides parent to invalidate the tenant graph cache after writes.
+        Returns a WriteResult with consistency metadata for read-your-writes.
 
         Args:
             subject: (subject_type, subject_id) or (subject_type, subject_id, subject_relation) tuple
@@ -1256,8 +1428,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object_tenant_id: Object's tenant
 
         Returns:
-            Tuple ID of created relationship
+            WriteResult with tuple_id, revision, and consistency_token.
+            Use the revision with ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=...)
+            for read-your-writes consistency.
+
+        Example:
+            # Write and immediately check with read-your-writes guarantee
+            result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+            allowed = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(
+                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                    min_revision=result.revision
+                )
+            )
         """
+        write_start = time.perf_counter()
         # Issue #773: Default subject_tenant_id and object_tenant_id to tenant_id
         effective_subject_tenant = subject_tenant_id if subject_tenant_id is not None else tenant_id
         effective_object_tenant = object_tenant_id if object_tenant_id is not None else tenant_id
@@ -1389,7 +1575,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
             self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
 
-        return result
+        # Issue #1081: Get revision for consistency token (Zanzibar zookie pattern)
+        revision = self._get_tenant_revision_for_grant(effective_tenant)
+        write_time_ms = (time.perf_counter() - write_start) * 1000
+
+        return WriteResult(
+            tuple_id=result,
+            revision=revision,
+            consistency_token=f"v{revision}",
+            written_at_ms=write_time_ms,
+        )
 
     def rebac_write_batch(
         self,

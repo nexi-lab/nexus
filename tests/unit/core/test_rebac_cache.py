@@ -401,7 +401,7 @@ class TestXFetchAlgorithm:
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
         metadata = cache._entry_metadata.get(key)
         assert metadata is not None
-        assert len(metadata) == 3  # (created_at, jittered_ttl, delta)
+        assert len(metadata) == 4  # (created_at, jittered_ttl, delta, revision)
         assert metadata[2] == 0.05  # delta
 
     def test_set_default_delta_zero(self):
@@ -465,8 +465,8 @@ class TestXFetchAlgorithm:
 
         # Simulate entry that is 58 seconds old (2 seconds remaining)
         now = time.time()
-        cache1._entry_metadata[key1] = (now - 58, 60.0, 0.5)
-        cache2._entry_metadata[key2] = (now - 58, 60.0, 5.0)
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 0.5, 0)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 5.0, 0)
 
         # Run many iterations
         refresh_count1 = 0
@@ -498,8 +498,8 @@ class TestXFetchAlgorithm:
 
         # Simulate entry that is 58 seconds old (2 seconds remaining)
         now = time.time()
-        cache1._entry_metadata[key1] = (now - 58, 60.0, 2.0)
-        cache2._entry_metadata[key2] = (now - 58, 60.0, 2.0)
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 2.0, 0)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 2.0, 0)
 
         # Run many iterations
         refresh_count1 = 0
@@ -527,11 +527,11 @@ class TestXFetchAlgorithm:
 
         # Before refresh threshold (70% of TTL = 42 seconds)
         now = time.time()
-        cache._entry_metadata[key] = (now - 30, 60.0, 0.0)  # 30s old
+        cache._entry_metadata[key] = (now - 30, 60.0, 0.0, 0)  # 30s old
         assert cache._should_refresh_xfetch(key) is False
 
         # After refresh threshold
-        cache._entry_metadata[key] = (now - 45, 60.0, 0.0)  # 45s old
+        cache._entry_metadata[key] = (now - 45, 60.0, 0.0, 0)  # 45s old
         assert cache._should_refresh_xfetch(key) is True
 
     def test_get_with_refresh_check_tracks_xfetch(self):
@@ -548,7 +548,7 @@ class TestXFetchAlgorithm:
         # With delta=5.0 and beta=1.0, E[refresh_factor] = 5.0
         # So with 2 seconds remaining, we should trigger frequently
         now = time.time()
-        cache._entry_metadata[key] = (now - 58, 60.0, 5.0)  # 58s old, 2s remaining
+        cache._entry_metadata[key] = (now - 58, 60.0, 5.0, 0)  # 58s old, 2s remaining
 
         # Should trigger refresh at least sometimes
         refresh_triggered = False
@@ -623,7 +623,7 @@ class TestXFetchAlgorithm:
         # Simulate near expiry
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
         now = time.time()
-        cache._entry_metadata[key] = (now - 55, 60.0, 0.1)
+        cache._entry_metadata[key] = (now - 55, 60.0, 0.1, 0)
 
         # Run many iterations with different betas
         refresh_beta_low = 0
@@ -733,7 +733,7 @@ class TestIssue1077TieredTTL:
 
         # Verify metadata uses owner TTL (with jitter)
         key = cache._make_key("agent", "alice", "manage", "file", "/doc.txt", None)
-        _, jittered_ttl, _ = cache._entry_metadata[key]
+        _, jittered_ttl, _, _ = cache._entry_metadata[key]
         # TTL should be around 3600 (±20% jitter)
         assert 2880 <= jittered_ttl <= 4320  # 3600 ± 20%
 
@@ -751,7 +751,7 @@ class TestIssue1077TieredTTL:
 
         # Verify metadata uses inherited TTL (not owner TTL)
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
-        _, jittered_ttl, _ = cache._entry_metadata[key]
+        _, jittered_ttl, _, _ = cache._entry_metadata[key]
         # TTL should be around 300 (inherited), not 3600 (owner)
         assert 240 <= jittered_ttl <= 360  # 300 ± 20%
 

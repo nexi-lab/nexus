@@ -2467,8 +2467,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         tenant_id: str | None = None,  # Auto-filled from auth if None
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
         context: dict[str, Any] | None = None,  # Operation context for permission checks
-    ) -> str:
-        """Create a ReBAC relationship tuple.
+    ) -> dict[str, Any]:
+        """Create a ReBAC relationship tuple (Issue #1081).
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
@@ -2481,37 +2481,33 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                           Only applies to CSV files.
                           Structure: {
                               "hidden_columns": ["password", "ssn"],  # Completely hide these columns
-                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values (single operation per column)
-                              "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
+                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values
+                              "visible_columns": ["name", "email"]  # Show raw data
                           }
-                          Note: A column can only appear in one category (hidden, aggregations, or visible)
-            context: Optional operation context for permission checks. Used to verify
-                    the caller has 'execute' permission on file objects before granting
-                    permissions to others.
+            context: Optional operation context for permission checks.
 
         Returns:
-            Tuple ID of created relationship
+            Dict with tuple_id, revision, and consistency_token (Issue #1081).
+            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
 
         Examples:
-            >>> nx.rebac_create(
+            >>> result = nx.rebac_create(
             ...     subject=("agent", "alice"),
-            ...     relation="member-of",
-            ...     object=("group", "developers")
+            ...     relation="viewer",
+            ...     object=("file", "/doc.txt")
             ... )
-            'uuid-string'
+            >>> result
+            {'tuple_id': 'uuid-string', 'revision': 123, 'consistency_token': 'v123'}
 
-            >>> # Dynamic viewer with column-level permissions for CSV files
-            >>> nx.rebac_create(
+            >>> # Immediately verify with read-your-writes guarantee
+            >>> nx.rebac_check(
             ...     subject=("agent", "alice"),
-            ...     relation="dynamic_viewer",
-            ...     object=("file", "/data/users.csv"),
-            ...     column_config={
-            ...         "hidden_columns": ["password", "ssn"],
-            ...         "aggregations": {"age": "mean", "salary": "sum"},
-            ...         "visible_columns": ["name", "email"]
-            ...     }
+            ...     permission="read",
+            ...     object=("file", "/doc.txt"),
+            ...     consistency_mode="at_least_as_fresh",
+            ...     min_revision=result["revision"]
             ... )
-            'uuid-string'
+            True
         """
         # Use tenant_id from auth if not specified
         effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
@@ -2536,25 +2532,54 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         permission: str,
         object: tuple[str, str],
         tenant_id: str | None = None,  # Auto-filled from auth if None
+        consistency_mode: str | None = None,  # Issue #1081
+        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object via ReBAC.
+        """Check if subject has permission on object via ReBAC (Issue #1081).
+
+        Supports per-request consistency modes aligned with SpiceDB/Zanzibar.
 
         Args:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from authenticated user's credentials.
+            tenant_id: Optional tenant ID for multi-tenant isolation.
+            consistency_mode: Per-request consistency mode (Issue #1081):
+                - "minimize_latency" (default): Use cache for fastest response
+                - "at_least_as_fresh": Cache must be >= min_revision
+                - "fully_consistent": Bypass cache entirely
+            min_revision: Minimum acceptable revision (required for at_least_as_fresh).
+                         Get this from rebac_create() result["revision"].
 
         Returns:
             True if permission is granted, False otherwise
 
         Examples:
+            >>> # Default: fast cached check
             >>> nx.rebac_check(
             ...     subject=("agent", "alice"),
             ...     permission="read",
-            ...     object=("file", "/workspace/doc.txt"),
-            ...     tenant_id="default"
+            ...     object=("file", "/doc.txt")
+            ... )
+            True
+
+            >>> # Read-your-writes after a permission grant
+            >>> result = nx.rebac_create(subject, "viewer", object)
+            >>> nx.rebac_check(
+            ...     subject=subject,
+            ...     permission="read",
+            ...     object=object,
+            ...     consistency_mode="at_least_as_fresh",
+            ...     min_revision=result["revision"]
+            ... )
+            True
+
+            >>> # Security audit: bypass all caches
+            >>> nx.rebac_check(
+            ...     subject=("agent", "alice"),
+            ...     permission="read",
+            ...     object=("file", "/sensitive.txt"),
+            ...     consistency_mode="fully_consistent"
             ... )
             True
         """
@@ -2568,6 +2593,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "permission": permission,
                 "object": object,
                 "tenant_id": effective_tenant_id,
+                "consistency_mode": consistency_mode,
+                "min_revision": min_revision,
             },
         )
         return result  # type: ignore[no-any-return]

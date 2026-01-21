@@ -178,9 +178,10 @@ class ReBACPermissionCache:
         self._ttl_jitter_percent = ttl_jitter_percent
         self._refresh_ahead_factor = refresh_ahead_factor
         # Track entry metadata for jitter, refresh-ahead, and XFetch
-        # Maps key -> (created_at, jittered_ttl, delta)
+        # Maps key -> (created_at, jittered_ttl, delta, revision)
         # delta is the recomputation time in seconds (Issue #718)
-        self._entry_metadata: dict[str, tuple[float, float, float]] = {}
+        # revision is the tenant revision at cache time (Issue #1081)
+        self._entry_metadata: dict[str, tuple[float, float, float, int]] = {}
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
 
@@ -478,6 +479,37 @@ class ReBACPermissionCache:
 
         return 0  # Fallback: all entries share same bucket (still functional)
 
+    def _get_current_revision(self, tenant_id: str | None) -> int:
+        """Get current revision for a tenant (Issue #1081).
+
+        Used for tracking revision at cache time for AT_LEAST_AS_FRESH consistency.
+
+        Args:
+            tenant_id: Tenant ID (defaults to "default")
+
+        Returns:
+            Current revision number, or 0 if unavailable
+        """
+        effective_tenant = tenant_id or "default"
+        current_time = time.time()
+
+        # Check local revision cache first
+        if effective_tenant in self._revision_cache:
+            cached_rev, cached_at = self._revision_cache[effective_tenant]
+            if current_time - cached_at < self._revision_cache_ttl:
+                return cached_rev
+
+        # Fetch from DB via callback
+        if self._revision_fetcher:
+            try:
+                revision = self._revision_fetcher(effective_tenant)
+                self._revision_cache[effective_tenant] = (revision, current_time)
+                return revision
+            except Exception as e:
+                logger.warning(f"Failed to fetch revision for {effective_tenant}: {e}")
+
+        return 0  # Fallback
+
     def _make_key(
         self,
         subject_type: str,
@@ -576,6 +608,88 @@ class ReBACPermissionCache:
 
             return result
 
+    def get_with_revision_check(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str | None = None,
+        min_revision: int | None = None,
+    ) -> tuple[bool | None, int]:
+        """Get cached result with revision check for AT_LEAST_AS_FRESH consistency (Issue #1081).
+
+        This method implements the SpiceDB/Zanzibar at_least_as_fresh consistency mode.
+        It returns cached results only if they were cached at a revision >= min_revision.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: Subject identifier
+            permission: Permission to check
+            object_type: Type of object
+            object_id: Object identifier
+            tenant_id: Optional tenant ID
+            min_revision: Minimum acceptable revision (for AT_LEAST_AS_FRESH mode)
+
+        Returns:
+            Tuple of (result, cached_revision):
+            - result: True/False if cached and fresh enough, None if cache miss or stale
+            - cached_revision: The revision at which this entry was cached (0 if not found)
+
+        Example:
+            # After a write, check with read-your-writes guarantee
+            result, revision = cache.get_with_revision_check(
+                "user", "alice", "read", "file", "/doc.txt",
+                tenant_id="default",
+                min_revision=write_result.revision
+            )
+            if result is None:
+                # Cache miss or stale - need fresh computation
+                ...
+        """
+        key = self._make_key(
+            subject_type, subject_id, permission, object_type, object_id, tenant_id
+        )
+
+        with self._lock:
+            # Get metadata to check revision
+            metadata = self._entry_metadata.get(key)
+            if metadata is None:
+                # No metadata = no cached entry
+                if self._enable_metrics:
+                    self._misses += 1
+                return None, 0
+
+            _created_at, _jittered_ttl, _delta, cached_revision = metadata
+
+            # Check if cached revision is fresh enough
+            if min_revision is not None and cached_revision < min_revision:
+                # Cached data is too stale for this request
+                if self._enable_metrics:
+                    self._misses += 1  # Count as miss since we can't use it
+                return None, cached_revision
+
+            # Revision is acceptable, get the actual cached value
+            result = self._grant_cache.get(key)
+            is_grant_hit = result is not None
+
+            if result is None:
+                result = self._denial_cache.get(key)
+
+            # Track metrics
+            if self._enable_metrics:
+                if result is not None:
+                    self._hits += 1
+                    if is_grant_hit:
+                        self._grant_hits += 1
+                    else:
+                        self._denial_hits += 1
+                else:
+                    self._misses += 1
+
+            return result, cached_revision
+
     def set(
         self,
         subject_type: str,
@@ -636,9 +750,11 @@ class ReBACPermissionCache:
                 base_ttl = self._denial_ttl_seconds
 
             # Track entry metadata with jittered TTL for refresh-ahead (Issue #932)
-            # and delta for XFetch (Issue #718)
+            # and delta for XFetch (Issue #718), plus revision for AT_LEAST_AS_FRESH (Issue #1081)
             jittered_ttl = self._get_jittered_ttl(float(base_ttl))
-            self._entry_metadata[key] = (time.time(), jittered_ttl, delta)
+            # Get current revision for consistency tracking
+            current_revision = self._get_current_revision(tenant_id)
+            self._entry_metadata[key] = (time.time(), jittered_ttl, delta, current_revision)
 
             # Route to appropriate cache based on result (Issue #877)
             # Grants get longer TTL, denials get shorter TTL for security
@@ -840,7 +956,7 @@ class ReBACPermissionCache:
         if metadata is None:
             return False
 
-        created_at, jittered_ttl, delta = metadata
+        created_at, jittered_ttl, delta, _revision = metadata
         expiry = created_at + jittered_ttl
         current_time = time.time()
 

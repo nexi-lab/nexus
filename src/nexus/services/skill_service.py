@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager import ReBACManager
+    from nexus.core.rebac_manager_enhanced import WriteResult
     from nexus.services.gateway import NexusFSGateway
 
 
@@ -104,7 +105,7 @@ class SkillService:
         skill_path: str,
         share_with: str,
         context: OperationContext | None,
-    ) -> str:
+    ) -> WriteResult:
         """Grant read permission on a skill to users, groups, or make public.
 
         Only the skill owner can share a skill. Uses ReBAC to manage permissions.

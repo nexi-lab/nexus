@@ -275,7 +275,7 @@ class TestEnhancedReBACManagerWithLeopard:
     def test_delete_updates_closure(self, manager):
         """Test that rebac_delete updates the Leopard closure."""
         # Write membership
-        tuple_id = manager.rebac_write(
+        write_result = manager.rebac_write(
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
@@ -287,7 +287,7 @@ class TestEnhancedReBACManagerWithLeopard:
         assert ("group", "team-a") in groups
 
         # Delete membership
-        manager.rebac_delete(tuple_id)
+        manager.rebac_delete(write_result.tuple_id)
 
         # Rebuild closure to ensure consistency
         manager.rebuild_leopard_closure("tenant1")

@@ -6457,7 +6457,7 @@ class NexusFS(  # type: ignore[misc]
         tenant_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Create a ReBAC relationship tuple - delegates to ReBACService.
 
         Async version of rebac_create() using the service layer.

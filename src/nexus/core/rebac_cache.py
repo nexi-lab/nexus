@@ -4,7 +4,7 @@ This module provides a high-performance L1 cache for permission checks,
 reducing latency from ~5ms (database) to <1ms (memory).
 
 Architecture:
-- L1 Cache (in-memory): This module - <1ms lookup, 10k entries
+- L1 Cache (in-memory): This module - <1ms lookup, 50k entries (Issue #1077)
 - L2 Cache (database): rebac_check_cache table - 5-10ms lookup
 - L3 Compute: Graph traversal - 50-500ms
 
@@ -14,6 +14,18 @@ Revision Quantization (Issue #909):
 - Replaces broken time-bucket approach from Issue #842
 - Based on SpiceDB/Google Zanzibar quantization approach
 - See: https://authzed.com/blog/hotspot-caching-in-google-zanzibar-and-spicedb
+
+Targeted Invalidation (Issue #1077):
+- Secondary indexes for O(1) path-based and subject-based invalidation
+- Avoids O(n) full cache scans for invalidation
+- Configurable via NEXUS_CACHE_INVALIDATION_MODE
+
+Tiered TTL (Issue #1077):
+- Different TTLs based on permission stability
+- Owner: 1 hour (rarely changes)
+- Editor/Viewer: 10 minutes
+- Inherited: 5 minutes (depends on parent changes)
+- Denial: 60 seconds (security critical)
 """
 
 import logging
@@ -52,7 +64,7 @@ class ReBACPermissionCache:
 
     def __init__(
         self,
-        max_size: int = 10000,
+        max_size: int = 50000,  # Issue #1077: increased from 10k to 50k
         ttl_seconds: int = 300,
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
@@ -63,12 +75,16 @@ class ReBACPermissionCache:
         ttl_jitter_percent: float = 0.2,
         refresh_ahead_factor: float = 0.7,
         xfetch_beta: float = 1.0,
+        # Issue #1077: Tiered TTL configuration
+        tiered_ttl_config: dict[str, int] | None = None,
+        # Issue #1077: Invalidation mode ("targeted" or "tenant_wide")
+        invalidation_mode: str = "targeted",
     ):
         """
         Initialize ReBAC permission cache.
 
         Args:
-            max_size: Maximum number of entries (default: 10k)
+            max_size: Maximum number of entries (default: 50k, Issue #1077)
             ttl_seconds: Time-to-live for grant (True) cache entries (default: 300s)
             denial_ttl_seconds: Time-to-live for denial (False) cache entries (default: 60s)
                 Shorter TTL for denials ensures revoked access is reflected quickly (Issue #877)
@@ -87,6 +103,13 @@ class ReBACPermissionCache:
                 - beta > 1.0: More aggressive (refresh earlier)
                 - beta < 1.0: Less aggressive (refresh later)
                 - beta = 1.0: Mathematically optimal (VLDB 2015 paper)
+            tiered_ttl_config: TTL configuration by relation type (Issue #1077)
+                Maps relation names to TTL in seconds. Example:
+                {"owner": 3600, "editor": 600, "viewer": 600, "inherited": 300}
+                If not provided, defaults to sensible values.
+            invalidation_mode: Invalidation strategy (Issue #1077)
+                - "targeted": Use secondary indexes for O(1) invalidation (default)
+                - "tenant_wide": Legacy O(n) full cache scan
         """
         # Deprecation warning for old parameter
         if quantization_interval > 0:
@@ -168,6 +191,40 @@ class ReBACPermissionCache:
         self._xfetch_early_refreshes = 0  # Count of XFetch-triggered refreshes
         self._xfetch_computed_refreshes = 0  # Count of refreshes that would have been stampedes
 
+        # Issue #1077: Tiered TTL configuration
+        # Different TTLs based on permission stability
+        self._tiered_ttl_config = tiered_ttl_config or {
+            "owner": 3600,  # 1 hour - rarely changes
+            "direct_owner": 3600,
+            "admin": 3600,
+            "editor": 600,  # 10 minutes
+            "write": 600,
+            "contributor": 600,
+            "can_write": 600,
+            "viewer": 600,  # 10 minutes
+            "read": 600,
+            "can_read": 600,
+            "reader": 600,
+            "inherited": 300,  # 5 minutes - depends on parent
+            "denial": 60,  # 1 minute - security critical
+        }
+
+        # Issue #1077: Invalidation mode
+        self._invalidation_mode = invalidation_mode
+
+        # Issue #1077: Secondary indexes for O(1) targeted invalidation
+        # Instead of scanning all cache keys, we maintain indexes
+        # _subject_index: Maps (tenant_id, subject_type, subject_id) -> set of cache keys
+        # _object_index: Maps (tenant_id, object_type, object_id) -> set of cache keys
+        # _path_prefix_index: Maps (tenant_id, object_type, path_prefix) -> set of cache keys
+        self._subject_index: dict[tuple[str, str, str], set[str]] = {}
+        self._object_index: dict[tuple[str, str, str], set[str]] = {}
+        self._path_prefix_index: dict[tuple[str, str, str], set[str]] = {}
+
+        # Metrics for targeted invalidation
+        self._targeted_invalidations = 0
+        self._index_lookups = 0
+
     def _get_jittered_ttl(self, base_ttl: float) -> float:
         """Add random jitter to TTL to prevent thundering herd.
 
@@ -181,6 +238,199 @@ class ReBACPermissionCache:
             return base_ttl
         jitter = base_ttl * self._ttl_jitter_percent
         return base_ttl + random.uniform(-jitter, jitter)
+
+    def _get_ttl_for_relation(self, relation: str, is_denial: bool = False) -> int:
+        """Get TTL for a specific relation type (Issue #1077).
+
+        Args:
+            relation: The relation type (e.g., "owner", "editor", "viewer")
+            is_denial: Whether this is a denial (False permission result)
+
+        Returns:
+            TTL in seconds based on relation stability
+        """
+        if is_denial:
+            return self._tiered_ttl_config.get("denial", self._denial_ttl_seconds)
+
+        relation_lower = relation.lower() if relation else "viewer"
+        ttl = self._tiered_ttl_config.get(relation_lower)
+        if ttl is not None:
+            return ttl
+
+        # Default to base TTL
+        return self._ttl_seconds
+
+    def _add_to_indexes(
+        self,
+        key: str,
+        subject_type: str,
+        subject_id: str,
+        object_type: str,
+        object_id: str,
+        tenant_id: str,
+    ) -> None:
+        """Add a cache key to secondary indexes for O(1) invalidation (Issue #1077).
+
+        This method must be called under the lock.
+
+        Args:
+            key: The cache key to index
+            subject_type: Type of subject
+            subject_id: Subject identifier
+            object_type: Type of object
+            object_id: Object identifier (path)
+            tenant_id: Tenant ID
+        """
+        if self._invalidation_mode != "targeted":
+            return
+
+        # Subject index
+        subject_key = (tenant_id, subject_type, subject_id)
+        if subject_key not in self._subject_index:
+            self._subject_index[subject_key] = set()
+        self._subject_index[subject_key].add(key)
+
+        # Object index
+        object_key = (tenant_id, object_type, object_id)
+        if object_key not in self._object_index:
+            self._object_index[object_key] = set()
+        self._object_index[object_key].add(key)
+
+        # Path prefix index - index all path prefixes for directory-based invalidation
+        # e.g., /workspace/project/file.py -> index at /workspace, /workspace/project
+        # Only index actual paths (starting with /) to avoid infinite loops with non-path IDs
+        if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
+            path = object_id
+            while path and path != "/":
+                parent = path.rsplit("/", 1)[0] or "/"
+                prefix_key = (tenant_id, object_type, parent)
+                if prefix_key not in self._path_prefix_index:
+                    self._path_prefix_index[prefix_key] = set()
+                self._path_prefix_index[prefix_key].add(key)
+                if parent == "/":
+                    break
+                path = parent
+
+    def _remove_from_indexes(self, key: str) -> None:
+        """Remove a cache key from all secondary indexes (Issue #1077).
+
+        This method must be called under the lock.
+
+        Args:
+            key: The cache key to remove from indexes
+        """
+        if self._invalidation_mode != "targeted":
+            return
+
+        # Parse the key to get components
+        parsed = self._parse_key(key)
+        if not parsed:
+            return
+
+        subject_type, subject_id, _, object_type, object_id, tenant_id = parsed
+
+        # Remove from subject index
+        subject_key = (tenant_id, subject_type, subject_id)
+        if subject_key in self._subject_index:
+            self._subject_index[subject_key].discard(key)
+            if not self._subject_index[subject_key]:
+                del self._subject_index[subject_key]
+
+        # Remove from object index
+        object_key = (tenant_id, object_type, object_id)
+        if object_key in self._object_index:
+            self._object_index[object_key].discard(key)
+            if not self._object_index[object_key]:
+                del self._object_index[object_key]
+
+        # Remove from path prefix index (only for actual paths starting with /)
+        if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
+            path = object_id
+            while path and path != "/":
+                parent = path.rsplit("/", 1)[0] or "/"
+                prefix_key = (tenant_id, object_type, parent)
+                if prefix_key in self._path_prefix_index:
+                    self._path_prefix_index[prefix_key].discard(key)
+                    if not self._path_prefix_index[prefix_key]:
+                        del self._path_prefix_index[prefix_key]
+                if parent == "/":
+                    break
+                path = parent
+
+    def _get_keys_for_subject(self, tenant_id: str, subject_type: str, subject_id: str) -> set[str]:
+        """Get all cache keys for a subject using secondary index (Issue #1077).
+
+        Args:
+            tenant_id: Tenant ID
+            subject_type: Type of subject
+            subject_id: Subject identifier
+
+        Returns:
+            Set of cache keys (empty if no matches or using tenant_wide mode)
+        """
+        if self._invalidation_mode != "targeted":
+            return set()
+
+        if self._enable_metrics:
+            self._index_lookups += 1
+
+        subject_key = (tenant_id, subject_type, subject_id)
+        return self._subject_index.get(subject_key, set()).copy()
+
+    def _get_keys_for_object(self, tenant_id: str, object_type: str, object_id: str) -> set[str]:
+        """Get all cache keys for an object using secondary index (Issue #1077).
+
+        Args:
+            tenant_id: Tenant ID
+            object_type: Type of object
+            object_id: Object identifier
+
+        Returns:
+            Set of cache keys (empty if no matches or using tenant_wide mode)
+        """
+        if self._invalidation_mode != "targeted":
+            return set()
+
+        if self._enable_metrics:
+            self._index_lookups += 1
+
+        object_key = (tenant_id, object_type, object_id)
+        return self._object_index.get(object_key, set()).copy()
+
+    def _get_keys_for_path_prefix(
+        self, tenant_id: str, object_type: str, path_prefix: str
+    ) -> set[str]:
+        """Get all cache keys under a path prefix using secondary index (Issue #1077).
+
+        This is the key optimization: instead of O(n) scan, we get O(affected) lookup.
+
+        Args:
+            tenant_id: Tenant ID
+            object_type: Type of object
+            path_prefix: Path prefix (e.g., "/workspace/")
+
+        Returns:
+            Set of cache keys under this prefix (empty if no matches or using tenant_wide mode)
+        """
+        if self._invalidation_mode != "targeted":
+            return set()
+
+        if self._enable_metrics:
+            self._index_lookups += 1
+
+        # Normalize prefix
+        normalized_prefix = path_prefix.rstrip("/") or "/"
+
+        # Get direct matches from the prefix index
+        prefix_key = (tenant_id, object_type, normalized_prefix)
+        keys = self._path_prefix_index.get(prefix_key, set()).copy()
+
+        # Also include the exact object if it exists
+        object_key = (tenant_id, object_type, normalized_prefix)
+        if object_key in self._object_index:
+            keys |= self._object_index[object_key]
+
+        return keys
 
     def set_revision_fetcher(self, fetcher: Callable[[str], int]) -> None:
         """Set callback to fetch current revision for a tenant.
@@ -336,6 +586,8 @@ class ReBACPermissionCache:
         result: bool,
         tenant_id: str | None = None,
         delta: float = 0.0,
+        relation: str | None = None,
+        is_inherited: bool = False,
     ) -> None:
         """
         Cache permission check result.
@@ -343,6 +595,9 @@ class ReBACPermissionCache:
         Grants (True) are cached with longer TTL, denials (False) with shorter TTL.
         This ensures revoked access is reflected quickly while maximizing cache benefit
         for allowed operations (Issue #877).
+
+        Issue #1077: Supports tiered TTL based on relation type and maintains
+        secondary indexes for O(1) targeted invalidation.
 
         Args:
             subject_type: Type of subject
@@ -355,15 +610,33 @@ class ReBACPermissionCache:
             delta: Recomputation time in seconds (Issue #718: XFetch algorithm)
                 Used for probabilistic early expiration - items that take longer
                 to recompute are refreshed earlier.
+            relation: Optional relation type for tiered TTL (Issue #1077)
+                e.g., "owner", "editor", "viewer". If not provided, uses default TTL.
+            is_inherited: Whether this is an inherited permission (Issue #1077)
+                Inherited permissions use shorter TTL since they depend on parent.
         """
         key = self._make_key(
             subject_type, subject_id, permission, object_type, object_id, tenant_id
         )
+        tenant_part = tenant_id if tenant_id else "default"
 
         with self._lock:
+            # Issue #1077: Get tiered TTL based on relation type
+            # Only use tiered TTL when relation is explicitly provided
+            # This preserves backward compatibility with existing code that relies on ttl_seconds
+            if result:
+                if relation is not None:
+                    effective_relation = "inherited" if is_inherited else relation
+                    base_ttl = self._get_ttl_for_relation(effective_relation, is_denial=False)
+                elif is_inherited:
+                    base_ttl = self._get_ttl_for_relation("inherited", is_denial=False)
+                else:
+                    base_ttl = self._ttl_seconds  # Use default TTL when no relation provided
+            else:
+                base_ttl = self._denial_ttl_seconds
+
             # Track entry metadata with jittered TTL for refresh-ahead (Issue #932)
             # and delta for XFetch (Issue #718)
-            base_ttl = self._ttl_seconds if result else self._denial_ttl_seconds
             jittered_ttl = self._get_jittered_ttl(float(base_ttl))
             self._entry_metadata[key] = (time.time(), jittered_ttl, delta)
 
@@ -377,6 +650,9 @@ class ReBACPermissionCache:
                 self._denial_cache[key] = result
                 if self._enable_metrics:
                     self._denial_sets += 1
+
+            # Issue #1077: Add to secondary indexes for O(1) invalidation
+            self._add_to_indexes(key, subject_type, subject_id, object_type, object_id, tenant_part)
 
             if self._enable_metrics:
                 self._sets += 1
@@ -756,6 +1032,8 @@ class ReBACPermissionCache:
 
         Used when subject's permissions change (e.g., user added to group).
 
+        Issue #1077: Uses secondary indexes for O(1) lookup when invalidation_mode="targeted".
+
         Args:
             subject_type: Type of subject
             subject_id: Subject identifier
@@ -767,24 +1045,38 @@ class ReBACPermissionCache:
         tenant_part = tenant_id if tenant_id else "default"
 
         with self._lock:
-
-            def match_fn(key: str) -> bool:
-                parsed = self._parse_key(key)
-                return bool(
-                    parsed
-                    and parsed[0] == subject_type
-                    and parsed[1] == subject_id
-                    and parsed[5] == tenant_part
+            # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
+            if self._invalidation_mode == "targeted":
+                keys_to_delete = list(
+                    self._get_keys_for_subject(tenant_part, subject_type, subject_id)
                 )
+                if self._enable_metrics:
+                    self._targeted_invalidations += 1
+            else:
+                # Legacy: O(n) scan through all keys
+                def match_fn(key: str) -> bool:
+                    parsed = self._parse_key(key)
+                    return bool(
+                        parsed
+                        and parsed[0] == subject_type
+                        and parsed[1] == subject_id
+                        and parsed[5] == tenant_part
+                    )
 
-            keys_to_delete = self._collect_matching_keys(match_fn)
+                keys_to_delete = self._collect_matching_keys(match_fn)
+
+            # Remove from indexes before deleting
+            for key in keys_to_delete:
+                self._remove_from_indexes(key)
+
             count = self._invalidate_from_both_caches(keys_to_delete)
 
             if self._enable_metrics:
                 self._invalidations += count
 
             logger.debug(
-                f"L1 cache: Invalidated {count} entries for subject {subject_type}:{subject_id}"
+                f"L1 cache: Invalidated {count} entries for subject {subject_type}:{subject_id} "
+                f"(mode={self._invalidation_mode})"
             )
             return count
 
@@ -795,6 +1087,8 @@ class ReBACPermissionCache:
         Invalidate all cache entries for a specific object.
 
         Used when object's permissions change (e.g., file access granted).
+
+        Issue #1077: Uses secondary indexes for O(1) lookup when invalidation_mode="targeted".
 
         Args:
             object_type: Type of object
@@ -807,24 +1101,38 @@ class ReBACPermissionCache:
         tenant_part = tenant_id if tenant_id else "default"
 
         with self._lock:
-
-            def match_fn(key: str) -> bool:
-                parsed = self._parse_key(key)
-                return bool(
-                    parsed
-                    and parsed[3] == object_type
-                    and parsed[4] == object_id
-                    and parsed[5] == tenant_part
+            # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
+            if self._invalidation_mode == "targeted":
+                keys_to_delete = list(
+                    self._get_keys_for_object(tenant_part, object_type, object_id)
                 )
+                if self._enable_metrics:
+                    self._targeted_invalidations += 1
+            else:
+                # Legacy: O(n) scan through all keys
+                def match_fn(key: str) -> bool:
+                    parsed = self._parse_key(key)
+                    return bool(
+                        parsed
+                        and parsed[3] == object_type
+                        and parsed[4] == object_id
+                        and parsed[5] == tenant_part
+                    )
 
-            keys_to_delete = self._collect_matching_keys(match_fn)
+                keys_to_delete = self._collect_matching_keys(match_fn)
+
+            # Remove from indexes before deleting
+            for key in keys_to_delete:
+                self._remove_from_indexes(key)
+
             count = self._invalidate_from_both_caches(keys_to_delete)
 
             if self._enable_metrics:
                 self._invalidations += count
 
             logger.debug(
-                f"L1 cache: Invalidated {count} entries for object {object_type}:{object_id}"
+                f"L1 cache: Invalidated {count} entries for object {object_type}:{object_id} "
+                f"(mode={self._invalidation_mode})"
             )
             return count
 
@@ -841,6 +1149,8 @@ class ReBACPermissionCache:
 
         Most precise invalidation - only affects permissions between this subject and object.
 
+        Issue #1077: Uses intersection of secondary indexes for O(1) lookup.
+
         Args:
             subject_type: Type of subject
             subject_id: Subject identifier
@@ -854,19 +1164,33 @@ class ReBACPermissionCache:
         tenant_part = tenant_id if tenant_id else "default"
 
         with self._lock:
+            # Issue #1077: Use intersection of indexes for precise O(1) lookup
+            if self._invalidation_mode == "targeted":
+                subject_keys = self._get_keys_for_subject(tenant_part, subject_type, subject_id)
+                object_keys = self._get_keys_for_object(tenant_part, object_type, object_id)
+                # Intersection gives us exactly the subject-object pair keys
+                keys_to_delete = list(subject_keys & object_keys)
+                if self._enable_metrics:
+                    self._targeted_invalidations += 1
+            else:
+                # Legacy: O(n) scan through all keys
+                def match_fn(key: str) -> bool:
+                    parsed = self._parse_key(key)
+                    return bool(
+                        parsed
+                        and parsed[0] == subject_type
+                        and parsed[1] == subject_id
+                        and parsed[3] == object_type
+                        and parsed[4] == object_id
+                        and parsed[5] == tenant_part
+                    )
 
-            def match_fn(key: str) -> bool:
-                parsed = self._parse_key(key)
-                return bool(
-                    parsed
-                    and parsed[0] == subject_type
-                    and parsed[1] == subject_id
-                    and parsed[3] == object_type
-                    and parsed[4] == object_id
-                    and parsed[5] == tenant_part
-                )
+                keys_to_delete = self._collect_matching_keys(match_fn)
 
-            keys_to_delete = self._collect_matching_keys(match_fn)
+            # Remove from indexes before deleting
+            for key in keys_to_delete:
+                self._remove_from_indexes(key)
+
             count = self._invalidate_from_both_caches(keys_to_delete)
 
             if self._enable_metrics:
@@ -874,7 +1198,8 @@ class ReBACPermissionCache:
 
             logger.debug(
                 f"L1 cache: Invalidated {count} entries for pair "
-                f"{subject_type}:{subject_id} <-> {object_type}:{object_id}"
+                f"{subject_type}:{subject_id} <-> {object_type}:{object_id} "
+                f"(mode={self._invalidation_mode})"
             )
             return count
 
@@ -885,6 +1210,9 @@ class ReBACPermissionCache:
         Invalidate all cache entries for objects matching a prefix.
 
         Used for directory operations (e.g., invalidate all files under /workspace/).
+
+        Issue #1077: Uses path prefix index for O(affected) lookup instead of O(n) scan.
+        This is a critical optimization for large caches with deep directory hierarchies.
 
         Args:
             object_type: Type of object
@@ -897,24 +1225,38 @@ class ReBACPermissionCache:
         tenant_part = tenant_id if tenant_id else "default"
 
         with self._lock:
-
-            def match_fn(key: str) -> bool:
-                parsed = self._parse_key(key)
-                return bool(
-                    parsed
-                    and parsed[3] == object_type
-                    and parsed[4].startswith(object_id_prefix)
-                    and parsed[5] == tenant_part
+            # Issue #1077: Use path prefix index for O(affected) lookup
+            if self._invalidation_mode == "targeted":
+                keys_to_delete = list(
+                    self._get_keys_for_path_prefix(tenant_part, object_type, object_id_prefix)
                 )
+                if self._enable_metrics:
+                    self._targeted_invalidations += 1
+            else:
+                # Legacy: O(n) scan through all keys
+                def match_fn(key: str) -> bool:
+                    parsed = self._parse_key(key)
+                    return bool(
+                        parsed
+                        and parsed[3] == object_type
+                        and parsed[4].startswith(object_id_prefix)
+                        and parsed[5] == tenant_part
+                    )
 
-            keys_to_delete = self._collect_matching_keys(match_fn)
+                keys_to_delete = self._collect_matching_keys(match_fn)
+
+            # Remove from indexes before deleting
+            for key in keys_to_delete:
+                self._remove_from_indexes(key)
+
             count = self._invalidate_from_both_caches(keys_to_delete)
 
             if self._enable_metrics:
                 self._invalidations += count
 
             logger.debug(
-                f"L1 cache: Invalidated {count} entries for prefix {object_type}:{object_id_prefix}"
+                f"L1 cache: Invalidated {count} entries for prefix {object_type}:{object_id_prefix} "
+                f"(mode={self._invalidation_mode})"
             )
             return count
 
@@ -979,12 +1321,17 @@ class ReBACPermissionCache:
             return min(300, self._ttl_seconds * 2)  # 5min maximum
 
     def clear(self) -> None:
-        """Clear all cache entries from both grant and denial caches."""
+        """Clear all cache entries from both grant and denial caches and indexes."""
         with self._lock:
             self._grant_cache.clear()
             self._denial_cache.clear()
+            # Issue #1077: Also clear secondary indexes
+            self._subject_index.clear()
+            self._object_index.clear()
+            self._path_prefix_index.clear()
+            self._entry_metadata.clear()
             if self._enable_metrics:
-                logger.info("L1 cache cleared (grant and denial caches)")
+                logger.info("L1 cache cleared (grant, denial caches, and indexes)")
 
     def get_stats(self) -> dict[str, Any]:
         """
@@ -1036,6 +1383,14 @@ class ReBACPermissionCache:
                 # XFetch metrics (Issue #718)
                 "xfetch_beta": self._xfetch_beta,
                 "xfetch_early_refreshes": self._xfetch_early_refreshes,
+                # Issue #1077: Tiered TTL and targeted invalidation metrics
+                "invalidation_mode": self._invalidation_mode,
+                "tiered_ttl_config": self._tiered_ttl_config,
+                "targeted_invalidations": self._targeted_invalidations,
+                "index_lookups": self._index_lookups,
+                "subject_index_size": len(self._subject_index),
+                "object_index_size": len(self._object_index),
+                "path_prefix_index_size": len(self._path_prefix_index),
             }
 
     def reset_stats(self) -> None:
@@ -1056,4 +1411,7 @@ class ReBACPermissionCache:
             # XFetch metrics (Issue #718)
             self._xfetch_early_refreshes = 0
             self._xfetch_computed_refreshes = 0
+            # Issue #1077: Targeted invalidation metrics
+            self._targeted_invalidations = 0
+            self._index_lookups = 0
             logger.info("L1 cache stats reset")

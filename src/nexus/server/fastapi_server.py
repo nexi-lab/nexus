@@ -811,6 +811,42 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Sparse index backfill skipped: {e}")
 
+    # Issue #1076: File cache warmup on server startup
+    # Pre-load metadata for commonly accessed paths to reduce cold-start latency
+    # Always enabled - runs in background, lightweight (metadata only), no downside
+    if _app_state.nexus_fs:
+        try:
+            warmup_max_files = int(os.getenv("NEXUS_CACHE_WARMUP_MAX_FILES", "1000"))
+            warmup_depth = int(os.getenv("NEXUS_CACHE_WARMUP_DEPTH", "2"))
+            _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
+
+            async def _warmup_file_cache() -> None:
+                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+
+                config = WarmupConfig(
+                    max_files=warmup_max_files,
+                    depth=warmup_depth,
+                    include_content=False,  # Metadata only for fast startup
+                )
+                warmer = CacheWarmer(nexus_fs=_nexus_fs_warmup, config=config)
+                stats = await warmer.warmup_directory(
+                    path="/",
+                    depth=warmup_depth,
+                    include_content=False,
+                    max_files=warmup_max_files,
+                )
+                logger.info(
+                    f"[WARMUP] Server startup warmup complete: "
+                    f"{stats.files_warmed} files, {stats.metadata_warmed} metadata entries"
+                )
+
+            asyncio.create_task(_warmup_file_cache())
+            logger.info(
+                f"[WARMUP] Server startup warmup started (max_files={warmup_max_files}, depth={warmup_depth})"
+            )
+        except Exception as e:
+            logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
+
     yield
 
     # Cleanup
@@ -2335,6 +2371,172 @@ def _register_routes(app: FastAPI) -> None:
                 "last_access": e.last_access,
             }
             for e in entries
+        ]
+
+    # =========================================================================
+    # Cache Warmup API Endpoints (Issue #1076)
+    # =========================================================================
+
+    @app.post("/api/cache/warmup", tags=["cache"])
+    async def warmup_cache(
+        request: Request,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Pre-populate caches for faster access (Issue #1076).
+
+        Reduces cold-start latency by pre-caching frequently accessed files.
+
+        Request body:
+            path: Optional path to warm (directory warmup)
+            user: Optional user for history-based warmup
+            hours: Hours to look back for history warmup (default: 24)
+            depth: Directory depth (default: 2)
+            include_content: Whether to warm content (default: false)
+            max_files: Maximum files to warm (default: 1000)
+
+        Returns:
+            Warmup statistics including files warmed, duration, etc.
+        """
+        from nexus.core.cache_warmer import (
+            CacheWarmer,
+            WarmupConfig,
+            get_file_access_tracker,
+        )
+
+        body = await request.json()
+        path = body.get("path")
+        user = body.get("user")
+        hours = body.get("hours", 24)
+        depth = body.get("depth", 2)
+        include_content = body.get("include_content", False)
+        max_files = body.get("max_files", 1000)
+        tenant_id = auth_result.get("tenant_id", "default")
+
+        config = WarmupConfig(
+            max_files=max_files,
+            depth=depth,
+            include_content=include_content,
+        )
+
+        file_tracker = get_file_access_tracker() if user else None
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        warmer = CacheWarmer(
+            nexus_fs=_app_state.nexus_fs,
+            config=config,
+            file_tracker=file_tracker,
+        )
+
+        if user:
+            stats = await warmer.warmup_from_history(
+                user=user,
+                hours=hours,
+                max_files=max_files,
+                tenant_id=tenant_id,
+            )
+        elif path:
+            stats = await warmer.warmup_directory(
+                path=path,
+                depth=depth,
+                include_content=include_content,
+                max_files=max_files,
+                tenant_id=tenant_id,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'path' or 'user' must be provided",
+            )
+
+        return {
+            "status": "completed",
+            **stats.to_dict(),
+        }
+
+    @app.get("/api/cache/stats", tags=["cache"])
+    async def get_cache_stats(
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get cache statistics (Issue #1076).
+
+        Returns statistics for all cache layers including hit rates,
+        memory usage, and entry counts.
+        """
+        from nexus.core.cache_warmer import get_file_access_tracker
+
+        nx = _app_state.nexus_fs
+        if not nx:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        cache_stats: dict[str, Any] = {}
+
+        # Metadata cache stats
+        if hasattr(nx, "metadata") and hasattr(nx.metadata, "_cache"):
+            cache = nx.metadata._cache
+            if cache:
+                cache_stats["metadata_cache"] = {
+                    "path_cache_size": len(getattr(cache, "_path_cache", {})),
+                    "list_cache_size": len(getattr(cache, "_list_cache", {})),
+                    "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
+                }
+
+        # Content cache stats
+        if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
+            cc = nx.backend.content_cache
+            if cc and hasattr(cc, "get_stats"):
+                cache_stats["content_cache"] = cc.get_stats()
+
+        # Permission cache stats
+        if hasattr(nx, "_rebac_manager"):
+            rm = nx._rebac_manager
+            if hasattr(rm, "_permission_cache") and rm._permission_cache:
+                pc = rm._permission_cache
+                if hasattr(pc, "get_stats"):
+                    cache_stats["permission_cache"] = pc.get_stats()
+
+            if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
+                tc = rm._tiger_cache
+                if hasattr(tc, "get_stats"):
+                    cache_stats["tiger_cache"] = tc.get_stats()
+
+        # Directory visibility cache
+        if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
+            dvc = nx._dir_visibility_cache
+            if hasattr(dvc, "get_metrics"):
+                cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+
+        # File access tracker stats
+        tracker = get_file_access_tracker()
+        cache_stats["file_access_tracker"] = tracker.get_stats()
+
+        return cache_stats
+
+    @app.get("/api/cache/hot-files", tags=["cache"])
+    async def get_hot_files(
+        limit: int = Query(20, description="Maximum number of entries", ge=1, le=100),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> list[dict[str, Any]]:
+        """Get frequently accessed files (Issue #1076).
+
+        Returns list of hot files based on recent access patterns.
+        """
+        from nexus.core.cache_warmer import get_file_access_tracker
+
+        tenant_id = auth_result.get("tenant_id", "default")
+        tracker = get_file_access_tracker()
+        hot_files = tracker.get_hot_files(tenant_id=tenant_id, limit=limit)
+
+        return [
+            {
+                "path": f.path,
+                "tenant_id": f.tenant_id,
+                "access_count": f.access_count,
+                "last_access": f.last_access,
+                "total_bytes": f.total_bytes,
+            }
+            for f in hot_files
         ]
 
     # =========================================================================

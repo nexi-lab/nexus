@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,7 +20,6 @@ from nexus.fuse.readahead import (
     ReadaheadManager,
     ReadSession,
 )
-
 
 # =============================================================================
 # ReadSession Tests
@@ -391,7 +389,7 @@ class TestReadaheadManager:
         time.sleep(0.2)
 
         # Next read should hit prefetch buffer
-        result = manager.on_read(fh=1, path="/test/file.txt", offset=8192, size=4096)
+        manager.on_read(fh=1, path="/test/file.txt", offset=8192, size=4096)
 
         # Result could be from prefetch buffer
         stats = manager.get_stats()
@@ -425,9 +423,8 @@ class TestReadaheadManager:
         # Invalidate
         manager.invalidate_path("/test/file.txt")
 
-        # Buffer should be cleared
-        pool_stats = manager.get_stats()["buffer_pool"]
-        # After invalidation, no buffers for this path
+        # Buffer should be cleared - after invalidation, no buffers for this path
+        _ = manager.get_stats()["buffer_pool"]
 
         manager.shutdown()
 

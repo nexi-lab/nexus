@@ -273,7 +273,11 @@ class TestApplyAttributeBoosting:
             {"path": "/src/auth.py", "score": 0.7, "chunk_text": "some code"},
         ]
 
-        config = RankingConfig(attribute_weights=AttributeWeights(filename=10.0, content=1.0))
+        # Disable exactness boost to test only filename weight
+        config = RankingConfig(
+            attribute_weights=AttributeWeights(filename=10.0, content=1.0),
+            enable_exactness_boost=False,
+        )
         boosted = apply_attribute_boosting(results, "auth", config)
 
         # With 10x filename boost, auth.py should definitely be first

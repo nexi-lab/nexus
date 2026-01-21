@@ -1030,28 +1030,33 @@ class PermissionEnforcer:
                         path_to_int: dict[str, int] = {}
                         int_to_path: dict[int, str] = {}
 
-                        # Bulk lookup path int IDs (no tenant - resource paths are globally unique)
-                        with resource_map._lock:
-                            for path in paths:
-                                key = ("file", path)  # No tenant - cross-tenant fix
-                                int_id = resource_map._uuid_to_int.get(key)
-                                if int_id is not None:
-                                    path_to_int[path] = int_id
-                                    int_to_path[int_id] = path
+                        # Bulk lookup path int IDs using bulk_get_int_ids (fetches from DB if not in memory)
+                        # FIX: Previously used direct _uuid_to_int.get() which was empty after server restart
+                        resource_keys = [("file", path) for path in paths]
+                        with resource_map._engine.connect() as conn:
+                            int_id_map = resource_map.bulk_get_int_ids(resource_keys, conn)
+                        for path in paths:
+                            key = ("file", path)
+                            int_id = int_id_map.get(key)
+                            if int_id is not None:
+                                path_to_int[path] = int_id
+                                int_to_path[int_id] = path
 
                         if path_to_int:
-                            # Use Rust for O(1) bitmap filtering
+                            # Use pyroaring for O(1) bitmap filtering
                             try:
-                                import nexus_fast
+                                from pyroaring import BitMap as RoaringBitmap
 
+                                # Deserialize bitmap from bytes
+                                bitmap = RoaringBitmap.deserialize(bitmap_bytes)
+
+                                # Filter path int IDs against bitmap - O(1) per check
                                 path_int_ids = list(path_to_int.values())
-                                accessible_ids = nexus_fast.filter_paths_with_tiger_cache(
-                                    path_int_ids, bitmap_bytes
-                                )
+                                accessible_ids = [idx for idx in path_int_ids if idx in bitmap]
 
                                 # Convert back to paths
                                 filtered = [
-                                    int_to_path[id] for id in accessible_ids if id in int_to_path
+                                    int_to_path[idx] for idx in accessible_ids if idx in int_to_path
                                 ]
 
                                 # Handle paths not in resource map (need fallback check)
@@ -1074,7 +1079,7 @@ class PermissionEnforcer:
                                     # OPTIMIZATION: Only check fallback paths via rebac_check_bulk,
                                     # not ALL paths. Combine Tiger Cache results with bulk results.
                                     logger.debug(
-                                        f"[TIGER-RUST] {len(paths_needing_fallback)} paths need fallback: "
+                                        f"[TIGER-BITMAP] {len(paths_needing_fallback)} paths need fallback: "
                                         f"{len(paths_not_in_map)} not in map, "
                                         f"{len(paths_in_map_but_not_granted)} in map but not in bitmap "
                                         "(may have inherited permissions)"
@@ -1090,6 +1095,32 @@ class PermissionEnforcer:
                                     cached_completeness = self._bitmap_completeness_cache.get(
                                         completeness_key
                                     )
+
+                                    # EARLY DIRECTORY GRANT CHECK (perf19 - fast path):
+                                    # If user has NO directory grants in Tiger cache, bitmap is complete
+                                    # because paths not in bitmap cannot have inherited permissions
+                                    if not cached_completeness:
+                                        dir_bitmap_bytes = tiger_cache.get_bitmap_bytes(
+                                            subject_type=subject_type,
+                                            subject_id=subject_id,
+                                            permission="read",
+                                            resource_type="directory",
+                                            tenant_id=tenant_id,
+                                        )
+                                        if dir_bitmap_bytes is None:
+                                            # No directory grants -> bitmap is complete
+                                            self._bitmap_completeness_cache[completeness_key] = (
+                                                True,
+                                                time.time(),
+                                            )
+                                            tiger_elapsed = time.time() - tiger_start
+                                            logger.info(
+                                                f"[BITMAP-COMPLETE-EARLY] No directory grants for {subject_type}:{subject_id}, "
+                                                f"skipping {len(paths_needing_fallback)} fallback checks, "
+                                                f"filter_list: {tiger_elapsed:.3f}s, allowed {len(filtered)}/{len(paths)} paths"
+                                            )
+                                            return filtered
+
                                     if cached_completeness:
                                         is_complete, cached_at = cached_completeness
                                         if (
@@ -1381,11 +1412,11 @@ class PermissionEnforcer:
 
                             except ImportError:
                                 logger.debug(
-                                    "[TIGER-RUST] nexus_fast not available, falling back to rebac_check_bulk"
+                                    "[TIGER-BITMAP] pyroaring not available, falling back to rebac_check_bulk"
                                 )
                             except Exception as e:
                                 logger.warning(
-                                    f"[TIGER-RUST] Rust filtering failed: {e}, falling back to rebac_check_bulk"
+                                    f"[TIGER-BITMAP] Bitmap filtering failed: {e}, falling back to rebac_check_bulk"
                                 )
                         else:
                             logger.debug(

@@ -2137,6 +2137,9 @@ class TigerCache:
         When a new file is created, this checks for any ancestor directory grants
         and adds the file to those users' bitmaps.
 
+        Also ensures the file is registered in tiger_resource_map for predicate
+        pushdown to work correctly (Issue #1030).
+
         Args:
             file_path: Path of the newly created file
             tenant_id: Tenant ID
@@ -2144,14 +2147,15 @@ class TigerCache:
         Returns:
             Number of grants the file was added to
         """
-        grants = self.get_directory_grants_for_path(file_path, tenant_id)
-        if not grants:
-            return 0
-
-        # Get/create int ID for the new file
+        # Always register file in tiger_resource_map for predicate pushdown (Issue #1030)
+        # This must happen BEFORE the early return check for ancestor grants
         int_id = self._resource_map.get_or_create_int_id("file", file_path)
         if int_id <= 0:
             logger.error(f"[TIGER] Failed to get int_id for new file: {file_path}")
+            return 0
+
+        grants = self.get_directory_grants_for_path(file_path, tenant_id)
+        if not grants:
             return 0
 
         added_count = 0

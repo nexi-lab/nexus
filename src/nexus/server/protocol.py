@@ -562,7 +562,9 @@ class RebacCheckParams:
     object: tuple[str, str]
     tenant_id: str | None = None
     # Issue #1081: Per-request consistency control
-    consistency_mode: str | None = None  # "minimize_latency" | "at_least_as_fresh" | "fully_consistent"
+    consistency_mode: str | None = (
+        None  # "minimize_latency" | "at_least_as_fresh" | "fully_consistent"
+    )
     min_revision: int | None = None  # Required for at_least_as_fresh mode
 
 

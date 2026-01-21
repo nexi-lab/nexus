@@ -298,7 +298,8 @@ class ReBACPermissionCache:
 
         # Path prefix index - index all path prefixes for directory-based invalidation
         # e.g., /workspace/project/file.py -> index at /workspace, /workspace/project
-        if object_type in ("file", "memory", "resource"):
+        # Only index actual paths (starting with /) to avoid infinite loops with non-path IDs
+        if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
             path = object_id
             while path and path != "/":
                 parent = path.rsplit("/", 1)[0] or "/"
@@ -342,8 +343,8 @@ class ReBACPermissionCache:
             if not self._object_index[object_key]:
                 del self._object_index[object_key]
 
-        # Remove from path prefix index
-        if object_type in ("file", "memory", "resource"):
+        # Remove from path prefix index (only for actual paths starting with /)
+        if object_type in ("file", "memory", "resource") and object_id.startswith("/"):
             path = object_id
             while path and path != "/":
                 parent = path.rsplit("/", 1)[0] or "/"

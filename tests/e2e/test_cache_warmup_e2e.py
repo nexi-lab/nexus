@@ -187,10 +187,10 @@ class TestCacheWarmupAPI:
             )
             assert response.status_code == 200
 
-        # Get initial stats
+        # Get initial stats (verify endpoint works before warmup)
         response = test_app.get("/api/cache/stats")
         assert response.status_code == 200
-        initial_stats = response.json()
+        _ = response.json()  # Verify JSON is valid
 
         # Warm up directory
         response = test_app.post(

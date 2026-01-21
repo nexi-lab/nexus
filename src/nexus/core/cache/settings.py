@@ -15,6 +15,17 @@ Environment variables:
     NEXUS_CACHE_TIGER_TTL: TTL for Tiger cache entries (default: 3600s)
     NEXUS_CACHE_EMBEDDING_TTL: TTL for embedding cache entries (default: 86400s / 24h)
 
+    # Tiered TTL by Relation Type (Issue #1077)
+    NEXUS_CACHE_TTL_OWNER: TTL for owner permissions (default: 3600s / 1 hour)
+    NEXUS_CACHE_TTL_EDITOR: TTL for editor permissions (default: 600s / 10 min)
+    NEXUS_CACHE_TTL_VIEWER: TTL for viewer permissions (default: 600s / 10 min)
+    NEXUS_CACHE_TTL_INHERITED: TTL for inherited permissions (default: 300s / 5 min)
+
+    # Invalidation Strategy (Issue #1077)
+    NEXUS_CACHE_INVALIDATION_MODE: Invalidation strategy
+        - "targeted": Path-specific invalidation using indexes (default)
+        - "tenant_wide": Legacy tenant-wide invalidation
+
     # Connection Pool Settings (Issue #1075)
     NEXUS_DRAGONFLY_POOL_SIZE: Max connections in pool (default: 50)
     NEXUS_DRAGONFLY_TIMEOUT: Socket timeout in seconds (default: 30.0)
@@ -61,6 +72,34 @@ class CacheSettings:
         default_factory=lambda: int(os.environ.get("NEXUS_CACHE_EMBEDDING_TTL", "86400"))
     )
 
+    # Tiered TTL by relation type (Issue #1077)
+    # Owner permissions rarely change, so use longer TTL
+    ttl_owner: int = field(
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_TTL_OWNER", "3600"))
+    )
+
+    # Editor permissions change more often
+    ttl_editor: int = field(
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_TTL_EDITOR", "600"))
+    )
+
+    # Viewer permissions - similar to editor
+    ttl_viewer: int = field(
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_TTL_VIEWER", "600"))
+    )
+
+    # Inherited permissions - shorter TTL since they depend on parent changes
+    ttl_inherited: int = field(
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_TTL_INHERITED", "300"))
+    )
+
+    # Invalidation strategy (Issue #1077)
+    # "targeted": Use path indexes for O(1) invalidation
+    # "tenant_wide": Legacy behavior - scan all keys
+    invalidation_mode: Literal["targeted", "tenant_wide"] = field(
+        default_factory=lambda: os.environ.get("NEXUS_CACHE_INVALIDATION_MODE", "targeted")  # type: ignore
+    )
+
     # Dragonfly connection pool size (Issue #1075: increased from 10 to 50)
     dragonfly_pool_size: int = field(
         default_factory=lambda: int(os.environ.get("NEXUS_DRAGONFLY_POOL_SIZE", "50"))
@@ -98,9 +137,9 @@ class CacheSettings:
         default_factory=lambda: os.environ.get("NEXUS_CACHE_ENABLE_L1", "true").lower() == "true"
     )
 
-    # L1 cache max size (entries)
+    # L1 cache max size (entries) - Issue #1077: increased from 10K to 50K
     l1_cache_size: int = field(
-        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "10000"))
+        default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "50000"))
     )
 
     def should_use_dragonfly(self) -> bool:
@@ -137,6 +176,23 @@ class CacheSettings:
         if self.embedding_ttl <= 0:
             raise ValueError("NEXUS_CACHE_EMBEDDING_TTL must be positive")
 
+        # Tiered TTL validation (Issue #1077)
+        if self.ttl_owner <= 0:
+            raise ValueError("NEXUS_CACHE_TTL_OWNER must be positive")
+        if self.ttl_editor <= 0:
+            raise ValueError("NEXUS_CACHE_TTL_EDITOR must be positive")
+        if self.ttl_viewer <= 0:
+            raise ValueError("NEXUS_CACHE_TTL_VIEWER must be positive")
+        if self.ttl_inherited <= 0:
+            raise ValueError("NEXUS_CACHE_TTL_INHERITED must be positive")
+
+        # Invalidation mode validation (Issue #1077)
+        if self.invalidation_mode not in ("targeted", "tenant_wide"):
+            raise ValueError(
+                f"Invalid NEXUS_CACHE_INVALIDATION_MODE: {self.invalidation_mode}. "
+                "Must be 'targeted' or 'tenant_wide'"
+            )
+
         if self.dragonfly_pool_size <= 0:
             raise ValueError("NEXUS_DRAGONFLY_POOL_SIZE must be positive")
 
@@ -148,6 +204,37 @@ class CacheSettings:
 
         if self.dragonfly_pool_timeout <= 0:
             raise ValueError("NEXUS_DRAGONFLY_POOL_TIMEOUT must be positive")
+
+    def get_ttl_for_relation(self, relation: str, is_inherited: bool = False) -> int:
+        """Get TTL for a specific relation type (Issue #1077).
+
+        Args:
+            relation: The relation type (e.g., "owner", "editor", "viewer", "read", "write")
+            is_inherited: Whether this is an inherited permission (shorter TTL)
+
+        Returns:
+            TTL in seconds based on relation stability
+        """
+        if is_inherited:
+            return self.ttl_inherited
+
+        # Map relations to their TTL
+        relation_lower = relation.lower()
+
+        # Owner-level relations (most stable, longest TTL)
+        if relation_lower in ("owner", "direct_owner", "admin"):
+            return self.ttl_owner
+
+        # Editor-level relations
+        if relation_lower in ("editor", "write", "contributor", "can_write"):
+            return self.ttl_editor
+
+        # Viewer-level relations
+        if relation_lower in ("viewer", "read", "can_read", "reader"):
+            return self.ttl_viewer
+
+        # Default to permission_ttl for unknown relations
+        return self.permission_ttl
 
     @classmethod
     def from_env(cls) -> "CacheSettings":
@@ -172,8 +259,12 @@ class CacheSettings:
             f"denial_ttl={self.permission_denial_ttl}s, "
             f"tiger_ttl={self.tiger_ttl}s, "
             f"embedding_ttl={self.embedding_ttl}s, "
+            f"tiered_ttl={{owner={self.ttl_owner}s, editor={self.ttl_editor}s, "
+            f"viewer={self.ttl_viewer}s, inherited={self.ttl_inherited}s}}, "
+            f"invalidation_mode={self.invalidation_mode}, "
             f"pool_size={self.dragonfly_pool_size}, "
             f"pool_timeout={self.dragonfly_pool_timeout}s, "
             f"keepalive={self.dragonfly_keepalive}, "
-            f"l1_enabled={self.enable_l1_cache})"
+            f"l1_enabled={self.enable_l1_cache}, "
+            f"l1_size={self.l1_cache_size})"
         )

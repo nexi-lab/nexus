@@ -2743,7 +2743,7 @@ class NexusFSCoreMixin:
         ctx = context if context is not None else self._default_context
         if is_implicit_dir:
             # Only check permissions if enforcement is enabled
-            if self._enforce_permissions:
+            if self._enforce_permissions:  # type: ignore[attr-defined]
                 # Try TRAVERSE permission first (O(1))
                 # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
                 has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)

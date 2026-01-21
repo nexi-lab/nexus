@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager, WriteResult
 
 
 class NexusFSReBACMixin:
@@ -201,7 +201,7 @@ class NexusFSReBACMixin:
         tenant_id: str | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
-    ) -> str:
+    ) -> WriteResult:
         """Create a relationship tuple in ReBAC system.
 
         Args:
@@ -1364,7 +1364,7 @@ class NexusFSReBACMixin:
         to_subject: tuple[str, str],
         expires_at: datetime | None = None,
         tenant_id: str | None = None,
-    ) -> str:
+    ) -> WriteResult:
         """Grant consent for one subject to discover another.
 
         Args:
@@ -1446,7 +1446,7 @@ class NexusFSReBACMixin:
         return False
 
     @rpc_expose(description="Make resource publicly discoverable")
-    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
+    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> WriteResult:
         """Make a resource publicly discoverable.
 
         Args:
@@ -1526,7 +1526,7 @@ class NexusFSReBACMixin:
         user_tenant_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
-    ) -> str:
+    ) -> WriteResult:
         """Share a resource with a specific user, regardless of tenant.
 
         This enables cross-tenant sharing - users from different organizations
@@ -1620,7 +1620,7 @@ class NexusFSReBACMixin:
         group_tenant_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
-    ) -> str:
+    ) -> WriteResult:
         """Share a resource with a group (all members get access).
 
         Uses userset-as-subject pattern: ("group", group_id, "member")
@@ -2370,7 +2370,7 @@ class NexusFSReBACMixin:
         self,
         tenant_id: str | None = None,
         subject: tuple[str, str] | None = None,
-    ) -> list[str]:
+    ) -> list[WriteResult]:
         """Grant TRAVERSE permission on root-level implicit directories.
 
         This is an optimization for FUSE path resolution. By granting TRAVERSE

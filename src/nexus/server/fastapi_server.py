@@ -997,8 +997,10 @@ def create_app(
     app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
     # Initialize rate limiter (Issue #780)
+    # Rate limiting is DISABLED by default for better performance
+    # Set NEXUS_RATE_LIMIT_ENABLED=true to enable rate limiting
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_DISABLED", "").lower() not in (
+    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
         "true",
         "1",
         "yes",
@@ -1029,7 +1031,9 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.info("Rate limiting is DISABLED (NEXUS_RATE_LIMIT_DISABLED=true)")
+        logger.info(
+            "Rate limiting is DISABLED (default, set NEXUS_RATE_LIMIT_ENABLED=true to enable)"
+        )
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:

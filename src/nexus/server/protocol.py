@@ -420,6 +420,14 @@ class StatParams:
 
 
 @dataclass
+class StatBulkParams:
+    """Parameters for stat_bulk() method."""
+
+    paths: list[str]
+    skip_errors: bool = True
+
+
+@dataclass
 class ListParams:
     """Parameters for list() method.
 
@@ -1976,6 +1984,7 @@ METHOD_PARAMS = {
     "glob_batch": GlobBatchParams,  # Issue #859
     "get_etag": GetEtagParams,
     "stat": StatParams,
+    "stat_bulk": StatBulkParams,
     "list": ListParams,
     "glob": GlobParams,
     "grep": GrepParams,

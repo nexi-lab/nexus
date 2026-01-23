@@ -203,33 +203,22 @@ def test_nexus(file_count=1000):
 
     print(f"  ✓ Listed {list_count} files in {list_duration:.3f}s")
 
-    # Test 2: Read
-    print("\n[2/3] Read operation (Nexus)...")
-    total_bytes = 0
-    read_count = 0
+    # Test 2: Read (using read_bulk for efficient batch reading)
+    print("\n[2/3] Read operation (Nexus read_bulk)...")
     start = time.time()
-    for filepath in listed:
-        try:
-            content = client.read(filepath)
-            total_bytes += len(content)
-            read_count += 1
-        except Exception:
-            pass
+    bulk_results = client.read_bulk(listed)
     read_duration = time.time() - start
+    total_bytes = sum(len(v) for v in bulk_results.values() if v)
+    read_count = len([v for v in bulk_results.values() if v])
 
     print(f"  ✓ Read {read_count} files ({total_bytes} bytes) in {read_duration:.3f}s")
 
-    # Test 3: Stat (ALL files for flat)
-    print("\n[3/3] Stat operation (Nexus)...")
-    stat_count = 0
+    # Test 3: Stat (using stat_bulk for efficient batch metadata)
+    print("\n[3/3] Stat operation (Nexus stat_bulk)...")
     start = time.time()
-    for filepath in listed:
-        try:
-            info = client.stat(filepath)
-            stat_count += 1
-        except Exception:
-            pass
+    stat_results = client.stat_bulk(listed)
     stat_duration = time.time() - start
+    stat_count = len([v for v in stat_results.values() if v])
 
     print(f"  ✓ Stat'd {stat_count} files in {stat_duration:.3f}s")
 

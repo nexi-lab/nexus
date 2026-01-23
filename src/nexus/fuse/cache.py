@@ -29,7 +29,7 @@ class FUSECacheManager:
         >>> cache_mgr = FUSECacheManager(
         ...     attr_cache_size=1024,
         ...     attr_cache_ttl=60,
-        ...     content_cache_size=100,
+        ...     content_cache_size=10000,
         ...     parsed_cache_size=50
         ... )
         >>>
@@ -45,7 +45,7 @@ class FUSECacheManager:
         self,
         attr_cache_size: int = 1024,
         attr_cache_ttl: int = 60,
-        content_cache_size: int = 100,
+        content_cache_size: int = 10000,
         parsed_cache_size: int = 50,
         enable_metrics: bool = False,
     ) -> None:
@@ -54,7 +54,7 @@ class FUSECacheManager:
         Args:
             attr_cache_size: Maximum number of attribute entries (default: 1024)
             attr_cache_ttl: TTL for attribute cache in seconds (default: 60)
-            content_cache_size: Maximum number of content entries (default: 100)
+            content_cache_size: Maximum number of content entries (default: 10000)
             parsed_cache_size: Maximum number of parsed content entries (default: 50)
             enable_metrics: If True, track cache hit/miss metrics
         """

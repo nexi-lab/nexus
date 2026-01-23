@@ -705,11 +705,13 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             headers["Authorization"] = f"Bearer {api_key}"
 
         # Create sync httpx client with HTTP/2 for multiplexing
+        # Note: trust_env=False bypasses system proxy settings (HTTP_PROXY, HTTPS_PROXY)
         self.session = httpx.Client(
             limits=limits,
             timeout=timeout_config,
             headers=headers,
             http2=True,
+            trust_env=False,
         )
 
         if api_key:
@@ -1169,6 +1171,36 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             raise
 
         return result  # type: ignore[no-any-return]
+
+    def stat_bulk(
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
+        skip_errors: bool = True,
+    ) -> dict[str, dict[str, Any] | None]:
+        """Get metadata for multiple files in a single RPC call.
+
+        This method is optimized for bulk operations where many file stats are needed.
+        It batches permission checks and metadata lookups for better performance.
+
+        Args:
+            paths: List of virtual paths to stat
+            context: Unused in remote client (handled server-side)
+            skip_errors: If True, skip files that can't be stat'd and return None.
+
+        Returns:
+            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
+            Each stat dict contains: size, etag, version, modified_at, is_directory
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Expected speedup: 10-50x for 100+ files
+        """
+        result = self._call_rpc(
+            "stat_bulk",
+            {"paths": paths, "skip_errors": skip_errors},
+        )
+        return cast(dict[str, dict[str, Any] | None], result)
 
     def read_range(
         self,

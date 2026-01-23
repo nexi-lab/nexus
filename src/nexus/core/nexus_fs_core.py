@@ -605,14 +605,23 @@ class NexusFSCoreMixin:
         tenant_id, agent_id, is_admin = self._get_routing_params(context)
 
         # Group paths by backend for potential bulk optimization
-        # First, get metadata and routes for all paths
-        # Note: meta is guaranteed non-None with non-None etag due to check below
+        # Use batch_get for metadata lookup (single SQL query instead of N queries)
         path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
         backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
 
+        # Batch metadata lookup
+        meta_start = time.time()
+        batch_meta = self.metadata.batch_get(list(allowed_set))
+        meta_elapsed = (time.time() - meta_start) * 1000
+        logger.info(
+            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
+        )
+
+        # Process metadata and group by backend
+        route_start = time.time()
         for path in allowed_set:
             try:
-                meta = self.metadata.get(path)
+                meta = batch_meta.get(path)
                 if meta is None or meta.etag is None:
                     if skip_errors:
                         results[path] = None
@@ -639,6 +648,9 @@ class NexusFSCoreMixin:
                     results[path] = None
                 else:
                     raise
+
+        route_elapsed = (time.time() - route_start) * 1000
+        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
@@ -747,40 +759,122 @@ class NexusFSCoreMixin:
                             else:
                                 raise
             else:
-                # Individual reads for backends without bulk cache support
-                for path in paths_for_backend:
-                    try:
-                        meta, route = path_info[path]
-                        assert meta.etag is not None  # Guaranteed by check above
-                        read_context = context
-                        if context:
-                            from dataclasses import replace
+                # Try parallel I/O for LocalBackend using nexus_fast
+                from nexus.backends.local import LocalBackend
 
-                            read_context = replace(context, backend_path=route.backend_path)
-                        content = route.backend.read_content(
-                            meta.etag, context=read_context
-                        ).unwrap()
-                        content = self._apply_dynamic_viewer_filter_if_needed(
-                            path, content, context
+                if isinstance(backend, LocalBackend) and len(paths_for_backend) > 1:
+                    # Use Rust parallel mmap reads for LocalBackend
+                    try:
+                        from nexus_fast import read_files_bulk
+
+                        # Build mapping: disk_path -> (virtual_path, meta)
+                        disk_to_virtual: dict[str, tuple[str, Any]] = {}
+                        disk_paths: list[str] = []
+                        for path in paths_for_backend:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None
+                            disk_path = str(backend._hash_to_path(meta.etag))
+                            disk_to_virtual[disk_path] = (path, meta)
+                            disk_paths.append(disk_path)
+
+                        # Parallel mmap read
+                        logger.info(
+                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
                         )
-                        if return_metadata:
-                            results[path] = {
-                                "content": content,
-                                "etag": meta.etag,
-                                "version": meta.version,
-                                "modified_at": meta.modified_at,
-                                "size": len(content),
-                            }
-                        else:
-                            results[path] = content
-                    except Exception as e:
+                        disk_contents = read_files_bulk(disk_paths)
+
+                        # Map results back to virtual paths
+                        for disk_path, content in disk_contents.items():
+                            vpath, meta = disk_to_virtual[disk_path]
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                vpath, content, context
+                            )
+                            if return_metadata:
+                                results[vpath] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[vpath] = content
+
+                        # Mark missing files as None if skip_errors
+                        for path in paths_for_backend:
+                            if path not in results:
+                                if skip_errors:
+                                    results[path] = None
+                                else:
+                                    raise NexusFileNotFoundError(path)
+                    except ImportError:
                         logger.warning(
-                            f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            "[READ-BULK] nexus_fast not available, falling back to sequential"
                         )
-                        if skip_errors:
-                            results[path] = None
-                        else:
-                            raise
+                        # Fall through to sequential reads below
+                        for path in paths_for_backend:
+                            if path in results:
+                                continue
+                            try:
+                                meta, route = path_info[path]
+                                assert meta.etag is not None
+                                content = route.backend.read_content(
+                                    meta.etag, context=None
+                                ).unwrap()
+                                content = self._apply_dynamic_viewer_filter_if_needed(
+                                    path, content, context
+                                )
+                                results[path] = (
+                                    content
+                                    if not return_metadata
+                                    else {
+                                        "content": content,
+                                        "etag": meta.etag,
+                                        "version": meta.version,
+                                        "modified_at": meta.modified_at,
+                                        "size": len(content),
+                                    }
+                                )
+                            except Exception:
+                                if skip_errors:
+                                    results[path] = None
+                                else:
+                                    raise
+                else:
+                    # Sequential reads for other backends or single files
+                    for path in paths_for_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start
@@ -2806,6 +2900,134 @@ class NexusFSCoreMixin:
             "modified_at": modified_at_str,
             "is_directory": False,
         }
+
+    @rpc_expose(description="Get metadata for multiple files in bulk")
+    def stat_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+        skip_errors: bool = True,
+    ) -> dict[str, dict[str, Any] | None]:
+        """
+        Get metadata for multiple files in a single RPC call.
+
+        This is optimized for bulk operations where many file stats are needed.
+        It batches permission checks and metadata lookups for better performance.
+
+        Args:
+            paths: List of virtual paths to stat
+            context: Optional operation context for permission checks
+            skip_errors: If True, skip files that can't be stat'd and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
+            Each stat dict contains: size, etag, version, modified_at, is_directory
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Batch permission checks (one DB query instead of N)
+            - Batch metadata lookups
+            - Expected speedup: 10-50x for 100+ files
+        """
+        import time
+
+        bulk_start = time.time()
+        results: dict[str, dict[str, Any] | None] = {}
+
+        # Validate all paths
+        validated_paths = []
+        for path in paths:
+            try:
+                validated_path = self._validate_path(path)
+                validated_paths.append(validated_path)
+            except Exception:
+                if skip_errors:
+                    results[path] = None
+                    continue
+                raise
+
+        if not validated_paths:
+            return results
+
+        # Batch permission check using filter_list
+        perm_start = time.time()
+        allowed_set: set[str]
+        if not self._enforce_permissions:  # type: ignore[attr-defined]
+            allowed_set = set(validated_paths)
+        else:
+            try:
+                from nexus.core.permissions import OperationContext
+
+                ctx = context if context is not None else self._default_context
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+                allowed_set = set(allowed_paths)
+            except Exception as e:
+                logger.error(f"[STAT-BULK] Permission check failed: {e}")
+                if not skip_errors:
+                    raise
+                allowed_set = set()
+
+        perm_elapsed = time.time() - perm_start
+        logger.info(
+            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+        )
+
+        # Mark denied files
+        for path in validated_paths:
+            if path not in allowed_set:
+                results[path] = None
+
+        # Batch metadata lookup - single SQL query for all paths
+        meta_start = time.time()
+
+        # Batch fetch metadata for all files in single query
+        # Note: We assume paths are files (not implicit directories) since stat_bulk
+        # is typically called on paths returned by list(). If a path isn't found,
+        # we check if it's an implicit directory as a fallback.
+        try:
+            batch_meta = self.metadata.batch_get(list(allowed_set))
+            for path, meta in batch_meta.items():
+                if meta is None:
+                    # Path not found in metadata - check if it's an implicit directory
+                    if self.metadata.is_implicit_directory(path):
+                        results[path] = {
+                            "size": 0,
+                            "etag": None,
+                            "version": None,
+                            "modified_at": None,
+                            "is_directory": True,
+                        }
+                    elif skip_errors:
+                        results[path] = None
+                    else:
+                        raise NexusFileNotFoundError(path)
+                else:
+                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
+                    results[path] = {
+                        "size": meta.size,
+                        "etag": meta.etag,
+                        "version": meta.version,
+                        "modified_at": modified_at_str,
+                        "is_directory": False,
+                    }
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
+            if not skip_errors:
+                raise
+
+        meta_elapsed = time.time() - meta_start
+        bulk_elapsed = time.time() - bulk_start
+
+        logger.info(
+            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
+            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
+        )
+
+        return results
 
     @rpc_expose(description="Check if file exists")
     def exists(self, path: str, context: OperationContext | None = None) -> bool:

@@ -117,7 +117,7 @@ class NexusFUSEOperations(Operations):
             cache_config: Optional cache configuration dict with keys:
                          - attr_cache_size: int (default: 1024)
                          - attr_cache_ttl: int (default: 60)
-                         - content_cache_size: int (default: 100)
+                         - content_cache_size: int (default: 10000)
                          - parsed_cache_size: int (default: 50)
                          - enable_metrics: bool (default: False)
         """
@@ -131,7 +131,7 @@ class NexusFUSEOperations(Operations):
         self.cache = FUSECacheManager(
             attr_cache_size=cache_config.get("attr_cache_size", 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
-            content_cache_size=cache_config.get("content_cache_size", 100),
+            content_cache_size=cache_config.get("content_cache_size", 10000),
             parsed_cache_size=cache_config.get("parsed_cache_size", 50),
             enable_metrics=cache_config.get("enable_metrics", False),
         )
@@ -153,6 +153,11 @@ class NexusFUSEOperations(Operations):
                 logger.info("[FUSE] L2 LocalDiskCache enabled for faster reads")
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
+
+        # Initialize readdir cache for faster directory listing
+        # Caches directory contents with short TTL to avoid repeated network calls
+        self._dir_cache: dict[str, tuple[float, list[str]]] = {}  # path -> (timestamp, entries)
+        self._dir_cache_ttl = cache_config.get("dir_cache_ttl", 5.0)  # 5 second default
 
         # Initialize readahead manager for sequential read optimization (Issue #1073)
         # Proactively prefetches data to warm L1/L2 caches
@@ -344,6 +349,17 @@ class NexusFUSEOperations(Operations):
         import time
 
         start_time = time.time()
+
+        # Check readdir cache first (fast path)
+        cached = self._dir_cache.get(path)
+        if cached is not None:
+            cache_time, cached_entries = cached
+            if time.time() - cache_time < self._dir_cache_ttl:
+                logger.info(
+                    f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
+                )
+                return cached_entries
+
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 
         try:
@@ -406,10 +422,44 @@ class NexusFUSEOperations(Operations):
             # Final filter to remove any OS metadata that might have slipped through
             entries = [e for e in entries if not is_os_metadata_file(e)]
 
+            # Directory-level content prefetch: preload small files using read_bulk()
+            # This dramatically improves performance when reading many files after ls
+            if len(files) <= 1000:  # Only prefetch for reasonable directory sizes
+                small_files = [
+                    f.get("path") if isinstance(f, dict) else f
+                    for f in files
+                    if not (isinstance(f, dict) and f.get("is_directory", False))
+                    and (not isinstance(f, dict) or f.get("size", 0) < 1024 * 1024)  # <1MB
+                ]
+                logger.info(
+                    f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
+                    f"has_read_bulk={hasattr(self.nexus_fs, 'read_bulk')}, "
+                    f"sample_paths={small_files[:3] if small_files else []}"
+                )
+                if small_files and hasattr(self.nexus_fs, "read_bulk"):
+                    try:
+                        prefetch_start = time.time()
+                        # Use read_bulk to fetch all content in one RPC call
+                        bulk_content = self.nexus_fs.read_bulk(small_files[:500])  # Limit to 500
+                        # Cache the content (use self.cache, not self.cache_manager)
+                        for fpath, content in bulk_content.items():
+                            if content is not None:
+                                self.cache.cache_content(fpath, content)
+                        prefetch_elapsed = time.time() - prefetch_start
+                        logger.info(
+                            f"[FUSE-PERF] readdir content prefetch: {len(bulk_content)} files in {prefetch_elapsed:.3f}s"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[FUSE-PERF] readdir content prefetch failed: {e}")
+
             total_elapsed = time.time() - start_time
             logger.info(
                 f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
             )
+
+            # Cache the result for subsequent calls
+            self._dir_cache[path] = (time.time(), entries)
+
             return entries
         except FuseOSError:
             raise
@@ -442,9 +492,22 @@ class NexusFUSEOperations(Operations):
             # Parse virtual path
             original_path, view_type = self._parse_virtual_path(path)
 
-            # Check if file exists
-            if not self.nexus_fs.exists(original_path):
-                raise FuseOSError(errno.ENOENT)
+            # Check if file exists - use cache first to avoid rate limiting
+            # If content or attrs are cached, we know the file exists (from readdir prefetch)
+            content_cached = self.cache.get_content(original_path) is not None
+            attr_cached = self.cache.get_attr(original_path) is not None
+            file_exists = content_cached or attr_cached
+
+            if file_exists:
+                logger.debug(
+                    f"[FUSE-OPEN] Cache HIT for {original_path} "
+                    f"(content={content_cached}, attr={attr_cached})"
+                )
+            else:
+                # Fallback to remote check only if not in cache
+                logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
+                if not self.nexus_fs.exists(original_path):
+                    raise FuseOSError(errno.ENOENT)
 
             # Generate file descriptor
             self.fd_counter += 1
@@ -459,7 +522,8 @@ class NexusFUSEOperations(Operations):
 
             # Trigger prefetch-on-open for readahead (Issue #1073)
             # This starts fetching file content in parallel before first read
-            if self._readahead and view_type is None:
+            # Skip if content already in L1 cache (from readdir prefetch) to avoid redundant network calls
+            if self._readahead and view_type is None and not content_cached:
                 try:
                     # Get file size for smarter prefetch decisions
                     file_size = None
@@ -470,6 +534,8 @@ class NexusFUSEOperations(Operations):
                     self._readahead.on_open(fd, original_path, file_size)
                 except Exception as e:
                     logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
+            elif content_cached:
+                logger.debug(f"[FUSE-OPEN] Skipping readahead (L1 cached): {original_path}")
 
             return fd
         except FuseOSError:
@@ -516,6 +582,9 @@ class NexusFUSEOperations(Operations):
             if self._readahead and view_type is None:
                 prefetched = self._readahead.on_read(fh, original_path, offset, size)
                 if prefetched is not None:
+                    logger.debug(
+                        f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
+                    )
                     return prefetched
 
             # Standard path: get from cache hierarchy
@@ -1068,21 +1137,32 @@ class NexusFUSEOperations(Operations):
         if view_type and (self.mode.value == "text" or self.mode.value == "smart"):
             cached_parsed = self.cache.get_parsed(path, view_type)
             if cached_parsed is not None:
+                logger.debug(f"[FUSE-CONTENT] PARSED CACHE HIT: {path}")
                 return cached_parsed
 
         # L1: Check in-memory content cache
         content = self.cache.get_content(path)
 
-        if content is None:
+        if content is not None:
+            logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT: {path} ({len(content)} bytes)")
+        else:
             # L2: Check local disk cache (Issue #1072)
             content = self._get_from_local_disk_cache(path)
 
-            if content is None:
+            if content is not None:
+                logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+            else:
                 # L3/L4: Read from backend filesystem (includes permission check)
+                logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
+                fetch_start = time.time()
                 raw_content = self.nexus_fs.read(path)
+                fetch_time = time.time() - fetch_start
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 content = raw_content
+                logger.info(
+                    f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
+                )
 
                 # Populate L2 disk cache
                 self._put_to_local_disk_cache(path, content)

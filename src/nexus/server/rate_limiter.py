@@ -3,14 +3,14 @@
 This module provides additional rate limiting utilities and documentation.
 The core rate limiting is implemented in fastapi_server.py.
 
-Rate Limit Tiers:
+Rate Limit Tiers (when enabled):
     - Anonymous: 60 requests/minute (NEXUS_RATE_LIMIT_ANONYMOUS)
     - Authenticated: 300 requests/minute (NEXUS_RATE_LIMIT_AUTHENTICATED)
     - Premium/Admin: 1000 requests/minute (NEXUS_RATE_LIMIT_PREMIUM)
     - Health endpoints: Unlimited (exempt from rate limiting)
 
 Environment Variables:
-    NEXUS_RATE_LIMIT_DISABLED: Set to "true" to disable rate limiting
+    NEXUS_RATE_LIMIT_ENABLED: Set to "true" to enable rate limiting (disabled by default)
     NEXUS_RATE_LIMIT_ANONYMOUS: Override anonymous rate limit (default: "60/minute")
     NEXUS_RATE_LIMIT_AUTHENTICATED: Override authenticated rate limit (default: "300/minute")
     NEXUS_RATE_LIMIT_PREMIUM: Override premium/admin rate limit (default: "1000/minute")
@@ -23,8 +23,8 @@ Storage Backends:
       (recommended for multi-instance deployments)
 
 Usage:
-    Rate limiting is automatically enabled when the FastAPI server starts.
-    To disable, set NEXUS_RATE_LIMIT_DISABLED=true
+    Rate limiting is DISABLED by default for better performance.
+    To enable, set NEXUS_RATE_LIMIT_ENABLED=true
 
 Example Rate Limit Headers in Response:
     X-RateLimit-Limit: 300

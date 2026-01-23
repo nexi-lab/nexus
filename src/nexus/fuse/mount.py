@@ -73,7 +73,7 @@ class NexusFUSE:
             cache_config: Optional cache configuration dict with keys:
                          - attr_cache_size: int (default: 1024)
                          - attr_cache_ttl: int (default: 60)
-                         - content_cache_size: int (default: 100)
+                         - content_cache_size: int (default: 10000)
                          - parsed_cache_size: int (default: 50)
                          - enable_metrics: bool (default: False)
             warmup_depth: Directory depth for automatic warmup (default: 2)
@@ -343,7 +343,7 @@ def mount_nexus(
         cache_config: Optional cache configuration dict with keys:
                      - attr_cache_size: int (default: 1024)
                      - attr_cache_ttl: int (default: 60)
-                     - content_cache_size: int (default: 100)
+                     - content_cache_size: int (default: 10000)
                      - parsed_cache_size: int (default: 50)
                      - enable_metrics: bool (default: False)
         warmup_depth: Directory depth for automatic warmup (default: 2)

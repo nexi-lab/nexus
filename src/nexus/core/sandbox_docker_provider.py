@@ -125,6 +125,18 @@ class DockerSandboxProvider(SandboxProvider):
         import os
 
         self.network_name = network_name or os.environ.get("NEXUS_DOCKER_NETWORK")
+
+        # Dev mode: Install nexus from local source instead of PyPI
+        # Set NEXUS_DEV_MODE=1 to enable
+        self._dev_mode = os.environ.get("NEXUS_DEV_MODE", "").lower() in ("1", "true", "yes")
+        if self._dev_mode:
+            # Get the nexus repo root (this file is at src/nexus/core/sandbox_docker_provider.py)
+            self._nexus_src_path = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            )
+            logger.info(
+                f"[DEV-MODE] Enabled - will install from local source: {self._nexus_src_path}"
+            )
         # Note: network_name is optional - if not set, containers will use default bridge network
 
         # Cache for active containers
@@ -550,13 +562,35 @@ class DockerSandboxProvider(SandboxProvider):
             f"[MOUNT-STEP-3] which nexus completed in {time.time() - start_time:.2f}s, exit_code={check_result.exit_code}"
         )
 
-        if check_result.exit_code != 0:
+        # In dev mode, always reinstall from source even if nexus is already installed
+        needs_install = check_result.exit_code != 0 or self._dev_mode
+
+        if needs_install:
             # nexus not found, try to install with FUSE support
-            logger.info("[MOUNT-STEP-3] nexus CLI not found, installing nexus-ai-fs[fuse]...")
+            if self._dev_mode:
+                # Dev mode: install from PyPI, then copy modified Python files from source
+                # This preserves pre-built Rust extensions while using local Python changes
+                logger.info(
+                    "[MOUNT-STEP-3] Installing from PyPI, then copying local Python source (dev mode)..."
+                )
+                # Install from PyPI first, then copy ALL Python source files
+                # This ensures all optimizations (readahead, local_disk_cache, etc.) are used
+                # Use sudo for the cp since site-packages is owned by root
+                install_cmd = (
+                    "pip install -q 'nexus-ai-fs[fuse]' && "
+                    "SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])') && "
+                    "cd /nexus-src/src && "
+                    "find nexus -name '*.py' -exec sudo cp --parents {} \"$SITE_PACKAGES/\" \\;"
+                )
+            else:
+                # Production: install from PyPI
+                logger.info("[MOUNT-STEP-3] nexus CLI not found, installing nexus-ai-fs[fuse]...")
+                install_cmd = "pip install -q 'nexus-ai-fs[fuse]'"
+
             start_time = time.time()
             install_result = await asyncio.to_thread(
                 container.exec_run,
-                "pip install -q 'nexus-ai-fs[fuse]'",
+                ["bash", "-c", install_cmd],
             )
             elapsed = time.time() - start_time
             logger.info(
@@ -850,6 +884,13 @@ class DockerSandboxProvider(SandboxProvider):
                 )
                 # Continue anyway - the run() call will handle the conflict
 
+        # Build volumes for container
+        volumes = {}
+        if self._dev_mode:
+            # Mount local nexus source for development (read-only to protect host)
+            volumes[self._nexus_src_path] = {"bind": "/nexus-src", "mode": "ro"}
+            logger.info(f"[DEV-MODE] Mounting {self._nexus_src_path} -> /nexus-src")
+
         return self.docker_client.containers.run(
             image=image,
             # Use image default CMD (sleep infinity in sandbox image)
@@ -868,6 +909,7 @@ class DockerSandboxProvider(SandboxProvider):
             if self.network_name
             else None,  # Only set if network_name is provided
             remove=False,  # Don't auto-remove, we'll handle cleanup
+            volumes=volumes if volumes else None,  # Mount volumes if any
         )
 
     def _ensure_image(self, image_name: str) -> None:

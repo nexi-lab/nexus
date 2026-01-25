@@ -271,14 +271,27 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # Cloud NAT gateways (AWS, GCP) have ~350s idle timeouts
             # Default Linux TCP keepalive is 2 hours - too long for cloud
             statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
+            # Idle connection timeouts (Postgres Best Practices)
+            # Reclaim 30-50% of connection slots from idle clients
+            idle_in_transaction_timeout = os.getenv(
+                "NEXUS_DB_IDLE_IN_TRANSACTION_TIMEOUT", "30000"
+            )  # 30s default
+            idle_session_timeout = os.getenv(
+                "NEXUS_DB_IDLE_SESSION_TIMEOUT", "600000"
+            )  # 10min default
             config["connect_args"] = {
                 # TCP Keepalive: detect dead connections through firewalls/NAT
                 "keepalives": 1,  # Enable TCP keepalive
                 "keepalives_idle": 60,  # Start probes after 60s idle
                 "keepalives_interval": 10,  # Probe every 10s
                 "keepalives_count": 3,  # 3 failed probes = dead connection
-                # Server settings
-                "options": f"-c statement_timeout={statement_timeout}",
+                # Server settings (Postgres Best Practices)
+                # Reference: https://www.postgresql.org/docs/current/runtime-config-client.html
+                "options": (
+                    f"-c statement_timeout={statement_timeout} "
+                    f"-c idle_in_transaction_session_timeout={idle_in_transaction_timeout} "
+                    f"-c idle_session_timeout={idle_session_timeout}"
+                ),
             }
 
         return config

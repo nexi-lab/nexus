@@ -458,10 +458,49 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================
+  # Test Runner (pytest in Linux environment)
+  # Runs unit and integration tests to verify Linux-specific code (inotify)
+  #
+  # Usage:
+  #   docker compose -f docker-compose.demo.yml --profile test run --rm test
+  #   docker compose -f docker-compose.demo.yml --profile test run --rm test pytest tests/unit -v
+  # ============================================
+  test:
+    image: python:3.13
+    container_name: nexus-test
+    working_dir: /app
+    profiles:
+      - test  # Only runs with: --profile test
+    volumes:
+      - .:/app
+      - test-cache:/root/.cache  # Cache pip/uv downloads
+    environment:
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -c '
+        echo "📦 Installing Rust toolchain..."
+        curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . $$HOME/.cargo/env
+        echo ""
+        echo "📦 Installing dependencies..."
+        pip install -q uv
+        uv pip install --system -e ".[dev,test]" -q
+        echo ""
+        echo "🐧 Platform: $$(python -c "import sys; print(sys.platform)")"
+        echo ""
+        echo "🧪 Running tests..."
+        pytest tests/unit/backends/test_passthrough.py tests/integration/test_wait_for_changes.py -v --no-header -n 0
+      '
+    networks:
+      - nexus-network
+
 # ============================================
 # Volumes
 # ============================================
 volumes:
+  test-cache:
+    driver: local
   zoekt-index:
     driver: local
   postgres-data:

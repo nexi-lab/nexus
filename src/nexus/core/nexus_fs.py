@@ -30,6 +30,7 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
+from nexus.core.nexus_fs_events import NexusFSEventsMixin
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
@@ -69,6 +70,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSSkillsMixin,
     NexusFSMCPMixin,
     NexusFSLLMMixin,
+    NexusFSEventsMixin,  # Issue #1106: Same-box file watching
     NexusFilesystem,
 ):
     """
@@ -430,6 +432,9 @@ class NexusFS(  # type: ignore[misc]
         # Issue #913: Track async event tasks to prevent memory leaks
         # Tasks are auto-removed via done callback when completed
         self._event_tasks: set[asyncio.Task[Any]] = set()
+
+        # Issue #1106: File watcher for same-box event detection (lazy initialized)
+        self._file_watcher: Any = None
 
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine

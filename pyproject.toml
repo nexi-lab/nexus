@@ -372,6 +372,16 @@ module = "nexus.backends.base_blob_connector"
 disable_error_code = ["return-value"]
 
 [[tool.mypy.overrides]]
+module = "nexus.backends.passthrough"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.core.file_watcher"
+# inotify_simple and pywin32 return untyped values
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.gmail_connector"
 # Legacy backend - not yet migrated to HandlerResponse
 disable_error_code = ["override", "return-value", "no-any-return", "import-untyped", "unused-ignore"]

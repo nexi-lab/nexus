@@ -136,11 +136,7 @@ class FileWatcher:
 
         try:
             watch_flags = (
-                flags.CREATE
-                | flags.DELETE
-                | flags.MODIFY
-                | flags.MOVED_TO
-                | flags.MOVED_FROM
+                flags.CREATE | flags.DELETE | flags.MODIFY | flags.MOVED_TO | flags.MOVED_FROM
             )
 
             # Track if we're watching a specific file
@@ -232,8 +228,7 @@ class FileWatcher:
             import win32file
         except ImportError as e:
             raise ImportError(
-                "pywin32 is required for Windows file watching. "
-                "Install with: pip install pywin32"
+                "pywin32 is required for Windows file watching. Install with: pip install pywin32"
             ) from e
 
         loop = asyncio.get_event_loop()

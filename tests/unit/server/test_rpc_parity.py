@@ -69,8 +69,8 @@ def test_all_rpc_methods_have_remote_implementations():
     # Event methods (wait_for_changes, lock, unlock) are same-box only (Block 1, Issue #1106)
     PENDING_REMOTE_IMPLEMENTATION: set[str] = {
         "wait_for_changes",  # Same-box file watching (inotify/ReadDirectoryChangesW)
-        "lock",              # Same-box advisory locking
-        "unlock",            # Same-box advisory locking
+        "lock",  # Same-box advisory locking
+        "unlock",  # Same-box advisory locking
     }
 
     # Get all exposed RPC methods from core

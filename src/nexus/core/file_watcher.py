@@ -10,6 +10,7 @@ Used by PassthroughBackend to implement wait_for_changes() for same-box scenario
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 from dataclasses import dataclass
@@ -74,7 +75,7 @@ class FileWatcher:
     def __init__(self) -> None:
         """Initialize file watcher."""
         self._platform = sys.platform
-        self._inotify: "INotify | None" = None  # type: ignore[name-defined]
+        self._inotify = None  # Lazy-initialized on Linux
 
     async def wait_for_change(
         self,
@@ -298,10 +299,8 @@ class FileWatcher:
 
                 if rc == WAIT_TIMEOUT:
                     # Cancel the pending I/O operation
-                    try:
+                    with contextlib.suppress(Exception):
                         win32file.CancelIo(handle)
-                    except Exception:
-                        pass  # Ignore cancel errors
                     return None
                 elif rc == WAIT_OBJECT_0:
                     # Get the result

@@ -51,7 +51,7 @@ class NexusFSEventsMixin:
 
         return isinstance(self.backend, PassthroughBackend)
 
-    def _get_file_watcher(self) -> "FileWatcher":
+    def _get_file_watcher(self) -> FileWatcher:
         """Get or create the file watcher instance.
 
         Returns:
@@ -78,7 +78,7 @@ class NexusFSEventsMixin:
         self,
         path: str,
         timeout: float = 30.0,
-        context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
@@ -141,7 +141,7 @@ class NexusFSEventsMixin:
         self,
         path: str,
         timeout: float = 30.0,
-        context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
@@ -195,7 +195,7 @@ class NexusFSEventsMixin:
     def unlock(
         self,
         lock_id: str,
-        context: "OperationContext | None" = None,
+        _context: OperationContext | None = None,
     ) -> bool:
         """Release an advisory lock.
 

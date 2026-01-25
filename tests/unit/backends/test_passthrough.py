@@ -2,7 +2,7 @@
 
 import pytest
 
-from nexus.backends.passthrough import PassthroughBackend, POINTER_PREFIX
+from nexus.backends.passthrough import POINTER_PREFIX, PassthroughBackend
 from nexus.core.hash_fast import hash_content
 
 

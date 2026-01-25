@@ -404,10 +404,8 @@ class TestPassthroughBackendIntegration:
             while not stop_flag.is_set():
                 try:
                     result = temp_backend._read_pointer("/atomic_test.txt")
-                    if result is not None:
-                        # Verify hash is valid (64 chars, all digits)
-                        if len(result) != 64 or not result.isdigit():
-                            errors.append(f"Invalid hash read: {result}")
+                    if result is not None and (len(result) != 64 or not result.isdigit()):
+                        errors.append(f"Invalid hash read: {result}")
                 except Exception as e:
                     errors.append(f"Read error: {e}")
                 time.sleep(0.001)

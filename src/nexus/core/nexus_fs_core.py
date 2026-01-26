@@ -107,6 +107,81 @@ class NexusFSCoreMixin:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
+    def _publish_file_event(
+        self,
+        event_type: str,
+        path: str,
+        tenant_id: str | None,
+        size: int | None = None,
+        etag: str | None = None,
+        agent_id: str | None = None,
+        old_path: str | None = None,
+    ) -> None:
+        """Publish a file event to the distributed event bus.
+
+        Issue #1106 Block 2: Centralized event publishing to avoid code duplication.
+        Handles both async (event loop running) and sync (no event loop) contexts.
+
+        Args:
+            event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
+            path: Path of the affected file
+            tenant_id: Tenant ID (defaults to "default" if None)
+            size: File size in bytes (optional)
+            etag: Content hash (optional)
+            agent_id: Agent that performed the operation (optional)
+            old_path: Previous path for rename events (optional)
+        """
+        if not hasattr(self, "_event_bus") or self._event_bus is None:
+            return
+
+        try:
+            from nexus.core.event_bus import FileEvent, FileEventType
+
+            # Map string to enum
+            type_map = {
+                "file_write": FileEventType.FILE_WRITE,
+                "file_delete": FileEventType.FILE_DELETE,
+                "file_rename": FileEventType.FILE_RENAME,
+                "dir_create": FileEventType.DIR_CREATE,
+                "dir_delete": FileEventType.DIR_DELETE,
+            }
+            file_event_type = type_map.get(event_type, event_type)
+
+            event = FileEvent(
+                type=file_event_type,
+                path=path,
+                tenant_id=tenant_id or "default",
+                size=size,
+                etag=etag,
+                agent_id=agent_id,
+                old_path=old_path,
+            )
+
+            # Determine task name for debugging
+            if old_path:
+                task_name = f"event_bus:{event_type}:{old_path}->{path}"
+            else:
+                task_name = f"event_bus:{event_type}:{path}"
+
+            # Fire event asynchronously
+            try:
+                asyncio.get_running_loop()
+                self._create_tracked_event_task(
+                    self._event_bus.publish(event),
+                    name=task_name,
+                )
+            except RuntimeError:
+                # No event loop - run in background thread
+                def publish_in_thread() -> None:
+                    try:
+                        asyncio.run(self._event_bus.publish(event))
+                    except Exception as e:
+                        logger.warning(f"Failed to publish {event_type} event: {e}")
+
+                threading.Thread(target=publish_in_thread, daemon=True).start()
+        except Exception as e:
+            logger.warning(f"Failed to create {event_type} event: {e}")
+
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
     ) -> bytes:
@@ -1551,6 +1626,16 @@ class NexusFSCoreMixin:
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
 
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_write",
+            path=path,
+            tenant_id=tenant_id,
+            size=len(content),
+            etag=content_hash,
+            agent_id=agent_id,
+        )
+
         # Return metadata for optimistic concurrency control
         return {
             "etag": content_hash,
@@ -2357,6 +2442,16 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_delete",
+            path=path,
+            tenant_id=tenant_id,
+            size=meta.size,
+            etag=meta.etag,
+            agent_id=agent_id,
+        )
+
     @rpc_expose(description="Rename/move file")
     def rename(self, old_path: str, new_path: str, context: OperationContext | None = None) -> None:
         """
@@ -2632,6 +2727,17 @@ class NexusFSCoreMixin:
                         logger.error(f"Rename event error for {event_context.get('old_path')}: {e}")
 
                 threading.Thread(target=run_rename_events, daemon=True).start()
+
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_rename",
+            path=new_path,
+            old_path=old_path,
+            tenant_id=tenant_id,
+            size=meta.size if meta else 0,
+            etag=meta.etag if meta else None,
+            agent_id=agent_id,
+        )
 
     def _update_tiger_cache_on_move(
         self,

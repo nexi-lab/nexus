@@ -221,6 +221,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "process_tiger_cache_queue",  # Internal - background worker processes cache updates
         "stop_tiger_cache_worker",  # Internal - stops background worker thread
         "warm_tiger_cache",  # Internal - pre-computes permissions for cache warming
+        # Cache invalidation - server-side internal methods (Issue #1106 Block 2)
+        "start_cache_invalidation",  # Internal - starts cache invalidation listeners
+        "stop_cache_invalidation",  # Internal - stops cache invalidation listeners
         # Directory Visibility Cache internal methods - server-side optimization only
         "clear_dir_visibility_cache",  # Internal - clears the directory visibility cache
         "get_dir_visibility_cache_metrics",  # Internal - returns cache metrics for monitoring

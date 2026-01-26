@@ -890,7 +890,9 @@ class TigerCache:
         logger.debug(f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths")
         return paths
 
-    def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
+    def _load_from_db(
+        self, key: CacheKey, conn: Connection | None = None, skip_l2: bool = False
+    ) -> Any:
         """Load bitmap from L2 (Dragonfly) or L3 (PostgreSQL).
 
         Read path: L2 (Dragonfly) -> L3 (PostgreSQL)
@@ -899,12 +901,14 @@ class TigerCache:
         Args:
             key: Cache key
             conn: Optional database connection
+            skip_l2: If True, skip L2 cache and read directly from L3 (database).
+                     Used by write-through operations to ensure reading latest committed state.
 
         Returns:
             Bitmap if found, None otherwise
         """
-        # L2: Try Dragonfly first (if available)
-        if self._dragonfly:
+        # L2: Try Dragonfly first (if available and not skipped)
+        if self._dragonfly and not skip_l2:
             result = self._run_dragonfly_op(
                 operation="get",
                 subject_type=key.subject_type,
@@ -1482,7 +1486,9 @@ class TigerCache:
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly, avoiding stale L2 cache
+                # This prevents race conditions when multiple concurrent grants happen
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is not None:
                     # Check if already in bitmap
@@ -1622,7 +1628,8 @@ class TigerCache:
                         return True
 
                 # Step 2: Load existing bitmap from DB
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly for atomic operation
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is None:
                     # No bitmap exists - nothing to revoke

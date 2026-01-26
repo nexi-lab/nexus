@@ -417,11 +417,12 @@ class RedisEventBus(EventBusBase):
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
-        channel = self._channel_name(event.tenant_id)
+        tenant_id = event.tenant_id or "default"
+        channel = self._channel_name(tenant_id)
         message = event.to_json()
 
         try:
-            num_subscribers = await self._redis.client.publish(channel, message)
+            num_subscribers: int = await self._redis.client.publish(channel, message)
             logger.debug(
                 f"Published {event.type} event for {event.path} to {channel} "
                 f"({num_subscribers} subscribers)"

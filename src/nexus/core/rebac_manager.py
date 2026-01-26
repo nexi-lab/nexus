@@ -3254,6 +3254,41 @@ class ReBACManager:
                 if row:
                     return dict(row)
 
+                # Check 2b: Cross-tenant wildcard access (Issue #1064)
+                # Wildcards should grant access across ALL tenants, not just the owner's tenant.
+                # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
+                # Only check cross-tenant if tenant_id is provided (multi-tenant mode).
+                if tenant_id is not None:
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            SELECT tuple_id, subject_type, subject_id, subject_relation,
+                                   relation, object_type, object_id, conditions, expires_at
+                            FROM rebac_tuples
+                            WHERE subject_type = ? AND subject_id = ?
+                              AND subject_relation IS NULL
+                              AND relation = ?
+                              AND object_type = ? AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            LIMIT 1
+                            """
+                        ),
+                        (
+                            wildcard_entity.entity_type,
+                            wildcard_entity.entity_id,
+                            relation,
+                            obj.entity_type,
+                            obj.entity_id,
+                            datetime.now(UTC).isoformat(),
+                        ),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        logger.debug(
+                            f"    ✅ Cross-tenant wildcard access: *:* -> {relation} -> {obj}"
+                        )
+                        return dict(row)
+
             # Check 3: Userset-as-subject grants
             # Find tuples like (group:eng#member, editor-of, file:readme)
             # where subject has 'member' relation to 'group:eng'

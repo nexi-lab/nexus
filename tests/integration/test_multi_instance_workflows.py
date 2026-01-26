@@ -574,9 +574,7 @@ class TestEventNotification:
         received_event = {"event": None}
 
         async def waiter():
-            received_event["event"] = await nexus_fs.wait_for_changes(
-                "/notify/", timeout=5.0
-            )
+            received_event["event"] = await nexus_fs.wait_for_changes("/notify/", timeout=5.0)
 
         async def writer():
             await asyncio.sleep(0.2)

@@ -262,17 +262,17 @@ class TestLuaScripts:
     def test_release_script_format(self):
         """Test release script has correct structure."""
         assert "redis.call" in RELEASE_SCRIPT
-        assert 'KEYS[1]' in RELEASE_SCRIPT
-        assert 'ARGV[1]' in RELEASE_SCRIPT
+        assert "KEYS[1]" in RELEASE_SCRIPT
+        assert "ARGV[1]" in RELEASE_SCRIPT
         assert "get" in RELEASE_SCRIPT
         assert "del" in RELEASE_SCRIPT
 
     def test_extend_script_format(self):
         """Test extend script has correct structure."""
         assert "redis.call" in EXTEND_SCRIPT
-        assert 'KEYS[1]' in EXTEND_SCRIPT
-        assert 'ARGV[1]' in EXTEND_SCRIPT
-        assert 'ARGV[2]' in EXTEND_SCRIPT
+        assert "KEYS[1]" in EXTEND_SCRIPT
+        assert "ARGV[1]" in EXTEND_SCRIPT
+        assert "ARGV[2]" in EXTEND_SCRIPT
         assert "get" in EXTEND_SCRIPT
         assert "expire" in EXTEND_SCRIPT
 

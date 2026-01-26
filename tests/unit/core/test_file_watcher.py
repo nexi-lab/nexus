@@ -13,14 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
-
 
 # =============================================================================
 # FileWatcher Lifecycle Tests
@@ -396,6 +393,7 @@ class TestBackwardCompatibility:
         watcher = FileWatcher()
 
         try:
+
             async def create_file():
                 await asyncio.sleep(0.2)
                 (tmp_path / "wait_test.txt").write_text("content")

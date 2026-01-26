@@ -27,11 +27,17 @@ from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
 class TestFileWatcherLifecycle:
     """Tests for FileWatcher start/stop lifecycle."""
 
+    @pytest.mark.skipif(
+        sys.platform not in ("linux", "win32"),
+        reason="File watching only supported on Linux and Windows",
+    )
     def test_initial_state(self):
         """Test FileWatcher initial state."""
         watcher = FileWatcher()
         assert watcher._started is False
-        assert watcher._watches == {}
+        # _watches only exists on supported platforms
+        if hasattr(watcher, "_watches"):
+            assert watcher._watches == {}
         watcher.close()
 
     @pytest.mark.skipif(

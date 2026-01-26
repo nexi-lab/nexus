@@ -14,8 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from nexus.core.distributed_lock import RedisLockManager
+    from nexus.core.event_bus import RedisEventBus
 
 # Skip entire module if Redis is not available
 pytestmark = pytest.mark.skipif(
@@ -345,9 +350,7 @@ class TestRedisLockManagerIntegration:
 
         try:
             # Extend lock
-            extended = await lock_manager.extend(
-                lock_id, "test-tenant", "/heartbeat.txt", ttl=30.0
-            )
+            extended = await lock_manager.extend(lock_id, "test-tenant", "/heartbeat.txt", ttl=30.0)
             assert extended is True
 
             # Verify still locked
@@ -395,9 +398,7 @@ class TestRedisLockManagerIntegration:
 
         try:
             # Try to release with wrong lock_id
-            released = await lock_manager.release(
-                "wrong-lock-id", "test-tenant", "/owned.txt"
-            )
+            released = await lock_manager.release("wrong-lock-id", "test-tenant", "/owned.txt")
             assert released is False
 
             # Lock should still exist
@@ -419,9 +420,7 @@ class TestRedisLockManagerIntegration:
 
         try:
             # Try to extend with wrong lock_id
-            extended = await lock_manager.extend(
-                "wrong-lock-id", "test-tenant", "/extend.txt"
-            )
+            extended = await lock_manager.extend("wrong-lock-id", "test-tenant", "/extend.txt")
             assert extended is False
 
         finally:
@@ -541,9 +540,7 @@ class TestDistributedWorkflows:
             assert num_subscribers >= 0
 
             # Release lock
-            released = await lock_manager.release(
-                lock_id, "test-tenant", "/workflow.txt"
-            )
+            released = await lock_manager.release(lock_id, "test-tenant", "/workflow.txt")
             assert released is True
 
         finally:
@@ -565,9 +562,7 @@ class TestDistributedWorkflows:
             # Simulate speaking with heartbeats
             for _ in range(3):
                 await asyncio.sleep(0.3)
-                extended = await lock_manager.extend(
-                    lock_id, "meeting-123", "/floor", ttl=5.0
-                )
+                extended = await lock_manager.extend(lock_id, "meeting-123", "/floor", ttl=5.0)
                 assert extended is True
 
             # Still have the floor
@@ -576,9 +571,7 @@ class TestDistributedWorkflows:
 
         finally:
             # Release floor
-            released = await lock_manager.release(
-                lock_id, "meeting-123", "/floor"
-            )
+            released = await lock_manager.release(lock_id, "meeting-123", "/floor")
             assert released is True
 
     @pytest.mark.asyncio
@@ -636,6 +629,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -676,6 +670,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -716,6 +711,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -756,6 +752,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -796,6 +793,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -836,6 +834,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -875,6 +874,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -915,6 +915,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -955,6 +956,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -994,6 +996,7 @@ class TestPathPatternFiltering:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1042,6 +1045,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1082,6 +1086,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1122,6 +1127,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1164,6 +1170,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1205,6 +1212,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1245,6 +1253,7 @@ class TestEventTypes:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1561,6 +1570,7 @@ class TestDistributedSpecific:
         await subscriber.start()
 
         try:
+
             async def wait_for_event():
                 return await subscriber.wait_for_event(
                     tenant_id=tenant_id,
@@ -1752,9 +1762,7 @@ class TestAdditionalEdgeCases:
     """Additional edge case tests for completeness."""
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_nonexistent_path_pattern(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_wait_for_event_nonexistent_path_pattern(self, event_bus: RedisEventBus):
         """Test wait_for_event on path that will never receive events."""
         import uuid
 
@@ -1771,9 +1779,7 @@ class TestAdditionalEdgeCases:
         assert event is None
 
     @pytest.mark.asyncio
-    async def test_lock_manager_is_locked_never_locked_path(
-        self, lock_manager: RedisLockManager
-    ):
+    async def test_lock_manager_is_locked_never_locked_path(self, lock_manager: RedisLockManager):
         """Test is_locked() on a path that was never locked."""
         import uuid
 
@@ -1788,9 +1794,7 @@ class TestAdditionalEdgeCases:
         assert is_locked is False
 
     @pytest.mark.asyncio
-    async def test_lock_manager_get_lock_info_never_locked(
-        self, lock_manager: RedisLockManager
-    ):
+    async def test_lock_manager_get_lock_info_never_locked(self, lock_manager: RedisLockManager):
         """Test get_lock_info() on a path that was never locked."""
         import uuid
 
@@ -1819,11 +1823,10 @@ class TestStressAndPerformance:
     """Stress tests for high-volume scenarios."""
 
     @pytest.mark.asyncio
-    async def test_rapid_event_publishing(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_rapid_event_publishing(self, event_bus: RedisEventBus):
         """Test publishing many events rapidly doesn't cause issues."""
         import uuid
+
         from nexus.core.event_bus import FileEvent, FileEventType
 
         tenant_id = f"stress-publish-{uuid.uuid4().hex[:8]}"
@@ -1841,9 +1844,7 @@ class TestStressAndPerformance:
         # No assertions needed - just verify no exceptions
 
     @pytest.mark.asyncio
-    async def test_rapid_lock_acquire_release(
-        self, lock_manager: RedisLockManager
-    ):
+    async def test_rapid_lock_acquire_release(self, lock_manager: RedisLockManager):
         """Test rapid lock acquire/release cycles."""
         import uuid
 
@@ -1868,13 +1869,12 @@ class TestStressAndPerformance:
             assert released is True
 
     @pytest.mark.asyncio
-    async def test_event_ordering_under_load(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_event_ordering_under_load(self, event_bus: RedisEventBus):
         """Test that events maintain ordering under load."""
         import uuid
-        from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
+
         from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
 
         tenant_id = f"order-load-{uuid.uuid4().hex[:8]}"
 
@@ -1933,9 +1933,7 @@ class TestStressAndPerformance:
             await subscribe_client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_concurrent_locks_different_paths(
-        self, lock_manager: RedisLockManager
-    ):
+    async def test_concurrent_locks_different_paths(self, lock_manager: RedisLockManager):
         """Test acquiring locks on many different paths concurrently."""
         import uuid
 
@@ -1959,10 +1957,7 @@ class TestStressAndPerformance:
             return False
 
         # Acquire 20 locks concurrently on different paths
-        tasks = [
-            acquire_and_release(f"/concurrent/{i}.txt")
-            for i in range(20)
-        ]
+        tasks = [acquire_and_release(f"/concurrent/{i}.txt") for i in range(20)]
         results = await asyncio.gather(*tasks)
 
         # All should succeed (different paths)
@@ -1982,9 +1977,7 @@ class TestErrorRecoveryLayer2:
     """Error recovery tests for Layer 2 distributed system."""
 
     @pytest.mark.asyncio
-    async def test_publish_to_stopped_bus_raises(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_publish_to_stopped_bus_raises(self, event_bus: RedisEventBus):
         """Test that publishing to stopped bus raises appropriate error."""
         from nexus.core.event_bus import FileEvent, FileEventType
 
@@ -2005,9 +1998,7 @@ class TestErrorRecoveryLayer2:
         await event_bus.start()
 
     @pytest.mark.asyncio
-    async def test_wait_for_event_on_stopped_bus_raises(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_wait_for_event_on_stopped_bus_raises(self, event_bus: RedisEventBus):
         """Test that wait_for_event on stopped bus raises appropriate error."""
         # Stop the bus first
         await event_bus.stop()
@@ -2024,18 +2015,14 @@ class TestErrorRecoveryLayer2:
         await event_bus.start()
 
     @pytest.mark.asyncio
-    async def test_health_check_returns_status(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_health_check_returns_status(self, event_bus: RedisEventBus):
         """Test health_check returns proper status."""
         # Should return True when Redis is available
         is_healthy = await event_bus.health_check()
         assert is_healthy is True
 
     @pytest.mark.asyncio
-    async def test_bus_can_restart_after_stop(
-        self, event_bus: RedisEventBus
-    ):
+    async def test_bus_can_restart_after_stop(self, event_bus: RedisEventBus):
         """Test that bus can restart after being stopped."""
         from nexus.core.event_bus import FileEvent, FileEventType
 

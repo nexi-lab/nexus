@@ -717,9 +717,11 @@ class TestPathPatternMatching:
                 # Apply glob filter manually (simulating NexusFS behavior)
                 pattern = "*.txt"
                 file_name = change.path.split("/")[-1].split("\\")[-1]
-                matches = fnmatch(file_name, pattern)
 
-                # Change should be detected regardless of pattern
+                # Verify fnmatch works correctly for this pattern
+                assert fnmatch(file_name, pattern) is True
+
+                # Change should be detected
                 assert change is not None
         finally:
             await create_task
@@ -762,7 +764,7 @@ class TestEventOrdering:
 
         try:
             await asyncio.wait_for(collect_events(), timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # May not get all events
         finally:
             await create_task

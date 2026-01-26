@@ -66,11 +66,9 @@ def test_all_rpc_methods_have_remote_implementations():
     # Methods that are exposed via @rpc_expose but intentionally don't have
     # remote client implementations yet.
     # Note: Most skills methods were added in PR #1012
-    # Event methods (wait_for_changes, lock, unlock) are same-box only (Block 1, Issue #1106)
+    # Event methods (wait_for_changes, lock, unlock, extend_lock) were implemented in Block 2 (Issue #1106)
     PENDING_REMOTE_IMPLEMENTATION: set[str] = {
-        "wait_for_changes",  # Same-box file watching (inotify/ReadDirectoryChangesW)
-        "lock",  # Same-box advisory locking
-        "unlock",  # Same-box advisory locking
+        # All event methods now have remote implementations (Block 2, Issue #1106)
     }
 
     # Get all exposed RPC methods from core

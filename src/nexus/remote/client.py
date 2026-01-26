@@ -6264,6 +6264,141 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
+    # ============================================================
+    # Event Operations (Issue #1106 Block 2)
+    # ============================================================
+
+    def wait_for_changes(
+        self,
+        path: str,
+        timeout: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Wait for file system changes on a path.
+
+        Long-polling RPC call that waits for changes to occur on the specified
+        path. Uses distributed event bus (Redis Pub/Sub) on the server side.
+
+        Args:
+            path: Virtual path to watch (file or directory with trailing /)
+            timeout: Maximum time to wait in seconds (default: 30.0)
+
+        Returns:
+            Dict with change info if change detected:
+                - type: "file_write", "file_delete", "file_rename", etc.
+                - path: Path that changed
+                - old_path: Previous path (for rename events only)
+            None if timeout reached
+
+        Example:
+            >>> # Watch for new files in inbox
+            >>> change = client.wait_for_changes("/inbox/", timeout=60)
+            >>> if change:
+            ...     print(f"Detected {change['type']} on {change['path']}")
+        """
+        result = self._call_rpc(
+            "wait_for_changes",
+            {"path": path, "timeout": timeout},
+            read_timeout=timeout + 5.0,  # Buffer for network latency
+        )
+        return result if result else None  # type: ignore[no-any-return]
+
+    def lock(
+        self,
+        path: str,
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+    ) -> str | None:
+        """Acquire a distributed lock on a path.
+
+        Uses Redis-based distributed locking on the server side.
+        For long-running operations, use extend_lock() to keep the lock alive.
+
+        Args:
+            path: Virtual path to lock
+            timeout: Maximum time to wait for lock in seconds (default: 30.0)
+            ttl: Lock TTL in seconds - auto-expires after this (default: 30.0)
+
+        Returns:
+            Lock ID if acquired (use this to unlock/extend later)
+            None if timeout reached
+
+        Example:
+            >>> lock_id = client.lock("/shared/config.json", timeout=5.0)
+            >>> if lock_id:
+            ...     try:
+            ...         content = client.read("/shared/config.json")
+            ...         client.write("/shared/config.json", modified_content)
+            ...     finally:
+            ...         client.unlock(lock_id, "/shared/config.json")
+        """
+        result = self._call_rpc(
+            "lock",
+            {"path": path, "timeout": timeout, "ttl": ttl},
+            read_timeout=timeout + 5.0,
+        )
+        return result.get("lock_id") if result else None
+
+    def extend_lock(
+        self,
+        lock_id: str,
+        path: str,
+        ttl: float = 30.0,
+    ) -> bool:
+        """Extend a lock's TTL (heartbeat for long-running operations).
+
+        Use this to keep distributed locks alive during long operations.
+        Call periodically (e.g., every TTL/2 seconds) to prevent lock expiry.
+
+        Args:
+            lock_id: Lock ID returned from lock()
+            path: Path that was locked
+            ttl: New TTL in seconds (default: 30.0)
+
+        Returns:
+            True if lock was extended
+            False if lock was not found or not owned
+
+        Example:
+            >>> # Heartbeat pattern for long operations
+            >>> def heartbeat():
+            ...     while working:
+            ...         success = client.extend_lock(lock_id, "/meeting/floor")
+            ...         if not success:
+            ...             raise RuntimeError("Lost lock!")
+            ...         time.sleep(15)  # Extend every 15s for 30s TTL
+        """
+        result = self._call_rpc(
+            "extend_lock",
+            {"lock_id": lock_id, "path": path, "ttl": ttl},
+        )
+        return result.get("extended", False) if result else False
+
+    def unlock(
+        self,
+        lock_id: str,
+        path: str,
+    ) -> bool:
+        """Release a distributed lock.
+
+        Args:
+            lock_id: Lock ID returned from lock()
+            path: Path that was locked
+
+        Returns:
+            True if lock was released
+            False if lock_id was not found or not owned
+
+        Example:
+            >>> lock_id = client.lock("/shared/config.json")
+            >>> # ... do work ...
+            >>> success = client.unlock(lock_id, "/shared/config.json")
+        """
+        result = self._call_rpc(
+            "unlock",
+            {"lock_id": lock_id, "path": path},
+        )
+        return result.get("released", False) if result else False
+
     def close(self) -> None:
         """Close the client and release resources."""
         self.session.close()

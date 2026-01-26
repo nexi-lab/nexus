@@ -604,8 +604,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject_type, subject_id = subject
         object_type, object_id = object
 
+        from nexus.core.rebac import WILDCARD_SUBJECT
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
+            # Check 1: Direct subject match (tenant-scoped)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
@@ -629,7 +632,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     datetime.now(UTC).isoformat(),
                 ),
             )
-            return cursor.fetchone() is not None
+            if cursor.fetchone() is not None:
+                return True
+
+            # Check 2: Wildcard/public access (Issue #1064)
+            # Wildcards should grant access across ALL tenants.
+            # Only check if subject is not already the wildcard.
+            if (subject_type, subject_id) != WILDCARD_SUBJECT:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT 1 FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        WILDCARD_SUBJECT[0],
+                        WILDCARD_SUBJECT[1],
+                        relation,
+                        object_type,
+                        object_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone() is not None:
+                    return True
+
+            return False
 
     def _cache_boundary_if_inherited(
         self,
@@ -1033,6 +1067,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
                 tuples.extend(cross_tenant_tuples)
 
+        # WILDCARD FIX (Issue #1064): Fetch cross-tenant wildcard tuples (*:*)
+        # Wildcard tuples grant access to ALL users regardless of tenant.
+        # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
+        wildcard_tuples = self._fetch_cross_tenant_wildcards(tenant_id)
+        if wildcard_tuples:
+            logger.debug(
+                f"[GRAPH-CACHE] Fetched {len(wildcard_tuples)} cross-tenant wildcard tuples"
+            )
+            tuples.extend(wildcard_tuples)
+
         # LEOPARD OPTIMIZATION (Issue #840): Add synthetic membership tuples from
         # transitive closure. This allows O(1) group membership lookups instead of
         # O(depth) recursive graph traversal during permission checks.
@@ -1169,6 +1213,60 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 + (
                     subject.entity_type,
                     subject.entity_id,
+                    tenant_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            tuples = []
+            for row in cursor.fetchall():
+                tuples.append(
+                    {
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "subject_relation": row["subject_relation"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                    }
+                )
+
+            return tuples
+
+    def _fetch_cross_tenant_wildcards(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch cross-tenant wildcard tuples (*:*) (Issue #1064).
+
+        Wildcard tuples grant access to ALL users regardless of tenant.
+        This query fetches all wildcard tuples from OTHER tenants so they
+        can be included in permission checks.
+
+        This is the industry-standard pattern used by SpiceDB, OpenFGA, Ory Keto.
+
+        Args:
+            tenant_id: Current tenant ID (to exclude duplicates from same tenant)
+
+        Returns:
+            List of wildcard tuples from other tenants
+        """
+        from nexus.core.rebac import WILDCARD_SUBJECT
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id
+                    FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                      AND tenant_id != ?
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """
+                ),
+                (
+                    WILDCARD_SUBJECT[0],
+                    WILDCARD_SUBJECT[1],
                     tenant_id,
                     datetime.now(UTC).isoformat(),
                 ),
@@ -3196,6 +3294,40 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                     logger = logging.getLogger(__name__)
                     logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
+
+            # Check for wildcard/public access (*:*) - Issue #1064
+            # Wildcards grant access to ALL users regardless of tenant.
+            # Only check if subject is not already the wildcard.
+            from nexus.core.rebac import WILDCARD_SUBJECT
+
+            if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
+                # Check for wildcard tuples in ANY tenant (cross-tenant public access)
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        WILDCARD_SUBJECT[0],
+                        WILDCARD_SUBJECT[1],
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone():
+                    logger.debug(
+                        f"[DIRECT-CHECK] Wildcard access found: *:* -> {relation} -> {obj}"
+                    )
                     return True
 
             # Check for userset-as-subject tuple (e.g., group#member)

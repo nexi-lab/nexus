@@ -781,3 +781,172 @@ class TestAsyncManagerWithoutCache:
         manager_no_cache = AsyncReBACManager(engine, enable_l1_cache=False)
         stats = manager_no_cache.get_l1_cache_stats()
         assert stats == {}
+
+
+class TestWildcardPublicAccess:
+    """Tests for wildcard (*:*) public access - Issue #1064.
+
+    Verifies that wildcard subjects grant access to ALL users regardless of tenant.
+    This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
+    """
+
+    @pytest.mark.asyncio
+    async def test_wildcard_grants_access_to_any_user(self, manager: AsyncReBACManager) -> None:
+        """Test that wildcard (*:*) tuple grants access to any user."""
+        # Create wildcard public access tuple
+        await manager.write_tuple(
+            subject=("*", "*"),  # Wildcard subject
+            relation="reader",
+            object=("file", "/public/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Any user should have access
+        assert await manager.rebac_check(
+            subject=("user", "alice"),
+            permission="read",
+            object=("file", "/public/doc.txt"),
+            tenant_id="default",
+        )
+
+        assert await manager.rebac_check(
+            subject=("user", "bob"),
+            permission="read",
+            object=("file", "/public/doc.txt"),
+            tenant_id="default",
+        )
+
+        assert await manager.rebac_check(
+            subject=("agent", "some-agent"),
+            permission="read",
+            object=("file", "/public/doc.txt"),
+            tenant_id="default",
+        )
+
+    @pytest.mark.asyncio
+    async def test_wildcard_cross_tenant_access(self, manager: AsyncReBACManager) -> None:
+        """Test that wildcard grants access across different tenants."""
+        # Create wildcard tuple in tenant A
+        await manager.write_tuple(
+            subject=("*", "*"),
+            relation="reader",
+            object=("file", "/shared/public.txt"),
+            tenant_id="tenant-a",
+        )
+
+        # User in tenant B should have access (cross-tenant via wildcard)
+        assert await manager.rebac_check(
+            subject=("user", "user-from-tenant-b"),
+            permission="read",
+            object=("file", "/shared/public.txt"),
+            tenant_id="tenant-b",
+        )
+
+    @pytest.mark.asyncio
+    async def test_wildcard_does_not_grant_higher_permissions(
+        self, manager: AsyncReBACManager
+    ) -> None:
+        """Test that wildcard reader does not grant write permission."""
+        # Create wildcard reader access
+        await manager.write_tuple(
+            subject=("*", "*"),
+            relation="reader",
+            object=("file", "/public/readonly.txt"),
+            tenant_id="default",
+        )
+
+        # Should have read
+        assert await manager.rebac_check(
+            subject=("user", "random"),
+            permission="read",
+            object=("file", "/public/readonly.txt"),
+            tenant_id="default",
+        )
+
+        # Should NOT have write
+        assert not await manager.rebac_check(
+            subject=("user", "random"),
+            permission="write",
+            object=("file", "/public/readonly.txt"),
+            tenant_id="default",
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_wildcard_means_no_public_access(
+        self, manager: AsyncReBACManager
+    ) -> None:
+        """Test that without wildcard, random users don't have access."""
+        # Create specific user access (not wildcard)
+        await manager.write_tuple(
+            subject=("user", "specific-user"),
+            relation="reader",
+            object=("file", "/private/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Specific user has access
+        assert await manager.rebac_check(
+            subject=("user", "specific-user"),
+            permission="read",
+            object=("file", "/private/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Random user does NOT have access
+        assert not await manager.rebac_check(
+            subject=("user", "random-user"),
+            permission="read",
+            object=("file", "/private/doc.txt"),
+            tenant_id="default",
+        )
+
+    @pytest.mark.asyncio
+    async def test_wildcard_with_specific_user_both_work(
+        self, manager: AsyncReBACManager
+    ) -> None:
+        """Test that both wildcard and specific user grants work together."""
+        # Create wildcard reader access
+        await manager.write_tuple(
+            subject=("*", "*"),
+            relation="reader",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Create specific user writer access
+        await manager.write_tuple(
+            subject=("user", "editor"),
+            relation="writer",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Random user has read (via wildcard)
+        assert await manager.rebac_check(
+            subject=("user", "random"),
+            permission="read",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Random user does NOT have write
+        assert not await manager.rebac_check(
+            subject=("user", "random"),
+            permission="write",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )
+
+        # Editor has both read and write
+        assert await manager.rebac_check(
+            subject=("user", "editor"),
+            permission="read",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )
+        assert await manager.rebac_check(
+            subject=("user", "editor"),
+            permission="write",
+            object=("file", "/mixed/doc.txt"),
+            tenant_id="default",
+        )

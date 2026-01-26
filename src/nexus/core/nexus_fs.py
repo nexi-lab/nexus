@@ -118,7 +118,8 @@ class NexusFS(  # type: ignore[misc]
         enable_deferred_permissions: bool = True,  # Issue #1071: Defer permission ops for faster writes (default: True)
         deferred_flush_interval: float = 0.05,  # Flush interval in seconds (50ms default - balance latency vs batching)
         # Issue #1106 Block 2: Distributed event system
-        redis_url: str | None = None,  # Redis/Dragonfly URL for distributed events/locks (e.g., "redis://localhost:6379")
+        redis_url: str
+        | None = None,  # Redis/Dragonfly URL for distributed events/locks (e.g., "redis://localhost:6379")
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if Redis available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if Redis available (default: True)
     ):
@@ -462,6 +463,7 @@ class NexusFS(  # type: ignore[misc]
 
                 if actual_redis_url:
                     import logging
+
                     logger = logging.getLogger(__name__)
 
                     # Create Redis client (reuse existing DragonflyClient)
@@ -473,7 +475,9 @@ class NexusFS(  # type: ignore[misc]
 
                         self._event_bus = RedisEventBus(self._redis_client)
                         set_global_event_bus(self._event_bus)
-                        logger.info(f"🔔 Distributed event bus initialized (Redis: {actual_redis_url})")
+                        logger.info(
+                            f"🔔 Distributed event bus initialized (Redis: {actual_redis_url})"
+                        )
 
                     # Initialize lock manager if enabled
                     if enable_distributed_locks:
@@ -484,10 +488,13 @@ class NexusFS(  # type: ignore[misc]
 
                         self._lock_manager = RedisLockManager(self._redis_client)
                         set_distributed_lock_manager(self._lock_manager)
-                        logger.info(f"🔐 Distributed lock manager initialized (Redis: {actual_redis_url})")
+                        logger.info(
+                            f"🔐 Distributed lock manager initialized (Redis: {actual_redis_url})"
+                        )
 
             except ImportError as e:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Could not initialize distributed event system: {e}")
 

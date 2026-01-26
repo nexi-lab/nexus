@@ -660,6 +660,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 f"(pool_size={cache_settings.dragonfly_pool_size}, "
                 f"keepalive={cache_settings.dragonfly_keepalive})"
             )
+
+            # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
+            # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
+            if _app_state.cache_factory.is_using_dragonfly:
+                tiger_cache = getattr(
+                    getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                    "_tiger_cache",
+                    None,
+                )
+                if tiger_cache:
+                    dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                    tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+                    logger.info(
+                        "[TIGER] Dragonfly L2 cache wired up - "
+                        "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
+                    )
         except Exception as e:
             logger.warning(f"Failed to initialize cache factory: {e}")
 

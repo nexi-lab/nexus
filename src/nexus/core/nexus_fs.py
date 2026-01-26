@@ -449,7 +449,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Issue #1106: Auto-start flag for cache invalidation
         # Note: Event bus has its own _started flag, so we don't duplicate it here
-        # This flag tracks whether start_cache_invalidation() has been called
+        # This flag tracks whether _start_cache_invalidation() has been called
         self._cache_invalidation_started: bool = False
 
         if redis_url and (enable_distributed_events or enable_distributed_locks):

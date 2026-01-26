@@ -30,6 +30,7 @@ from pyroaring import BitMap as RoaringBitmap
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
+    from nexus.core.cache.dragonfly import DragonflyTigerCache
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -415,6 +416,14 @@ class TigerCache:
 
     Stores which resources a subject can access with a given permission.
     Enables O(1) permission filtering for list operations.
+
+    Architecture (with Dragonfly integration):
+        L1: In-memory cache (self._cache) - fastest, per-instance
+        L2: Dragonfly cache (optional) - shared across instances
+        L3: PostgreSQL (tiger_cache table) - source of truth
+
+    Read path: L1 -> L2 (if available) -> L3
+    Write path: L3 first (source of truth) -> L2 (if available) -> L1
     """
 
     def __init__(
@@ -422,6 +431,7 @@ class TigerCache:
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
+        dragonfly_cache: DragonflyTigerCache | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -429,19 +439,163 @@ class TigerCache:
             engine: SQLAlchemy database engine
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
+            dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
         """
         self._engine = engine
         self._resource_map = resource_map or TigerResourceMap(engine)
         self._rebac_manager = rebac_manager
         self._is_postgresql = "postgresql" in str(engine.url)
 
-        # In-memory cache for hot entries
+        # L2: Dragonfly distributed cache (optional)
+        self._dragonfly: DragonflyTigerCache | None = dragonfly_cache
+        self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
+
+        # L1: In-memory cache for hot entries
         self._cache: dict[
             CacheKey, tuple[Any, int, float]
         ] = {}  # key -> (bitmap, revision, cached_at)
-        self._cache_ttl = 300  # 5 minutes
+        self._cache_ttl = 300  # 5 minutes (same for L1 and L2 for consistency)
         self._cache_max_size = 100_000  # Increased from 10k per Issue #979
         self._lock = threading.RLock()
+
+        # Persistent thread pool for L2 operations (avoid per-operation creation)
+        self._l2_executor: Any | None = None
+
+    def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
+        """Set or update the Dragonfly cache backend.
+
+        This allows late binding of the Dragonfly cache after initialization,
+        useful when the cache factory initializes after TigerCache.
+
+        Args:
+            dragonfly_cache: DragonflyTigerCache instance or None to disable
+        """
+        self._dragonfly = dragonfly_cache
+        if dragonfly_cache:
+            # Cache URL for sync Redis operations
+            self._dragonfly_url = getattr(dragonfly_cache._client, "_url", None)
+            # Create persistent thread pool (max 4 workers for L2 ops)
+            import concurrent.futures
+
+            if self._l2_executor is None:
+                self._l2_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="tiger-l2"
+                )
+            logger.info("[TIGER] Dragonfly L2 cache enabled")
+        else:
+            self._dragonfly_url = None
+            # Shutdown executor if exists
+            if self._l2_executor:
+                self._l2_executor.shutdown(wait=False)
+                self._l2_executor = None
+            logger.info("[TIGER] Dragonfly L2 cache disabled")
+
+    def _run_dragonfly_op(
+        self,
+        operation: str,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        bitmap_data: bytes | None = None,
+        revision: int = 0,
+    ) -> Any:
+        """Run a Dragonfly operation using sync Redis client.
+
+        Uses a persistent thread pool and sync Redis client to avoid
+        event loop conflicts with FastAPI's async context.
+
+        Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}
+        Note: tenant_id excluded per Issue #979 for cross-tenant resource sharing.
+
+        Args:
+            operation: One of "get", "set", "invalidate"
+            subject_type: Subject type for cache key
+            subject_id: Subject ID for cache key
+            permission: Permission for cache key
+            resource_type: Resource type for cache key
+            bitmap_data: Bitmap data for set operations
+            revision: Revision for set operations
+
+        Returns:
+            Result from the operation, or None on error
+        """
+        if not self._dragonfly or not self._dragonfly_url or not self._l2_executor:
+            return None
+
+        import concurrent.futures
+
+        # Use L1 TTL for L2 consistency (Issue #1106: TTL sync)
+        ttl = self._cache_ttl
+
+        def run_sync_redis() -> Any:
+            """Execute Dragonfly operation using sync Redis client."""
+            import redis
+
+            # Thread-local connection with connection pooling
+            client = redis.from_url(
+                self._dragonfly_url,
+                decode_responses=False,
+                socket_timeout=3.0,
+                socket_connect_timeout=2.0,
+            )
+            try:
+                # Key format: exclude tenant_id per Issue #979
+                key = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
+
+                if operation == "get":
+                    result = client.hgetall(key)
+                    if not result:
+                        return None
+                    data = result.get(b"data")
+                    rev = result.get(b"revision")
+                    if data is None or rev is None:
+                        return None
+                    return (data, int(rev))
+
+                elif operation == "set":
+                    pipe = client.pipeline()
+                    pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
+                    pipe.expire(key, ttl)
+                    pipe.execute()
+                    return True
+
+                elif operation == "invalidate":
+                    # Pattern-based invalidation with proper wildcards
+                    # Build pattern: use * for empty/None fields
+                    parts = [
+                        "tiger",
+                        subject_type if subject_type else "*",
+                        subject_id if subject_id else "*",
+                        permission if permission else "*",
+                        resource_type if resource_type else "*",
+                    ]
+                    pattern = ":".join(parts)
+                    count = 0
+                    # Use SCAN for safe iteration
+                    cursor = 0
+                    while True:
+                        cursor, keys = client.scan(cursor=cursor, match=pattern, count=100)
+                        if keys:
+                            client.delete(*keys)
+                            count += len(keys)
+                        if cursor == 0:
+                            break
+                    return count
+
+                return None
+            finally:
+                client.close()
+
+        try:
+            future = self._l2_executor.submit(run_sync_redis)
+            return future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[TIGER] L2 Dragonfly operation timed out")
+            return None
+        except Exception as e:
+            logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
+            return None
 
     def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
         """Set the ReBAC manager for permission computation."""
@@ -736,16 +890,48 @@ class TigerCache:
         logger.debug(f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths")
         return paths
 
-    def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
-        """Load bitmap from database.
+    def _load_from_db(
+        self, key: CacheKey, conn: Connection | None = None, skip_l2: bool = False
+    ) -> Any:
+        """Load bitmap from L2 (Dragonfly) or L3 (PostgreSQL).
+
+        Read path: L2 (Dragonfly) -> L3 (PostgreSQL)
+        On L3 hit, also populates L2 for future requests.
 
         Args:
             key: Cache key
             conn: Optional database connection
+            skip_l2: If True, skip L2 cache and read directly from L3 (database).
+                     Used by write-through operations to ensure reading latest committed state.
 
         Returns:
             Bitmap if found, None otherwise
         """
+        # L2: Try Dragonfly first (if available and not skipped)
+        if self._dragonfly and not skip_l2:
+            result = self._run_dragonfly_op(
+                operation="get",
+                subject_type=key.subject_type,
+                subject_id=key.subject_id,
+                permission=key.permission,
+                resource_type=key.resource_type,
+            )
+            if result:
+                bitmap_data, revision = result
+                bitmap = RoaringBitmap.deserialize(bitmap_data)
+
+                # Cache in L1 memory
+                with self._lock:
+                    self._evict_if_needed()
+                    self._cache[key] = (bitmap, revision, time.time())
+
+                logger.debug(f"[TIGER] L2 Dragonfly hit for {key}, {len(bitmap)} resources")
+                return bitmap
+            else:
+                logger.debug(f"[TIGER] L2 Dragonfly miss for {key}")
+            # Dragonfly miss or unavailable, fall through to L3
+
+        # L3: Fall back to PostgreSQL
         from sqlalchemy import text
 
         query = text("""
@@ -768,13 +954,27 @@ class TigerCache:
             row = result.fetchone()
             if row:
                 bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                revision = int(row.revision)
 
-                # Cache in memory
+                # Cache in L1 memory
                 with self._lock:
                     self._evict_if_needed()
-                    self._cache[key] = (bitmap, int(row.revision), time.time())
+                    self._cache[key] = (bitmap, revision, time.time())
 
-                logger.debug(f"[TIGER] DB cache hit for {key}, {len(bitmap)} resources")
+                # Populate L2 Dragonfly (fire-and-forget)
+                if self._dragonfly:
+                    self._run_dragonfly_op(
+                        operation="set",
+                        subject_type=key.subject_type,
+                        subject_id=key.subject_id,
+                        permission=key.permission,
+                        resource_type=key.resource_type,
+                        bitmap_data=bytes(row.bitmap_data),
+                        revision=revision,
+                    )
+                    logger.debug(f"[TIGER] Populated L2 Dragonfly from L3 for {key}")
+
+                logger.debug(f"[TIGER] L3 PostgreSQL hit for {key}, {len(bitmap)} resources")
                 return bitmap
             return None
 
@@ -1032,7 +1232,7 @@ class TigerCache:
         try:
             if conn:
                 execute(conn)
-                logger.info(f"[TIGER] Database write (via conn) for {key}")
+                logger.info(f"[TIGER] L3 PostgreSQL write (via conn) for {key}")
             else:
                 with self._engine.begin() as new_conn:
                     # Set short timeout for Tiger Cache ops - fail fast instead of blocking
@@ -1040,12 +1240,25 @@ class TigerCache:
                         new_conn.execute(text("PRAGMA busy_timeout=100"))
                     execute(new_conn)
                 # Transaction committed after exiting 'with' block
-                logger.info(f"[TIGER] Database write COMMITTED for {key}")
+                logger.info(f"[TIGER] L3 PostgreSQL write COMMITTED for {key}")
         except Exception as e:
-            logger.error(f"[TIGER] Database write FAILED for {key}: {e}")
+            logger.error(f"[TIGER] L3 PostgreSQL write FAILED for {key}: {e}")
             raise
 
-        # Update in-memory cache
+        # L2: Populate Dragonfly cache (write-through pattern)
+        if self._dragonfly:
+            self._run_dragonfly_op(
+                operation="set",
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission=permission,
+                resource_type=resource_type,
+                bitmap_data=bytes(bitmap_data),
+                revision=revision,
+            )
+            logger.debug(f"[TIGER] L2 Dragonfly write for {key}")
+
+        # L1: Update in-memory cache
         with self._lock:
             self._evict_if_needed()
             self._cache[key] = (bitmap, revision, time.time())
@@ -1119,7 +1332,22 @@ class TigerCache:
                     new_conn.execute(text("PRAGMA busy_timeout=100"))
                 count = execute(new_conn)
 
-        # Clear in-memory cache entries
+        # L2: Invalidate from Dragonfly cache (tenant_id excluded per Issue #979)
+        dragonfly_count = 0
+        if self._dragonfly:
+            dragonfly_count = (
+                self._run_dragonfly_op(
+                    operation="invalidate",
+                    subject_type=subject_type or "",
+                    subject_id=subject_id or "",
+                    permission=permission or "",
+                    resource_type=resource_type or "",
+                )
+                or 0
+            )
+            logger.debug(f"[TIGER] L2 Dragonfly invalidated {dragonfly_count} entries")
+
+        # L1: Clear in-memory cache entries
         with self._lock:
             keys_to_remove = []
             for key in self._cache:
@@ -1140,7 +1368,9 @@ class TigerCache:
             for key in keys_to_remove:
                 del self._cache[key]
 
-        logger.debug(f"[TIGER] Invalidated {count} cache entries")
+        logger.debug(
+            f"[TIGER] Invalidated {count} L3 + {dragonfly_count} L2 + {len(keys_to_remove)} L1 entries"
+        )
         return count
 
     def _evict_if_needed(self) -> None:
@@ -1256,7 +1486,9 @@ class TigerCache:
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly, avoiding stale L2 cache
+                # This prevents race conditions when multiple concurrent grants happen
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is not None:
                     # Check if already in bitmap
@@ -1396,7 +1628,8 @@ class TigerCache:
                         return True
 
                 # Step 2: Load existing bitmap from DB
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly for atomic operation
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is None:
                     # No bitmap exists - nothing to revoke
@@ -1662,6 +1895,19 @@ class TigerCache:
                         "revision": revision,
                     },
                 )
+
+            # L2: Also populate Dragonfly cache (write-through)
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bytes(bitmap_data),
+                    revision=revision,
+                )
+                logger.debug(f"[TIGER] L2 Dragonfly write (persist_bulk) for {key}")
 
             logger.debug(f"[TIGER] Persisted bulk bitmap for {key} ({len(bitmap)} resources)")
             return True

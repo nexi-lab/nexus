@@ -44,11 +44,13 @@ class TestFileWatcherLifecycle:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_start_sets_started_flag(self):
+    @pytest.mark.asyncio
+    async def test_start_sets_started_flag(self):
         """Test that start() sets _started flag."""
         watcher = FileWatcher()
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             assert watcher._started is True
         finally:
             watcher.stop()
@@ -58,11 +60,13 @@ class TestFileWatcherLifecycle:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_stop_clears_started_flag(self):
+    @pytest.mark.asyncio
+    async def test_stop_clears_started_flag(self):
         """Test that stop() clears _started flag."""
         watcher = FileWatcher()
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             assert watcher._started is True
             watcher.stop()
             assert watcher._started is False
@@ -73,12 +77,14 @@ class TestFileWatcherLifecycle:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_double_start_is_safe(self):
+    @pytest.mark.asyncio
+    async def test_double_start_is_safe(self):
         """Test that calling start() twice is safe."""
         watcher = FileWatcher()
         try:
-            watcher.start()
-            watcher.start()  # Should not raise
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
+            watcher.start(loop)  # Should not raise
             assert watcher._started is True
         finally:
             watcher.stop()
@@ -88,11 +94,13 @@ class TestFileWatcherLifecycle:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_double_stop_is_safe(self):
+    @pytest.mark.asyncio
+    async def test_double_stop_is_safe(self):
         """Test that calling stop() twice is safe."""
         watcher = FileWatcher()
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             watcher.stop()
             watcher.stop()  # Should not raise
             assert watcher._started is False
@@ -112,17 +120,24 @@ class TestCallbackRegistration:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_add_watch_registers_callback(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_add_watch_registers_callback(self, tmp_path):
         """Test that add_watch() registers a callback."""
         watcher = FileWatcher()
         callback = MagicMock()
 
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             watcher.add_watch(tmp_path, callback)
 
-            # Callback should be registered
-            assert str(tmp_path) in watcher._watches or tmp_path in watcher._watches
+            # Callback should be registered (different storage on different platforms)
+            if sys.platform == "linux":
+                # Linux uses _wd_to_info with watch descriptor as key
+                assert len(watcher._wd_to_info) > 0
+            elif sys.platform == "win32":
+                # Windows uses _watches with path as key
+                assert str(tmp_path) in watcher._watches or tmp_path in watcher._watches
         finally:
             watcher.stop()
             watcher.close()
@@ -147,18 +162,25 @@ class TestCallbackRegistration:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_remove_watch_unregisters_callback(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_remove_watch_unregisters_callback(self, tmp_path):
         """Test that remove_watch() unregisters a callback."""
         watcher = FileWatcher()
         callback = MagicMock()
 
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             watcher.add_watch(tmp_path, callback)
             watcher.remove_watch(tmp_path)
 
-            # Callback should be unregistered
-            assert str(tmp_path) not in watcher._watches
+            # Callback should be unregistered (different storage on different platforms)
+            if sys.platform == "linux":
+                # Linux: _wd_to_info should be empty after removal
+                assert len(watcher._wd_to_info) == 0
+            elif sys.platform == "win32":
+                # Windows uses _watches with path as key
+                assert str(tmp_path) not in watcher._watches
         finally:
             watcher.stop()
             watcher.close()
@@ -167,12 +189,14 @@ class TestCallbackRegistration:
         sys.platform not in ("linux", "win32"),
         reason="File watching only supported on Linux and Windows",
     )
-    def test_remove_watch_nonexistent_is_safe(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_remove_watch_nonexistent_is_safe(self, tmp_path):
         """Test that remove_watch() on non-watched path is safe."""
         watcher = FileWatcher()
 
         try:
-            watcher.start()
+            loop = asyncio.get_event_loop()
+            watcher.start(loop)
             # Should not raise
             watcher.remove_watch(tmp_path / "nonexistent")
         finally:

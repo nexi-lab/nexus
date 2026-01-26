@@ -659,7 +659,7 @@ class NexusFSEventsMixin:
                 """Background task to subscribe to distributed events."""
                 try:
                     logger.info(f"Starting distributed cache invalidation for tenant: {tenant_id}")
-                    async for event in self._event_bus.subscribe(tenant_id):
+                    async for event in self._event_bus.subscribe(tenant_id):  # type: ignore[union-attr]
                         self._on_distributed_event(event)
                 except asyncio.CancelledError:
                     logger.info("Distributed cache invalidation stopped")
@@ -671,8 +671,8 @@ class NexusFSEventsMixin:
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(_subscribe_loop())
-                self._event_tasks.add(task)
-                task.add_done_callback(self._event_tasks.discard)
+                self._event_tasks.add(task)  # type: ignore[attr-defined]
+                task.add_done_callback(self._event_tasks.discard)  # type: ignore[attr-defined]
             except RuntimeError:
                 logger.debug("No running event loop, skipping distributed cache invalidation")
 
@@ -708,7 +708,7 @@ class NexusFSEventsMixin:
         start_cache_invalidation() again.
         """
         # Stop Layer 2 (distributed) tasks
-        for task in list(self._event_tasks):
+        for task in list(self._event_tasks):  # type: ignore[attr-defined]
             if not task.done():
                 task.cancel()
 

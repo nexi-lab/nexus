@@ -467,7 +467,7 @@ class NexusFS(  # type: ignore[misc]
                     logger = logging.getLogger(__name__)
 
                     # Create Redis client (reuse existing DragonflyClient)
-                    self._redis_client = DragonflyClient(redis_url=actual_redis_url)
+                    self._redis_client = DragonflyClient(url=actual_redis_url)
 
                     # Initialize event bus if enabled
                     if enable_distributed_events:

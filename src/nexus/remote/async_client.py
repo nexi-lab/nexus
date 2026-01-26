@@ -2522,7 +2522,7 @@ class AsyncRemoteNexusFS:
             {"path": path, "timeout": timeout},
             read_timeout=timeout + 5.0,  # Buffer for network latency
         )
-        return result if result else None  # type: ignore[no-any-return]
+        return result if result else None
 
     async def lock(
         self,

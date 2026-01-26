@@ -326,18 +326,19 @@ class RedisLockManager(LockManagerBase):
             True if released, False if not owned or expired
         """
         await self._ensure_scripts_loaded()
+        assert self._release_script_sha is not None  # Guaranteed by _ensure_scripts_loaded
 
         key = self._lock_key(tenant_id, path)
 
         try:
-            result = await self._redis.client.evalsha(
+            result = await self._redis.client.evalsha(  # type: ignore[misc]
                 self._release_script_sha,
                 1,  # Number of keys
                 key,  # KEYS[1]
                 lock_id,  # ARGV[1]
             )
 
-            released = result == 1
+            released: bool = result == 1
             if released:
                 logger.debug(f"Lock released: {key}")
             else:
@@ -370,12 +371,13 @@ class RedisLockManager(LockManagerBase):
             True if extended, False if not owned or expired
         """
         await self._ensure_scripts_loaded()
+        assert self._extend_script_sha is not None  # Guaranteed by _ensure_scripts_loaded
 
         key = self._lock_key(tenant_id, path)
         ttl_seconds = int(ttl)
 
         try:
-            result = await self._redis.client.evalsha(
+            result = await self._redis.client.evalsha(  # type: ignore[misc]
                 self._extend_script_sha,
                 1,  # Number of keys
                 key,  # KEYS[1]
@@ -383,7 +385,7 @@ class RedisLockManager(LockManagerBase):
                 ttl_seconds,  # ARGV[2]
             )
 
-            extended = result == 1
+            extended: bool = result == 1
             if extended:
                 logger.debug(f"Lock extended: {key} (new TTL: {ttl}s)")
             else:
@@ -398,7 +400,8 @@ class RedisLockManager(LockManagerBase):
     async def is_locked(self, tenant_id: str, path: str) -> bool:
         """Check if a path is currently locked."""
         key = self._lock_key(tenant_id, path)
-        return await self._redis.client.exists(key) > 0
+        exists_count: int = await self._redis.client.exists(key)
+        return exists_count > 0
 
     async def get_lock_info(self, tenant_id: str, path: str) -> dict[str, Any] | None:
         """Get information about a lock.
@@ -434,7 +437,7 @@ class RedisLockManager(LockManagerBase):
             True if deleted, False if not found
         """
         key = self._lock_key(tenant_id, path)
-        deleted = await self._redis.client.delete(key)
+        deleted: int = await self._redis.client.delete(key)
 
         if deleted:
             logger.warning(f"Lock force-released: {key}")

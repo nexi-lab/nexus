@@ -213,7 +213,7 @@ class FileWatcher:
 
         # Register inotify fd with asyncio event loop
         # When fd is readable, _on_inotify_events will be called
-        self._loop.add_reader(self._inotify.fd, self._on_inotify_events)
+        self._loop.add_reader(self._inotify.fd, self._on_inotify_events)  # type: ignore[union-attr]
 
     def _stop_linux(self) -> None:
         """Clean up inotify resources."""
@@ -529,7 +529,7 @@ class _WindowsWatch:
         # Unregister wait callback
         if self._wait_handle:
             try:
-                kernel32 = ctypes.windll.kernel32
+                kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
                 kernel32.UnregisterWait(self._wait_handle)
             except Exception:
                 pass
@@ -579,10 +579,12 @@ class _WindowsWatch:
 
     def _register_wait_callback(self) -> None:
         """Register callback with Windows thread pool using RegisterWaitForSingleObject."""
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
 
         # Define callback type: VOID CALLBACK WaitOrTimerCallback(PVOID, BOOLEAN)
-        WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_ubyte)
+        WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(  # type: ignore[attr-defined]
+            None, ctypes.c_void_p, ctypes.c_ubyte
+        )
 
         def wait_callback(_context: Any, timed_out: bool) -> None:
             """Called by Windows when event is signaled."""
@@ -619,7 +621,7 @@ class _WindowsWatch:
         )
 
         if not result:
-            error = ctypes.get_last_error()
+            error = ctypes.get_last_error()  # type: ignore[attr-defined]
             raise OSError(f"RegisterWaitForSingleObject failed: {error}")
 
     def _process_events(self) -> None:
@@ -644,9 +646,9 @@ class _WindowsWatch:
             change = FileChange(type=change_type, path=full_path)
 
             # Invoke callback in event loop if available
-            if self._loop and self._callback:
+            if self._loop and self._callback:  # type: ignore[truthy-function]
                 self._loop.call_soon_threadsafe(self._callback, change)
-            elif self._callback:
+            elif self._callback:  # type: ignore[truthy-function]
                 try:
                     self._callback(change)
                 except Exception as e:

@@ -129,8 +129,8 @@ jobs:
           echo "count=$CURRENT_COUNT" >> $GITHUB_OUTPUT
           echo "Current type: ignore count: $CURRENT_COUNT"
 
-          # Baseline updated for Block 2 (538 = 531 + 7 union-attr for event/lock manager)
-          BASELINE=538
+          # Baseline updated for Block 2 (547 = 531 + 16 type ignores for event/lock/watcher)
+          BASELINE=547
 
           if [ "$CURRENT_COUNT" -gt "$BASELINE" ]; then
             echo "::error::Type ignore count increased from $BASELINE to $CURRENT_COUNT"

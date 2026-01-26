@@ -38,7 +38,12 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.core.rebac import (
+    CROSS_TENANT_ALLOWED_RELATIONS,
+    WILDCARD_SUBJECT,
+    Entity,
+    NamespaceConfig,
+)
 from nexus.core.rebac_cache import ReBACPermissionCache
 
 if TYPE_CHECKING:
@@ -510,6 +515,27 @@ class AsyncReBACManager:
                 )
                 if result.fetchone():
                     logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
+
+            # Check for wildcard/public access (*:*) - Issue #1064
+            # Wildcards grant access to ALL subjects regardless of tenant.
+            # Only check if subject is NOT already the wildcard (avoid infinite loop).
+            # Performance: O(1) indexed lookup via idx_rebac_alive_by_subject.
+            # Industry standard: SpiceDB, OpenFGA, Ory Keto all use query-time wildcard check.
+            if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
+                result = await session.execute(
+                    _QUERY_CROSS_TENANT_TUPLE,  # Reuses no-tenant-filter query
+                    {
+                        "subject_type": WILDCARD_SUBJECT[0],  # "*"
+                        "subject_id": WILDCARD_SUBJECT[1],  # "*"
+                        "relation": relation,
+                        "object_type": obj.entity_type,
+                        "object_id": obj.entity_id,
+                        "now": now_iso,
+                    },
+                )
+                if result.fetchone():
+                    logger.debug(f"Wildcard public access: *:* -> {relation} -> {obj}")
                     return True
 
             # Check userset-as-subject tuples (e.g., group#member)

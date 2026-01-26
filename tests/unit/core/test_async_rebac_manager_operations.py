@@ -872,9 +872,7 @@ class TestWildcardPublicAccess:
         )
 
     @pytest.mark.asyncio
-    async def test_no_wildcard_means_no_public_access(
-        self, manager: AsyncReBACManager
-    ) -> None:
+    async def test_no_wildcard_means_no_public_access(self, manager: AsyncReBACManager) -> None:
         """Test that without wildcard, random users don't have access."""
         # Create specific user access (not wildcard)
         await manager.write_tuple(
@@ -901,9 +899,7 @@ class TestWildcardPublicAccess:
         )
 
     @pytest.mark.asyncio
-    async def test_wildcard_with_specific_user_both_work(
-        self, manager: AsyncReBACManager
-    ) -> None:
+    async def test_wildcard_with_specific_user_both_work(self, manager: AsyncReBACManager) -> None:
         """Test that both wildcard and specific user grants work together."""
         # Create wildcard reader access
         await manager.write_tuple(

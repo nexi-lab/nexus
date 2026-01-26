@@ -23,9 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 import uuid
-from pathlib import Path
 
 import pytest
 
@@ -374,7 +372,7 @@ class TestLockThenWrite:
             if lock_id:
                 try:
                     # Simulate long operation with heartbeats
-                    for i in range(3):
+                    for _ in range(3):
                         await asyncio.sleep(0.4)
                         extended = await nexus_fs.extend_lock(lock_id, test_path, ttl=1.0)
                         assert extended is True
@@ -459,7 +457,7 @@ class TestConcurrentAccess:
         )
 
         assert len(results) == 3
-        for name, content in results:
+        for _name, content in results:
             assert content == b"shared content"
 
     @pytest.mark.asyncio
@@ -553,7 +551,7 @@ class TestConcurrentAccess:
 
         # All reads should be consistent (all A's or all B's, no mix)
         for content in read_results:
-            assert content == initial_content or content == new_content
+            assert content in (initial_content, new_content)
             # No partial reads
             assert not (b"A" in content and b"B" in content)
 

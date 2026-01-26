@@ -128,12 +128,12 @@ async def nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shared_lock
     nexus._lock_manager = shared_lock_manager
 
     # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus.start_cache_invalidation()
+    nexus._start_cache_invalidation()
 
     yield nexus
 
     # Stop cache invalidation
-    nexus.stop_cache_invalidation()
+    nexus._stop_cache_invalidation()
 
 
 @pytest.fixture
@@ -164,12 +164,12 @@ async def second_nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shar
     nexus._lock_manager = shared_lock_manager
 
     # Start cache invalidation (events from other instances will invalidate local cache)
-    nexus.start_cache_invalidation()
+    nexus._start_cache_invalidation()
 
     yield nexus
 
     # Stop cache invalidation
-    nexus.stop_cache_invalidation()
+    nexus._stop_cache_invalidation()
 
 
 # =============================================================================

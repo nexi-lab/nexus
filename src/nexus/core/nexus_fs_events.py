@@ -48,7 +48,7 @@ class NexusFSEventsMixin:
     Cache Invalidation Auto-Start:
         When caching is enabled and an event source is available, cache invalidation
         is automatically started on the first async operation (e.g., wait_for_changes).
-        This ensures users don't need to manually call start_cache_invalidation().
+        This ensures users don't need to manually call _start_cache_invalidation().
     """
 
     # Type hints for attributes from NexusFS parent class
@@ -134,7 +134,7 @@ class NexusFSEventsMixin:
             return self.tenant_id
         return "default"
 
-    def _should_auto_start_cache_invalidation(self) -> bool:
+    def _should_auto__start_cache_invalidation(self) -> bool:
         """Check if cache invalidation should be auto-started.
 
         Returns True if:
@@ -168,7 +168,7 @@ class NexusFSEventsMixin:
         2. Auto-starts cache invalidation if caching is enabled
 
         This lazy initialization ensures users don't need to manually call
-        start_cache_invalidation() - it happens automatically when needed.
+        _start_cache_invalidation() - it happens automatically when needed.
         """
         # Start event bus if available and not started
         # SSOT: Use event bus's internal _started flag instead of maintaining our own
@@ -180,8 +180,8 @@ class NexusFSEventsMixin:
                 logger.warning(f"Failed to auto-start event bus: {e}")
 
         # Auto-start cache invalidation if conditions are met
-        if self._should_auto_start_cache_invalidation():
-            self.start_cache_invalidation()
+        if self._should_auto__start_cache_invalidation():
+            self._start_cache_invalidation()
             logger.info("🔄 Cache invalidation auto-started (caching enabled with event source)")
 
     @rpc_expose(description="Wait for file system changes")
@@ -624,7 +624,7 @@ class NexusFSEventsMixin:
         """
         self._handle_cache_invalidation_event(event.type, event.path, event.old_path)
 
-    def start_cache_invalidation(self) -> None:
+    def _start_cache_invalidation(self) -> None:
         """Start cache invalidation listeners for both Layer 1 and Layer 2.
 
         This method sets up event-driven cache invalidation:
@@ -700,12 +700,12 @@ class NexusFSEventsMixin:
                 except Exception as e:
                     logger.warning(f"Could not start same-box cache invalidation: {e}")
 
-    def stop_cache_invalidation(self) -> None:
+    def _stop_cache_invalidation(self) -> None:
         """Stop all cache invalidation listeners.
 
         Cleans up both Layer 1 (FileWatcher) and Layer 2 (EventBus) listeners.
         After stopping, cache invalidation can be restarted by calling
-        start_cache_invalidation() again.
+        _start_cache_invalidation() again.
         """
         # Stop Layer 2 (distributed) tasks
         for task in list(self._event_tasks):  # type: ignore[attr-defined]

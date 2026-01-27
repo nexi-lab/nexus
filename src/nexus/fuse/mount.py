@@ -2,15 +2,18 @@
 
 This module provides the high-level interface for mounting Nexus as a
 FUSE filesystem, including mount mode management and lifecycle control.
+
+Issue #1076: Added automatic cache warmup on mount for faster first access.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fuse import FUSE
 
@@ -58,6 +61,8 @@ class NexusFUSE:
         mount_point: str,
         mode: MountMode = MountMode.SMART,
         cache_config: dict[str, int | bool] | None = None,
+        warmup_depth: int = 2,
+        warmup_max_files: int = 1000,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -68,17 +73,26 @@ class NexusFUSE:
             cache_config: Optional cache configuration dict with keys:
                          - attr_cache_size: int (default: 1024)
                          - attr_cache_ttl: int (default: 60)
-                         - content_cache_size: int (default: 100)
+                         - content_cache_size: int (default: 10000)
                          - parsed_cache_size: int (default: 50)
                          - enable_metrics: bool (default: False)
+            warmup_depth: Directory depth for automatic warmup (default: 2)
+            warmup_max_files: Maximum files to warm (default: 1000)
+
+        Note:
+            Issue #1076: Cache warmup runs automatically after mount in background.
+            This is always enabled as it's non-blocking and reduces first-access latency.
         """
         self.nexus_fs = nexus_fs
         self.mount_point = Path(mount_point)
         self.mode = mode
         self.cache_config = cache_config
+        self.warmup_depth = warmup_depth
+        self.warmup_max_files = warmup_max_files
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
+        self._warmup_thread: threading.Thread | None = None
 
     def mount(
         self,
@@ -186,6 +200,57 @@ class NexusFUSE:
 
             logger.info(f"Mounted Nexus to {self.mount_point} (background)")
 
+            # Issue #1076: Automatic cache warmup after mount
+            # Always enabled - non-blocking, lightweight, reduces first-access latency
+            self._start_warmup()
+
+    def _start_warmup(self) -> None:
+        """Start background cache warmup (Issue #1076).
+
+        Runs warmup in a separate thread to not block mount completion.
+        """
+
+        def warmup_thread() -> None:
+            try:
+                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+
+                logger.info(
+                    f"[WARMUP] Starting automatic warmup for mount at / "
+                    f"(depth={self.warmup_depth}, max_files={self.warmup_max_files})"
+                )
+
+                config = WarmupConfig(
+                    max_files=self.warmup_max_files,
+                    depth=self.warmup_depth,
+                    include_content=False,  # Metadata only for fast warmup
+                )
+
+                warmer = CacheWarmer(nexus_fs=self.nexus_fs, config=config)  # type: ignore[arg-type]
+
+                # Run async warmup in sync context
+                async def do_warmup() -> Any:
+                    return await warmer.warmup_directory(
+                        path="/",
+                        depth=self.warmup_depth,
+                        include_content=False,
+                        max_files=self.warmup_max_files,
+                    )
+
+                # Create new event loop for this thread
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    stats = loop.run_until_complete(do_warmup())
+                    logger.info(f"[WARMUP] Mount warmup complete: {stats.to_dict()}")
+                finally:
+                    loop.close()
+
+            except Exception as e:
+                logger.warning(f"[WARMUP] Mount warmup failed (non-critical): {e}")
+
+        self._warmup_thread = threading.Thread(target=warmup_thread, daemon=True)
+        self._warmup_thread.start()
+
     def unmount(self) -> None:
         """Unmount the filesystem.
 
@@ -263,6 +328,8 @@ def mount_nexus(
     allow_other: bool = False,
     debug: bool = False,
     cache_config: dict[str, int | bool] | None = None,
+    warmup_depth: int = 2,
+    warmup_max_files: int = 1000,
 ) -> NexusFUSE:
     """Convenience function to mount Nexus filesystem.
 
@@ -276,12 +343,18 @@ def mount_nexus(
         cache_config: Optional cache configuration dict with keys:
                      - attr_cache_size: int (default: 1024)
                      - attr_cache_ttl: int (default: 60)
-                     - content_cache_size: int (default: 100)
+                     - content_cache_size: int (default: 10000)
                      - parsed_cache_size: int (default: 50)
                      - enable_metrics: bool (default: False)
+        warmup_depth: Directory depth for automatic warmup (default: 2)
+        warmup_max_files: Maximum files to warm (default: 1000)
 
     Returns:
         NexusFUSE instance
+
+    Note:
+        Issue #1076: Cache warmup runs automatically after mount in background.
+        This is always enabled as it's non-blocking and reduces first-access latency.
 
     Example:
         >>> from nexus import connect
@@ -289,7 +362,7 @@ def mount_nexus(
         >>>
         >>> nx = connect(config={"data_dir": "./nexus-data"})
         >>>
-        >>> # Mount with virtual parsed views
+        >>> # Mount with virtual parsed views (warmup runs automatically)
         >>> fuse = mount_nexus(nx, "/mnt/nexus", mode="smart", foreground=False)
         >>> # cat /mnt/nexus/file.xlsx → binary content
         >>> # cat /mnt/nexus/file_parsed.xlsx.md → parsed markdown
@@ -305,8 +378,15 @@ def mount_nexus(
     # Parse mode
     mode_enum = MountMode(mode.lower())
 
-    # Create and mount
-    fuse = NexusFUSE(nexus_fs, mount_point, mode=mode_enum, cache_config=cache_config)
+    # Create and mount (warmup runs automatically in background)
+    fuse = NexusFUSE(
+        nexus_fs,
+        mount_point,
+        mode=mode_enum,
+        cache_config=cache_config,
+        warmup_depth=warmup_depth,
+        warmup_max_files=warmup_max_files,
+    )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 
     return fuse

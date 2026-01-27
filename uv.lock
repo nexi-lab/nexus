@@ -782,12 +782,33 @@ wheels = [
 ]
 
 [[package]]
+name = "click-default-group"
+version = "1.2.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1d/ce/edb087fb53de63dad3b36408ca30368f438738098e668b78c87f93cd41df/click_default_group-1.2.4.tar.gz", hash = "sha256:eb3f3c99ec0d456ca6cd2a7f08f7d4e91771bef51b01bdd9580cc6450fe1251e", size = 3505, upload-time = "2023-08-04T07:54:58.425Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/1a/aff8bb287a4b1400f69e09a53bd65de96aa5cee5691925b38731c67fc695/click_default_group-1.2.4-py2.py3-none-any.whl", hash = "sha256:9b60486923720e7fc61731bdb32b617039aba820e22e1c88766b1125592eaa5f", size = 4123, upload-time = "2023-08-04T07:54:56.875Z" },
+]
+
+[[package]]
 name = "cobble"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/54/7a/a507c709be2c96e1bb6102eb7b7f4026c5e5e223ef7d745a17d239e9d844/cobble-0.1.4.tar.gz", hash = "sha256:de38be1539992c8a06e569630717c485a5f91be2192c461ea2b220607dfa78aa", size = 3805, upload-time = "2024-06-01T18:11:09.528Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d5/e1/3714a2f371985215c219c2a70953d38e3eed81ef165aed061d21de0e998b/cobble-0.1.4-py3-none-any.whl", hash = "sha256:36c91b1655e599fd428e2b95fdd5f0da1ca2e9f1abb0bc871dec21a0e78a2b44", size = 3984, upload-time = "2024-06-01T18:11:07.911Z" },
+]
+
+[[package]]
+name = "codetiming"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ad/4e/c40bf151af20ba2748bd6ea24e484d7b6196b1056ba3a1a4ee33b6939c37/codetiming-1.4.0.tar.gz", hash = "sha256:4937bf913a2814258b87eaaa43d9a1bb24711ffd3557a9ab6934fa1fe3ba0dbc", size = 14899, upload-time = "2022-11-08T07:12:29.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/91/e4a2b7c64e738beefddfa24b409d6eecb16c378bde01578918b6ea722a09/codetiming-1.4.0-py3-none-any.whl", hash = "sha256:3b80f409bef00941a9755c5524071ce2f72eaa4520f4bc35b33869cde024ccbd", size = 7165, upload-time = "2022-11-08T07:12:23.553Z" },
 ]
 
 [[package]]
@@ -1162,6 +1183,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/48/9c/11969bd3e3bc4aa3a711f83dd3720239d3565a934929c74fc32f6c9f3638/fastapi-0.124.0.tar.gz", hash = "sha256:260cd178ad75e6d259991f2fd9b0fee924b224850079df576a3ba604ce58f4e6", size = 357623, upload-time = "2025-12-06T13:11:35.692Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/29/9e1e82e16e9a1763d3b55bfbe9b2fa39d7175a1fd97685c482fa402e111d/fastapi-0.124.0-py3-none-any.whl", hash = "sha256:91596bdc6dde303c318f06e8d2bc75eafb341fc793a0c9c92c0bc1db1ac52480", size = 112505, upload-time = "2025-12-06T13:11:34.392Z" },
+]
+
+[[package]]
+name = "fastcdc"
+version = "1.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "click-default-group" },
+    { name = "codetiming" },
+    { name = "humanize" },
+    { name = "py-cpuinfo" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f6/b8/b4c03fea1cc6e5573e571304e248571669a5fe76b2c234cbe02dd00b2163/fastcdc-1.7.0.tar.gz", hash = "sha256:634b4fbea85296484e896b6ff70e43bcd94724989530c8639a6e5b253105eed2", size = 17628, upload-time = "2024-06-27T15:55:34.684Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/d2/de4fdb44aa33301db953abf36e5a178ce391657335c54182dc2281360d61/fastcdc-1.7.0-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:6cf75d6ebc38c9744e3e8e11486bd91b3301c453c258337ab34fc3806a0b47f3", size = 371015, upload-time = "2024-06-27T15:54:53.261Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/2e/be04e02d151b95840169575d81d7a1ed1e1be1ba94ed3aacef28f568a4ed/fastcdc-1.7.0-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:f797f02dad05ab3006f28e2fd7aa4c2f9be696341f40ee760730102de227bc0c", size = 371420, upload-time = "2024-06-27T15:54:55.415Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/77/b7033bb25541f4141a0993b314eb1a2c58a20e44e143e3bae253f1680e00/fastcdc-1.7.0-cp312-cp312-macosx_13_0_x86_64.whl", hash = "sha256:06628cdd1f58f216ed631b8cdf9d5b069210aaa8cc65e0e4ea255ca71eb84bc8", size = 368931, upload-time = "2024-06-27T15:54:57.448Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/fb/f9d2fbc4a6bc1ade4250d7ba6f331f7f1c282b72db4666c4b3441a020346/fastcdc-1.7.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:b17830785a7b9e6507fc2d5b40c920aa16de3609f60797bc00c07061ac7ae72d", size = 368930, upload-time = "2024-06-27T15:54:59.753Z" },
+    { url = "https://files.pythonhosted.org/packages/51/11/f4e758b1d75bbf35fd31108c180280ded5bb3466980a844832bef49db6a5/fastcdc-1.7.0-cp312-cp312-manylinux_2_31_x86_64.whl", hash = "sha256:2826371f08fb5b970723b9cec299cf003c6f1a86b1112d883473f433e9db2b10", size = 756146, upload-time = "2024-06-27T15:55:03.13Z" },
+    { url = "https://files.pythonhosted.org/packages/31/ae/1995e5afc830e747fd33f5598f8d4dc8fa716e16235d4f9e2486a4eb2d51/fastcdc-1.7.0-cp312-cp312-win_amd64.whl", hash = "sha256:38bbbc21c28c12b618f465c128bd82164d4c620888ce8d39934ca33082d203c4", size = 270902, upload-time = "2024-06-27T15:55:05.813Z" },
 ]
 
 [[package]]
@@ -1816,6 +1858,15 @@ wheels = [
 ]
 
 [[package]]
+name = "humanize"
+version = "4.15.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/66/a3921783d54be8a6870ac4ccffcd15c4dc0dd7fcce51c6d63b8c63935276/humanize-4.15.0.tar.gz", hash = "sha256:1dd098483eb1c7ee8e32eb2e99ad1910baefa4b75c3aff3a82f4d78688993b10", size = 83599, upload-time = "2025-12-20T20:16:13.19Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/7b/bca5613a0c3b542420cf92bd5e5fb8ebd5435ce1011a091f66bb7693285e/humanize-4.15.0-py3-none-any.whl", hash = "sha256:b1186eb9f5a9749cd9cb8565aee77919dd7c8d076161cf44d70e59e3301e1769", size = 132203, upload-time = "2025-12-20T20:16:11.67Z" },
+]
+
+[[package]]
 name = "hyperframe"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1861,6 +1912,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f2/97/ebf4da567aa6827c909642694d71c9fcf53e5b504f2d96afea02718862f3/iniconfig-2.1.0.tar.gz", hash = "sha256:3abbd2e30b36733fee78f9c7f7308f2d0050e88f0087fd25c2645f63c773e1c7", size = 4793, upload-time = "2025-03-19T20:09:59.721Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/e1/e6716421ea10d38022b952c159d5161ca1193197fb744506875fbb87ea7b/iniconfig-2.1.0-py3-none-any.whl", hash = "sha256:9deba5723312380e77435581c6bf4935c94cbfab9b1ed33ef8d238ea168eb760", size = 6050, upload-time = "2025-03-19T20:10:01.071Z" },
+]
+
+[[package]]
+name = "inotify-simple"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/5c/bfe40e15d684bc30b0073aa97c39be410a5fbef3d33cad6f0bf2012571e0/inotify_simple-2.0.1.tar.gz", hash = "sha256:f010bbbd8283bd71a9f4eb2de94765804ede24bd47320b0e6ef4136e541cdc2c", size = 7101, upload-time = "2025-08-25T06:28:20.998Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e3/86/8be1ac7e90f80b413e81f1e235148e8db771218886a2353392f02da01be3/inotify_simple-2.0.1-py3-none-any.whl", hash = "sha256:e5da495f2064889f8e68b67f9358b0d102e03b783c2d42e5b8e132ab859a5d8a", size = 7449, upload-time = "2025-08-25T06:28:19.919Z" },
 ]
 
 [[package]]
@@ -2959,6 +3019,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "dotenv" },
     { name = "fastapi" },
+    { name = "fastcdc" },
     { name = "fastmcp" },
     { name = "frozenlist" },
     { name = "google-api-python-client" },
@@ -2969,6 +3030,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "grpcio" },
     { name = "httpx", extra = ["http2"] },
+    { name = "inotify-simple", marker = "sys_platform == 'linux'" },
     { name = "limits" },
     { name = "litellm" },
     { name = "lz4" },
@@ -3089,6 +3151,7 @@ requires-dist = [
     { name = "e2b-code-interpreter", marker = "extra == 'all'", specifier = ">=1.0.0" },
     { name = "e2b-code-interpreter", marker = "extra == 'e2b'", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.124.0" },
+    { name = "fastcdc", specifier = ">=1.5.0" },
     { name = "fastembed", marker = "extra == 'performance'", specifier = ">=0.4.0" },
     { name = "fastmcp", specifier = ">=0.2.0" },
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.4.0" },
@@ -3103,6 +3166,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.0" },
     { name = "grpcio", specifier = ">=1.68.0" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
+    { name = "inotify-simple", marker = "sys_platform == 'linux'", specifier = ">=1.3.0" },
     { name = "langchain-core", marker = "extra == 'test'", specifier = ">=0.3.0" },
     { name = "langgraph", marker = "extra == 'test'", specifier = ">=0.2.0" },
     { name = "limits", specifier = ">=3.6.0" },

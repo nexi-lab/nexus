@@ -358,6 +358,7 @@ class TestDockerSandboxProvider:
 
         # Mock successful exec_run calls
         mkdir_result = MagicMock(exit_code=0)
+        fuse_conf_result = MagicMock(exit_code=0)  # FUSE config step
         which_result = MagicMock(exit_code=0)  # nexus already installed
         mount_result = MagicMock(exit_code=0)
         prewarm_result = MagicMock(exit_code=0)  # test -d succeeds
@@ -369,6 +370,7 @@ class TestDockerSandboxProvider:
 
         mock_container.exec_run.side_effect = [
             mkdir_result,
+            fuse_conf_result,
             which_result,
             mount_result,
             prewarm_result,
@@ -389,7 +391,7 @@ class TestDockerSandboxProvider:
 
         # Verify host.docker.internal transformation
         calls = mock_container.exec_run.call_args_list
-        mount_call = str(calls[2])  # Third call is mount command
+        mount_call = str(calls[3])  # Fourth call is mount command (after mkdir, fuse_conf, which)
         assert "host.docker.internal" in mount_call
 
     @pytest.mark.asyncio
@@ -403,6 +405,7 @@ class TestDockerSandboxProvider:
 
         # Mock exec_run: nexus not found, install succeeds, mount succeeds
         mkdir_result = MagicMock(exit_code=0)
+        fuse_conf_result = MagicMock(exit_code=0)  # FUSE config step
         which_result = MagicMock(exit_code=1)  # nexus not found
         install_result = MagicMock(exit_code=0)
         mount_result = MagicMock(exit_code=0)
@@ -412,6 +415,7 @@ class TestDockerSandboxProvider:
 
         mock_container.exec_run.side_effect = [
             mkdir_result,
+            fuse_conf_result,
             which_result,
             install_result,
             mount_result,
@@ -431,7 +435,7 @@ class TestDockerSandboxProvider:
 
         # Verify install was called
         calls = mock_container.exec_run.call_args_list
-        install_call = str(calls[2])
+        install_call = str(calls[3])  # Fourth call is install (after mkdir, fuse_conf, which)
         assert "pip install" in install_call
         assert "nexus-ai-fs" in install_call
 

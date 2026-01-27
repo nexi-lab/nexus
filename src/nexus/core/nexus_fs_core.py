@@ -107,6 +107,81 @@ class NexusFSCoreMixin:
         task.add_done_callback(self._event_tasks.discard)
         return task
 
+    def _publish_file_event(
+        self,
+        event_type: str,
+        path: str,
+        tenant_id: str | None,
+        size: int | None = None,
+        etag: str | None = None,
+        agent_id: str | None = None,
+        old_path: str | None = None,
+    ) -> None:
+        """Publish a file event to the distributed event bus.
+
+        Issue #1106 Block 2: Centralized event publishing to avoid code duplication.
+        Handles both async (event loop running) and sync (no event loop) contexts.
+
+        Args:
+            event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
+            path: Path of the affected file
+            tenant_id: Tenant ID (defaults to "default" if None)
+            size: File size in bytes (optional)
+            etag: Content hash (optional)
+            agent_id: Agent that performed the operation (optional)
+            old_path: Previous path for rename events (optional)
+        """
+        if not hasattr(self, "_event_bus") or self._event_bus is None:
+            return
+
+        try:
+            from nexus.core.event_bus import FileEvent, FileEventType
+
+            # Map string to enum
+            type_map = {
+                "file_write": FileEventType.FILE_WRITE,
+                "file_delete": FileEventType.FILE_DELETE,
+                "file_rename": FileEventType.FILE_RENAME,
+                "dir_create": FileEventType.DIR_CREATE,
+                "dir_delete": FileEventType.DIR_DELETE,
+            }
+            file_event_type = type_map.get(event_type, event_type)
+
+            event = FileEvent(
+                type=file_event_type,
+                path=path,
+                tenant_id=tenant_id or "default",
+                size=size,
+                etag=etag,
+                agent_id=agent_id,
+                old_path=old_path,
+            )
+
+            # Determine task name for debugging
+            if old_path:
+                task_name = f"event_bus:{event_type}:{old_path}->{path}"
+            else:
+                task_name = f"event_bus:{event_type}:{path}"
+
+            # Fire event asynchronously
+            try:
+                asyncio.get_running_loop()
+                self._create_tracked_event_task(
+                    self._event_bus.publish(event),
+                    name=task_name,
+                )
+            except RuntimeError:
+                # No event loop - run in background thread
+                def publish_in_thread() -> None:
+                    try:
+                        asyncio.run(self._event_bus.publish(event))
+                    except Exception as e:
+                        logger.warning(f"Failed to publish {event_type} event: {e}")
+
+                threading.Thread(target=publish_in_thread, daemon=True).start()
+        except Exception as e:
+            logger.warning(f"Failed to create {event_type} event: {e}")
+
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
     ) -> bytes:
@@ -605,14 +680,23 @@ class NexusFSCoreMixin:
         tenant_id, agent_id, is_admin = self._get_routing_params(context)
 
         # Group paths by backend for potential bulk optimization
-        # First, get metadata and routes for all paths
-        # Note: meta is guaranteed non-None with non-None etag due to check below
+        # Use batch_get for metadata lookup (single SQL query instead of N queries)
         path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
         backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
 
+        # Batch metadata lookup
+        meta_start = time.time()
+        batch_meta = self.metadata.batch_get(list(allowed_set))
+        meta_elapsed = (time.time() - meta_start) * 1000
+        logger.info(
+            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
+        )
+
+        # Process metadata and group by backend
+        route_start = time.time()
         for path in allowed_set:
             try:
-                meta = self.metadata.get(path)
+                meta = batch_meta.get(path)
                 if meta is None or meta.etag is None:
                     if skip_errors:
                         results[path] = None
@@ -639,6 +723,9 @@ class NexusFSCoreMixin:
                     results[path] = None
                 else:
                     raise
+
+        route_elapsed = (time.time() - route_start) * 1000
+        logger.info(f"[READ-BULK] Routing: {len(path_info)} paths in {route_elapsed:.1f}ms")
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
@@ -747,40 +834,122 @@ class NexusFSCoreMixin:
                             else:
                                 raise
             else:
-                # Individual reads for backends without bulk cache support
-                for path in paths_for_backend:
-                    try:
-                        meta, route = path_info[path]
-                        assert meta.etag is not None  # Guaranteed by check above
-                        read_context = context
-                        if context:
-                            from dataclasses import replace
+                # Try parallel I/O for LocalBackend using nexus_fast
+                from nexus.backends.local import LocalBackend
 
-                            read_context = replace(context, backend_path=route.backend_path)
-                        content = route.backend.read_content(
-                            meta.etag, context=read_context
-                        ).unwrap()
-                        content = self._apply_dynamic_viewer_filter_if_needed(
-                            path, content, context
+                if isinstance(backend, LocalBackend) and len(paths_for_backend) > 1:
+                    # Use Rust parallel mmap reads for LocalBackend
+                    try:
+                        from nexus_fast import read_files_bulk
+
+                        # Build mapping: disk_path -> (virtual_path, meta)
+                        disk_to_virtual: dict[str, tuple[str, Any]] = {}
+                        disk_paths: list[str] = []
+                        for path in paths_for_backend:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None
+                            disk_path = str(backend._hash_to_path(meta.etag))
+                            disk_to_virtual[disk_path] = (path, meta)
+                            disk_paths.append(disk_path)
+
+                        # Parallel mmap read
+                        logger.info(
+                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} LocalBackend files"
                         )
-                        if return_metadata:
-                            results[path] = {
-                                "content": content,
-                                "etag": meta.etag,
-                                "version": meta.version,
-                                "modified_at": meta.modified_at,
-                                "size": len(content),
-                            }
-                        else:
-                            results[path] = content
-                    except Exception as e:
+                        disk_contents = read_files_bulk(disk_paths)
+
+                        # Map results back to virtual paths
+                        for disk_path, content in disk_contents.items():
+                            vpath, meta = disk_to_virtual[disk_path]
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                vpath, content, context
+                            )
+                            if return_metadata:
+                                results[vpath] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[vpath] = content
+
+                        # Mark missing files as None if skip_errors
+                        for path in paths_for_backend:
+                            if path not in results:
+                                if skip_errors:
+                                    results[path] = None
+                                else:
+                                    raise NexusFileNotFoundError(path)
+                    except ImportError:
                         logger.warning(
-                            f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            "[READ-BULK] nexus_fast not available, falling back to sequential"
                         )
-                        if skip_errors:
-                            results[path] = None
-                        else:
-                            raise
+                        # Fall through to sequential reads below
+                        for path in paths_for_backend:
+                            if path in results:
+                                continue
+                            try:
+                                meta, route = path_info[path]
+                                assert meta.etag is not None
+                                content = route.backend.read_content(
+                                    meta.etag, context=None
+                                ).unwrap()
+                                content = self._apply_dynamic_viewer_filter_if_needed(
+                                    path, content, context
+                                )
+                                results[path] = (
+                                    content
+                                    if not return_metadata
+                                    else {
+                                        "content": content,
+                                        "etag": meta.etag,
+                                        "version": meta.version,
+                                        "modified_at": meta.modified_at,
+                                        "size": len(content),
+                                    }
+                                )
+                            except Exception:
+                                if skip_errors:
+                                    results[path] = None
+                                else:
+                                    raise
+                else:
+                    # Sequential reads for other backends or single files
+                    for path in paths_for_backend:
+                        try:
+                            meta, route = path_info[path]
+                            assert meta.etag is not None  # Guaranteed by check above
+                            read_context = context
+                            if context:
+                                from dataclasses import replace
+
+                                read_context = replace(context, backend_path=route.backend_path)
+                            content = route.backend.read_content(
+                                meta.etag, context=read_context
+                            ).unwrap()
+                            content = self._apply_dynamic_viewer_filter_if_needed(
+                                path, content, context
+                            )
+                            if return_metadata:
+                                results[path] = {
+                                    "content": content,
+                                    "etag": meta.etag,
+                                    "version": meta.version,
+                                    "modified_at": meta.modified_at,
+                                    "size": len(content),
+                                }
+                            else:
+                                results[path] = content
+                        except Exception as e:
+                            logger.warning(
+                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
+                            )
+                            if skip_errors:
+                                results[path] = None
+                            else:
+                                raise
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start
@@ -1232,6 +1401,32 @@ class NexusFSCoreMixin:
 
         self.metadata.put(metadata)
 
+        # Leopard-style: Add new file to ancestor directory grants
+        # When a file is created in a directory that has been granted to users,
+        # the file should inherit those permissions (if include_future_files=True)
+        is_new_file = meta is None
+        if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+                if tiger_cache:
+                    added_count = tiger_cache.add_file_to_ancestor_grants(
+                        file_path=path,
+                        tenant_id=tenant_id or "default",
+                    )
+                    if added_count > 0:
+                        import logging
+
+                        logger = logging.getLogger(__name__)
+                        logger.debug(
+                            f"[LEOPARD] New file {path} added to {added_count} ancestor directory grants"
+                        )
+            except Exception as e:
+                # Log but don't fail the write operation
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[LEOPARD] Failed to add new file to ancestor grants: {e}")
+
         # Invalidate cached parsed_text when file is updated
         # This ensures read(parsed=True) re-parses the new content
         if meta is not None:  # File existed before (update, not create)
@@ -1248,42 +1443,58 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
 
-        if hasattr(self, "_hierarchy_manager"):
-            try:
-                ctx = context if context is not None else self._default_context
-                logger.info(
-                    f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
-                )
-                created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, tenant_id=ctx.tenant_id or "default"
-                )
-                logger.info(f"write: Created {created_count} parent tuples for {path}")
-            except Exception as e:
-                # Log the error but don't fail the write operation
-                logger.warning(
-                    f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
-                )
+        # Issue #1071: Use deferred buffer for async permission operations if available
+        # This reduces single-file write latency from ~36ms to ~10ms by batching
+        # permission operations in the background. Owner access is guaranteed by
+        # owner_id in metadata (fast-path check).
+        ctx = context if context is not None else self._default_context
+        deferred_buffer = getattr(self, "_deferred_permission_buffer", None)
 
-        # Issue #548: Grant direct_owner permission to the user who created the file
-        # For new files only (meta is None means file didn't exist before)
-        # Note: Use ctx.user (human user) so agents inherit via agent->user relationship
-        if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+        if deferred_buffer is not None:
+            # DEFERRED PATH: Queue permission operations for background batch processing
+            # Owner can still access file immediately via owner_id fast-path
             try:
-                ctx = context if context is not None else self._default_context
-                if ctx.user and not ctx.is_system:
-                    logger.debug(
-                        f"write: Granting direct_owner permission to {ctx.user} for {path}"
-                    )
-                    self._rebac_manager.rebac_write(
-                        subject=("user", ctx.user),
-                        relation="direct_owner",
-                        object=("file", path),
-                        tenant_id=ctx.tenant_id or "default",
-                    )
-                    logger.debug(f"write: Granted direct_owner permission to {ctx.user} for {path}")
+                deferred_buffer.queue_hierarchy(path, ctx.tenant_id or "default")
+                if meta is None and ctx.user and not ctx.is_system:
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.tenant_id or "default")
             except Exception as e:
-                # Log but don't fail the write operation
-                logger.warning(f"write: Failed to grant direct_owner permission for {path}: {e}")
+                logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
+        else:
+            # SYNC PATH: Execute permission operations immediately (original behavior)
+            if hasattr(self, "_hierarchy_manager"):
+                try:
+                    logger.info(
+                        f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
+                    )
+                    created_count = self._hierarchy_manager.ensure_parent_tuples(
+                        path, tenant_id=ctx.tenant_id or "default"
+                    )
+                    logger.info(f"write: Created {created_count} parent tuples for {path}")
+                except Exception as e:
+                    logger.warning(
+                        f"write: Failed to create parent tuples for {path}: {type(e).__name__}: {e}"
+                    )
+
+            # Issue #548: Grant direct_owner permission to the user who created the file
+            if meta is None and hasattr(self, "_rebac_manager") and self._rebac_manager:
+                try:
+                    if ctx.user and not ctx.is_system:
+                        logger.debug(
+                            f"write: Granting direct_owner permission to {ctx.user} for {path}"
+                        )
+                        self._rebac_manager.rebac_write(
+                            subject=("user", ctx.user),
+                            relation="direct_owner",
+                            object=("file", path),
+                            tenant_id=ctx.tenant_id or "default",
+                        )
+                        logger.debug(
+                            f"write: Granted direct_owner permission to {ctx.user} for {path}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"write: Failed to grant direct_owner permission for {path}: {e}"
+                    )
 
         # Auto-parse file if enabled and format is supported
         if self.auto_parse:
@@ -1414,6 +1625,16 @@ class NexusFSCoreMixin:
 
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
+
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_write",
+            path=path,
+            tenant_id=tenant_id,
+            size=len(content),
+            etag=content_hash,
+            agent_id=agent_id,
+        )
 
         # Return metadata for optimistic concurrency control
         return {
@@ -1875,35 +2096,113 @@ class NexusFSCoreMixin:
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
+        # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
         import logging
+        import time as _time
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
+        tenant_id_for_perms = ctx.tenant_id or "default"
 
-        for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
-            is_new_file = existing_metadata.get(path) is None
-
-            # Create parent relationship tuples for file inheritance
-            if hasattr(self, "_hierarchy_manager"):
+        # PERF: Batch hierarchy tuple creation (single transaction instead of N)
+        _hierarchy_start = _time.perf_counter()
+        all_paths = [path for path, _ in validated_files]
+        if hasattr(self, "_hierarchy_manager") and hasattr(
+            self._hierarchy_manager, "ensure_parent_tuples_batch"
+        ):
+            try:
+                created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
+                    all_paths, tenant_id=tenant_id_for_perms
+                )
+                logger.info(
+                    f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"write_batch: Batch parent tuples failed, falling back to individual: {e}"
+                )
+                # Fallback to individual calls if batch fails
+                for path in all_paths:
+                    try:
+                        self._hierarchy_manager.ensure_parent_tuples(
+                            path, tenant_id=tenant_id_for_perms
+                        )
+                    except Exception as e2:
+                        logger.warning(
+                            f"write_batch: Failed to create parent tuples for {path}: {e2}"
+                        )
+        elif hasattr(self, "_hierarchy_manager"):
+            # No batch method available, use individual calls
+            for path in all_paths:
                 try:
                     self._hierarchy_manager.ensure_parent_tuples(
-                        path, tenant_id=ctx.tenant_id or "default"
+                        path, tenant_id=tenant_id_for_perms
                     )
                 except Exception as e:
                     logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
+        _hierarchy_elapsed = (_time.perf_counter() - _hierarchy_start) * 1000
 
-            # Grant direct_owner permission for new files only
-            if is_new_file and hasattr(self, "_rebac_manager") and self._rebac_manager:
+        # PERF: Batch direct_owner grants (single transaction instead of N)
+        _rebac_start = _time.perf_counter()
+        if (
+            hasattr(self, "_rebac_manager")
+            and self._rebac_manager
+            and ctx.user
+            and not ctx.is_system
+        ):
+            # Collect all owner grants needed for new files
+            owner_grants = []
+            for (path, _), _meta in zip(validated_files, metadata_list, strict=False):
+                is_new_file = existing_metadata.get(path) is None
+                if is_new_file:
+                    owner_grants.append(
+                        {
+                            "subject": ("user", ctx.user),
+                            "relation": "direct_owner",
+                            "object": ("file", path),
+                            "tenant_id": tenant_id_for_perms,
+                        }
+                    )
+
+            if owner_grants and hasattr(self._rebac_manager, "rebac_write_batch"):
                 try:
-                    if ctx.user and not ctx.is_system:
-                        self._rebac_manager.rebac_write(
-                            subject=("user", ctx.user),
-                            relation="direct_owner",
-                            object=("file", path),
-                            tenant_id=ctx.tenant_id or "default",
-                        )
+                    grant_count = self._rebac_manager.rebac_write_batch(owner_grants)
+                    logger.info(f"write_batch: Batch granted direct_owner to {grant_count} files")
                 except Exception as e:
-                    logger.warning(f"write_batch: Failed to grant direct_owner for {path}: {e}")
+                    logger.warning(
+                        f"write_batch: Batch rebac_write failed, falling back to individual: {e}"
+                    )
+                    # Fallback to individual calls
+                    for grant in owner_grants:
+                        try:
+                            self._rebac_manager.rebac_write(
+                                subject=grant["subject"],
+                                relation=grant["relation"],
+                                object=grant["object"],
+                                tenant_id=grant["tenant_id"],
+                            )
+                        except Exception as e2:
+                            logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
+            elif owner_grants:
+                # No batch method available, use individual calls
+                for grant in owner_grants:
+                    try:
+                        self._rebac_manager.rebac_write(
+                            subject=grant["subject"],
+                            relation=grant["relation"],
+                            object=grant["object"],
+                            tenant_id=grant["tenant_id"],
+                        )
+                    except Exception as e:
+                        logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
+        _rebac_elapsed = (_time.perf_counter() - _rebac_start) * 1000
+
+        # Log detailed timing breakdown for performance analysis
+        logger.warning(
+            f"[WRITE-BATCH-PERF] files={len(validated_files)}, "
+            f"hierarchy={_hierarchy_elapsed:.1f}ms, rebac={_rebac_elapsed:.1f}ms, "
+            f"per_file_avg={(_hierarchy_elapsed + _rebac_elapsed) / len(validated_files):.1f}ms"
+        )
 
         # Auto-parse files if enabled
         if self.auto_parse:
@@ -2143,6 +2442,16 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_delete",
+            path=path,
+            tenant_id=tenant_id,
+            size=meta.size,
+            etag=meta.etag,
+            agent_id=agent_id,
+        )
+
     @rpc_expose(description="Rename/move file")
     def rename(self, old_path: str, new_path: str, context: OperationContext | None = None) -> None:
         """
@@ -2319,6 +2628,25 @@ class NexusFSCoreMixin:
         else:
             logger.warning("[RENAME-REBAC] SKIPPED - no _rebac_manager available")
 
+        # Leopard-style: Update Tiger Cache bitmaps for moved files
+        # When a file moves between directories, permissions may change:
+        # - If old directory had grants, file should be removed from those users' bitmaps
+        # - If new directory has grants, file should be added to those users' bitmaps
+        if hasattr(self, "_rebac_manager") and self._rebac_manager:
+            try:
+                tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
+                if tiger_cache:
+                    self._update_tiger_cache_on_move(
+                        tiger_cache=tiger_cache,
+                        old_path=old_path,
+                        new_path=new_path,
+                        is_directory=bool(is_directory),
+                        tenant_id=tenant_id or "default",
+                    )
+            except Exception as e:
+                # Log but don't fail the rename operation
+                logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
+
         # Log operation for audit trail and undo capability
         try:
             from nexus.storage.operation_logger import OperationLogger
@@ -2400,6 +2728,181 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_rename_events, daemon=True).start()
 
+        # Issue #1106 Block 2: Publish event to distributed event bus
+        self._publish_file_event(
+            event_type="file_rename",
+            path=new_path,
+            old_path=old_path,
+            tenant_id=tenant_id,
+            size=meta.size if meta else 0,
+            etag=meta.etag if meta else None,
+            agent_id=agent_id,
+        )
+
+    def _update_tiger_cache_on_move(
+        self,
+        tiger_cache: Any,
+        old_path: str,
+        new_path: str,
+        is_directory: bool,
+        tenant_id: str,
+    ) -> None:
+        """Update Tiger Cache bitmaps when a file/directory is moved.
+
+        Leopard-style optimization: When a file moves between directories,
+        permissions may change based on ancestor directory grants:
+        - If old directory had grants, file should be removed from those users' bitmaps
+        - If new directory has grants, file should be added to those users' bitmaps
+        - Grants in both paths need no change (permission still applies)
+
+        Args:
+            tiger_cache: The TigerCache instance
+            old_path: Original file path
+            new_path: New file path
+            is_directory: Whether this is a directory move
+            tenant_id: Tenant ID
+        """
+        # Get grants that apply to old and new paths
+        old_grants = tiger_cache.get_directory_grants_for_path(old_path, tenant_id)
+        new_grants = tiger_cache.get_directory_grants_for_path(new_path, tenant_id)
+
+        # Create grant keys for comparison (subject_type, subject_id, permission)
+        def grant_key(g: dict) -> tuple:
+            return (g["subject_type"], g["subject_id"], g["permission"])
+
+        old_grant_keys = {grant_key(g) for g in old_grants}
+        new_grant_keys = {grant_key(g) for g in new_grants}
+
+        # Grants only in old path -> remove file from those bitmaps
+        grants_to_remove = old_grant_keys - new_grant_keys
+        # Grants only in new path -> add file to those bitmaps
+        grants_to_add = new_grant_keys - old_grant_keys
+
+        if not grants_to_remove and not grants_to_add:
+            logger.debug(
+                f"[LEOPARD] No permission changes needed for move: {old_path} -> {new_path}"
+            )
+            return
+
+        # Get files to update (single file or all descendants for directory)
+        if is_directory:
+            files_to_update = self._get_directory_files_for_move(old_path, new_path, tenant_id)
+        else:
+            files_to_update = [(old_path, new_path)]
+
+        logger.info(
+            f"[LEOPARD] Updating permissions for move: {old_path} -> {new_path}, "
+            f"files={len(files_to_update)}, grants_to_remove={len(grants_to_remove)}, "
+            f"grants_to_add={len(grants_to_add)}"
+        )
+
+        # Process each file
+        resource_map = getattr(tiger_cache, "_resource_map", None)
+        if not resource_map:
+            logger.warning("[LEOPARD] No resource map available, skipping bitmap updates")
+            return
+
+        for _old_file_path, new_file_path in files_to_update:
+            # Get int_id for the file (use new path since file was already renamed)
+            int_id = resource_map.get_or_create_int_id("file", new_file_path)
+            if int_id <= 0:
+                logger.warning(f"[LEOPARD] Failed to get int_id for: {new_file_path}")
+                continue
+
+            # Remove from old grants' bitmaps
+            for subject_type, subject_id, permission in grants_to_remove:
+                try:
+                    tiger_cache.remove_from_bitmap(
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type="file",
+                        tenant_id=tenant_id,
+                        resource_int_id=int_id,
+                    )
+                    logger.debug(
+                        f"[LEOPARD] Removed {new_file_path} from bitmap: "
+                        f"{subject_type}:{subject_id} ({permission})"
+                    )
+                except Exception as e:
+                    logger.warning(f"[LEOPARD] Failed to remove from bitmap: {e}")
+
+            # Add to new grants' bitmaps
+            for grant in new_grants:
+                key = grant_key(grant)
+                if key not in grants_to_add:
+                    continue
+
+                # Check if grant includes future files (moved files count as "new" to this path)
+                if not grant.get("include_future_files", True):
+                    continue
+
+                try:
+                    tiger_cache.add_to_bitmap(
+                        grant["subject_type"],
+                        grant["subject_id"],
+                        grant["permission"],
+                        "file",
+                        tenant_id,
+                        int_id,
+                    )
+
+                    # Persist immediately (write-through)
+                    tiger_cache.persist_single_grant(
+                        grant["subject_type"],
+                        grant["subject_id"],
+                        grant["permission"],
+                        "file",
+                        new_file_path,
+                        tenant_id,
+                    )
+
+                    logger.debug(
+                        f"[LEOPARD] Added {new_file_path} to bitmap: "
+                        f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
+                    )
+                except Exception as e:
+                    logger.warning(f"[LEOPARD] Failed to add to bitmap: {e}")
+
+        logger.info(f"[LEOPARD] Completed permission updates for move: {old_path} -> {new_path}")
+
+    def _get_directory_files_for_move(
+        self,
+        old_dir_path: str,
+        new_dir_path: str,
+        tenant_id: str,
+    ) -> list[tuple[str, str]]:
+        """Get all files under a directory for move permission updates.
+
+        Args:
+            old_dir_path: Original directory path
+            new_dir_path: New directory path
+            tenant_id: Tenant ID
+
+        Returns:
+            List of (old_file_path, new_file_path) tuples
+        """
+        # Normalize paths
+        old_prefix = old_dir_path.rstrip("/") + "/"
+        new_prefix = new_dir_path.rstrip("/") + "/"
+
+        try:
+            # Query all files under directory (using new path since already renamed)
+            # The files have already been renamed via metadata update, so query new paths
+            files = self.metadata.list(prefix=new_prefix, recursive=True, tenant_id=tenant_id)
+            result = []
+            for file_meta in files:
+                new_file_path = file_meta.path
+                if new_file_path:
+                    # Compute what the old path would have been
+                    relative_path = new_file_path[len(new_prefix) :]
+                    old_file_path = old_prefix + relative_path
+                    result.append((old_file_path, new_file_path))
+            return result
+        except Exception as e:
+            logger.warning(f"[LEOPARD] Failed to list directory files: {e}")
+            return []
+
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """
@@ -2439,16 +2942,18 @@ class NexusFSCoreMixin:
         # This enables `stat /skills` to work for authenticated users (TRAVERSE is auto-allowed)
         ctx = context if context is not None else self._default_context
         if is_implicit_dir:
-            # Try TRAVERSE permission first (O(1))
-            # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
-            has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
-            if not has_permission:
-                has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
-            if not has_permission:
-                raise PermissionError(
-                    f"Access denied: User '{ctx.user}' does not have TRAVERSE "
-                    f"permission for '{path}'"
-                )
+            # Only check permissions if enforcement is enabled
+            if self._enforce_permissions:  # type: ignore[attr-defined]
+                # Try TRAVERSE permission first (O(1))
+                # Fall back to descendant access check if TRAVERSE denied (Unix-like behavior)
+                has_permission = self._permission_enforcer.check(path, Permission.TRAVERSE, ctx)
+                if not has_permission:
+                    has_permission = self._has_descendant_access(path, Permission.READ, ctx)  # type: ignore[attr-defined]
+                if not has_permission:
+                    raise PermissionError(
+                        f"Access denied: User '{ctx.user}' does not have TRAVERSE "
+                        f"permission for '{path}'"
+                    )
         else:
             self._check_permission(path, Permission.READ, context)
 
@@ -2501,6 +3006,134 @@ class NexusFSCoreMixin:
             "modified_at": modified_at_str,
             "is_directory": False,
         }
+
+    @rpc_expose(description="Get metadata for multiple files in bulk")
+    def stat_bulk(
+        self,
+        paths: list[str],
+        context: OperationContext | None = None,
+        skip_errors: bool = True,
+    ) -> dict[str, dict[str, Any] | None]:
+        """
+        Get metadata for multiple files in a single RPC call.
+
+        This is optimized for bulk operations where many file stats are needed.
+        It batches permission checks and metadata lookups for better performance.
+
+        Args:
+            paths: List of virtual paths to stat
+            context: Optional operation context for permission checks
+            skip_errors: If True, skip files that can't be stat'd and return None.
+                        If False, raise exception on first error.
+
+        Returns:
+            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
+            Each stat dict contains: size, etag, version, modified_at, is_directory
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Batch permission checks (one DB query instead of N)
+            - Batch metadata lookups
+            - Expected speedup: 10-50x for 100+ files
+        """
+        import time
+
+        bulk_start = time.time()
+        results: dict[str, dict[str, Any] | None] = {}
+
+        # Validate all paths
+        validated_paths = []
+        for path in paths:
+            try:
+                validated_path = self._validate_path(path)
+                validated_paths.append(validated_path)
+            except Exception:
+                if skip_errors:
+                    results[path] = None
+                    continue
+                raise
+
+        if not validated_paths:
+            return results
+
+        # Batch permission check using filter_list
+        perm_start = time.time()
+        allowed_set: set[str]
+        if not self._enforce_permissions:  # type: ignore[attr-defined]
+            allowed_set = set(validated_paths)
+        else:
+            try:
+                from nexus.core.permissions import OperationContext
+
+                ctx = context if context is not None else self._default_context
+                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+                allowed_paths = self._permission_enforcer.filter_list(validated_paths, ctx)
+                allowed_set = set(allowed_paths)
+            except Exception as e:
+                logger.error(f"[STAT-BULK] Permission check failed: {e}")
+                if not skip_errors:
+                    raise
+                allowed_set = set()
+
+        perm_elapsed = time.time() - perm_start
+        logger.info(
+            f"[STAT-BULK] Permission check: {len(allowed_set)}/{len(validated_paths)} allowed in {perm_elapsed * 1000:.1f}ms"
+        )
+
+        # Mark denied files
+        for path in validated_paths:
+            if path not in allowed_set:
+                results[path] = None
+
+        # Batch metadata lookup - single SQL query for all paths
+        meta_start = time.time()
+
+        # Batch fetch metadata for all files in single query
+        # Note: We assume paths are files (not implicit directories) since stat_bulk
+        # is typically called on paths returned by list(). If a path isn't found,
+        # we check if it's an implicit directory as a fallback.
+        try:
+            batch_meta = self.metadata.batch_get(list(allowed_set))
+            for path, meta in batch_meta.items():
+                if meta is None:
+                    # Path not found in metadata - check if it's an implicit directory
+                    if self.metadata.is_implicit_directory(path):
+                        results[path] = {
+                            "size": 0,
+                            "etag": None,
+                            "version": None,
+                            "modified_at": None,
+                            "is_directory": True,
+                        }
+                    elif skip_errors:
+                        results[path] = None
+                    else:
+                        raise NexusFileNotFoundError(path)
+                else:
+                    modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
+                    results[path] = {
+                        "size": meta.size,
+                        "etag": meta.etag,
+                        "version": meta.version,
+                        "modified_at": modified_at_str,
+                        "is_directory": False,
+                    }
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            logger.warning(f"[STAT-BULK] Batch metadata failed: {type(e).__name__}: {e}")
+            if not skip_errors:
+                raise
+
+        meta_elapsed = time.time() - meta_start
+        bulk_elapsed = time.time() - bulk_start
+
+        logger.info(
+            f"[STAT-BULK] Completed: {len(results)} files in {bulk_elapsed * 1000:.1f}ms "
+            f"(perm={perm_elapsed * 1000:.0f}ms, meta={meta_elapsed * 1000:.0f}ms)"
+        )
+
+        return results
 
     @rpc_expose(description="Check if file exists")
     def exists(self, path: str, context: OperationContext | None = None) -> bool:

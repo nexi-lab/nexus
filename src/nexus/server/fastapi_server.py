@@ -294,6 +294,10 @@ class AppState:
         # Hot Search Daemon (Issue #951)
         self.search_daemon: Any = None
         self.search_daemon_enabled: bool = False
+        # Directory Grant Expander for large folder grants (Leopard-style)
+        self.directory_grant_expander: Any = None
+        # Cache factory for Dragonfly/Redis (Issue #1075)
+        self.cache_factory: Any = None
 
 
 # Global state (set during app creation)
@@ -641,6 +645,40 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
+    # Initialize cache factory for Dragonfly/Redis (Issue #1075)
+    # Provides optimized connection pooling for permission/tiger caches
+    dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
+    if dragonfly_url:
+        try:
+            from nexus.core.cache.factory import init_cache_factory
+            from nexus.core.cache.settings import CacheSettings
+
+            cache_settings = CacheSettings.from_env()
+            _app_state.cache_factory = await init_cache_factory(cache_settings)
+            logger.info(
+                f"Cache factory initialized with Dragonfly "
+                f"(pool_size={cache_settings.dragonfly_pool_size}, "
+                f"keepalive={cache_settings.dragonfly_keepalive})"
+            )
+
+            # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
+            # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
+            if _app_state.cache_factory.is_using_dragonfly:
+                tiger_cache = getattr(
+                    getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                    "_tiger_cache",
+                    None,
+                )
+                if tiger_cache:
+                    dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                    tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+                    logger.info(
+                        "[TIGER] Dragonfly L2 cache wired up - "
+                        "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to initialize cache factory: {e}")
+
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
     # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
@@ -737,6 +775,27 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Issue #913: Store task reference for proper shutdown
                 warm_task = asyncio.create_task(_warm_tiger_cache())
                 logger.debug(f"Tiger Cache warm-up started (limit={warm_limit})")
+
+                # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
+                # This processes pending directory grants asynchronously in background
+                try:
+                    from nexus.core.tiger_cache import DirectoryGrantExpander
+
+                    expander = DirectoryGrantExpander(
+                        engine=_app_state.nexus_fs._rebac_manager.engine,
+                        tiger_cache=tiger_cache,
+                        metadata_store=_app_state.nexus_fs.metadata,
+                    )
+                    _app_state.directory_grant_expander = expander
+
+                    async def _run_grant_expander() -> None:
+                        await expander.run_worker()
+
+                    asyncio.create_task(_run_grant_expander())
+                    logger.info("DirectoryGrantExpander worker started for large folder grants")
+                except Exception as e:
+                    logger.debug(f"DirectoryGrantExpander startup skipped: {e}")
+
         except Exception as e:
             logger.debug(f"Tiger Cache warm-up skipped: {e}")
 
@@ -768,6 +827,42 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Sparse index backfill skipped: {e}")
 
+    # Issue #1076: File cache warmup on server startup
+    # Pre-load metadata for commonly accessed paths to reduce cold-start latency
+    # Always enabled - runs in background, lightweight (metadata only), no downside
+    if _app_state.nexus_fs:
+        try:
+            warmup_max_files = int(os.getenv("NEXUS_CACHE_WARMUP_MAX_FILES", "1000"))
+            warmup_depth = int(os.getenv("NEXUS_CACHE_WARMUP_DEPTH", "2"))
+            _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
+
+            async def _warmup_file_cache() -> None:
+                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+
+                config = WarmupConfig(
+                    max_files=warmup_max_files,
+                    depth=warmup_depth,
+                    include_content=False,  # Metadata only for fast startup
+                )
+                warmer = CacheWarmer(nexus_fs=_nexus_fs_warmup, config=config)
+                stats = await warmer.warmup_directory(
+                    path="/",
+                    depth=warmup_depth,
+                    include_content=False,
+                    max_files=warmup_max_files,
+                )
+                logger.info(
+                    f"[WARMUP] Server startup warmup complete: "
+                    f"{stats.files_warmed} files, {stats.metadata_warmed} metadata entries"
+                )
+
+            asyncio.create_task(_warmup_file_cache())
+            logger.info(
+                f"[WARMUP] Server startup warmup started (max_files={warmup_max_files}, depth={warmup_depth})"
+            )
+        except Exception as e:
+            logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
+
     yield
 
     # Cleanup
@@ -780,6 +875,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("Search Daemon stopped")
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
+
+    # Stop DirectoryGrantExpander worker
+    if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:
+        try:
+            _app_state.directory_grant_expander.stop()
+            logger.info("DirectoryGrantExpander worker stopped")
+        except Exception as e:
+            logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -814,6 +917,14 @@ async def lifespan(_app: FastAPI) -> Any:
         await _app_state.subscription_manager.close()
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
+
+    # Shutdown cache factory (Issue #1075)
+    if hasattr(_app_state, "cache_factory") and _app_state.cache_factory:
+        try:
+            await _app_state.cache_factory.shutdown()
+            logger.info("Cache factory stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down cache factory: {e}")
 
     # Shutdown OpenTelemetry (Issue #764)
     try:
@@ -902,8 +1013,10 @@ def create_app(
     app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
     # Initialize rate limiter (Issue #780)
+    # Rate limiting is DISABLED by default for better performance
+    # Set NEXUS_RATE_LIMIT_ENABLED=true to enable rate limiting
     global limiter
-    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_DISABLED", "").lower() not in (
+    rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
         "true",
         "1",
         "yes",
@@ -934,7 +1047,9 @@ def create_app(
             f"Premium: {RATE_LIMIT_PREMIUM}"
         )
     else:
-        logger.info("Rate limiting is DISABLED (NEXUS_RATE_LIMIT_DISABLED=true)")
+        logger.info(
+            "Rate limiting is DISABLED (default, set NEXUS_RATE_LIMIT_ENABLED=true to enable)"
+        )
 
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:
@@ -1320,6 +1435,55 @@ def _register_routes(app: FastAPI) -> None:
             health["unhealthy_backends"] = unhealthy_backends
 
         return health
+
+    # Connection pool metrics endpoint (Issue #1075)
+    @app.get("/metrics/pool", tags=["health"])
+    @limiter.exempt
+    async def pool_metrics() -> dict[str, Any]:
+        """Get database connection pool metrics.
+
+        Returns metrics for PostgreSQL and Redis/Dragonfly connection pools:
+        - pool_size: Base number of connections
+        - checked_out: Connections currently in use
+        - overflow: Connections beyond pool_size
+        - available: Connections ready to use
+
+        Useful for monitoring pool utilization and identifying
+        connection exhaustion issues.
+        """
+        metrics: dict[str, Any] = {}
+
+        # PostgreSQL pool stats from metadata store
+        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+            try:
+                pg_stats = _app_state.nexus_fs.metadata.get_pool_stats()
+                metrics["postgres"] = pg_stats
+            except Exception as e:
+                metrics["postgres"] = {"error": str(e)}
+        else:
+            metrics["postgres"] = {"status": "not_available"}
+
+        # Redis/Dragonfly pool stats from cache factory
+        try:
+            from nexus.core.cache.factory import get_cache_factory
+
+            cache_factory = get_cache_factory()
+            if cache_factory.is_using_dragonfly and cache_factory._dragonfly_client:
+                dragonfly_stats = cache_factory._dragonfly_client.get_pool_stats()
+                dragonfly_info = await cache_factory._dragonfly_client.get_info()
+                metrics["dragonfly"] = {
+                    **dragonfly_stats,
+                    "server_info": dragonfly_info,
+                }
+            else:
+                metrics["dragonfly"] = {"status": "not_configured"}
+        except RuntimeError:
+            # Cache factory not initialized
+            metrics["dragonfly"] = {"status": "not_initialized"}
+        except Exception as e:
+            metrics["dragonfly"] = {"error": str(e)}
+
+        return metrics
 
     # Authentication routes
     try:
@@ -2227,6 +2391,172 @@ def _register_routes(app: FastAPI) -> None:
                 "last_access": e.last_access,
             }
             for e in entries
+        ]
+
+    # =========================================================================
+    # Cache Warmup API Endpoints (Issue #1076)
+    # =========================================================================
+
+    @app.post("/api/cache/warmup", tags=["cache"])
+    async def warmup_cache(
+        request: Request,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Pre-populate caches for faster access (Issue #1076).
+
+        Reduces cold-start latency by pre-caching frequently accessed files.
+
+        Request body:
+            path: Optional path to warm (directory warmup)
+            user: Optional user for history-based warmup
+            hours: Hours to look back for history warmup (default: 24)
+            depth: Directory depth (default: 2)
+            include_content: Whether to warm content (default: false)
+            max_files: Maximum files to warm (default: 1000)
+
+        Returns:
+            Warmup statistics including files warmed, duration, etc.
+        """
+        from nexus.core.cache_warmer import (
+            CacheWarmer,
+            WarmupConfig,
+            get_file_access_tracker,
+        )
+
+        body = await request.json()
+        path = body.get("path")
+        user = body.get("user")
+        hours = body.get("hours", 24)
+        depth = body.get("depth", 2)
+        include_content = body.get("include_content", False)
+        max_files = body.get("max_files", 1000)
+        tenant_id = auth_result.get("tenant_id", "default")
+
+        config = WarmupConfig(
+            max_files=max_files,
+            depth=depth,
+            include_content=include_content,
+        )
+
+        file_tracker = get_file_access_tracker() if user else None
+
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        warmer = CacheWarmer(
+            nexus_fs=_app_state.nexus_fs,
+            config=config,
+            file_tracker=file_tracker,
+        )
+
+        if user:
+            stats = await warmer.warmup_from_history(
+                user=user,
+                hours=hours,
+                max_files=max_files,
+                tenant_id=tenant_id,
+            )
+        elif path:
+            stats = await warmer.warmup_directory(
+                path=path,
+                depth=depth,
+                include_content=include_content,
+                max_files=max_files,
+                tenant_id=tenant_id,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Either 'path' or 'user' must be provided",
+            )
+
+        return {
+            "status": "completed",
+            **stats.to_dict(),
+        }
+
+    @app.get("/api/cache/stats", tags=["cache"])
+    async def get_cache_stats(
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Get cache statistics (Issue #1076).
+
+        Returns statistics for all cache layers including hit rates,
+        memory usage, and entry counts.
+        """
+        from nexus.core.cache_warmer import get_file_access_tracker
+
+        nx = _app_state.nexus_fs
+        if not nx:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+
+        cache_stats: dict[str, Any] = {}
+
+        # Metadata cache stats
+        if hasattr(nx, "metadata") and hasattr(nx.metadata, "_cache"):
+            cache = nx.metadata._cache
+            if cache:
+                cache_stats["metadata_cache"] = {
+                    "path_cache_size": len(getattr(cache, "_path_cache", {})),
+                    "list_cache_size": len(getattr(cache, "_list_cache", {})),
+                    "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
+                }
+
+        # Content cache stats
+        if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
+            cc = nx.backend.content_cache
+            if cc and hasattr(cc, "get_stats"):
+                cache_stats["content_cache"] = cc.get_stats()
+
+        # Permission cache stats
+        if hasattr(nx, "_rebac_manager"):
+            rm = nx._rebac_manager
+            if hasattr(rm, "_permission_cache") and rm._permission_cache:
+                pc = rm._permission_cache
+                if hasattr(pc, "get_stats"):
+                    cache_stats["permission_cache"] = pc.get_stats()
+
+            if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
+                tc = rm._tiger_cache
+                if hasattr(tc, "get_stats"):
+                    cache_stats["tiger_cache"] = tc.get_stats()
+
+        # Directory visibility cache
+        if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
+            dvc = nx._dir_visibility_cache
+            if hasattr(dvc, "get_metrics"):
+                cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+
+        # File access tracker stats
+        tracker = get_file_access_tracker()
+        cache_stats["file_access_tracker"] = tracker.get_stats()
+
+        return cache_stats
+
+    @app.get("/api/cache/hot-files", tags=["cache"])
+    async def get_hot_files(
+        limit: int = Query(20, description="Maximum number of entries", ge=1, le=100),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> list[dict[str, Any]]:
+        """Get frequently accessed files (Issue #1076).
+
+        Returns list of hot files based on recent access patterns.
+        """
+        from nexus.core.cache_warmer import get_file_access_tracker
+
+        tenant_id = auth_result.get("tenant_id", "default")
+        tracker = get_file_access_tracker()
+        hot_files = tracker.get_hot_files(tenant_id=tenant_id, limit=limit)
+
+        return [
+            {
+                "path": f.path,
+                "tenant_id": f.tenant_id,
+                "access_count": f.access_count,
+                "last_access": f.last_access,
+                "total_bytes": f.total_bytes,
+            }
+            for f in hot_files
         ]
 
     # =========================================================================

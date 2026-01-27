@@ -11,6 +11,64 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from nexus.server.auth.oauth_config import OAuthConfig
 
 
+class SecretsConfig(BaseModel):
+    """Configuration for secrets management.
+
+    Supports multiple backends:
+    - env: Environment variables (default, backwards-compatible)
+    - openbao: OpenBao/Vault for enterprise deployments
+    """
+
+    backend: str = Field(
+        default="env",
+        description="Secrets backend: 'env' for environment variables, 'openbao' for OpenBao/Vault",
+    )
+
+    # OpenBao configuration
+    openbao_address: str | None = Field(
+        default=None,
+        description="OpenBao server address (default: $NEXUS_OPENBAO_ADDR or $VAULT_ADDR)",
+    )
+    openbao_token: str | None = Field(
+        default=None,
+        description="OpenBao token (dev only, use AppRole for production)",
+    )
+    openbao_auth_method: str | None = Field(
+        default=None,
+        description="OpenBao auth method: 'approle', 'kubernetes', or None for token",
+    )
+    openbao_role_id: str | None = Field(
+        default=None,
+        description="OpenBao AppRole role ID",
+    )
+    openbao_secret_id: str | None = Field(
+        default=None,
+        description="OpenBao AppRole secret ID",
+    )
+    openbao_k8s_role: str | None = Field(
+        default=None,
+        description="OpenBao Kubernetes auth role name",
+    )
+    openbao_kv_mount: str = Field(
+        default="secret",
+        description="OpenBao KV secrets engine mount path",
+    )
+    openbao_transit_mount: str = Field(
+        default="transit",
+        description="OpenBao Transit engine mount path",
+    )
+    openbao_namespace: str | None = Field(
+        default=None,
+        description="OpenBao namespace (enterprise feature)",
+    )
+    cache_ttl: int = Field(
+        default=300,
+        description="Secret cache TTL in seconds",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DockerImageTemplate(BaseModel):
     """Configuration for a single Docker image template."""
 
@@ -265,6 +323,12 @@ class NexusConfig(BaseModel):
         description="Docker sandbox template configuration",
     )
 
+    # Secrets management configuration (v0.7.0+)
+    secrets: SecretsConfig = Field(
+        default_factory=SecretsConfig,
+        description="Secrets management configuration (OpenBao, env vars, etc.)",
+    )
+
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, v: str) -> str:
@@ -362,6 +426,10 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
         from nexus.server.auth.oauth_config import OAuthConfig as OAuthConfigType
 
         merged_dict["oauth"] = OAuthConfigType(**merged_dict["oauth"])
+
+    # Convert secrets dict to SecretsConfig if present
+    if "secrets" in merged_dict and isinstance(merged_dict["secrets"], dict):
+        merged_dict["secrets"] = SecretsConfig(**merged_dict["secrets"])
 
     return NexusConfig(**merged_dict)
 
@@ -518,6 +586,41 @@ def _load_from_environment() -> NexusConfig:
 
     if parse_providers:
         env_config["parse_providers"] = parse_providers
+
+    # Load secrets configuration from environment
+    secrets_config: dict[str, Any] = {}
+
+    # Secrets backend selection
+    secrets_backend = os.getenv("NEXUS_SECRETS_BACKEND")
+    if secrets_backend:
+        secrets_config["backend"] = secrets_backend
+
+    # OpenBao configuration
+    openbao_env_mapping = {
+        "NEXUS_OPENBAO_ADDR": "openbao_address",
+        "VAULT_ADDR": "openbao_address",  # Fallback to Vault env var
+        "NEXUS_OPENBAO_TOKEN": "openbao_token",
+        "VAULT_TOKEN": "openbao_token",  # Fallback to Vault env var
+        "NEXUS_OPENBAO_AUTH_METHOD": "openbao_auth_method",
+        "NEXUS_OPENBAO_ROLE_ID": "openbao_role_id",
+        "NEXUS_OPENBAO_SECRET_ID": "openbao_secret_id",
+        "NEXUS_OPENBAO_K8S_ROLE": "openbao_k8s_role",
+        "NEXUS_OPENBAO_KV_MOUNT": "openbao_kv_mount",
+        "NEXUS_OPENBAO_TRANSIT_MOUNT": "openbao_transit_mount",
+        "NEXUS_OPENBAO_NAMESPACE": "openbao_namespace",
+        "NEXUS_SECRETS_CACHE_TTL": "cache_ttl",
+    }
+
+    for env_var, config_key in openbao_env_mapping.items():
+        value = os.getenv(env_var)
+        if value is not None and config_key not in secrets_config:
+            if config_key == "cache_ttl":
+                secrets_config[config_key] = int(value)
+            else:
+                secrets_config[config_key] = value
+
+    if secrets_config:
+        env_config["secrets"] = secrets_config
 
     return NexusConfig(**env_config)
 

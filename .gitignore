@@ -135,6 +135,7 @@ config.yml
 *.local.yaml
 *.local.yml
 secrets/
+!src/nexus/secrets/
 *.encrypted
 
 # Data directories

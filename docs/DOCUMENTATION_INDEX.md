@@ -68,6 +68,8 @@ Complete guide to Nexus documentation organized by topic.
 | Document | Description |
 |----------|-------------|
 | [Default Context Security](security/default-context-security.md) | Security implications |
+| [OpenBao Integration](openbao-integration.md) | Enterprise secrets management with OpenBao/Vault |
+| [Slack Secrets Management](slack-secrets-management.md) | Slack OAuth secrets with GCP Secret Manager |
 
 ---
 

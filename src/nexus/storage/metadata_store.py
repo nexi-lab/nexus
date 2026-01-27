@@ -232,6 +232,13 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         Returns:
             Dictionary of engine kwargs for create_engine()
+
+        Environment Variables (PostgreSQL):
+            NEXUS_DB_POOL_SIZE: Base pool size (default: 20)
+            NEXUS_DB_MAX_OVERFLOW: Burst capacity above pool_size (default: 30)
+            NEXUS_DB_POOL_TIMEOUT: Seconds to wait for connection (default: 30)
+            NEXUS_DB_POOL_RECYCLE: Seconds before recycling connections (default: 1800)
+            NEXUS_DB_STATEMENT_TIMEOUT: Query timeout in ms (default: 60000)
         """
         config: dict[str, Any] = {
             "pool_pre_ping": True,  # Check connections before using them
@@ -251,9 +258,41 @@ class SQLAlchemyMetadataStore(MetadataStore):
             config["poolclass"] = pool.QueuePool
             config["pool_size"] = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
             config["max_overflow"] = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
-            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "10"))
-            config["pool_recycle"] = 1800  # Recycle connections every 30 min
+            config["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "30"))
+            config["pool_recycle"] = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
             config["pool_pre_ping"] = True  # Verify connections are alive before use
+
+            # LIFO mode: reuse most recently returned connections first
+            # This allows idle connections to be closed by server-side timeouts
+            # while keeping active connections warm
+            config["pool_use_lifo"] = True
+
+            # TCP keepalive settings for cloud/NAT environments
+            # Cloud NAT gateways (AWS, GCP) have ~350s idle timeouts
+            # Default Linux TCP keepalive is 2 hours - too long for cloud
+            statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
+            # Idle connection timeouts (Postgres Best Practices)
+            # Reclaim 30-50% of connection slots from idle clients
+            idle_in_transaction_timeout = os.getenv(
+                "NEXUS_DB_IDLE_IN_TRANSACTION_TIMEOUT", "30000"
+            )  # 30s default
+            idle_session_timeout = os.getenv(
+                "NEXUS_DB_IDLE_SESSION_TIMEOUT", "600000"
+            )  # 10min default
+            config["connect_args"] = {
+                # TCP Keepalive: detect dead connections through firewalls/NAT
+                "keepalives": 1,  # Enable TCP keepalive
+                "keepalives_idle": 60,  # Start probes after 60s idle
+                "keepalives_interval": 10,  # Probe every 10s
+                "keepalives_count": 3,  # 3 failed probes = dead connection
+                # Server settings (Postgres Best Practices)
+                # Reference: https://www.postgresql.org/docs/current/runtime-config-client.html
+                "options": (
+                    f"-c statement_timeout={statement_timeout} "
+                    f"-c idle_in_transaction_session_timeout={idle_in_transaction_timeout} "
+                    f"-c idle_session_timeout={idle_session_timeout}"
+                ),
+            }
 
         return config
 
@@ -1113,6 +1152,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
         prefix: str = "",
         recursive: bool = True,
         tenant_id: str | None = None,
+        accessible_paths: set[str] | None = None,
+        accessible_int_ids: set[int] | None = None,
     ) -> list[FileMetadata]:
         """
         List all files with given path prefix.
@@ -1124,12 +1165,26 @@ class SQLAlchemyMetadataStore(MetadataStore):
         When tenant_id is provided, filters by tenant at the database level (indexed),
         reducing rows loaded by 30-90% in multi-tenant deployments.
 
+        PERFORMANCE OPTIMIZATION (Issue #1030): Polars-style predicate pushdown for permissions.
+        When accessible_paths is provided, filters at DB level instead of post-filtering in Python.
+        This reduces rows loaded from database by filtering on the allowed paths using SQL IN clause.
+
+        PERFORMANCE OPTIMIZATION (Issue #1030 v2): Integer-based predicate pushdown via Tiger Cache.
+        When accessible_int_ids is provided, uses JOIN with tiger_resource_map for O(1) filtering.
+        This is faster than string-based IN clause because integers are compared more efficiently.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files. If False, only direct children.
             tenant_id: Optional tenant ID to filter by (PREWHERE optimization).
                       When provided, only files belonging to this tenant are returned.
                       When None, all files are returned (backward compatible).
+            accessible_paths: Optional set of paths the user can access (predicate pushdown).
+                      When provided, only files in this set are returned (DB-level filter).
+                      When None, all files are returned (permission filtering done elsewhere).
+            accessible_int_ids: Optional set of Tiger resource map int IDs (predicate pushdown v2).
+                      When provided, uses JOIN with tiger_resource_map for efficient filtering.
+                      Takes precedence over accessible_paths if both are provided.
 
         Returns:
             List of file metadata
@@ -1148,9 +1203,12 @@ class SQLAlchemyMetadataStore(MetadataStore):
             ['/workspace/acme_file.txt']  # Only org_acme's files
         """
         # Check cache first (note: cache key includes recursive flag and tenant_id)
+        # Skip caching when accessible_paths is provided (predicate pushdown) as results vary per user
         tenant_key = tenant_id or "all"
         cache_key = f"{prefix}:{'r' if recursive else 'nr'}:t={tenant_key}"
-        if self._cache_enabled and self._cache:
+        use_cache = self._cache_enabled and self._cache and accessible_paths is None
+        if use_cache:
+            assert self._cache is not None  # mypy: guarded by use_cache check
             cached = self._cache.get_list(cache_key)
             if cached is not None:
                 logger.debug(
@@ -1162,6 +1220,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             # OPTIMIZATION: Check if a PARENT prefix is cached and filter locally
             # This avoids DB queries for /skills/system/ when /skills/ is already cached
             # Note: Parent cache lookup must also match tenant_id
+            # Note: Skip this optimization when accessible_paths is provided (handled above)
             if recursive and prefix and prefix != "/":
                 parent_prefix = prefix.rstrip("/")
                 prev_prefix = None  # Track previous to detect infinite loop
@@ -1203,6 +1262,35 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             FilePathModel.tenant_id == "default",  # Include default tenant files
                             FilePathModel.tenant_id.is_(None),
                         )
+                    )
+
+                # Issue #1030 v2: Integer-based predicate pushdown via Tiger Cache
+                # JOIN with tiger_resource_map for efficient filtering (faster than string IN clause)
+                # Takes precedence over accessible_paths if both are provided
+                use_int_id_join = False
+                if accessible_int_ids is not None:
+                    if len(accessible_int_ids) == 0:
+                        # No accessible int IDs = empty result
+                        logger.debug(
+                            "[PREDICATE-PUSHDOWN-INT] Empty accessible_int_ids, returning []"
+                        )
+                        return []
+                    use_int_id_join = True
+                    logger.debug(
+                        f"[PREDICATE-PUSHDOWN-INT] Will JOIN with tiger_resource_map for {len(accessible_int_ids)} int IDs"
+                    )
+                # Issue #1030: Polars-style predicate pushdown for permissions (string-based fallback)
+                # Filter at DB level using IN clause instead of post-filtering in Python
+                elif accessible_paths is not None:
+                    if len(accessible_paths) == 0:
+                        # No accessible paths = empty result
+                        logger.debug("[PREDICATE-PUSHDOWN] Empty accessible_paths, returning []")
+                        return []
+                    # Use IN clause for predicate pushdown
+                    # For large sets (>10k), SQLite/Postgres handle this efficiently
+                    base_conditions.append(FilePathModel.virtual_path.in_(accessible_paths))
+                    logger.debug(
+                        f"[PREDICATE-PUSHDOWN] Filtering by {len(accessible_paths)} accessible paths at DB level"
                     )
 
                 if prefix:
@@ -1259,6 +1347,22 @@ class SQLAlchemyMetadataStore(MetadataStore):
                             .order_by(FilePathModel.virtual_path)
                         )
 
+                # Issue #1030 v2: Apply JOIN with tiger_resource_map for int_id filtering
+                if use_int_id_join:
+                    from nexus.storage.models import TigerResourceMapModel
+
+                    assert accessible_int_ids is not None  # mypy: guarded by use_int_id_join
+                    # JOIN: file_paths.virtual_path = tiger_resource_map.resource_id
+                    # WHERE: resource_type = 'file' AND resource_int_id IN (accessible_int_ids)
+                    stmt = stmt.join(
+                        TigerResourceMapModel,
+                        (FilePathModel.virtual_path == TigerResourceMapModel.resource_id)
+                        & (TigerResourceMapModel.resource_type == "file"),
+                    ).where(TigerResourceMapModel.resource_int_id.in_(accessible_int_ids))
+                    logger.info(
+                        f"[PREDICATE-PUSHDOWN-INT] Applied JOIN filter for {len(accessible_int_ids)} int IDs"
+                    )
+
                 results = []
                 for file_path in session.scalars(stmt):
                     results.append(
@@ -1277,7 +1381,8 @@ class SQLAlchemyMetadataStore(MetadataStore):
                     )
 
                 # Cache the results (use cache_key that includes recursive flag)
-                if self._cache_enabled and self._cache:
+                # Skip caching when accessible_paths is provided (predicate pushdown results vary per user)
+                if use_cache and self._cache:
                     self._cache.set_list(cache_key, results)
                     logger.debug(
                         f"[METADATA-CACHE] SET for list({prefix}, recursive={recursive}), {len(results)} items"
@@ -1946,6 +2051,75 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 return result
         except Exception as e:
             raise MetadataError(f"Failed to get batch content IDs: {e}") from e
+
+    def batch_get(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+        """
+        Get full metadata for multiple paths in a single query.
+
+        This is optimized for bulk operations like stat_bulk.
+        Uses raw SQL for maximum performance (avoids ORM overhead).
+
+        Performance: Single SQL query instead of N queries.
+        Expected speedup: 10-50x for 100+ files.
+
+        Args:
+            paths: List of virtual paths
+
+        Returns:
+            Dictionary mapping path to FileMetadata (or None if file not found)
+        """
+        if not paths:
+            return {}
+
+        try:
+            with self.SessionLocal() as session:
+                # Use ORM with in_() for database-agnostic query
+                # Works with both SQLite and PostgreSQL
+                stmt = (
+                    select(
+                        FilePathModel.virtual_path,
+                        FilePathModel.backend_id,
+                        FilePathModel.physical_path,
+                        FilePathModel.size_bytes,
+                        FilePathModel.content_hash,
+                        FilePathModel.file_type,
+                        FilePathModel.created_at,
+                        FilePathModel.updated_at,
+                        FilePathModel.current_version,
+                        FilePathModel.tenant_id,
+                    )
+                    .where(FilePathModel.virtual_path.in_(paths))
+                    .where(FilePathModel.deleted_at.is_(None))
+                )
+
+                # Build result dict
+                result: dict[str, FileMetadata | None] = {}
+                found_paths = set()
+
+                for row in session.execute(stmt):
+                    meta = FileMetadata(
+                        path=row[0],  # virtual_path
+                        backend_name=row[1],  # backend_id
+                        physical_path=row[2],  # physical_path
+                        size=row[3],  # size_bytes
+                        etag=row[4],  # content_hash
+                        mime_type=row[5],  # file_type
+                        created_at=row[6],  # created_at
+                        modified_at=row[7],  # updated_at
+                        version=row[8],  # current_version
+                        tenant_id=row[9],  # tenant_id
+                    )
+                    result[row[0]] = meta
+                    found_paths.add(row[0])
+
+                # Add None for paths not found
+                for path in paths:
+                    if path not in found_paths:
+                        result[path] = None
+
+                return result
+        except Exception as e:
+            raise MetadataError(f"Failed to get batch metadata: {e}") from e
 
     # Additional methods for file metadata (key-value pairs)
 

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.chunked_storage import ChunkedStorageMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -39,12 +40,13 @@ DEFAULT_CAS_BLOOM_FP_RATE = 0.01  # 1% false positive rate
     description="Local filesystem with CAS deduplication",
     category="storage",
 )
-class LocalBackend(Backend):
+class LocalBackend(Backend, ChunkedStorageMixin):
     """
-    Unified local filesystem backend.
+    Unified local filesystem backend with CDC chunked storage.
 
     Combines:
     - Content-addressable storage (CAS) for automatic deduplication
+    - Content-Defined Chunking (CDC) for large files (>=16MB)
     - Directory operations for filesystem compatibility
 
     Storage structure:
@@ -52,14 +54,19 @@ class LocalBackend(Backend):
         ├── cas/              # Content storage (by hash)
         │   ├── ab/
         │   │   └── cd/
-        │   │       ├── abcd1234...ef56        # Content file
-        │   │       └── abcd1234...ef56.meta   # Metadata (ref count)
+        │   │       ├── abcd1234...ef56        # Content file or chunk
+        │   │       ├── abcd1234...ef56.meta   # Metadata (ref count, is_chunk)
+        │   │       ├── 5678efgh...            # Chunked manifest (JSON)
+        │   │       └── 5678efgh...meta        # Manifest metadata
         └── dirs/             # Virtual directory structure
             ├── workspace/
             └── projects/
 
     Features:
     - Content deduplication (same content stored once)
+    - CDC chunking for large files (Issue #1074)
+    - Per-chunk reference counting for cross-file deduplication
+    - Parallel chunk I/O for better throughput
     - Reference counting for safe deletion
     - Atomic write operations
     - Thread-safe file locking
@@ -347,17 +354,41 @@ class LocalBackend(Backend):
         """
         Write content to CAS storage and return its hash.
 
+        Large files (>=16MB by default) are automatically chunked using
+        Content-Defined Chunking (CDC) for better deduplication across
+        file versions and parallel I/O.
+
         If content already exists, increments reference count.
         Handles race conditions when multiple threads write the same content.
 
         Args:
             content: File content as bytes
-            _context: Operation context (ignored for local backend)
+            context: Operation context (ignored for local backend)
 
         Returns:
             HandlerResponse with content hash in data field
         """
         start_time = time.perf_counter()
+
+        # Route large files to chunked storage (Issue #1074)
+        if self._should_chunk(content):
+            try:
+                content_hash = self._write_chunked(content, context)
+                return HandlerResponse.ok(
+                    data=content_hash,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+            except Exception as e:
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path="chunked",
+                )
+
+        # Small files: use single-blob storage
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
 
@@ -445,11 +476,14 @@ class LocalBackend(Backend):
     ) -> HandlerResponse[bytes]:
         """Read content by its hash with retry for Windows file locking.
 
+        Transparently handles both single-blob and chunked content.
+        Chunked content is automatically reassembled from its chunks.
+
         Uses Bloom filter for fast miss detection after checking in-memory cache.
 
         Args:
-            content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for local backend)
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
 
         Returns:
             HandlerResponse with file content in data field
@@ -467,13 +501,41 @@ class LocalBackend(Backend):
                     path=content_hash,
                 )
 
+        # Check if this is chunked content (Issue #1074)
+        if self._is_chunked_content(content_hash):
+            try:
+                content = self._read_chunked(content_hash, context)
+                # Add to cache for future reads
+                if self.content_cache is not None:
+                    self.content_cache.put(content_hash, content)
+                return HandlerResponse.ok(
+                    data=content,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+            except FileNotFoundError:
+                return HandlerResponse.not_found(
+                    path=content_hash,
+                    message=f"Chunked content not found: {content_hash}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                )
+            except Exception as e:
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+
         # Note: We intentionally do NOT use Bloom filter for early rejection here
         # because another process/instance sharing the same root may have written
         # content that isn't in our Bloom filter. The Bloom filter is only used
         # for content_exists() optimization.
         # TODO: Consider shared Bloom filter for multi-process scenarios.
 
-        # Cache miss - read from disk
+        # Cache miss - read single-blob from disk
         content_path = self._hash_to_path(content_hash)
 
         # Retry logic for Windows file locking issues
@@ -500,7 +562,7 @@ class LocalBackend(Backend):
                 try:
                     from nexus_fast import read_file
 
-                    content: bytes | None = read_file(str(content_path))
+                    content = read_file(str(content_path))
                     if content is None:
                         if attempt < max_retries - 1:
                             time.sleep(retry_delay)
@@ -766,9 +828,12 @@ class LocalBackend(Backend):
     ) -> HandlerResponse[None]:
         """Delete content by hash with reference counting.
 
+        Handles both single-blob and chunked content. For chunked content,
+        decrements ref_count on all chunks and deletes those with ref_count=0.
+
         Args:
-            content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for local backend)
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
 
         Returns:
             HandlerResponse indicating success or failure
@@ -783,6 +848,24 @@ class LocalBackend(Backend):
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
+
+        # Handle chunked content (Issue #1074)
+        if self._is_chunked_content(content_hash):
+            try:
+                self._delete_chunked(content_hash, context)
+                return HandlerResponse.ok(
+                    data=None,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+            except Exception as e:
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
         # Fix #514: Use file locking to prevent race condition on ref_count
         lock_path = self._get_lock_path(content_hash)
@@ -900,9 +983,11 @@ class LocalBackend(Backend):
     ) -> HandlerResponse[int]:
         """Get content size in bytes.
 
+        For chunked content, returns the original file size (not manifest size).
+
         Args:
-            content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for local backend)
+            content_hash: SHA-256/BLAKE3 hash as hex string
+            context: Operation context (ignored for local backend)
 
         Returns:
             HandlerResponse with content size in bytes
@@ -919,7 +1004,11 @@ class LocalBackend(Backend):
             )
 
         try:
-            size = content_path.stat().st_size
+            # For chunked content, size is stored in metadata (original file size)
+            if self._is_chunked_content(content_hash):
+                size = self._get_content_size_chunked(content_hash)
+            else:
+                size = content_path.stat().st_size
             return HandlerResponse.ok(
                 data=size,
                 execution_time_ms=(time.perf_counter() - start_time) * 1000,

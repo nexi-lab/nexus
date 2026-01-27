@@ -1,6 +1,6 @@
 [project]
 name = "nexus-ai-fs"
-version = "0.6.4"
+version = "0.7.0.dev0"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -55,6 +55,8 @@ dependencies = [
     "fastapi>=0.124.0",
     "uvicorn[standard]>=0.38.0", # ASGI server
     "uvloop>=0.22.1; sys_platform != 'win32'", # Fast event loop (Unix only, 2-4x faster)
+    # File watching (Linux only - Windows uses native ReadDirectoryChangesW)
+    "inotify_simple>=1.3.0; sys_platform == 'linux'",
     # Database
     "sqlalchemy>=2.0.44",
     "alembic>=1.13.0",
@@ -93,6 +95,8 @@ dependencies = [
     "blake3>=1.0.0",
     # Binary delta sync for rsync-style incremental updates (Issue #869)
     "bsdiff4>=1.2.0",
+    # Content-Defined Chunking for large file deduplication (Issue #1074)
+    "fastcdc>=1.5.0",
     # BM25S for 500x faster ranked text search (Issue #796)
     "bm25s>=0.2.0",
     # Rapidfuzz for fast fuzzy string matching in edit engine (Issue #800)
@@ -366,6 +370,16 @@ disable_error_code = ["return-value"]
 module = "nexus.backends.base_blob_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.backends.passthrough"
+# HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
+disable_error_code = ["return-value"]
+
+[[tool.mypy.overrides]]
+module = "nexus.core.file_watcher"
+# inotify_simple and pywin32 return untyped values
+disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.gmail_connector"

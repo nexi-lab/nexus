@@ -630,6 +630,36 @@ class TenantAwareReBACManager(ReBACManager):
                 if count > 0:
                     return True
 
+                # Check 2b: Cross-tenant wildcard access (Issue #1064)
+                # Wildcards should grant access across ALL tenants.
+                # This is the industry-standard pattern used by SpiceDB, OpenFGA, Ory Keto.
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT COUNT(*) as count
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND subject_relation IS NULL
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        wildcard_entity.entity_type,
+                        wildcard_entity.entity_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                row = cursor.fetchone()
+                count = row["count"]
+                if count > 0:
+                    logger.debug(f"Cross-tenant wildcard access: *:* -> {relation} -> {obj}")
+                    return True
+
             # Check 2.5: Cross-tenant shares (PR #647)
             # For shared-* relations, check WITHOUT tenant_id filter because
             # cross-tenant shares are stored in the resource owner's tenant

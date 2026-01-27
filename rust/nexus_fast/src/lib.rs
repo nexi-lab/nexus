@@ -236,10 +236,19 @@ struct InternedGraph {
     tuple_index: AHashMap<InternedTupleKey, bool>,
     adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>>,
     userset_index: AHashMap<InternedUsersetKey, Vec<InternedUsersetEntry>>,
+    /// Wildcard subject (*:*) symbol - Issue #1064
+    wildcard_subject: Option<InternedEntity>,
 }
 
 impl InternedGraph {
-    fn from_tuples(tuples: &[InternedTuple]) -> Self {
+    fn from_tuples(tuples: &[InternedTuple], interner: &mut DefaultStringInterner) -> Self {
+        // Intern the wildcard subject "*:*" for fast comparison - Issue #1064
+        let wildcard_type = interner.get_or_intern("*");
+        let wildcard_id = interner.get_or_intern("*");
+        let wildcard_subject = Some(InternedEntity {
+            entity_type: wildcard_type,
+            entity_id: wildcard_id,
+        });
         let mut tuple_index = AHashMap::new();
         let mut adjacency_list: AHashMap<InternedAdjacencyKey, Vec<InternedEntity>> =
             AHashMap::new();
@@ -282,6 +291,7 @@ impl InternedGraph {
             tuple_index,
             adjacency_list,
             userset_index,
+            wildcard_subject,
         }
     }
 
@@ -291,6 +301,7 @@ impl InternedGraph {
         relation: Sym,
         object: InternedEntity,
     ) -> bool {
+        // Check 1: Exact subject match
         let tuple_key = (
             object.entity_type,
             object.entity_id,
@@ -298,7 +309,26 @@ impl InternedGraph {
             subject.entity_type,
             subject.entity_id,
         );
-        self.tuple_index.contains_key(&tuple_key)
+        if self.tuple_index.contains_key(&tuple_key) {
+            return true;
+        }
+
+        // Check 2: Wildcard subject match (*:*) - Issue #1064
+        // Wildcard tuples grant access to ALL subjects
+        if let Some(wildcard) = &self.wildcard_subject {
+            let wildcard_key = (
+                object.entity_type,
+                object.entity_id,
+                relation,
+                wildcard.entity_type,
+                wildcard.entity_id,
+            );
+            if self.tuple_index.contains_key(&wildcard_key) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn find_related_objects(&self, object: InternedEntity, relation: Sym) -> Vec<InternedEntity> {
@@ -708,6 +738,7 @@ impl ReBACGraph {
 
     /// Check for direct relation in O(1) time using hash index
     fn check_direct_relation(&self, subject: &Entity, relation: &str, object: &Entity) -> bool {
+        // Check 1: Exact subject match
         let tuple_key = (
             object.entity_type.clone(),
             object.entity_id.clone(),
@@ -715,7 +746,20 @@ impl ReBACGraph {
             subject.entity_type.clone(),
             subject.entity_id.clone(),
         );
-        self.tuple_index.contains_key(&tuple_key)
+        if self.tuple_index.contains_key(&tuple_key) {
+            return true;
+        }
+
+        // Check 2: Wildcard subject match (*:*) - Issue #1064
+        // Wildcard tuples grant access to ALL subjects
+        let wildcard_key = (
+            object.entity_type.clone(),
+            object.entity_id.clone(),
+            relation.to_string(),
+            "*".to_string(),
+            "*".to_string(),
+        );
+        self.tuple_index.contains_key(&wildcard_key)
     }
 
     /// Find related objects in O(1) time using adjacency list
@@ -848,7 +892,7 @@ fn compute_permissions_bulk<'py>(
             })
             .collect::<PyResult<Vec<_>>>()?;
 
-        InternedGraph::from_tuples(&interned_tuples)
+        InternedGraph::from_tuples(&interned_tuples, &mut interner)
     };
 
     // Parse namespace configs and convert to interned versions

@@ -1551,7 +1551,19 @@ class TigerCache:
                 )
                 # Commit happens automatically when exiting 'with' block
 
-            # Step 4: Update in-memory cache
+            # Step 4: Update L2 cache (Dragonfly) for cross-instance consistency
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bitmap_data,
+                    revision=revision,
+                )
+
+            # Step 5: Update L1 in-memory cache
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
@@ -1691,7 +1703,19 @@ class TigerCache:
                     },
                 )
 
-            # Step 5: Update in-memory cache
+            # Step 5: Update L2 cache (Dragonfly) for cross-instance consistency
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bitmap_data,
+                    revision=revision,
+                )
+
+            # Step 6: Update L1 in-memory cache
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())

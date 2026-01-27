@@ -22,10 +22,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/.env"
 
 if [ -f "$ENV_FILE" ]; then
+    # Save any already-set variables before loading .env
+    _SAVED_NEXUS_PORT="${NEXUS_PORT}"
+    _SAVED_POSTGRES_PORT="${POSTGRES_PORT}"
+    _SAVED_POSTGRES_CONTAINER="${POSTGRES_CONTAINER}"
+    _SAVED_POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR}"
+
     set -a  # Auto-export all variables
     source "$ENV_FILE"
     set +a
     echo -e "${GREEN}✓ Loaded configuration from ${ENV_FILE}${NC}"
+
+    # Restore overridden variables (command-line takes precedence)
+    [ -n "$_SAVED_NEXUS_PORT" ] && export NEXUS_PORT="$_SAVED_NEXUS_PORT"
+    [ -n "$_SAVED_POSTGRES_PORT" ] && export POSTGRES_PORT="$_SAVED_POSTGRES_PORT"
+    [ -n "$_SAVED_POSTGRES_CONTAINER" ] && export POSTGRES_CONTAINER="$_SAVED_POSTGRES_CONTAINER"
+    [ -n "$_SAVED_POSTGRES_DATA_DIR" ] && export POSTGRES_DATA_DIR="$_SAVED_POSTGRES_DATA_DIR"
 
     # Construct database URL from primitives
     # Note: If using POSTGRES_HOST=postgres, ensure /etc/hosts has: 127.0.0.1 postgres
@@ -394,13 +406,14 @@ ensure_docker_sandbox_image() {
 # Function to check if port 2026 is available
 check_port_2026_available() {
     # Only check for LISTEN state, not stale connections
-    if lsof -ti :2026 -sTCP:LISTEN >/dev/null 2>&1; then
-        echo -e "${YELLOW}ERROR: Port 2026 is already in use${NC}"
+    local PORT=${NEXUS_PORT:-2026}
+    if lsof -ti :${PORT} -sTCP:LISTEN >/dev/null 2>&1; then
+        echo -e "${YELLOW}ERROR: Port ${PORT} is already in use${NC}"
         echo ""
-        PIDS=$(lsof -ti :2026 -sTCP:LISTEN 2>/dev/null || true)
+        PIDS=$(lsof -ti :${PORT} -sTCP:LISTEN 2>/dev/null || true)
         if [ -n "$PIDS" ]; then
-            echo "Process(es) running on port 2026:"
-            lsof -i :2026 -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
+            echo "Process(es) running on port ${PORT}:"
+            lsof -i :${PORT} -sTCP:LISTEN 2>/dev/null | grep -v "^COMMAND" | while read line; do
                 echo "  $line"
             done
             echo ""
@@ -466,8 +479,9 @@ ensure_postgres_running() {
     DB_NAME="${POSTGRES_DB}"
     DB_USER="${POSTGRES_USER}"
     DB_PASSWORD="${POSTGRES_PASSWORD}"
-    DB_PORT="${POSTGRES_PORT}"
-    POSTGRES_DATA_DIR="/tmp/nexus-postgres"
+    # Extract port from POSTGRES_URL if it contains @host:port pattern, otherwise use POSTGRES_PORT
+    DB_PORT=$(python3 -c "import re, sys; m=re.search(r'@[^:]+:(\d+)', \"${POSTGRES_URL}\"); sys.stdout.write(m.group(1) if m else '${POSTGRES_PORT}')" 2>/dev/null || echo "${POSTGRES_PORT}")
+    POSTGRES_DATA_DIR="${POSTGRES_DATA_DIR:-/tmp/nexus-postgres}"
 
     if ! docker ps | grep -q "nexus.*postgres"; then
         echo -e "${YELLOW}PostgreSQL container not running, starting...${NC}"
@@ -827,7 +841,7 @@ start_server() {
             # Wait for server to be ready (check health endpoint)
             echo "Waiting for server to be ready..."
             for i in {1..30}; do
-                if curl -s http://localhost:2026/health >/dev/null 2>&1; then
+                if curl -s http://localhost:${NEXUS_PORT:-2026}/health >/dev/null 2>&1; then
                     echo "Server is ready!"
                     sleep 1  # Give it one more second
 
@@ -849,11 +863,13 @@ start_server() {
     if [ "$NO_AUTH" = true ]; then
         nexus serve \
             --config ./configs/config.demo.yaml \
+            --port ${NEXUS_PORT:-2026} \
             --async &
     else
         nexus serve \
             --config ./configs/config.demo.yaml \
             --auth-type database \
+            --port ${NEXUS_PORT:-2026} \
             --async &
     fi
     NEXUS_PID=$!
@@ -1044,7 +1060,7 @@ init_database() {
     # Export API key for provisioning
     export NEXUS_API_KEY="$ADMIN_API_KEY"
 
-    NEXUS_URL_VALUE="http://localhost:2026"
+    NEXUS_URL_VALUE="http://localhost:${NEXUS_PORT:-2026}"
 
     # Save to .nexus-admin-env for easy sourcing (standard format)
     cat > .nexus-admin-env << EOF
@@ -1120,7 +1136,7 @@ EOF
     fi
     echo "  Data Dir:     $DATA_PATH"
     echo "  Host:         0.0.0.0"
-    echo "  Port:         2026"
+    echo "  Port:         ${NEXUS_PORT:-2026}"
     if [ "$START_UI" = true ]; then
         echo "  Frontend:     Enabled"
     fi
@@ -1207,7 +1223,7 @@ EOF
             # Wait for server to be ready (check health endpoint)
             echo "Waiting for server to be ready..."
             for i in {1..30}; do
-                if curl -s http://localhost:2026/health >/dev/null 2>&1; then
+                if curl -s http://localhost:${NEXUS_PORT:-2026}/health >/dev/null 2>&1; then
                     echo "Server is ready!"
                     sleep 1  # Give it one more second
 
@@ -1229,11 +1245,13 @@ EOF
     if [ "$NO_AUTH" = true ]; then
         nexus serve \
             --config ./configs/config.demo.yaml \
+            --port ${NEXUS_PORT:-2026} \
             --async &
     else
         nexus serve \
             --config ./configs/config.demo.yaml \
             --auth-type database \
+            --port ${NEXUS_PORT:-2026} \
             --async &
     fi
     NEXUS_PID=$!

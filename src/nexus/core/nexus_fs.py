@@ -30,6 +30,7 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
+from nexus.core.nexus_fs_events import NexusFSEventsMixin
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
@@ -69,6 +70,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSSkillsMixin,
     NexusFSMCPMixin,
     NexusFSLLMMixin,
+    NexusFSEventsMixin,  # Issue #1106: Same-box file watching
     NexusFilesystem,
 ):
     """
@@ -113,6 +115,13 @@ class NexusFS(  # type: ignore[misc]
         workflow_engine: Any
         | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
         enable_tiger_cache: bool = True,  # Enable Tiger Cache for materialized permissions (default: True)
+        enable_deferred_permissions: bool = True,  # Issue #1071: Defer permission ops for faster writes (default: True)
+        deferred_flush_interval: float = 0.05,  # Flush interval in seconds (50ms default - balance latency vs batching)
+        # Issue #1106 Block 2: Distributed event system
+        redis_url: str
+        | None = None,  # Redis/Dragonfly URL for distributed events/locks (e.g., "redis://localhost:6379")
+        enable_distributed_events: bool = True,  # Enable GlobalEventBus if Redis available (default: True)
+        enable_distributed_locks: bool = True,  # Enable DistributedLockManager if Redis available (default: True)
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -352,6 +361,20 @@ class NexusFS(  # type: ignore[misc]
             enable_inheritance=inherit_permissions,
         )
 
+        # Issue #1071: Initialize DeferredPermissionBuffer for async write optimization
+        # When enabled, permission ops (rebac_write, ensure_parent_tuples) are batched
+        # in the background. Owner can still access files immediately via owner_id fast-path.
+        from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
+
+        self._deferred_permission_buffer: DeferredPermissionBuffer | None = None
+        if enable_deferred_permissions:
+            self._deferred_permission_buffer = DeferredPermissionBuffer(
+                rebac_manager=self._rebac_manager,
+                hierarchy_manager=self._hierarchy_manager,
+                flush_interval_sec=deferred_flush_interval,
+            )
+            self._deferred_permission_buffer.start()
+
         # Initialize workspace registry for managing registered workspaces/memories
         from nexus.core.workspace_registry import WorkspaceRegistry
 
@@ -414,6 +437,66 @@ class NexusFS(  # type: ignore[misc]
         # Issue #913: Track async event tasks to prevent memory leaks
         # Tasks are auto-removed via done callback when completed
         self._event_tasks: set[asyncio.Task[Any]] = set()
+
+        # Issue #1106: File watcher for same-box event detection (lazy initialized)
+        self._file_watcher: Any = None
+
+        # Issue #1106 Block 2: Distributed event bus and lock manager
+        # Initialize when Redis URL is provided and feature is enabled
+        self._event_bus: Any = None
+        self._lock_manager: Any = None
+        self._redis_client: Any = None
+
+        # Issue #1106: Auto-start flag for cache invalidation
+        # Note: Event bus has its own _started flag, so we don't duplicate it here
+        # This flag tracks whether _start_cache_invalidation() has been called
+        self._cache_invalidation_started: bool = False
+
+        if redis_url and (enable_distributed_events or enable_distributed_locks):
+            try:
+                import os
+
+                from nexus.core.cache.dragonfly import DragonflyClient
+
+                # Use provided URL or fall back to environment variable
+                actual_redis_url = redis_url or os.getenv("NEXUS_REDIS_URL")
+
+                if actual_redis_url:
+                    import logging
+
+                    logger = logging.getLogger(__name__)
+
+                    # Create Redis client (reuse existing DragonflyClient)
+                    self._redis_client = DragonflyClient(url=actual_redis_url)
+
+                    # Initialize event bus if enabled
+                    if enable_distributed_events:
+                        from nexus.core.event_bus import RedisEventBus, set_global_event_bus
+
+                        self._event_bus = RedisEventBus(self._redis_client)
+                        set_global_event_bus(self._event_bus)
+                        logger.info(
+                            f"🔔 Distributed event bus initialized (Redis: {actual_redis_url})"
+                        )
+
+                    # Initialize lock manager if enabled
+                    if enable_distributed_locks:
+                        from nexus.core.distributed_lock import (
+                            RedisLockManager,
+                            set_distributed_lock_manager,
+                        )
+
+                        self._lock_manager = RedisLockManager(self._redis_client)
+                        set_distributed_lock_manager(self._lock_manager)
+                        logger.info(
+                            f"🔐 Distributed lock manager initialized (Redis: {actual_redis_url})"
+                        )
+
+            except ImportError as e:
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Could not initialize distributed event system: {e}")
 
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine
@@ -6441,7 +6524,7 @@ class NexusFS(  # type: ignore[misc]
         tenant_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """Create a ReBAC relationship tuple - delegates to ReBACService.
 
         Async version of rebac_create() using the service layer.
@@ -7441,6 +7524,10 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Stop DeferredPermissionBuffer first to flush pending permissions
+        if hasattr(self, "_deferred_permission_buffer") and self._deferred_permission_buffer:
+            self._deferred_permission_buffer.stop()
+
         # Stop Tiger Cache background worker first
         self.stop_tiger_cache_worker()
 

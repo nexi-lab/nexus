@@ -41,7 +41,7 @@ nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
-__version__ = "0.6.4"
+__version__ = "0.7.0.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

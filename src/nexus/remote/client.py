@@ -705,11 +705,13 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             headers["Authorization"] = f"Bearer {api_key}"
 
         # Create sync httpx client with HTTP/2 for multiplexing
+        # Note: trust_env=False bypasses system proxy settings (HTTP_PROXY, HTTPS_PROXY)
         self.session = httpx.Client(
             limits=limits,
             timeout=timeout_config,
             headers=headers,
             http2=True,
+            trust_env=False,
         )
 
         if api_key:
@@ -1169,6 +1171,36 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             raise
 
         return result  # type: ignore[no-any-return]
+
+    def stat_bulk(
+        self,
+        paths: list[str],
+        context: Any = None,  # noqa: ARG002
+        skip_errors: bool = True,
+    ) -> dict[str, dict[str, Any] | None]:
+        """Get metadata for multiple files in a single RPC call.
+
+        This method is optimized for bulk operations where many file stats are needed.
+        It batches permission checks and metadata lookups for better performance.
+
+        Args:
+            paths: List of virtual paths to stat
+            context: Unused in remote client (handled server-side)
+            skip_errors: If True, skip files that can't be stat'd and return None.
+
+        Returns:
+            Dict mapping path -> stat dict (or None if skip_errors=True and stat failed)
+            Each stat dict contains: size, etag, version, modified_at, is_directory
+
+        Performance:
+            - Single RPC call instead of N calls
+            - Expected speedup: 10-50x for 100+ files
+        """
+        result = self._call_rpc(
+            "stat_bulk",
+            {"paths": paths, "skip_errors": skip_errors},
+        )
+        return cast(dict[str, dict[str, Any] | None], result)
 
     def read_range(
         self,
@@ -2467,8 +2499,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         tenant_id: str | None = None,  # Auto-filled from auth if None
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
         context: dict[str, Any] | None = None,  # Operation context for permission checks
-    ) -> str:
-        """Create a ReBAC relationship tuple.
+    ) -> dict[str, Any]:
+        """Create a ReBAC relationship tuple (Issue #1081).
 
         Args:
             subject: (subject_type, subject_id) tuple (e.g., ('agent', 'alice'))
@@ -2481,37 +2513,33 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                           Only applies to CSV files.
                           Structure: {
                               "hidden_columns": ["password", "ssn"],  # Completely hide these columns
-                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values (single operation per column)
-                              "visible_columns": ["name", "email"]  # Show raw data (optional, auto-calculated if empty)
+                              "aggregations": {"age": "mean", "salary": "sum"},  # Show aggregated values
+                              "visible_columns": ["name", "email"]  # Show raw data
                           }
-                          Note: A column can only appear in one category (hidden, aggregations, or visible)
-            context: Optional operation context for permission checks. Used to verify
-                    the caller has 'execute' permission on file objects before granting
-                    permissions to others.
+            context: Optional operation context for permission checks.
 
         Returns:
-            Tuple ID of created relationship
+            Dict with tuple_id, revision, and consistency_token (Issue #1081).
+            Use revision with consistency_mode="at_least_as_fresh" for read-your-writes.
 
         Examples:
-            >>> nx.rebac_create(
+            >>> result = nx.rebac_create(
             ...     subject=("agent", "alice"),
-            ...     relation="member-of",
-            ...     object=("group", "developers")
+            ...     relation="viewer",
+            ...     object=("file", "/doc.txt")
             ... )
-            'uuid-string'
+            >>> result
+            {'tuple_id': 'uuid-string', 'revision': 123, 'consistency_token': 'v123'}
 
-            >>> # Dynamic viewer with column-level permissions for CSV files
-            >>> nx.rebac_create(
+            >>> # Immediately verify with read-your-writes guarantee
+            >>> nx.rebac_check(
             ...     subject=("agent", "alice"),
-            ...     relation="dynamic_viewer",
-            ...     object=("file", "/data/users.csv"),
-            ...     column_config={
-            ...         "hidden_columns": ["password", "ssn"],
-            ...         "aggregations": {"age": "mean", "salary": "sum"},
-            ...         "visible_columns": ["name", "email"]
-            ...     }
+            ...     permission="read",
+            ...     object=("file", "/doc.txt"),
+            ...     consistency_mode="at_least_as_fresh",
+            ...     min_revision=result["revision"]
             ... )
-            'uuid-string'
+            True
         """
         # Use tenant_id from auth if not specified
         effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
@@ -2536,25 +2564,54 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         permission: str,
         object: tuple[str, str],
         tenant_id: str | None = None,  # Auto-filled from auth if None
+        consistency_mode: str | None = None,  # Issue #1081
+        min_revision: int | None = None,  # Issue #1081
     ) -> bool:
-        """Check if subject has permission on object via ReBAC.
+        """Check if subject has permission on object via ReBAC (Issue #1081).
+
+        Supports per-request consistency modes aligned with SpiceDB/Zanzibar.
 
         Args:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from authenticated user's credentials.
+            tenant_id: Optional tenant ID for multi-tenant isolation.
+            consistency_mode: Per-request consistency mode (Issue #1081):
+                - "minimize_latency" (default): Use cache for fastest response
+                - "at_least_as_fresh": Cache must be >= min_revision
+                - "fully_consistent": Bypass cache entirely
+            min_revision: Minimum acceptable revision (required for at_least_as_fresh).
+                         Get this from rebac_create() result["revision"].
 
         Returns:
             True if permission is granted, False otherwise
 
         Examples:
+            >>> # Default: fast cached check
             >>> nx.rebac_check(
             ...     subject=("agent", "alice"),
             ...     permission="read",
-            ...     object=("file", "/workspace/doc.txt"),
-            ...     tenant_id="default"
+            ...     object=("file", "/doc.txt")
+            ... )
+            True
+
+            >>> # Read-your-writes after a permission grant
+            >>> result = nx.rebac_create(subject, "viewer", object)
+            >>> nx.rebac_check(
+            ...     subject=subject,
+            ...     permission="read",
+            ...     object=object,
+            ...     consistency_mode="at_least_as_fresh",
+            ...     min_revision=result["revision"]
+            ... )
+            True
+
+            >>> # Security audit: bypass all caches
+            >>> nx.rebac_check(
+            ...     subject=("agent", "alice"),
+            ...     permission="read",
+            ...     object=("file", "/sensitive.txt"),
+            ...     consistency_mode="fully_consistent"
             ... )
             True
         """
@@ -2568,6 +2625,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "permission": permission,
                 "object": object,
                 "tenant_id": effective_tenant_id,
+                "consistency_mode": consistency_mode,
+                "min_revision": min_revision,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -6204,6 +6263,141 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             {"link_id": link_id, "limit": limit},
         )
         return result  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Event Operations (Issue #1106 Block 2)
+    # ============================================================
+
+    def wait_for_changes(
+        self,
+        path: str,
+        timeout: float = 30.0,
+    ) -> dict[str, Any] | None:
+        """Wait for file system changes on a path.
+
+        Long-polling RPC call that waits for changes to occur on the specified
+        path. Uses distributed event bus (Redis Pub/Sub) on the server side.
+
+        Args:
+            path: Virtual path to watch (file or directory with trailing /)
+            timeout: Maximum time to wait in seconds (default: 30.0)
+
+        Returns:
+            Dict with change info if change detected:
+                - type: "file_write", "file_delete", "file_rename", etc.
+                - path: Path that changed
+                - old_path: Previous path (for rename events only)
+            None if timeout reached
+
+        Example:
+            >>> # Watch for new files in inbox
+            >>> change = client.wait_for_changes("/inbox/", timeout=60)
+            >>> if change:
+            ...     print(f"Detected {change['type']} on {change['path']}")
+        """
+        result = self._call_rpc(
+            "wait_for_changes",
+            {"path": path, "timeout": timeout},
+            read_timeout=timeout + 5.0,  # Buffer for network latency
+        )
+        return result if result else None
+
+    def lock(
+        self,
+        path: str,
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+    ) -> str | None:
+        """Acquire a distributed lock on a path.
+
+        Uses Redis-based distributed locking on the server side.
+        For long-running operations, use extend_lock() to keep the lock alive.
+
+        Args:
+            path: Virtual path to lock
+            timeout: Maximum time to wait for lock in seconds (default: 30.0)
+            ttl: Lock TTL in seconds - auto-expires after this (default: 30.0)
+
+        Returns:
+            Lock ID if acquired (use this to unlock/extend later)
+            None if timeout reached
+
+        Example:
+            >>> lock_id = client.lock("/shared/config.json", timeout=5.0)
+            >>> if lock_id:
+            ...     try:
+            ...         content = client.read("/shared/config.json")
+            ...         client.write("/shared/config.json", modified_content)
+            ...     finally:
+            ...         client.unlock(lock_id, "/shared/config.json")
+        """
+        result = self._call_rpc(
+            "lock",
+            {"path": path, "timeout": timeout, "ttl": ttl},
+            read_timeout=timeout + 5.0,
+        )
+        return result.get("lock_id") if result else None
+
+    def extend_lock(
+        self,
+        lock_id: str,
+        path: str,
+        ttl: float = 30.0,
+    ) -> bool:
+        """Extend a lock's TTL (heartbeat for long-running operations).
+
+        Use this to keep distributed locks alive during long operations.
+        Call periodically (e.g., every TTL/2 seconds) to prevent lock expiry.
+
+        Args:
+            lock_id: Lock ID returned from lock()
+            path: Path that was locked
+            ttl: New TTL in seconds (default: 30.0)
+
+        Returns:
+            True if lock was extended
+            False if lock was not found or not owned
+
+        Example:
+            >>> # Heartbeat pattern for long operations
+            >>> def heartbeat():
+            ...     while working:
+            ...         success = client.extend_lock(lock_id, "/meeting/floor")
+            ...         if not success:
+            ...             raise RuntimeError("Lost lock!")
+            ...         time.sleep(15)  # Extend every 15s for 30s TTL
+        """
+        result = self._call_rpc(
+            "extend_lock",
+            {"lock_id": lock_id, "path": path, "ttl": ttl},
+        )
+        return result.get("extended", False) if result else False
+
+    def unlock(
+        self,
+        lock_id: str,
+        path: str,
+    ) -> bool:
+        """Release a distributed lock.
+
+        Args:
+            lock_id: Lock ID returned from lock()
+            path: Path that was locked
+
+        Returns:
+            True if lock was released
+            False if lock_id was not found or not owned
+
+        Example:
+            >>> lock_id = client.lock("/shared/config.json")
+            >>> # ... do work ...
+            >>> success = client.unlock(lock_id, "/shared/config.json")
+        """
+        result = self._call_rpc(
+            "unlock",
+            {"lock_id": lock_id, "path": path},
+        )
+        return result.get("released", False) if result else False
 
     def close(self) -> None:
         """Close the client and release resources."""

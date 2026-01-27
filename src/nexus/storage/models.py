@@ -162,6 +162,16 @@ class FilePathModel(Base):
         Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
         # Issue #920: Index for owner-based queries (e.g., "list my files")
         Index("idx_file_paths_posix_uid", "posix_uid"),
+        # ========== Postgres Best Practices: Covering Index ==========
+        # Include commonly needed columns to enable index-only scans (2-5x faster)
+        # Reference: https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+        Index(
+            "idx_file_paths_tenant_path_covering",
+            "tenant_id",
+            "virtual_path",
+            postgresql_include=["path_id", "content_hash", "size_bytes", "updated_at", "file_type"],
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -566,6 +576,14 @@ class VersionHistoryModel(Base):
         Index("idx_version_history_content_hash", "content_hash"),
         Index("idx_version_history_created_at", "created_at"),
         Index("idx_version_history_parent", "parent_version_id"),
+        # ========== Postgres Best Practices: BRIN Index ==========
+        # Version history is append-only, ideal for BRIN (10-100x smaller than B-tree)
+        # Reference: https://www.postgresql.org/docs/current/brin-intro.html
+        Index(
+            "idx_version_history_created_brin",
+            "created_at",
+            postgresql_using="brin",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -668,6 +686,22 @@ class OperationLogModel(Base):
         Index("idx_operation_log_path", "path"),
         Index("idx_operation_log_created_at", "created_at"),
         Index("idx_operation_log_status", "status"),
+        # ========== Postgres Best Practices: BRIN Index ==========
+        # BRIN indexes are 10-100x smaller than B-tree for time-series data.
+        # Ideal for append-only tables with naturally ordered data.
+        # Reference: https://www.postgresql.org/docs/current/brin-intro.html
+        Index(
+            "idx_operation_log_created_brin",
+            "created_at",
+            postgresql_using="brin",
+        ),
+        # Composite BRIN for tenant-scoped time queries
+        Index(
+            "idx_operation_log_tenant_created_brin",
+            "tenant_id",
+            "created_at",
+            postgresql_using="brin",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -1192,6 +1226,22 @@ class MemoryModel(Base):
             unique=True,
             sqlite_where=text("path_key IS NOT NULL"),
         ),
+        # ========== Postgres Best Practices: BRIN Index ==========
+        # BRIN indexes are 10-100x smaller than B-tree for time-series data.
+        # Memory records are typically inserted in time order.
+        # Reference: https://www.postgresql.org/docs/current/brin-intro.html
+        Index(
+            "idx_memory_created_brin",
+            "created_at",
+            postgresql_using="brin",
+        ),
+        # Tenant-scoped BRIN for time-range queries within a tenant
+        Index(
+            "idx_memory_tenant_created_brin",
+            "tenant_id",
+            "created_at",
+            postgresql_using="brin",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -1395,6 +1445,20 @@ class ReBACTupleModel(Base):
                 "relation IN ('shared-viewer', 'shared-editor', 'shared-owner') "
                 "AND expires_at IS NULL"
             ),
+        ),
+        # ========== Postgres Best Practices: Covering Index ==========
+        # Include commonly needed columns to enable index-only scans (2-5x faster)
+        # Reference: https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+        Index(
+            "idx_rebac_permission_check_covering",
+            "subject_type",
+            "subject_id",
+            "relation",
+            "object_type",
+            "object_id",
+            "tenant_id",
+            postgresql_include=["tuple_id", "expires_at", "created_at"],
+            postgresql_where=text("expires_at IS NULL"),
         ),
     )
 
@@ -3500,6 +3564,91 @@ class TigerCacheQueueModel(Base):
         return (
             f"<TigerCacheQueueModel(queue_id={self.queue_id}, "
             f"{self.subject_type}:{self.subject_id}, status={self.status})>"
+        )
+
+
+class TigerDirectoryGrantsModel(Base):
+    """Tracks directory-level permission grants for Leopard-style expansion.
+
+    When permission is granted on a directory, this table records it so:
+    1. Pre-materialization: Expand grant to all descendants
+    2. New file integration: When file created, inherit from ancestor directories
+    3. Move handling: When file moves, update based on old/new ancestors
+
+    Related: Issue #1089 (Leopard-style directory grant pre-materialization)
+    """
+
+    __tablename__ = "tiger_directory_grants"
+
+    # Primary key (BigInteger for PostgreSQL compatibility)
+    grant_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Subject (who has access)
+    subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Permission type (read, write, execute)
+    permission: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Directory path that was granted (e.g., /workspace/project/)
+    directory_path: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Tenant isolation
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Revision at time of grant (for consistency)
+    grant_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+    # Whether to include files created after the grant
+    include_future_files: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Expansion status: pending, in_progress, completed, failed
+    expansion_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+
+    # Progress tracking
+    expanded_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Error info if expansion failed
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        # Unique constraint: one grant per (subject, permission, directory, tenant)
+        UniqueConstraint(
+            "tenant_id",
+            "directory_path",
+            "permission",
+            "subject_type",
+            "subject_id",
+            name="uq_tiger_directory_grants",
+        ),
+        # Index for finding grants by path prefix (for new file integration)
+        Index("idx_tiger_dir_grants_path_prefix", "tenant_id", "directory_path"),
+        # Index for finding grants by subject (for cache invalidation)
+        Index("idx_tiger_dir_grants_subject", "tenant_id", "subject_type", "subject_id"),
+        # Index for pending expansions (for background worker)
+        Index("idx_tiger_dir_grants_pending", "expansion_status", "created_at"),
+        # Index for permission lookups
+        Index("idx_tiger_dir_grants_lookup", "tenant_id", "directory_path", "permission"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TigerDirectoryGrantsModel(grant_id={self.grant_id}, "
+            f"{self.subject_type}:{self.subject_id}, "
+            f"dir={self.directory_path}, status={self.expansion_status})>"
         )
 
 

@@ -6,6 +6,7 @@ from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResu
 
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
+from nexus.backends.passthrough import PassthroughBackend
 from nexus.backends.registry import (
     ArgType,
     ConnectionArg,
@@ -105,6 +106,7 @@ __all__ = [
     "create_connector_from_config",
     # Concrete backends
     "LocalBackend",
+    "PassthroughBackend",
     "GCSBackend",
     "GoogleDriveConnectorBackend",
     "GCSConnectorBackend",

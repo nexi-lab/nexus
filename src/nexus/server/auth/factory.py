@@ -3,8 +3,6 @@
 import logging
 from typing import Any
 
-from authlib.jose import jwt
-
 from nexus.server.auth.base import AuthProvider, AuthResult
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.local import LocalAuth
@@ -100,10 +98,20 @@ class DiscriminatingAuthProvider(AuthProvider):
         if len(parts) != 3:
             return False
 
-        # Try to decode header
+        # Try to decode header (base64url decode)
         try:
-            jwt.decode_header(token)
-            return True
+            import base64
+            import json
+
+            header_b64 = parts[0]
+            # Add padding if needed for base64
+            padding = 4 - len(header_b64) % 4
+            if padding != 4:
+                header_b64 += "=" * padding
+            header_json = base64.urlsafe_b64decode(header_b64)
+            header = json.loads(header_json)
+            # Must have 'alg' field to be a valid JWT header
+            return "alg" in header
         except Exception:
             return False
 

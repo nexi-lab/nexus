@@ -57,11 +57,114 @@ class ConsistencyLevel(Enum):
     - EVENTUAL: Use cache (up to 5min staleness), fastest
     - BOUNDED: Max 1s staleness
     - STRONG: Bypass cache, fresh read, slowest but most accurate
+
+    Note: For new code, prefer ConsistencyMode with ConsistencyRequirement
+    which aligns with SpiceDB/Zanzibar naming conventions.
     """
 
     EVENTUAL = "eventual"  # Use cache (5min staleness)
     BOUNDED = "bounded"  # Max 1s staleness
     STRONG = "strong"  # Bypass cache, fresh read
+
+
+class ConsistencyMode(Enum):
+    """Per-request consistency modes aligned with SpiceDB/Zanzibar (Issue #1081).
+
+    Provides fine-grained control over cache behavior on a per-request basis,
+    following industry best practices from Google Zanzibar and SpiceDB.
+
+    Modes:
+    - MINIMIZE_LATENCY: Use cache for fastest response (~99% of requests)
+    - AT_LEAST_AS_FRESH: Cache must be >= min_revision (read-after-write)
+    - FULLY_CONSISTENT: Bypass cache entirely (security audits, <1% of requests)
+
+    See:
+    - https://authzed.com/docs/spicedb/concepts/consistency
+    - https://www.usenix.org/system/files/atc19-pang.pdf (Zanzibar paper)
+    """
+
+    MINIMIZE_LATENCY = "minimize_latency"  # Default: use cache, fastest
+    AT_LEAST_AS_FRESH = "at_least_as_fresh"  # Cache if revision >= min_revision
+    FULLY_CONSISTENT = "fully_consistent"  # Bypass cache, slowest but freshest
+
+
+@dataclass(slots=True)
+class ConsistencyRequirement:
+    """Per-request consistency requirement (Issue #1081).
+
+    Combines a consistency mode with optional parameters like min_revision.
+    This follows the SpiceDB/Zanzibar pattern for per-request consistency control.
+
+    Examples:
+        # Default: maximize cache usage (99% of requests)
+        ConsistencyRequirement()
+
+        # Read-after-write: ensure we see a recent write
+        ConsistencyRequirement(
+            mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+            min_revision=write_result.revision
+        )
+
+        # Security audit: bypass all caches
+        ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
+
+    Attributes:
+        mode: The consistency mode to use
+        min_revision: Required for AT_LEAST_AS_FRESH - minimum acceptable revision
+    """
+
+    mode: ConsistencyMode = ConsistencyMode.MINIMIZE_LATENCY
+    min_revision: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate consistency requirement."""
+        if self.mode == ConsistencyMode.AT_LEAST_AS_FRESH and self.min_revision is None:
+            raise ValueError(
+                "min_revision is required for AT_LEAST_AS_FRESH mode. "
+                "Pass the revision from a previous write operation."
+            )
+
+    def to_legacy_level(self) -> ConsistencyLevel:
+        """Convert to legacy ConsistencyLevel for backward compatibility."""
+        if self.mode == ConsistencyMode.FULLY_CONSISTENT:
+            return ConsistencyLevel.STRONG
+        elif self.mode == ConsistencyMode.AT_LEAST_AS_FRESH:
+            return ConsistencyLevel.BOUNDED
+        else:
+            return ConsistencyLevel.EVENTUAL
+
+
+@dataclass(slots=True)
+class WriteResult:
+    """Result of a permission write with consistency metadata (Issue #1081).
+
+    Following the Zanzibar zookie pattern, writes return a consistency token
+    that can be used for subsequent read-your-writes queries.
+
+    Example:
+        # Write a permission
+        result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+
+        # Immediately check with read-your-writes guarantee
+        allowed = manager.rebac_check(
+            subject, permission, object,
+            consistency=ConsistencyRequirement(
+                mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                min_revision=result.revision
+            )
+        )
+
+    Attributes:
+        tuple_id: UUID of the created relationship tuple
+        revision: The revision number after this write (for AT_LEAST_AS_FRESH)
+        consistency_token: Opaque token encoding the revision (for clients)
+        written_at_ms: Timestamp when write was persisted (epoch ms)
+    """
+
+    tuple_id: str
+    revision: int
+    consistency_token: str
+    written_at_ms: float
 
 
 @dataclass(slots=True)
@@ -283,9 +386,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
-        consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
+        consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
-        """Check permission with explicit consistency level (P0-1).
+        """Check permission with explicit consistency control (P0-1, Issue #1081).
+
+        Supports both legacy ConsistencyLevel and new ConsistencyRequirement.
+        The new ConsistencyRequirement enables SpiceDB/Zanzibar-style per-request
+        consistency modes including AT_LEAST_AS_FRESH for read-your-writes.
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -293,14 +400,55 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             tenant_id: Tenant ID to scope check
-            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
+            consistency: Consistency control, one of:
+                - None: Uses EVENTUAL/MINIMIZE_LATENCY (default, fastest)
+                - ConsistencyLevel.EVENTUAL: Use cache (up to 5min staleness)
+                - ConsistencyLevel.BOUNDED: Max 1s staleness
+                - ConsistencyLevel.STRONG: Bypass cache entirely
+                - ConsistencyRequirement(mode=MINIMIZE_LATENCY): Same as EVENTUAL
+                - ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=N):
+                    Use cache only if revision >= N (for read-your-writes)
+                - ConsistencyRequirement(mode=FULLY_CONSISTENT): Same as STRONG
 
         Returns:
             True if permission is granted, False otherwise
 
         Raises:
             GraphLimitExceeded: If graph traversal exceeds limits (P0-5)
+
+        Example:
+            # Default: maximize cache usage
+            result = manager.rebac_check(subject, permission, object)
+
+            # After a write, ensure we see the new permission
+            write_result = manager.rebac_write(subject, relation, object, ...)
+            result = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(
+                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                    min_revision=write_result.revision
+                )
+            )
+
+            # Security audit: bypass all caches
+            result = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
+            )
         """
+        # Issue #1081: Normalize consistency parameter
+        consistency_level: ConsistencyLevel
+        min_revision: int | None = None
+
+        if consistency is None:
+            consistency_level = ConsistencyLevel.EVENTUAL
+        elif isinstance(consistency, ConsistencyRequirement):
+            # New-style ConsistencyRequirement
+            consistency_level = consistency.to_legacy_level()
+            min_revision = consistency.min_revision
+        else:
+            # Legacy ConsistencyLevel
+            consistency_level = consistency
         import logging
 
         logger = logging.getLogger(__name__)
@@ -375,7 +523,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger.debug("  -> Using rebac_check_detailed")
         detailed_result = self.rebac_check_detailed(
-            subject, permission, object, context, tenant_id, consistency
+            subject, permission, object, context, tenant_id, consistency_level, min_revision
         )
         logger.debug(
             f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
@@ -456,8 +604,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject_type, subject_id = subject
         object_type, object_id = object
 
+        from nexus.core.rebac import WILDCARD_SUBJECT
+
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
+            # Check 1: Direct subject match (tenant-scoped)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
@@ -481,7 +632,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     datetime.now(UTC).isoformat(),
                 ),
             )
-            return cursor.fetchone() is not None
+            if cursor.fetchone() is not None:
+                return True
+
+            # Check 2: Wildcard/public access (Issue #1064)
+            # Wildcards should grant access across ALL tenants.
+            # Only check if subject is not already the wildcard.
+            if (subject_type, subject_id) != WILDCARD_SUBJECT:
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT 1 FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        WILDCARD_SUBJECT[0],
+                        WILDCARD_SUBJECT[1],
+                        relation,
+                        object_type,
+                        object_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone() is not None:
+                    return True
+
+            return False
 
     def _cache_boundary_if_inherited(
         self,
@@ -544,8 +726,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         context: dict[str, Any] | None = None,
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
+        min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
-        """Check permission with detailed result metadata (P0-1).
+        """Check permission with detailed result metadata (P0-1, Issue #1081).
 
         Args:
             subject: (subject_type, subject_id) tuple
@@ -553,7 +736,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
             tenant_id: Tenant ID to scope check
-            consistency: Consistency level
+            consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
+            min_revision: Minimum acceptable revision for AT_LEAST_AS_FRESH mode.
+                When provided with BOUNDED consistency, cache will only be used
+                if the cached entry was created at revision >= min_revision.
 
         Returns:
             CheckResult with consistency metadata and traversal stats
@@ -638,10 +824,29 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
 
         elif consistency == ConsistencyLevel.BOUNDED:
-            # Bounded consistency: Max 1s staleness
-            cached = self._get_cached_check_tenant_aware_bounded(
-                subject_entity, permission, object_entity, tenant_id, max_age_seconds=1
-            )
+            # Bounded consistency: Max 1s staleness OR revision-based (Issue #1081)
+            # If min_revision is provided, use revision-based check (AT_LEAST_AS_FRESH)
+            # Otherwise fall back to time-based check
+            cached = None
+            cached_revision = 0
+
+            if min_revision is not None and self._l1_cache:
+                # Issue #1081: AT_LEAST_AS_FRESH mode - check cache with revision constraint
+                cached, cached_revision = self._l1_cache.get_with_revision_check(
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    permission,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    tenant_id,
+                    min_revision,
+                )
+            else:
+                # Legacy time-based bounded check
+                cached = self._get_cached_check_tenant_aware_bounded(
+                    subject_entity, permission, object_entity, tenant_id, max_age_seconds=1
+                )
+
             if cached is not None:
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
@@ -649,11 +854,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     consistency_token=self._get_version_token(tenant_id),
                     decision_time_ms=decision_time_ms,
                     cached=True,
-                    cache_age_ms=None,  # Within 1s bound
+                    cache_age_ms=None,  # Within staleness bound
                     traversal_stats=None,
                 )
 
-            # Cache miss or too old - compute fresh
+            # Cache miss or too old/stale - compute fresh
             stats = TraversalStats()
             limit_error = None
             try:
@@ -862,6 +1067,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 )
                 tuples.extend(cross_tenant_tuples)
 
+        # WILDCARD FIX (Issue #1064): Fetch cross-tenant wildcard tuples (*:*)
+        # Wildcard tuples grant access to ALL users regardless of tenant.
+        # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
+        wildcard_tuples = self._fetch_cross_tenant_wildcards(tenant_id)
+        if wildcard_tuples:
+            logger.debug(
+                f"[GRAPH-CACHE] Fetched {len(wildcard_tuples)} cross-tenant wildcard tuples"
+            )
+            tuples.extend(wildcard_tuples)
+
         # LEOPARD OPTIMIZATION (Issue #840): Add synthetic membership tuples from
         # transitive closure. This allows O(1) group membership lookups instead of
         # O(depth) recursive graph traversal during permission checks.
@@ -998,6 +1213,60 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 + (
                     subject.entity_type,
                     subject.entity_id,
+                    tenant_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            tuples = []
+            for row in cursor.fetchall():
+                tuples.append(
+                    {
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "subject_relation": row["subject_relation"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                    }
+                )
+
+            return tuples
+
+    def _fetch_cross_tenant_wildcards(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Fetch cross-tenant wildcard tuples (*:*) (Issue #1064).
+
+        Wildcard tuples grant access to ALL users regardless of tenant.
+        This query fetches all wildcard tuples from OTHER tenants so they
+        can be included in permission checks.
+
+        This is the industry-standard pattern used by SpiceDB, OpenFGA, Ory Keto.
+
+        Args:
+            tenant_id: Current tenant ID (to exclude duplicates from same tenant)
+
+        Returns:
+            List of wildcard tuples from other tenants
+        """
+        from nexus.core.rebac import WILDCARD_SUBJECT
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id, subject_relation, relation,
+                           object_type, object_id
+                    FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                      AND tenant_id != ?
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """
+                ),
+                (
+                    WILDCARD_SUBJECT[0],
+                    WILDCARD_SUBJECT[1],
                     tenant_id,
                     datetime.now(UTC).isoformat(),
                 ),
@@ -1230,7 +1499,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             except Exception as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
 
-    def rebac_write(
+    def rebac_write(  # type: ignore[override]  # Issue #1081: Returns WriteResult instead of str
         self,
         subject: tuple[str, str] | tuple[str, str, str],
         relation: str,
@@ -1240,10 +1509,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
         subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
         object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
-    ) -> str:
-        """Create a relationship tuple with cache invalidation.
+    ) -> WriteResult:
+        """Create a relationship tuple with cache invalidation (Issue #1081).
 
         Overrides parent to invalidate the tenant graph cache after writes.
+        Returns a WriteResult with consistency metadata for read-your-writes.
 
         Args:
             subject: (subject_type, subject_id) or (subject_type, subject_id, subject_relation) tuple
@@ -1256,8 +1526,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object_tenant_id: Object's tenant
 
         Returns:
-            Tuple ID of created relationship
+            WriteResult with tuple_id, revision, and consistency_token.
+            Use the revision with ConsistencyRequirement(mode=AT_LEAST_AS_FRESH, min_revision=...)
+            for read-your-writes consistency.
+
+        Example:
+            # Write and immediately check with read-your-writes guarantee
+            result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+            allowed = manager.rebac_check(
+                subject, permission, object,
+                consistency=ConsistencyRequirement(
+                    mode=ConsistencyMode.AT_LEAST_AS_FRESH,
+                    min_revision=result.revision
+                )
+            )
         """
+        write_start = time.perf_counter()
         # Issue #773: Default subject_tenant_id and object_tenant_id to tenant_id
         effective_subject_tenant = subject_tenant_id if subject_tenant_id is not None else tenant_id
         effective_object_tenant = object_tenant_id if object_tenant_id is not None else tenant_id
@@ -1365,6 +1649,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     tenant_id=effective_tenant,
                 )
 
+            # Leopard-style Directory Grant Expansion
+            # When permission is granted on a directory, expand to all descendants
+            if object_type == "file" and permissions and self._is_directory_path(object_id):
+                self._expand_directory_permission_grant(
+                    subject=subject_tuple,
+                    permissions=permissions,
+                    directory_path=object_id,
+                    tenant_id=effective_tenant,
+                )
+
         # Issue #922: Notify boundary cache invalidators
         self._notify_boundary_cache_invalidators(effective_tenant, subject, relation, object)
 
@@ -1379,7 +1673,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
             self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
 
-        return result
+        # Issue #1081: Get revision for consistency token (Zanzibar zookie pattern)
+        revision = self._get_tenant_revision_for_grant(effective_tenant)
+        write_time_ms = (time.perf_counter() - write_start) * 1000
+
+        return WriteResult(
+            tuple_id=result,
+            revision=revision,
+            consistency_token=f"v{revision}",
+            written_at_ms=write_time_ms,
+        )
 
     def rebac_write_batch(
         self,
@@ -2088,6 +2391,336 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             resource_id=resource_id,
         )
 
+    # =========================================================================
+    # Leopard-style Directory Permission Pre-materialization
+    # =========================================================================
+
+    # Write amplification limit: max files to expand synchronously
+    # Beyond this, expansion is queued for async processing
+    DIRECTORY_EXPANSION_LIMIT = 10_000
+
+    def _is_directory_path(self, path: str) -> bool:
+        """Check if a path represents a directory.
+
+        Uses heuristics since NexusFS uses implicit directories:
+        1. Path ends with /
+        2. Path has no file extension in the last component
+        3. Files exist under this path (queried from metadata store if available)
+
+        Args:
+            path: File path to check
+
+        Returns:
+            True if path appears to be a directory
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Explicit directory marker
+        if path.endswith("/"):
+            return True
+
+        # Root is always a directory
+        if path == "/":
+            return True
+
+        # Check for common file extensions (not a directory)
+        last_component = path.rsplit("/", 1)[-1]
+        if "." in last_component:
+            extension = last_component.rsplit(".", 1)[-1].lower()
+            # Common file extensions that indicate NOT a directory
+            file_extensions = {
+                "txt",
+                "md",
+                "json",
+                "yaml",
+                "yml",
+                "xml",
+                "csv",
+                "tsv",
+                "py",
+                "js",
+                "ts",
+                "jsx",
+                "tsx",
+                "html",
+                "css",
+                "scss",
+                "java",
+                "c",
+                "cpp",
+                "h",
+                "hpp",
+                "go",
+                "rs",
+                "rb",
+                "php",
+                "sql",
+                "sh",
+                "bash",
+                "zsh",
+                "ps1",
+                "bat",
+                "cmd",
+                "png",
+                "jpg",
+                "jpeg",
+                "gif",
+                "svg",
+                "ico",
+                "webp",
+                "pdf",
+                "doc",
+                "docx",
+                "xls",
+                "xlsx",
+                "ppt",
+                "pptx",
+                "zip",
+                "tar",
+                "gz",
+                "bz2",
+                "7z",
+                "rar",
+                "mp3",
+                "mp4",
+                "wav",
+                "avi",
+                "mov",
+                "mkv",
+                "log",
+                "ini",
+                "conf",
+                "cfg",
+                "env",
+                "lock",
+            }
+            if extension in file_extensions:
+                return False
+
+        # If we have a metadata store reference, check for children
+        # This is the most accurate but requires a DB query
+        if hasattr(self, "_metadata_store") and self._metadata_store:
+            try:
+                # Check if any files exist under this path
+                return bool(self._metadata_store.is_implicit_directory(path))
+            except Exception as e:
+                logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
+
+        # Default: treat paths without extensions as potential directories
+        # The expansion will be a no-op if there are no descendants
+        return "." not in last_component
+
+    def _expand_directory_permission_grant(
+        self,
+        subject: tuple[str, str],
+        permissions: list[str],
+        directory_path: str,
+        tenant_id: str,
+    ) -> None:
+        """Expand a directory permission grant to all descendants (Leopard-style).
+
+        This is the core of pre-materialization. When a permission is granted
+        on a directory, expand it to ALL descendant files so that permission
+        checks become O(1) bitmap lookups instead of O(depth) tree walks.
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permissions: List of permissions granted (e.g., ["read", "write"])
+            directory_path: Directory path that was granted
+            tenant_id: Tenant ID
+
+        Trade-offs (Zanzibar Leopard pattern):
+            - Write amplification: 1 grant -> N bitmap updates
+            - Read optimization: O(depth) -> O(1) per file
+            - Storage: O(grants) -> O(grants * avg_descendants)
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if not self._tiger_cache:
+            return
+
+        # Normalize directory path
+        if not directory_path.endswith("/"):
+            directory_path = directory_path + "/"
+
+        # Get current revision for consistency (prevents "new enemy" problem)
+        grant_revision = self._get_tenant_revision_for_grant(tenant_id)
+
+        # Get all descendants of the directory
+        descendants = self._get_directory_descendants(directory_path, tenant_id)
+
+        logger.info(
+            f"[LEOPARD] Directory grant expansion: {directory_path} "
+            f"-> {len(descendants)} descendants for {subject[0]}:{subject[1]}"
+        )
+
+        if not descendants:
+            # No descendants - just record the grant for future file integration
+            for permission in permissions:
+                self._tiger_cache.record_directory_grant(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    directory_path=directory_path,
+                    tenant_id=tenant_id,
+                    grant_revision=grant_revision,
+                    include_future_files=True,
+                )
+                # Mark as completed immediately (empty directory)
+                self._tiger_cache._update_grant_status(
+                    subject[0],
+                    subject[1],
+                    permission,
+                    directory_path,
+                    tenant_id,
+                    status="completed",
+                    expanded_count=0,
+                    total_count=0,
+                )
+            return
+
+        # Check write amplification limit
+        if len(descendants) > self.DIRECTORY_EXPANSION_LIMIT:
+            logger.warning(
+                f"[LEOPARD] Directory {directory_path} has {len(descendants)} files, "
+                f"exceeds limit {self.DIRECTORY_EXPANSION_LIMIT}. Using async expansion."
+            )
+            # Queue for async expansion
+            for permission in permissions:
+                self._tiger_cache.record_directory_grant(
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    permission=permission,
+                    directory_path=directory_path,
+                    tenant_id=tenant_id,
+                    grant_revision=grant_revision,
+                    include_future_files=True,
+                )
+                # Status remains "pending" - background worker will process
+            return
+
+        # Synchronous expansion for small directories
+        for permission in permissions:
+            # Record the directory grant first
+            self._tiger_cache.record_directory_grant(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                permission=permission,
+                directory_path=directory_path,
+                tenant_id=tenant_id,
+                grant_revision=grant_revision,
+                include_future_files=True,
+            )
+
+            # Expand to all descendants
+            expanded, completed = self._tiger_cache.expand_directory_grant(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                permission=permission,
+                directory_path=directory_path,
+                tenant_id=tenant_id,
+                grant_revision=grant_revision,
+                descendants=descendants,
+            )
+
+            if completed:
+                logger.info(
+                    f"[LEOPARD] Expanded {permission} on {directory_path}: "
+                    f"{expanded} files for {subject[0]}:{subject[1]}"
+                )
+            else:
+                logger.error(f"[LEOPARD] Failed to expand {permission} on {directory_path}")
+
+    def _get_tenant_revision_for_grant(self, tenant_id: str) -> int:
+        """Get current tenant revision for consistency during expansion.
+
+        This prevents the "new enemy" problem: files created after the grant
+        revision are not automatically included (user must explicitly include
+        future files or re-grant).
+
+        Args:
+            tenant_id: Tenant ID
+
+        Returns:
+            Current revision number
+        """
+        from sqlalchemy import text
+
+        try:
+            query = text("""
+                SELECT revision FROM tenant_revisions
+                WHERE tenant_id = :tenant_id
+            """)
+            with self.engine.connect() as conn:
+                result = conn.execute(query, {"tenant_id": tenant_id})
+                row = result.fetchone()
+                return int(row.revision) if row else 0
+        except Exception:
+            return 0
+
+    def _get_directory_descendants(
+        self,
+        directory_path: str,
+        tenant_id: str,
+    ) -> list[str]:
+        """Get all file paths under a directory.
+
+        Args:
+            directory_path: Directory path (with trailing /)
+            tenant_id: Tenant ID
+
+        Returns:
+            List of descendant file paths
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Try using metadata store if available
+        if hasattr(self, "_metadata_store") and self._metadata_store:
+            try:
+                files = self._metadata_store.list(
+                    prefix=directory_path,
+                    recursive=True,
+                    tenant_id=tenant_id,
+                )
+                return [f.path for f in files]
+            except Exception as e:
+                logger.warning(f"[LEOPARD] Metadata store query failed: {e}")
+
+        # Fallback: query file_paths table directly
+        from sqlalchemy import text
+
+        try:
+            query = text("""
+                SELECT virtual_path
+                FROM file_paths
+                WHERE virtual_path LIKE :prefix
+                  AND deleted_at IS NULL
+                  AND (tenant_id = :tenant_id OR tenant_id = 'default' OR tenant_id IS NULL)
+            """)
+
+            with self.engine.connect() as conn:
+                result = conn.execute(
+                    query, {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
+                )
+                return [row.virtual_path for row in result]
+        except Exception as e:
+            logger.error(f"[LEOPARD] Failed to query descendants: {e}")
+            return []
+
+    def set_metadata_store(self, metadata_store: Any) -> None:
+        """Set the metadata store reference for directory queries.
+
+        Args:
+            metadata_store: MetadataStore instance
+        """
+        self._metadata_store = metadata_store
+
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.
 
@@ -2661,6 +3294,40 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                     logger = logging.getLogger(__name__)
                     logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    return True
+
+            # Check for wildcard/public access (*:*) - Issue #1064
+            # Wildcards grant access to ALL users regardless of tenant.
+            # Only check if subject is not already the wildcard.
+            from nexus.core.rebac import WILDCARD_SUBJECT
+
+            if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
+                # Check for wildcard tuples in ANY tenant (cross-tenant public access)
+                cursor.execute(
+                    self._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND subject_relation IS NULL
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        LIMIT 1
+                        """
+                    ),
+                    (
+                        WILDCARD_SUBJECT[0],
+                        WILDCARD_SUBJECT[1],
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
+                if cursor.fetchone():
+                    logger.debug(
+                        f"[DIRECT-CHECK] Wildcard access found: *:* -> {relation} -> {obj}"
+                    )
                     return True
 
             # Check for userset-as-subject tuple (e.g., group#member)

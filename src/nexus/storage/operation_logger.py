@@ -127,6 +127,83 @@ class OperationLogger:
 
         return list(self.session.execute(stmt).scalars())
 
+    def list_operations_cursor(
+        self,
+        *,
+        tenant_id: str | None = None,
+        agent_id: str | None = None,
+        operation_type: str | None = None,
+        path: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[OperationLogModel], str | None]:
+        """List operations using cursor-based pagination (Postgres Best Practice).
+
+        Cursor-based pagination provides O(1) performance regardless of page depth,
+        unlike OFFSET which gets slower on deeper pages.
+        Reference: https://supabase.com/docs/guides/database/pagination
+
+        Args:
+            tenant_id: Filter by tenant ID
+            agent_id: Filter by agent ID
+            operation_type: Filter by operation type
+            path: Filter by path (exact match)
+            status: Filter by status (success/failure)
+            limit: Maximum number of results
+            cursor: Cursor from previous response (operation_id of last item)
+
+        Returns:
+            Tuple of (operations list, next_cursor or None if no more results)
+        """
+        stmt = select(OperationLogModel).order_by(
+            desc(OperationLogModel.created_at),
+            desc(OperationLogModel.operation_id),  # Tie-breaker for same timestamp
+        )
+
+        # Apply cursor (fetch items after this operation_id)
+        if cursor:
+            # Get the cursor operation to find its created_at
+            cursor_op = self.session.execute(
+                select(OperationLogModel).where(OperationLogModel.operation_id == cursor)
+            ).scalar_one_or_none()
+            if cursor_op:
+                # Use composite cursor: (created_at, operation_id)
+                stmt = stmt.where(
+                    (OperationLogModel.created_at < cursor_op.created_at)
+                    | (
+                        (OperationLogModel.created_at == cursor_op.created_at)
+                        & (OperationLogModel.operation_id < cursor)
+                    )
+                )
+
+        # Apply filters
+        if tenant_id is not None:
+            stmt = stmt.where(OperationLogModel.tenant_id == tenant_id)
+        if agent_id is not None:
+            stmt = stmt.where(OperationLogModel.agent_id == agent_id)
+        if operation_type is not None:
+            stmt = stmt.where(OperationLogModel.operation_type == operation_type)
+        if path is not None:
+            stmt = stmt.where(OperationLogModel.path == path)
+        if status is not None:
+            stmt = stmt.where(OperationLogModel.status == status)
+
+        # Fetch one extra to detect if there are more results
+        stmt = stmt.limit(limit + 1)
+
+        results = list(self.session.execute(stmt).scalars())
+
+        # Determine next cursor
+        if len(results) > limit:
+            # More results exist
+            results = results[:limit]
+            next_cursor = results[-1].operation_id
+        else:
+            next_cursor = None
+
+        return results, next_cursor
+
     def get_last_operation(
         self,
         *,

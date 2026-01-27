@@ -401,7 +401,7 @@ class TestXFetchAlgorithm:
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
         metadata = cache._entry_metadata.get(key)
         assert metadata is not None
-        assert len(metadata) == 3  # (created_at, jittered_ttl, delta)
+        assert len(metadata) == 4  # (created_at, jittered_ttl, delta, revision)
         assert metadata[2] == 0.05  # delta
 
     def test_set_default_delta_zero(self):
@@ -465,8 +465,8 @@ class TestXFetchAlgorithm:
 
         # Simulate entry that is 58 seconds old (2 seconds remaining)
         now = time.time()
-        cache1._entry_metadata[key1] = (now - 58, 60.0, 0.5)
-        cache2._entry_metadata[key2] = (now - 58, 60.0, 5.0)
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 0.5, 0)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 5.0, 0)
 
         # Run many iterations
         refresh_count1 = 0
@@ -498,8 +498,8 @@ class TestXFetchAlgorithm:
 
         # Simulate entry that is 58 seconds old (2 seconds remaining)
         now = time.time()
-        cache1._entry_metadata[key1] = (now - 58, 60.0, 2.0)
-        cache2._entry_metadata[key2] = (now - 58, 60.0, 2.0)
+        cache1._entry_metadata[key1] = (now - 58, 60.0, 2.0, 0)
+        cache2._entry_metadata[key2] = (now - 58, 60.0, 2.0, 0)
 
         # Run many iterations
         refresh_count1 = 0
@@ -527,11 +527,11 @@ class TestXFetchAlgorithm:
 
         # Before refresh threshold (70% of TTL = 42 seconds)
         now = time.time()
-        cache._entry_metadata[key] = (now - 30, 60.0, 0.0)  # 30s old
+        cache._entry_metadata[key] = (now - 30, 60.0, 0.0, 0)  # 30s old
         assert cache._should_refresh_xfetch(key) is False
 
         # After refresh threshold
-        cache._entry_metadata[key] = (now - 45, 60.0, 0.0)  # 45s old
+        cache._entry_metadata[key] = (now - 45, 60.0, 0.0, 0)  # 45s old
         assert cache._should_refresh_xfetch(key) is True
 
     def test_get_with_refresh_check_tracks_xfetch(self):
@@ -548,7 +548,7 @@ class TestXFetchAlgorithm:
         # With delta=5.0 and beta=1.0, E[refresh_factor] = 5.0
         # So with 2 seconds remaining, we should trigger frequently
         now = time.time()
-        cache._entry_metadata[key] = (now - 58, 60.0, 5.0)  # 58s old, 2s remaining
+        cache._entry_metadata[key] = (now - 58, 60.0, 5.0, 0)  # 58s old, 2s remaining
 
         # Should trigger refresh at least sometimes
         refresh_triggered = False
@@ -623,7 +623,7 @@ class TestXFetchAlgorithm:
         # Simulate near expiry
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
         now = time.time()
-        cache._entry_metadata[key] = (now - 55, 60.0, 0.1)
+        cache._entry_metadata[key] = (now - 55, 60.0, 0.1, 0)
 
         # Run many iterations with different betas
         refresh_beta_low = 0
@@ -638,3 +638,291 @@ class TestXFetchAlgorithm:
 
         # Higher beta should trigger more refreshes
         assert refresh_beta_high >= refresh_beta_low
+
+
+class TestIssue1077TieredTTL:
+    """Test suite for Issue #1077: Tiered TTL by relation type."""
+
+    def test_tiered_ttl_config_default(self):
+        """Test default tiered TTL configuration."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Check default tiered TTL config exists
+        assert "owner" in cache._tiered_ttl_config
+        assert "editor" in cache._tiered_ttl_config
+        assert "viewer" in cache._tiered_ttl_config
+        assert "inherited" in cache._tiered_ttl_config
+        assert "denial" in cache._tiered_ttl_config
+
+        # Owner should have longer TTL (1 hour)
+        assert cache._tiered_ttl_config["owner"] == 3600
+
+        # Editor/viewer should have medium TTL (10 min)
+        assert cache._tiered_ttl_config["editor"] == 600
+        assert cache._tiered_ttl_config["viewer"] == 600
+
+        # Inherited should be shorter (5 min)
+        assert cache._tiered_ttl_config["inherited"] == 300
+
+        # Denial should be shortest (1 min)
+        assert cache._tiered_ttl_config["denial"] == 60
+
+    def test_tiered_ttl_custom_config(self):
+        """Test custom tiered TTL configuration."""
+        custom_config = {
+            "owner": 7200,  # 2 hours
+            "editor": 1200,  # 20 min
+            "viewer": 900,  # 15 min
+        }
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300, tiered_ttl_config=custom_config)
+
+        assert cache._tiered_ttl_config["owner"] == 7200
+        assert cache._tiered_ttl_config["editor"] == 1200
+        assert cache._tiered_ttl_config["viewer"] == 900
+
+    def test_get_ttl_for_relation_owner(self):
+        """Test TTL lookup for owner relation."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Owner relations should return 1 hour
+        assert cache._get_ttl_for_relation("owner") == 3600
+        assert cache._get_ttl_for_relation("direct_owner") == 3600
+        assert cache._get_ttl_for_relation("admin") == 3600
+
+    def test_get_ttl_for_relation_editor(self):
+        """Test TTL lookup for editor relation."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Editor relations should return 10 min
+        assert cache._get_ttl_for_relation("editor") == 600
+        assert cache._get_ttl_for_relation("write") == 600
+        assert cache._get_ttl_for_relation("contributor") == 600
+
+    def test_get_ttl_for_relation_viewer(self):
+        """Test TTL lookup for viewer relation."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Viewer relations should return 10 min
+        assert cache._get_ttl_for_relation("viewer") == 600
+        assert cache._get_ttl_for_relation("read") == 600
+        assert cache._get_ttl_for_relation("can_read") == 600
+
+    def test_get_ttl_for_relation_denial(self):
+        """Test TTL lookup for denial."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Denial should return 1 min
+        assert cache._get_ttl_for_relation("any", is_denial=True) == 60
+
+    def test_get_ttl_for_relation_unknown(self):
+        """Test TTL lookup for unknown relation falls back to default."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        # Unknown relations should return default TTL
+        assert cache._get_ttl_for_relation("custom_relation") == 300
+
+    def test_set_with_relation_owner(self):
+        """Test setting cache entry with owner relation uses tiered TTL."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=300)
+
+        cache.set("agent", "alice", "manage", "file", "/doc.txt", True, relation="owner")
+
+        # Verify entry was set
+        result = cache.get("agent", "alice", "manage", "file", "/doc.txt")
+        assert result is True
+
+        # Verify metadata uses owner TTL (with jitter)
+        key = cache._make_key("agent", "alice", "manage", "file", "/doc.txt", None)
+        _, jittered_ttl, _, _ = cache._entry_metadata[key]
+        # TTL should be around 3600 (±20% jitter)
+        assert 2880 <= jittered_ttl <= 4320  # 3600 ± 20%
+
+    def test_set_with_inherited_flag(self):
+        """Test setting cache entry with inherited flag uses inherited TTL."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=600)
+
+        cache.set(
+            "agent", "alice", "read", "file", "/doc.txt", True, relation="owner", is_inherited=True
+        )
+
+        # Verify entry was set
+        result = cache.get("agent", "alice", "read", "file", "/doc.txt")
+        assert result is True
+
+        # Verify metadata uses inherited TTL (not owner TTL)
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
+        _, jittered_ttl, _, _ = cache._entry_metadata[key]
+        # TTL should be around 300 (inherited), not 3600 (owner)
+        assert 240 <= jittered_ttl <= 360  # 300 ± 20%
+
+
+class TestIssue1077TargetedInvalidation:
+    """Test suite for Issue #1077: Targeted invalidation using secondary indexes."""
+
+    def test_invalidation_mode_targeted_default(self):
+        """Test that targeted invalidation mode is the default."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+        assert cache._invalidation_mode == "targeted"
+
+    def test_invalidation_mode_tenant_wide(self):
+        """Test legacy tenant_wide invalidation mode."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="tenant_wide")
+        assert cache._invalidation_mode == "tenant_wide"
+
+    def test_indexes_created_on_set(self):
+        """Test that secondary indexes are created when setting cache entries."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        cache.set("agent", "alice", "read", "file", "/workspace/doc.txt", True)
+
+        # Subject index should be populated
+        subject_key = ("default", "agent", "alice")
+        assert subject_key in cache._subject_index
+        assert len(cache._subject_index[subject_key]) == 1
+
+        # Object index should be populated
+        object_key = ("default", "file", "/workspace/doc.txt")
+        assert object_key in cache._object_index
+        assert len(cache._object_index[object_key]) == 1
+
+        # Path prefix index should include ancestor paths
+        prefix_key = ("default", "file", "/workspace")
+        assert prefix_key in cache._path_prefix_index
+        assert len(cache._path_prefix_index[prefix_key]) >= 1
+
+    def test_indexes_not_created_in_tenant_wide_mode(self):
+        """Test that indexes are not created in tenant_wide mode."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="tenant_wide")
+
+        cache.set("agent", "alice", "read", "file", "/workspace/doc.txt", True)
+
+        # Indexes should be empty
+        assert len(cache._subject_index) == 0
+        assert len(cache._object_index) == 0
+        assert len(cache._path_prefix_index) == 0
+
+    def test_targeted_invalidate_subject(self):
+        """Test targeted invalidation by subject."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set entries for alice and bob
+        cache.set("agent", "alice", "read", "file", "/doc1.txt", True)
+        cache.set("agent", "alice", "write", "file", "/doc2.txt", True)
+        cache.set("agent", "bob", "read", "file", "/doc3.txt", True)
+
+        # Verify indexes
+        assert len(cache._subject_index[("default", "agent", "alice")]) == 2
+        assert len(cache._subject_index[("default", "agent", "bob")]) == 1
+
+        # Invalidate alice
+        count = cache.invalidate_subject("agent", "alice")
+        assert count == 2
+
+        # Verify alice's entries are gone
+        assert cache.get("agent", "alice", "read", "file", "/doc1.txt") is None
+        assert cache.get("agent", "alice", "write", "file", "/doc2.txt") is None
+
+        # Bob's entry should still exist
+        assert cache.get("agent", "bob", "read", "file", "/doc3.txt") is True
+
+        # Verify indexes are cleaned up
+        assert ("default", "agent", "alice") not in cache._subject_index
+
+    def test_targeted_invalidate_object_prefix(self):
+        """Test targeted invalidation by path prefix."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set entries under different paths
+        cache.set("agent", "alice", "read", "file", "/workspace/project/a.txt", True)
+        cache.set("agent", "bob", "write", "file", "/workspace/project/b.txt", True)
+        cache.set("agent", "alice", "read", "file", "/workspace/other/c.txt", True)
+        cache.set("agent", "alice", "read", "file", "/home/d.txt", True)
+
+        # Invalidate /workspace/project prefix
+        count = cache.invalidate_object_prefix("file", "/workspace/project")
+        assert count == 2
+
+        # Entries under /workspace/project should be gone
+        assert cache.get("agent", "alice", "read", "file", "/workspace/project/a.txt") is None
+        assert cache.get("agent", "bob", "write", "file", "/workspace/project/b.txt") is None
+
+        # Entries under /workspace/other and /home should still exist
+        assert cache.get("agent", "alice", "read", "file", "/workspace/other/c.txt") is True
+        assert cache.get("agent", "alice", "read", "file", "/home/d.txt") is True
+
+    def test_targeted_invalidate_subject_object_pair(self):
+        """Test targeted invalidation for subject-object pair."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set multiple entries
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True)
+        cache.set("agent", "alice", "write", "file", "/doc.txt", True)
+        cache.set("agent", "alice", "read", "file", "/other.txt", True)
+        cache.set("agent", "bob", "read", "file", "/doc.txt", True)
+
+        # Invalidate only alice's entries for /doc.txt
+        count = cache.invalidate_subject_object_pair("agent", "alice", "file", "/doc.txt")
+        assert count == 2
+
+        # Only alice's /doc.txt entries should be gone
+        assert cache.get("agent", "alice", "read", "file", "/doc.txt") is None
+        assert cache.get("agent", "alice", "write", "file", "/doc.txt") is None
+
+        # Other entries should remain
+        assert cache.get("agent", "alice", "read", "file", "/other.txt") is True
+        assert cache.get("agent", "bob", "read", "file", "/doc.txt") is True
+
+    def test_stats_include_targeted_invalidation_metrics(self):
+        """Test that stats include targeted invalidation metrics."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, enable_metrics=True)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True)
+        cache.invalidate_subject("agent", "alice")
+
+        stats = cache.get_stats()
+        assert "invalidation_mode" in stats
+        assert stats["invalidation_mode"] == "targeted"
+        assert "targeted_invalidations" in stats
+        assert stats["targeted_invalidations"] >= 1
+        assert "index_lookups" in stats
+        assert "subject_index_size" in stats
+        assert "object_index_size" in stats
+        assert "path_prefix_index_size" in stats
+
+    def test_clear_also_clears_indexes(self):
+        """Test that clear() also clears secondary indexes."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True)
+        assert len(cache._subject_index) > 0
+        assert len(cache._object_index) > 0
+
+        cache.clear()
+
+        assert len(cache._subject_index) == 0
+        assert len(cache._object_index) == 0
+        assert len(cache._path_prefix_index) == 0
+
+    def test_path_prefix_index_deep_hierarchy(self):
+        """Test path prefix indexing works for deep hierarchies."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
+
+        # Set entry with deep path
+        deep_path = "/workspace/project/src/utils/helpers/common.py"
+        cache.set("agent", "alice", "read", "file", deep_path, True)
+
+        # All ancestor prefixes should be indexed
+        assert ("default", "file", "/workspace") in cache._path_prefix_index
+        assert ("default", "file", "/workspace/project") in cache._path_prefix_index
+        assert ("default", "file", "/workspace/project/src") in cache._path_prefix_index
+        assert ("default", "file", "/workspace/project/src/utils") in cache._path_prefix_index
+        assert (
+            "default",
+            "file",
+            "/workspace/project/src/utils/helpers",
+        ) in cache._path_prefix_index
+
+        # Invalidating top-level should remove the entry
+        count = cache.invalidate_object_prefix("file", "/workspace")
+        assert count == 1
+        assert cache.get("agent", "alice", "read", "file", deep_path) is None

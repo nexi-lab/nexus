@@ -93,6 +93,13 @@ from nexus.search.query_router import (
     RoutingConfig,
     create_query_router,
 )
+from nexus.search.ranking import (
+    AttributeWeights,
+    RankingConfig,
+    apply_attribute_boosting,
+    detect_matched_field,
+    get_ranking_config_from_env,
+)
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase
 from nexus.search.zoekt_client import (
@@ -150,6 +157,12 @@ __all__ = [
     "RoutedQuery",
     "RoutingConfig",
     "create_query_router",
+    # Attribute Ranking (Issue #1092)
+    "AttributeWeights",
+    "RankingConfig",
+    "apply_attribute_boosting",
+    "detect_matched_field",
+    "get_ranking_config_from_env",
     # BM25S Fast Text Search (Issue #796)
     "BM25SIndex",
     "BM25SSearchResult",

@@ -449,6 +449,8 @@ class TestMountNexusFunction:
             str(temp_mount_point),
             mode=MountMode.SMART,
             cache_config=None,
+            warmup_depth=2,
+            warmup_max_files=1000,
         )
 
         # Should have called mount
@@ -482,6 +484,8 @@ class TestMountNexusFunction:
             str(temp_mount_point),
             mode=MountMode.BINARY,
             cache_config=cache_config,
+            warmup_depth=2,
+            warmup_max_files=1000,
         )
 
         # Should have called mount with correct params

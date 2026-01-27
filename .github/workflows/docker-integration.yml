@@ -1139,6 +1139,8 @@ jobs:
           echo ""
 
           # Step 6: Test MCP tool: nexus_list_files
+          # Brief delay to ensure metadata is committed after writes
+          sleep 1
           echo "📋 Step 6: Testing nexus_list_files tool..."
           LIST_TOOL_RESPONSE_RAW=$(curl -sf http://${MCP_HOST}:${MCP_PORT}/mcp \
             -H "Content-Type: application/json" \

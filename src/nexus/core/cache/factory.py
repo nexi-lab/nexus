@@ -96,14 +96,23 @@ class CacheFactory:
             try:
                 from nexus.core.cache.dragonfly import DragonflyClient
 
+                # Issue #1075: Pass all connection pool settings
                 self._dragonfly_client = DragonflyClient(
                     url=self._settings.dragonfly_url,  # type: ignore[arg-type]
                     pool_size=self._settings.dragonfly_pool_size,
                     timeout=self._settings.dragonfly_timeout,
+                    connect_timeout=self._settings.dragonfly_connect_timeout,
+                    pool_timeout=self._settings.dragonfly_pool_timeout,
+                    socket_keepalive=self._settings.dragonfly_keepalive,
+                    retry_on_timeout=self._settings.dragonfly_retry_on_timeout,
                 )
                 await self._dragonfly_client.connect()
                 self._using_dragonfly = True
-                logger.info("Cache factory initialized with Dragonfly backend")
+                logger.info(
+                    f"Cache factory initialized with Dragonfly backend "
+                    f"(pool_size={self._settings.dragonfly_pool_size}, "
+                    f"keepalive={self._settings.dragonfly_keepalive})"
+                )
             except ImportError:
                 logger.warning("redis package not installed, falling back to PostgreSQL cache")
                 self._using_dragonfly = False

@@ -388,6 +388,9 @@ _CONFIG_MAPPINGS: dict[str, dict[str, str]] = {
     "local": {
         "data_dir": "root_path",
     },
+    "passthrough": {
+        "data_dir": "base_path",
+    },
     "gcs": {
         "bucket": "bucket_name",
         "project_id": "project_id",

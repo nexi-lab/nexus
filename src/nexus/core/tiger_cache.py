@@ -18,6 +18,7 @@ Related: Issue #682
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -29,6 +30,7 @@ from pyroaring import BitMap as RoaringBitmap
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
+    from nexus.core.cache.dragonfly import DragonflyTigerCache
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -414,6 +416,14 @@ class TigerCache:
 
     Stores which resources a subject can access with a given permission.
     Enables O(1) permission filtering for list operations.
+
+    Architecture (with Dragonfly integration):
+        L1: In-memory cache (self._cache) - fastest, per-instance
+        L2: Dragonfly cache (optional) - shared across instances
+        L3: PostgreSQL (tiger_cache table) - source of truth
+
+    Read path: L1 -> L2 (if available) -> L3
+    Write path: L3 first (source of truth) -> L2 (if available) -> L1
     """
 
     def __init__(
@@ -421,6 +431,7 @@ class TigerCache:
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
+        dragonfly_cache: DragonflyTigerCache | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -428,19 +439,163 @@ class TigerCache:
             engine: SQLAlchemy database engine
             resource_map: Resource mapping service (created if not provided)
             rebac_manager: ReBAC manager for permission computation
+            dragonfly_cache: Optional Dragonfly cache for L2 distributed caching
         """
         self._engine = engine
         self._resource_map = resource_map or TigerResourceMap(engine)
         self._rebac_manager = rebac_manager
         self._is_postgresql = "postgresql" in str(engine.url)
 
-        # In-memory cache for hot entries
+        # L2: Dragonfly distributed cache (optional)
+        self._dragonfly: DragonflyTigerCache | None = dragonfly_cache
+        self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
+
+        # L1: In-memory cache for hot entries
         self._cache: dict[
             CacheKey, tuple[Any, int, float]
         ] = {}  # key -> (bitmap, revision, cached_at)
-        self._cache_ttl = 300  # 5 minutes
+        self._cache_ttl = 300  # 5 minutes (same for L1 and L2 for consistency)
         self._cache_max_size = 100_000  # Increased from 10k per Issue #979
         self._lock = threading.RLock()
+
+        # Persistent thread pool for L2 operations (avoid per-operation creation)
+        self._l2_executor: Any | None = None
+
+    def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
+        """Set or update the Dragonfly cache backend.
+
+        This allows late binding of the Dragonfly cache after initialization,
+        useful when the cache factory initializes after TigerCache.
+
+        Args:
+            dragonfly_cache: DragonflyTigerCache instance or None to disable
+        """
+        self._dragonfly = dragonfly_cache
+        if dragonfly_cache:
+            # Cache URL for sync Redis operations
+            self._dragonfly_url = getattr(dragonfly_cache._client, "_url", None)
+            # Create persistent thread pool (max 4 workers for L2 ops)
+            import concurrent.futures
+
+            if self._l2_executor is None:
+                self._l2_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="tiger-l2"
+                )
+            logger.info("[TIGER] Dragonfly L2 cache enabled")
+        else:
+            self._dragonfly_url = None
+            # Shutdown executor if exists
+            if self._l2_executor:
+                self._l2_executor.shutdown(wait=False)
+                self._l2_executor = None
+            logger.info("[TIGER] Dragonfly L2 cache disabled")
+
+    def _run_dragonfly_op(
+        self,
+        operation: str,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        bitmap_data: bytes | None = None,
+        revision: int = 0,
+    ) -> Any:
+        """Run a Dragonfly operation using sync Redis client.
+
+        Uses a persistent thread pool and sync Redis client to avoid
+        event loop conflicts with FastAPI's async context.
+
+        Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}
+        Note: tenant_id excluded per Issue #979 for cross-tenant resource sharing.
+
+        Args:
+            operation: One of "get", "set", "invalidate"
+            subject_type: Subject type for cache key
+            subject_id: Subject ID for cache key
+            permission: Permission for cache key
+            resource_type: Resource type for cache key
+            bitmap_data: Bitmap data for set operations
+            revision: Revision for set operations
+
+        Returns:
+            Result from the operation, or None on error
+        """
+        if not self._dragonfly or not self._dragonfly_url or not self._l2_executor:
+            return None
+
+        import concurrent.futures
+
+        # Use L1 TTL for L2 consistency (Issue #1106: TTL sync)
+        ttl = self._cache_ttl
+
+        def run_sync_redis() -> Any:
+            """Execute Dragonfly operation using sync Redis client."""
+            import redis
+
+            # Thread-local connection with connection pooling
+            client = redis.from_url(
+                self._dragonfly_url,
+                decode_responses=False,
+                socket_timeout=3.0,
+                socket_connect_timeout=2.0,
+            )
+            try:
+                # Key format: exclude tenant_id per Issue #979
+                key = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
+
+                if operation == "get":
+                    result = client.hgetall(key)
+                    if not result:
+                        return None
+                    data = result.get(b"data")
+                    rev = result.get(b"revision")
+                    if data is None or rev is None:
+                        return None
+                    return (data, int(rev))
+
+                elif operation == "set":
+                    pipe = client.pipeline()
+                    pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
+                    pipe.expire(key, ttl)
+                    pipe.execute()
+                    return True
+
+                elif operation == "invalidate":
+                    # Pattern-based invalidation with proper wildcards
+                    # Build pattern: use * for empty/None fields
+                    parts = [
+                        "tiger",
+                        subject_type if subject_type else "*",
+                        subject_id if subject_id else "*",
+                        permission if permission else "*",
+                        resource_type if resource_type else "*",
+                    ]
+                    pattern = ":".join(parts)
+                    count = 0
+                    # Use SCAN for safe iteration
+                    cursor = 0
+                    while True:
+                        cursor, keys = client.scan(cursor=cursor, match=pattern, count=100)
+                        if keys:
+                            client.delete(*keys)
+                            count += len(keys)
+                        if cursor == 0:
+                            break
+                    return count
+
+                return None
+            finally:
+                client.close()
+
+        try:
+            future = self._l2_executor.submit(run_sync_redis)
+            return future.result(timeout=5.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[TIGER] L2 Dragonfly operation timed out")
+            return None
+        except Exception as e:
+            logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
+            return None
 
     def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
         """Set the ReBAC manager for permission computation."""
@@ -657,16 +812,126 @@ class TigerCache:
                     return age
         return None
 
-    def _load_from_db(self, key: CacheKey, conn: Connection | None = None) -> Any:
-        """Load bitmap from database.
+    def get_accessible_int_ids(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+    ) -> set[int] | None:
+        """Get all accessible resource integer IDs from bitmap (Polars-style predicate pushdown).
+
+        This method enables predicate pushdown optimization by returning all resource IDs
+        that a subject can access, allowing the database query to filter at the SQL level
+        rather than post-filtering in Python.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission to check (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+
+        Returns:
+            Set of integer IDs the subject can access, or None if no bitmap cached.
+            Returns empty set if bitmap exists but has no entries.
+        """
+        key = CacheKey(subject_type, subject_id, permission, resource_type)
+
+        # Check in-memory cache first
+        with self._lock:
+            if key in self._cache:
+                bitmap, revision, cached_at = self._cache[key]
+                if time.time() - cached_at < self._cache_ttl:
+                    logger.debug(f"[TIGER-PUSHDOWN] Memory hit for {key}, {len(bitmap)} entries")
+                    return set(bitmap)  # RoaringBitmap is iterable
+
+        # Load from database
+        bitmap = self._load_from_db(key)
+        if bitmap is not None:
+            logger.debug(f"[TIGER-PUSHDOWN] DB hit for {key}, {len(bitmap)} entries")
+            return set(bitmap)
+
+        logger.debug(f"[TIGER-PUSHDOWN] No bitmap found for {key}")
+        return None
+
+    def get_accessible_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+    ) -> set[str] | None:
+        """Get all accessible resource paths from bitmap (for SQL WHERE clause).
+
+        Converts integer IDs from the bitmap back to string paths using the resource map.
+        This is used for predicate pushdown to filter at the database level.
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission to check (e.g., "read", "write")
+            resource_type: Type of resource (e.g., "file")
+
+        Returns:
+            Set of paths the subject can access, or None if no bitmap cached.
+        """
+        int_ids = self.get_accessible_int_ids(subject_type, subject_id, permission, resource_type)
+        if int_ids is None:
+            return None
+
+        # Convert int IDs back to paths using resource map
+        paths: set[str] = set()
+        with self._resource_map._lock:
+            for int_id in int_ids:
+                key = self._resource_map._int_to_uuid.get(int_id)
+                if key and key[0] == resource_type:
+                    paths.add(key[1])  # key is (type, path)
+
+        logger.debug(f"[TIGER-PUSHDOWN] Converted {len(int_ids)} int IDs to {len(paths)} paths")
+        return paths
+
+    def _load_from_db(
+        self, key: CacheKey, conn: Connection | None = None, skip_l2: bool = False
+    ) -> Any:
+        """Load bitmap from L2 (Dragonfly) or L3 (PostgreSQL).
+
+        Read path: L2 (Dragonfly) -> L3 (PostgreSQL)
+        On L3 hit, also populates L2 for future requests.
 
         Args:
             key: Cache key
             conn: Optional database connection
+            skip_l2: If True, skip L2 cache and read directly from L3 (database).
+                     Used by write-through operations to ensure reading latest committed state.
 
         Returns:
             Bitmap if found, None otherwise
         """
+        # L2: Try Dragonfly first (if available and not skipped)
+        if self._dragonfly and not skip_l2:
+            result = self._run_dragonfly_op(
+                operation="get",
+                subject_type=key.subject_type,
+                subject_id=key.subject_id,
+                permission=key.permission,
+                resource_type=key.resource_type,
+            )
+            if result:
+                bitmap_data, revision = result
+                bitmap = RoaringBitmap.deserialize(bitmap_data)
+
+                # Cache in L1 memory
+                with self._lock:
+                    self._evict_if_needed()
+                    self._cache[key] = (bitmap, revision, time.time())
+
+                logger.debug(f"[TIGER] L2 Dragonfly hit for {key}, {len(bitmap)} resources")
+                return bitmap
+            else:
+                logger.debug(f"[TIGER] L2 Dragonfly miss for {key}")
+            # Dragonfly miss or unavailable, fall through to L3
+
+        # L3: Fall back to PostgreSQL
         from sqlalchemy import text
 
         query = text("""
@@ -689,13 +954,27 @@ class TigerCache:
             row = result.fetchone()
             if row:
                 bitmap = RoaringBitmap.deserialize(row.bitmap_data)
+                revision = int(row.revision)
 
-                # Cache in memory
+                # Cache in L1 memory
                 with self._lock:
                     self._evict_if_needed()
-                    self._cache[key] = (bitmap, int(row.revision), time.time())
+                    self._cache[key] = (bitmap, revision, time.time())
 
-                logger.debug(f"[TIGER] DB cache hit for {key}, {len(bitmap)} resources")
+                # Populate L2 Dragonfly (fire-and-forget)
+                if self._dragonfly:
+                    self._run_dragonfly_op(
+                        operation="set",
+                        subject_type=key.subject_type,
+                        subject_id=key.subject_id,
+                        permission=key.permission,
+                        resource_type=key.resource_type,
+                        bitmap_data=bytes(row.bitmap_data),
+                        revision=revision,
+                    )
+                    logger.debug(f"[TIGER] Populated L2 Dragonfly from L3 for {key}")
+
+                logger.debug(f"[TIGER] L3 PostgreSQL hit for {key}, {len(bitmap)} resources")
                 return bitmap
             return None
 
@@ -953,7 +1232,7 @@ class TigerCache:
         try:
             if conn:
                 execute(conn)
-                logger.info(f"[TIGER] Database write (via conn) for {key}")
+                logger.info(f"[TIGER] L3 PostgreSQL write (via conn) for {key}")
             else:
                 with self._engine.begin() as new_conn:
                     # Set short timeout for Tiger Cache ops - fail fast instead of blocking
@@ -961,12 +1240,25 @@ class TigerCache:
                         new_conn.execute(text("PRAGMA busy_timeout=100"))
                     execute(new_conn)
                 # Transaction committed after exiting 'with' block
-                logger.info(f"[TIGER] Database write COMMITTED for {key}")
+                logger.info(f"[TIGER] L3 PostgreSQL write COMMITTED for {key}")
         except Exception as e:
-            logger.error(f"[TIGER] Database write FAILED for {key}: {e}")
+            logger.error(f"[TIGER] L3 PostgreSQL write FAILED for {key}: {e}")
             raise
 
-        # Update in-memory cache
+        # L2: Populate Dragonfly cache (write-through pattern)
+        if self._dragonfly:
+            self._run_dragonfly_op(
+                operation="set",
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission=permission,
+                resource_type=resource_type,
+                bitmap_data=bytes(bitmap_data),
+                revision=revision,
+            )
+            logger.debug(f"[TIGER] L2 Dragonfly write for {key}")
+
+        # L1: Update in-memory cache
         with self._lock:
             self._evict_if_needed()
             self._cache[key] = (bitmap, revision, time.time())
@@ -1040,7 +1332,22 @@ class TigerCache:
                     new_conn.execute(text("PRAGMA busy_timeout=100"))
                 count = execute(new_conn)
 
-        # Clear in-memory cache entries
+        # L2: Invalidate from Dragonfly cache (tenant_id excluded per Issue #979)
+        dragonfly_count = 0
+        if self._dragonfly:
+            dragonfly_count = (
+                self._run_dragonfly_op(
+                    operation="invalidate",
+                    subject_type=subject_type or "",
+                    subject_id=subject_id or "",
+                    permission=permission or "",
+                    resource_type=resource_type or "",
+                )
+                or 0
+            )
+            logger.debug(f"[TIGER] L2 Dragonfly invalidated {dragonfly_count} entries")
+
+        # L1: Clear in-memory cache entries
         with self._lock:
             keys_to_remove = []
             for key in self._cache:
@@ -1061,7 +1368,9 @@ class TigerCache:
             for key in keys_to_remove:
                 del self._cache[key]
 
-        logger.debug(f"[TIGER] Invalidated {count} cache entries")
+        logger.debug(
+            f"[TIGER] Invalidated {count} L3 + {dragonfly_count} L2 + {len(keys_to_remove)} L1 entries"
+        )
         return count
 
     def _evict_if_needed(self) -> None:
@@ -1177,7 +1486,9 @@ class TigerCache:
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly, avoiding stale L2 cache
+                # This prevents race conditions when multiple concurrent grants happen
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is not None:
                     # Check if already in bitmap
@@ -1240,7 +1551,19 @@ class TigerCache:
                 )
                 # Commit happens automatically when exiting 'with' block
 
-            # Step 4: Update in-memory cache
+            # Step 4: Update L2 cache (Dragonfly) for cross-instance consistency
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bitmap_data,
+                    revision=revision,
+                )
+
+            # Step 5: Update L1 in-memory cache
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
@@ -1317,7 +1640,8 @@ class TigerCache:
                         return True
 
                 # Step 2: Load existing bitmap from DB
-                existing_bitmap = self._load_from_db(key, conn)
+                # IMPORTANT: skip_l2=True to read from database directly for atomic operation
+                existing_bitmap = self._load_from_db(key, conn, skip_l2=True)
 
                 if existing_bitmap is None:
                     # No bitmap exists - nothing to revoke
@@ -1379,7 +1703,19 @@ class TigerCache:
                     },
                 )
 
-            # Step 5: Update in-memory cache
+            # Step 5: Update L2 cache (Dragonfly) for cross-instance consistency
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bitmap_data,
+                    revision=revision,
+                )
+
+            # Step 6: Update L1 in-memory cache
             with self._lock:
                 self._evict_if_needed()
                 self._cache[key] = (bitmap, revision, time.time())
@@ -1584,12 +1920,554 @@ class TigerCache:
                     },
                 )
 
+            # L2: Also populate Dragonfly cache (write-through)
+            if self._dragonfly:
+                self._run_dragonfly_op(
+                    operation="set",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    bitmap_data=bytes(bitmap_data),
+                    revision=revision,
+                )
+                logger.debug(f"[TIGER] L2 Dragonfly write (persist_bulk) for {key}")
+
             logger.debug(f"[TIGER] Persisted bulk bitmap for {key} ({len(bitmap)} resources)")
             return True
 
         except Exception as e:
             logger.error(f"[TIGER] persist_bitmap_bulk failed for {key}: {e}")
             return False
+
+    # =========================================================================
+    # Directory Grant Pre-materialization (Leopard-style)
+    # =========================================================================
+
+    def record_directory_grant(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        directory_path: str,
+        tenant_id: str,
+        grant_revision: int,
+        include_future_files: bool = True,
+    ) -> int | None:
+        """Record a directory-level grant for pre-materialization tracking.
+
+        When a permission is granted on a directory, this records the grant
+        so that:
+        1. New files created under the directory can inherit the permission
+        2. Grant revocation can clean up all expanded permissions
+        3. File moves can update permissions based on ancestor grants
+
+        Args:
+            subject_type: Type of subject (e.g., "user", "agent")
+            subject_id: ID of subject
+            permission: Permission type (e.g., "read", "write")
+            directory_path: Path of the directory granted (e.g., "/workspace/")
+            tenant_id: Tenant ID
+            grant_revision: Revision at time of grant (for consistency)
+            include_future_files: Whether new files should inherit this grant
+
+        Returns:
+            Grant ID if created, None if already exists
+        """
+        from sqlalchemy import text
+
+        # Normalize directory path (ensure trailing slash)
+        if not directory_path.endswith("/"):
+            directory_path = directory_path + "/"
+
+        try:
+            if self._is_postgresql:
+                query = text("""
+                    INSERT INTO tiger_directory_grants
+                        (subject_type, subject_id, permission, directory_path, tenant_id,
+                         grant_revision, include_future_files, expansion_status, expanded_count,
+                         created_at, updated_at)
+                    VALUES
+                        (:subject_type, :subject_id, :permission, :directory_path, :tenant_id,
+                         :grant_revision, :include_future_files, 'pending', 0,
+                         NOW(), NOW())
+                    ON CONFLICT (tenant_id, directory_path, permission, subject_type, subject_id)
+                    DO UPDATE SET
+                        grant_revision = EXCLUDED.grant_revision,
+                        include_future_files = EXCLUDED.include_future_files,
+                        updated_at = NOW()
+                    RETURNING grant_id
+                """)
+            else:
+                query = text("""
+                    INSERT OR REPLACE INTO tiger_directory_grants
+                        (subject_type, subject_id, permission, directory_path, tenant_id,
+                         grant_revision, include_future_files, expansion_status, expanded_count,
+                         created_at, updated_at)
+                    VALUES
+                        (:subject_type, :subject_id, :permission, :directory_path, :tenant_id,
+                         :grant_revision, :include_future_files, 'pending', 0,
+                         datetime('now'), datetime('now'))
+                """)
+
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    query,
+                    {
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "permission": permission,
+                        "directory_path": directory_path,
+                        "tenant_id": tenant_id,
+                        "grant_revision": grant_revision,
+                        "include_future_files": include_future_files,
+                    },
+                )
+                if self._is_postgresql:
+                    row = result.fetchone()
+                    return int(row.grant_id) if row else None
+                return None
+
+        except Exception as e:
+            logger.error(f"[TIGER] record_directory_grant failed: {e}")
+            return None
+
+    def get_directory_grants_for_path(
+        self,
+        path: str,
+        tenant_id: str,
+    ) -> list[dict]:
+        """Get all directory grants that would apply to a given path.
+
+        Used when a new file is created to find all ancestor directory grants
+        that should be inherited.
+
+        Args:
+            path: File path to check (e.g., "/workspace/project/file.txt")
+            tenant_id: Tenant ID
+
+        Returns:
+            List of grant dictionaries with subject, permission, directory info
+        """
+        from sqlalchemy import text
+
+        # Generate all ancestor paths
+        ancestors = self._get_ancestor_paths(path)
+        if not ancestors:
+            return []
+
+        try:
+            if self._is_postgresql:
+                query = text("""
+                    SELECT grant_id, subject_type, subject_id, permission, directory_path,
+                           grant_revision, include_future_files
+                    FROM tiger_directory_grants
+                    WHERE tenant_id = :tenant_id
+                      AND directory_path = ANY(:ancestors)
+                      AND expansion_status = 'completed'
+                """)
+                params = {"tenant_id": tenant_id, "ancestors": ancestors}
+            else:
+                # SQLite: Use IN clause
+                placeholders = ", ".join([f":a{i}" for i in range(len(ancestors))])
+                query = text(f"""
+                    SELECT grant_id, subject_type, subject_id, permission, directory_path,
+                           grant_revision, include_future_files
+                    FROM tiger_directory_grants
+                    WHERE tenant_id = :tenant_id
+                      AND directory_path IN ({placeholders})
+                      AND expansion_status = 'completed'
+                """)
+                params = {"tenant_id": tenant_id}
+                for i, a in enumerate(ancestors):
+                    params[f"a{i}"] = a
+
+            grants = []
+            with self._engine.connect() as conn:
+                result = conn.execute(query, params)
+                for row in result:
+                    grants.append(
+                        {
+                            "grant_id": row.grant_id,
+                            "subject_type": row.subject_type,
+                            "subject_id": row.subject_id,
+                            "permission": row.permission,
+                            "directory_path": row.directory_path,
+                            "grant_revision": row.grant_revision,
+                            "include_future_files": row.include_future_files,
+                        }
+                    )
+
+            return grants
+
+        except Exception as e:
+            logger.error(f"[TIGER] get_directory_grants_for_path failed: {e}")
+            return []
+
+    def _get_ancestor_paths(self, path: str) -> list[str]:
+        """Get all ancestor directory paths for a given path.
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            List of ancestor paths, from immediate parent to root
+            Example: "/a/b/c/file.txt" -> ["/a/b/c/", "/a/b/", "/a/", "/"]
+        """
+        ancestors = []
+        # Remove trailing slash and filename
+        current = path.rstrip("/")
+
+        while current and current != "/":
+            # Get parent directory
+            last_slash = current.rfind("/")
+            if last_slash <= 0:
+                ancestors.append("/")
+                break
+            current = current[:last_slash]
+            ancestors.append(current + "/")
+
+        return ancestors
+
+    def expand_directory_grant(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        directory_path: str,
+        tenant_id: str,
+        grant_revision: int,  # noqa: ARG002 - Reserved for future consistency checks
+        descendants: list[str],
+        batch_size: int = 1000,
+    ) -> tuple[int, bool]:
+        """Expand a directory grant to all descendants (pre-materialization).
+
+        This is the core of Leopard-style permission expansion. When a permission
+        is granted on a directory, this adds ALL descendant files to the user's
+        bitmap for O(1) permission checks.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission type
+            directory_path: Directory path granted
+            tenant_id: Tenant ID
+            grant_revision: Revision for consistency
+            descendants: List of descendant file paths
+            batch_size: Number of files to process per batch
+
+        Returns:
+            Tuple of (files_expanded, completed)
+        """
+
+        if not descendants:
+            self._update_grant_status(
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="completed",
+                expanded_count=0,
+                total_count=0,
+            )
+            return (0, True)
+
+        # Update total count
+        self._update_grant_status(
+            subject_type,
+            subject_id,
+            permission,
+            directory_path,
+            tenant_id,
+            status="in_progress",
+            total_count=len(descendants),
+        )
+
+        total_expanded = 0
+        try:
+            # Process in batches to avoid memory issues
+            for i in range(0, len(descendants), batch_size):
+                batch = descendants[i : i + batch_size]
+
+                # Get/create int IDs for all files in batch
+                resources = [("file", path) for path in batch]
+                with self._engine.connect() as conn:
+                    int_ids = self._resource_map.bulk_get_int_ids(resources, conn)
+
+                # Create IDs for resources that don't exist yet
+                for resource, int_id in int_ids.items():
+                    if int_id is None:
+                        new_id = self._resource_map.get_or_create_int_id(resource[0], resource[1])
+                        if new_id > 0:
+                            int_ids[resource] = new_id
+
+                # Collect all valid int IDs
+                valid_int_ids = {v for v in int_ids.values() if v is not None and v > 0}
+
+                if valid_int_ids:
+                    # Add to in-memory bitmap
+                    self.add_to_bitmap_bulk(
+                        subject_type, subject_id, permission, "file", tenant_id, valid_int_ids
+                    )
+
+                total_expanded += len(valid_int_ids)
+
+                # Update progress
+                self._update_grant_status(
+                    subject_type,
+                    subject_id,
+                    permission,
+                    directory_path,
+                    tenant_id,
+                    status="in_progress",
+                    expanded_count=total_expanded,
+                )
+
+                logger.debug(
+                    f"[TIGER] Expanded batch {i // batch_size + 1}: "
+                    f"{len(valid_int_ids)} files, total {total_expanded}/{len(descendants)}"
+                )
+
+            # Persist the complete bitmap to database
+            key = CacheKey(subject_type, subject_id, permission, "file")
+            with self._lock:
+                if key in self._cache:
+                    bitmap, revision, _ = self._cache[key]
+                    all_int_ids = set(bitmap.to_array())
+                    self.persist_bitmap_bulk(
+                        subject_type, subject_id, permission, "file", all_int_ids, tenant_id
+                    )
+
+            # Mark as completed
+            self._update_grant_status(
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="completed",
+                expanded_count=total_expanded,
+            )
+
+            logger.info(
+                f"[TIGER] Directory grant expansion completed: "
+                f"{directory_path} -> {total_expanded} files for {subject_type}:{subject_id}"
+            )
+
+            return (total_expanded, True)
+
+        except Exception as e:
+            logger.error(f"[TIGER] expand_directory_grant failed: {e}")
+            self._update_grant_status(
+                subject_type,
+                subject_id,
+                permission,
+                directory_path,
+                tenant_id,
+                status="failed",
+                error_message=str(e),
+            )
+            return (total_expanded, False)
+
+    def _update_grant_status(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        directory_path: str,
+        tenant_id: str,
+        status: str | None = None,
+        expanded_count: int | None = None,
+        total_count: int | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Update the status of a directory grant expansion."""
+        from sqlalchemy import text
+
+        updates: list[str] = []
+        params: dict[str, str | int] = {
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "directory_path": directory_path,
+            "tenant_id": tenant_id,
+        }
+
+        if status is not None:
+            updates.append("expansion_status = :status")
+            params["status"] = status
+            if status == "completed":
+                if self._is_postgresql:
+                    updates.append("completed_at = NOW()")
+                else:
+                    updates.append("completed_at = datetime('now')")
+
+        if expanded_count is not None:
+            updates.append("expanded_count = :expanded_count")
+            params["expanded_count"] = expanded_count
+
+        if total_count is not None:
+            updates.append("total_count = :total_count")
+            params["total_count"] = total_count
+
+        if error_message is not None:
+            updates.append("error_message = :error_message")
+            params["error_message"] = error_message
+
+        if not updates:
+            return
+
+        if self._is_postgresql:
+            updates.append("updated_at = NOW()")
+        else:
+            updates.append("updated_at = datetime('now')")
+
+        query = text(f"""
+            UPDATE tiger_directory_grants
+            SET {", ".join(updates)}
+            WHERE subject_type = :subject_type
+              AND subject_id = :subject_id
+              AND permission = :permission
+              AND directory_path = :directory_path
+              AND tenant_id = :tenant_id
+        """)
+
+        try:
+            with self._engine.begin() as conn:
+                conn.execute(query, params)
+        except Exception as e:
+            logger.error(f"[TIGER] _update_grant_status failed: {e}")
+
+    def remove_directory_grant(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        directory_path: str,
+        tenant_id: str,
+    ) -> bool:
+        """Remove a directory grant and optionally clean up expanded permissions.
+
+        Args:
+            subject_type: Type of subject
+            subject_id: ID of subject
+            permission: Permission type
+            directory_path: Directory path to remove grant from
+            tenant_id: Tenant ID
+
+        Returns:
+            True if removed successfully
+        """
+        from sqlalchemy import text
+
+        # Normalize directory path
+        if not directory_path.endswith("/"):
+            directory_path = directory_path + "/"
+
+        try:
+            query = text("""
+                DELETE FROM tiger_directory_grants
+                WHERE subject_type = :subject_type
+                  AND subject_id = :subject_id
+                  AND permission = :permission
+                  AND directory_path = :directory_path
+                  AND tenant_id = :tenant_id
+            """)
+
+            with self._engine.begin() as conn:
+                conn.execute(
+                    query,
+                    {
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "permission": permission,
+                        "directory_path": directory_path,
+                        "tenant_id": tenant_id,
+                    },
+                )
+
+            logger.info(
+                f"[TIGER] Removed directory grant: {directory_path} "
+                f"for {subject_type}:{subject_id} ({permission})"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[TIGER] remove_directory_grant failed: {e}")
+            return False
+
+    def add_file_to_ancestor_grants(
+        self,
+        file_path: str,
+        tenant_id: str,
+    ) -> int:
+        """Add a newly created file to all applicable ancestor directory grants.
+
+        When a new file is created, this checks for any ancestor directory grants
+        and adds the file to those users' bitmaps.
+
+        Also ensures the file is registered in tiger_resource_map for predicate
+        pushdown to work correctly (Issue #1030).
+
+        Args:
+            file_path: Path of the newly created file
+            tenant_id: Tenant ID
+
+        Returns:
+            Number of grants the file was added to
+        """
+        # Always register file in tiger_resource_map for predicate pushdown (Issue #1030)
+        # This must happen BEFORE the early return check for ancestor grants
+        int_id = self._resource_map.get_or_create_int_id("file", file_path)
+        if int_id <= 0:
+            logger.error(f"[TIGER] Failed to get int_id for new file: {file_path}")
+            return 0
+
+        grants = self.get_directory_grants_for_path(file_path, tenant_id)
+        if not grants:
+            return 0
+
+        added_count = 0
+        for grant in grants:
+            # Check if grant includes future files
+            if not grant.get("include_future_files", True):
+                continue
+
+            try:
+                # Add to user's bitmap
+                self.add_to_bitmap(
+                    grant["subject_type"],
+                    grant["subject_id"],
+                    grant["permission"],
+                    "file",
+                    tenant_id,
+                    int_id,
+                )
+
+                # Persist immediately (write-through)
+                self.persist_single_grant(
+                    grant["subject_type"],
+                    grant["subject_id"],
+                    grant["permission"],
+                    "file",
+                    file_path,
+                    tenant_id,
+                )
+
+                added_count += 1
+                logger.debug(
+                    f"[TIGER] Added new file {file_path} to grant "
+                    f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
+                )
+
+            except Exception as e:
+                logger.error(f"[TIGER] Failed to add file to grant: {e}")
+
+        if added_count > 0:
+            logger.info(f"[TIGER] New file {file_path} added to {added_count} ancestor grants")
+
+        return added_count
 
     def warm_from_db(self, limit: int = 1000) -> int:
         """Load recently used bitmaps from database into memory cache (Issue #979).
@@ -2044,3 +2922,425 @@ class TigerCacheUpdater:
                 if not self._is_postgresql:
                     new_conn.execute(text("PRAGMA busy_timeout=100"))
                 return execute(new_conn)
+
+
+class DirectoryGrantExpander:
+    """Async worker for expanding large directory grants (Leopard-style).
+
+    When a permission is granted on a directory with more than EXPANSION_LIMIT files,
+    the grant is recorded as "pending" and this worker processes it in background.
+
+    This enables:
+    - Non-blocking grant operations (user doesn't wait for 100k files)
+    - Batched processing (memory efficient)
+    - Progress tracking (UI can show expansion status)
+    - Failure recovery (can resume from last position)
+
+    Usage:
+        # Start worker in background thread/process
+        expander = DirectoryGrantExpander(engine, tiger_cache, metadata_store)
+        asyncio.create_task(expander.run_worker())
+
+        # Or run single expansion cycle
+        expanded = expander.process_pending_grants()
+    """
+
+    # Number of files to expand per batch
+    BATCH_SIZE = 1000
+
+    # How often to check for pending grants (seconds)
+    POLL_INTERVAL = 5.0
+
+    def __init__(
+        self,
+        engine: Engine,
+        tiger_cache: TigerCache,
+        metadata_store: Any = None,
+    ):
+        """Initialize the expander.
+
+        Args:
+            engine: SQLAlchemy database engine
+            tiger_cache: Tiger Cache instance
+            metadata_store: Metadata store for listing files (optional)
+        """
+        self._engine = engine
+        self._tiger_cache = tiger_cache
+        self._metadata_store = metadata_store
+        self._is_postgresql = "postgresql" in str(engine.url)
+        self._running = False
+        self._stop_event: asyncio.Event | None = None
+
+    def set_metadata_store(self, store: Any) -> None:
+        """Set the metadata store for file listing."""
+        self._metadata_store = store
+
+    def get_pending_grants(self, limit: int = 10) -> list[dict]:
+        """Get pending directory grants to expand.
+
+        Args:
+            limit: Maximum number of grants to return
+
+        Returns:
+            List of grant dictionaries
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            SELECT grant_id, subject_type, subject_id, permission,
+                   directory_path, tenant_id, grant_revision,
+                   include_future_files, expanded_count, total_count
+            FROM tiger_directory_grants
+            WHERE expansion_status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT :limit
+        """)
+
+        try:
+            with self._engine.connect() as conn:
+                result = conn.execute(query, {"limit": limit})
+                grants = []
+                for row in result:
+                    grants.append(
+                        {
+                            "grant_id": row.grant_id,
+                            "subject_type": row.subject_type,
+                            "subject_id": row.subject_id,
+                            "permission": row.permission,
+                            "directory_path": row.directory_path,
+                            "tenant_id": row.tenant_id,
+                            "grant_revision": row.grant_revision,
+                            "include_future_files": row.include_future_files,
+                            "expanded_count": row.expanded_count or 0,
+                            "total_count": row.total_count,
+                        }
+                    )
+                return grants
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to get pending grants: {e}")
+            return []
+
+    def _mark_in_progress(self, grant_id: int, total_count: int) -> bool:
+        """Mark a grant as in_progress and set total count.
+
+        Args:
+            grant_id: Grant ID
+            total_count: Total number of files to expand
+
+        Returns:
+            True if updated successfully
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            UPDATE tiger_directory_grants
+            SET expansion_status = 'in_progress',
+                total_count = :total_count,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE grant_id = :grant_id
+              AND expansion_status = 'pending'
+        """)
+
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "total_count": total_count,
+                    },
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to mark in_progress: {e}")
+            return False
+
+    def _update_progress(self, grant_id: int, expanded_count: int) -> bool:
+        """Update expansion progress.
+
+        Args:
+            grant_id: Grant ID
+            expanded_count: Number of files expanded so far
+
+        Returns:
+            True if updated successfully
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            UPDATE tiger_directory_grants
+            SET expanded_count = :expanded_count,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE grant_id = :grant_id
+        """)
+
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "expanded_count": expanded_count,
+                    },
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to update progress: {e}")
+            return False
+
+    def _mark_completed(self, grant_id: int, expanded_count: int) -> bool:
+        """Mark a grant as completed.
+
+        Args:
+            grant_id: Grant ID
+            expanded_count: Final number of files expanded
+
+        Returns:
+            True if updated successfully
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            UPDATE tiger_directory_grants
+            SET expansion_status = 'completed',
+                expanded_count = :expanded_count,
+                completed_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE grant_id = :grant_id
+        """)
+
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "expanded_count": expanded_count,
+                    },
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to mark completed: {e}")
+            return False
+
+    def _mark_failed(self, grant_id: int, error_message: str) -> bool:
+        """Mark a grant as failed.
+
+        Args:
+            grant_id: Grant ID
+            error_message: Error description
+
+        Returns:
+            True if updated successfully
+        """
+        from sqlalchemy import text
+
+        query = text("""
+            UPDATE tiger_directory_grants
+            SET expansion_status = 'failed',
+                error_message = :error_message,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE grant_id = :grant_id
+        """)
+
+        try:
+            with self._engine.begin() as conn:
+                result = conn.execute(
+                    query,
+                    {
+                        "grant_id": grant_id,
+                        "error_message": error_message[:1000],  # Truncate long errors
+                    },
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to mark failed: {e}")
+            return False
+
+    def _get_directory_descendants(
+        self,
+        directory_path: str,
+        tenant_id: str,
+    ) -> list[str]:
+        """Get all files under a directory.
+
+        Args:
+            directory_path: Directory path (ending with /)
+            tenant_id: Tenant ID
+
+        Returns:
+            List of file paths
+        """
+        if not self._metadata_store:
+            logger.warning("[LEOPARD-WORKER] No metadata store, cannot list files")
+            return []
+
+        try:
+            files = self._metadata_store.list(
+                prefix=directory_path,
+                recursive=True,
+                tenant_id=tenant_id,
+            )
+            return [f.path for f in files if f.path]
+        except Exception as e:
+            logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")
+            return []
+
+    def expand_grant(self, grant: dict) -> tuple[int, bool]:
+        """Expand a single directory grant with batching.
+
+        Args:
+            grant: Grant dictionary from get_pending_grants()
+
+        Returns:
+            Tuple of (files_expanded, completed_successfully)
+        """
+        grant_id = grant["grant_id"]
+        directory_path = grant["directory_path"]
+        tenant_id = grant["tenant_id"]
+        subject_type = grant["subject_type"]
+        subject_id = grant["subject_id"]
+        permission = grant["permission"]
+        grant_revision = grant["grant_revision"]
+        already_expanded = grant.get("expanded_count", 0)
+
+        logger.info(
+            f"[LEOPARD-WORKER] Starting expansion for grant {grant_id}: "
+            f"{directory_path} -> {subject_type}:{subject_id} ({permission})"
+        )
+
+        try:
+            # Get all descendants
+            descendants = self._get_directory_descendants(directory_path, tenant_id)
+
+            if not descendants:
+                # No files - mark as completed
+                self._mark_completed(grant_id, 0)
+                logger.info(f"[LEOPARD-WORKER] Grant {grant_id}: no files to expand")
+                return 0, True
+
+            total_count = len(descendants)
+
+            # Mark as in_progress with total count
+            if not self._mark_in_progress(grant_id, total_count):
+                # Someone else is processing this grant
+                logger.info(f"[LEOPARD-WORKER] Grant {grant_id} already being processed")
+                return 0, False
+
+            # Skip already expanded files (for resume)
+            if already_expanded > 0:
+                descendants = descendants[already_expanded:]
+                logger.info(
+                    f"[LEOPARD-WORKER] Grant {grant_id}: resuming from {already_expanded}/{total_count}"
+                )
+
+            # Process in batches
+            expanded_count = already_expanded
+            for i in range(0, len(descendants), self.BATCH_SIZE):
+                batch = descendants[i : i + self.BATCH_SIZE]
+
+                # Expand batch
+                batch_expanded, _ = self._tiger_cache.expand_directory_grant(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    directory_path=directory_path,
+                    tenant_id=tenant_id,
+                    grant_revision=grant_revision,
+                    descendants=batch,
+                )
+
+                expanded_count += batch_expanded
+
+                # Update progress
+                self._update_progress(grant_id, expanded_count)
+
+                logger.debug(
+                    f"[LEOPARD-WORKER] Grant {grant_id}: {expanded_count}/{total_count} "
+                    f"({100 * expanded_count / total_count:.1f}%)"
+                )
+
+            # Mark as completed
+            self._mark_completed(grant_id, expanded_count)
+            logger.info(
+                f"[LEOPARD-WORKER] Grant {grant_id} completed: {expanded_count} files expanded"
+            )
+            return expanded_count, True
+
+        except Exception as e:
+            error_msg = f"Expansion failed: {e}"
+            logger.error(f"[LEOPARD-WORKER] Grant {grant_id}: {error_msg}")
+            self._mark_failed(grant_id, error_msg)
+            return 0, False
+
+    def process_pending_grants(self, limit: int = 10) -> int:
+        """Process a batch of pending grants.
+
+        Args:
+            limit: Maximum number of grants to process
+
+        Returns:
+            Total number of files expanded
+        """
+        grants = self.get_pending_grants(limit=limit)
+
+        if not grants:
+            return 0
+
+        logger.info(f"[LEOPARD-WORKER] Processing {len(grants)} pending grants")
+
+        total_expanded = 0
+        for grant in grants:
+            expanded, _ = self.expand_grant(grant)
+            total_expanded += expanded
+
+        return total_expanded
+
+    async def run_worker(self) -> None:
+        """Run the expansion worker continuously.
+
+        This should be started as a background task:
+            asyncio.create_task(expander.run_worker())
+
+        Stop with:
+            expander.stop()
+        """
+        import asyncio
+
+        self._running = True
+        self._stop_event = asyncio.Event()
+
+        logger.info("[LEOPARD-WORKER] Starting directory grant expansion worker")
+
+        while self._running:
+            try:
+                # Process pending grants
+                expanded = await asyncio.to_thread(self.process_pending_grants)
+
+                if expanded > 0:
+                    logger.info(f"[LEOPARD-WORKER] Expanded {expanded} files this cycle")
+
+                # Wait before next poll (or until stopped)
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=self.POLL_INTERVAL,
+                    )
+                    # If we get here, stop was requested
+                    break
+                except TimeoutError:
+                    # Normal timeout - continue polling
+                    pass
+
+            except Exception as e:
+                logger.error(f"[LEOPARD-WORKER] Worker error: {e}")
+                # Wait before retrying on error
+                await asyncio.sleep(self.POLL_INTERVAL * 2)
+
+        logger.info("[LEOPARD-WORKER] Worker stopped")
+
+    def stop(self) -> None:
+        """Stop the worker gracefully."""
+        self._running = False
+        if self._stop_event:
+            self._stop_event.set()

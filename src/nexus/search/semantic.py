@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.search.ranking import RankingConfig
 
 
 @dataclass
@@ -59,6 +60,10 @@ class SemanticSearchResult:
     # Individual search scores (for hybrid search debugging)
     keyword_score: float | None = None
     vector_score: float | None = None
+    # Issue #1092: Attribute ranking metadata
+    matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
+    attribute_boost: float | None = None  # Boost multiplier applied
+    original_score: float | None = None  # Score before attribute boosting
 
 
 class SemanticSearch:
@@ -81,6 +86,7 @@ class SemanticSearch:
         entropy_filtering: bool = False,
         entropy_threshold: float = 0.35,
         entropy_alpha: float = 0.5,
+        ranking_config: RankingConfig | None = None,
     ):
         """Initialize semantic search.
 
@@ -95,6 +101,7 @@ class SemanticSearch:
                                Chunks scoring below this are filtered out
             entropy_alpha: Balance between entity novelty (α) and semantic novelty (1-α)
                            Default 0.5 gives equal weight to both signals
+            ranking_config: Configuration for attribute-based ranking (Issue #1092)
         """
         self.nx = nx
         self.chunk_size = chunk_size
@@ -128,6 +135,11 @@ class SemanticSearch:
                 embedding_provider=embedding_provider,
                 base_chunker=self.chunker,
             )
+
+        # Issue #1092: Initialize attribute ranking configuration
+        from nexus.search.ranking import RankingConfig
+
+        self.ranking_config = ranking_config or RankingConfig()
 
     def initialize(self) -> None:
         """Initialize the search engine (create vector extensions and FTS tables)."""
@@ -475,6 +487,12 @@ class SemanticSearch:
                     session, query_embedding, limit=limit, path_filter=path_filter
                 )
 
+        # Issue #1092: Apply attribute boosting
+        if self.ranking_config.enable_attribute_boosting:
+            from nexus.search.ranking import apply_attribute_boosting
+
+            results = apply_attribute_boosting(results, query, self.ranking_config)
+
         # Convert to SemanticSearchResult
         search_results = []
         for result in results:
@@ -490,6 +508,10 @@ class SemanticSearch:
                     line_end=result.get("line_end"),
                     keyword_score=result.get("keyword_score"),
                     vector_score=result.get("vector_score"),
+                    # Issue #1092: Attribute ranking metadata
+                    matched_field=result.get("matched_field"),
+                    attribute_boost=result.get("attribute_boost"),
+                    original_score=result.get("original_score"),
                 )
             )
 

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Performance Comparison - Before vs After Optimization</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1, h2, h3 {
+            color: #333;
+        }
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: right;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #555;
+        }
+        td:first-child, th:first-child {
+            text-align: left;
+            font-weight: 500;
+        }
+        .good {
+            background: #d4edda;
+            color: #155724;
+        }
+        .bad {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .neutral {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .improvement {
+            font-size: 0.85em;
+            color: #28a745;
+            font-weight: bold;
+        }
+        .before-after {
+            display: flex;
+            gap: 5px;
+            justify-content: flex-end;
+            align-items: center;
+        }
+        .before {
+            color: #6c757d;
+            text-decoration: line-through;
+        }
+        .after {
+            font-weight: bold;
+        }
+        .arrow {
+            color: #28a745;
+        }
+        .summary-box {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-card h4 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .legend {
+            display: flex;
+            gap: 20px;
+            margin: 15px 0;
+            font-size: 14px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Nexus Performance Benchmark Results</h1>
+        <p><strong>Comparison:</strong> Before (2026-01-10) vs After Optimization (2026-01-23)</p>
+        <p><strong>Platform:</strong> macOS + Docker PostgreSQL</p>
+        <p><strong>Permissions:</strong> ENABLED</p>
+        <p><strong>Rate Limiting:</strong> DISABLED</p>
+    </div>
+
+    <div class="section">
+        <h2>Key Improvements Summary</h2>
+        <div class="summary-box">
+            <div class="stat-card">
+                <h4>Nexus API STAT</h4>
+                <div class="value">134x</div>
+                <div>faster (bulk)</div>
+            </div>
+            <div class="stat-card">
+                <h4>Nexus API READ</h4>
+                <div class="value">58x</div>
+                <div>faster (bulk)</div>
+            </div>
+            <div class="stat-card">
+                <h4>Sandbox Bash LIST</h4>
+                <div class="value">35x</div>
+                <div>faster</div>
+            </div>
+            <div class="stat-card">
+                <h4>Sandbox Bash READ</h4>
+                <div class="value">14x</div>
+                <div>faster</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Flat Directory Performance</h2>
+
+        <h3>1000 Files</h3>
+        <div class="legend">
+            <div class="legend-item"><div class="legend-color" style="background:#d4edda"></div> Best in category</div>
+            <div class="legend-item"><div class="legend-color" style="background:#f8d7da"></div> Needs improvement</div>
+        </div>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>List (files/s)</th>
+                <th>Read (files/s)</th>
+                <th>Stat (files/s)</th>
+                <th>Upload (files/s)</th>
+            </tr>
+            <tr>
+                <td>Native Bash</td>
+                <td>2,428</td>
+                <td>6,743</td>
+                <td>75,352</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td>Native Python</td>
+                <td>18,362</td>
+                <td class="good">78,438</td>
+                <td class="good">405,678</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Nexus API</strong></td>
+                <td class="good">
+                    <div class="before-after">
+                        <span class="before">72,283</span>
+                        <span class="arrow">→</span>
+                        <span class="after">131,788</span>
+                    </div>
+                    <div class="improvement">1.8x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">483</span>
+                        <span class="arrow">→</span>
+                        <span class="after">28,079</span>
+                    </div>
+                    <div class="improvement">58x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">289</span>
+                        <span class="arrow">→</span>
+                        <span class="after">38,765</span>
+                    </div>
+                    <div class="improvement">134x ↑</div>
+                </td>
+                <td>47</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Bash</strong></td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">2,406</span>
+                        <span class="arrow">→</span>
+                        <span class="after">83,871</span>
+                    </div>
+                    <div class="improvement">35x ↑</div>
+                </td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">112</span>
+                        <span class="arrow">→</span>
+                        <span class="after">1,592</span>
+                    </div>
+                    <div class="improvement">14x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">621</span>
+                        <span class="arrow">→</span>
+                        <span class="after">13,357</span>
+                    </div>
+                    <div class="improvement">22x ↑</div>
+                </td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Python</strong></td>
+                <td class="good">
+                    <div class="before-after">
+                        <span class="before">9,371</span>
+                        <span class="arrow">→</span>
+                        <span class="after">751,667</span>
+                    </div>
+                    <div class="improvement">80x ↑</div>
+                </td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">240</span>
+                        <span class="arrow">→</span>
+                        <span class="after">3,162</span>
+                    </div>
+                    <div class="improvement">13x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">19,231</span>
+                        <span class="arrow">→</span>
+                        <span class="after">17,036</span>
+                    </div>
+                    <div class="improvement">~1x</div>
+                </td>
+                <td>-</td>
+            </tr>
+        </table>
+
+        <h3>10000 Files</h3>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>List (files/s)</th>
+                <th>Read (files/s)</th>
+                <th>Stat (files/s)</th>
+                <th>Upload (files/s)</th>
+            </tr>
+            <tr>
+                <td>Native Bash</td>
+                <td>30,326</td>
+                <td>9,623</td>
+                <td>161,999</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td>Native Python</td>
+                <td>181,015</td>
+                <td class="good">71,172</td>
+                <td class="good">456,513</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Nexus API</strong></td>
+                <td class="good">
+                    <div class="before-after">
+                        <span class="before">64,436</span>
+                        <span class="arrow">→</span>
+                        <span class="after">268,028</span>
+                    </div>
+                    <div class="improvement">4.2x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">417</span>
+                        <span class="arrow">→</span>
+                        <span class="after">9,723</span>
+                    </div>
+                    <div class="improvement">23x ↑</div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">232</span>
+                        <span class="arrow">→</span>
+                        <span class="after">10,272</span>
+                    </div>
+                    <div class="improvement">44x ↑</div>
+                </td>
+                <td>45</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Bash</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">9,677</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">28</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">52</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Python</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">16,023</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">68</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">2,494</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td>-</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Grep Search Performance</h2>
+
+        <h3>1000 Files</h3>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Search Rate (files/s)</th>
+                <th>Improvement</th>
+            </tr>
+            <tr>
+                <td>Native Bash</td>
+                <td>5,278</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td>Native Python</td>
+                <td class="good">51,876</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Nexus API</strong></td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">4,761</span>
+                        <span class="arrow">→</span>
+                        <span class="after">28,162</span>
+                    </div>
+                </td>
+                <td class="improvement">5.9x ↑</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Bash</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">139</span>
+                        <span class="arrow">→</span>
+                        <span class="after">4,623</span>
+                    </div>
+                </td>
+                <td class="improvement">33x ↑</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Python</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">155</span>
+                        <span class="arrow">→</span>
+                        <span class="after">3,840</span>
+                    </div>
+                </td>
+                <td class="improvement">25x ↑</td>
+            </tr>
+        </table>
+
+        <h3>10000 Files</h3>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Search Rate (files/s)</th>
+                <th>Improvement</th>
+            </tr>
+            <tr>
+                <td>Native Bash</td>
+                <td>5,473</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td>Native Python</td>
+                <td class="good">32,169</td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Nexus API</strong></td>
+                <td>
+                    <div class="before-after">
+                        <span class="before">5,487</span>
+                        <span class="arrow">→</span>
+                        <span class="after">9,127</span>
+                    </div>
+                </td>
+                <td class="improvement">1.7x ↑</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Bash</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">-</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td>-</td>
+            </tr>
+            <tr>
+                <td><strong>Sandbox Python</strong></td>
+                <td class="bad">
+                    <div class="before-after">
+                        <span class="before">-</span>
+                        <span class="arrow">→</span>
+                        <span class="after">-</span>
+                    </div>
+                </td>
+                <td>-</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Optimizations Applied</h2>
+        <ul>
+            <li><strong>read_bulk()</strong> - Batch read multiple files in single HTTP request</li>
+            <li><strong>stat_bulk()</strong> - Batch stat with Rust-accelerated permission checks</li>
+            <li><strong>delete_bulk()</strong> - Batch delete operations</li>
+            <li><strong>PostgreSQL backend</strong> - Replaced SQLite for better concurrency</li>
+            <li><strong>Rate limiting disabled by default</strong> - NEXUS_RATE_LIMIT_ENABLED=false</li>
+            <li><strong>L1 Memory Cache</strong> - 10,000 file content cache (up from 100)</li>
+            <li><strong>L2 Disk Cache</strong> - Persistent SSD caching</li>
+            <li><strong>Directory listing cache</strong> - 5s TTL for readdir</li>
+            <li><strong>Content prefetch</strong> - Prefetch during readdir for sequential access</li>
+            <li><strong>Skip readahead for cached</strong> - Avoid redundant network calls</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>Test Environment</h2>
+        <p><strong>Before:</strong> 2026-01-10 - Sequential API calls, SQLite, smaller caches</p>
+        <p><strong>After:</strong> 2026-01-23 - Bulk API calls, PostgreSQL, optimized caching</p>
+        <p><strong>Hardware:</strong> macOS + Docker PostgreSQL</p>
+        <p><strong>Permissions:</strong> Enabled (ReBAC with Rust acceleration)</p>
+    </div>
+
+    <footer style="text-align: center; color: #666; margin-top: 40px; padding: 20px;">
+        Generated: 2026-01-23 | Source: benchmarks/performance/
+    </footer>
+</body>
+</html>

@@ -125,6 +125,18 @@ class DockerSandboxProvider(SandboxProvider):
         import os
 
         self.network_name = network_name or os.environ.get("NEXUS_DOCKER_NETWORK")
+
+        # Dev mode: Install nexus from local source instead of PyPI
+        # Set NEXUS_DEV_MODE=1 to enable
+        self._dev_mode = os.environ.get("NEXUS_DEV_MODE", "").lower() in ("1", "true", "yes")
+        if self._dev_mode:
+            # Get the nexus repo root (this file is at src/nexus/core/sandbox_docker_provider.py)
+            self._nexus_src_path = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            )
+            logger.info(
+                f"[DEV-MODE] Enabled - will install from local source: {self._nexus_src_path}"
+            )
         # Note: network_name is optional - if not set, containers will use default bridge network
 
         # Cache for active containers
@@ -520,6 +532,25 @@ class DockerSandboxProvider(SandboxProvider):
                 "files_visible": 0,
             }
 
+        # Enable user_allow_other in /etc/fuse.conf for --allow-other to work
+        # Note: Use ^user_allow_other to only match uncommented lines
+        logger.info("[MOUNT-STEP-2b] Configuring FUSE to allow other users...")
+        fuse_conf_cmd = (
+            "grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || "
+            "echo 'user_allow_other' | sudo tee -a /etc/fuse.conf > /dev/null"
+        )
+        fuse_conf_result = await asyncio.to_thread(
+            container.exec_run,
+            ["sh", "-c", fuse_conf_cmd],
+        )
+        if fuse_conf_result.exit_code != 0:
+            logger.warning(
+                f"[MOUNT-STEP-2b] Failed to configure FUSE (continuing anyway): "
+                f"{fuse_conf_result.output.decode() if fuse_conf_result.output else ''}"
+            )
+        else:
+            logger.info("[MOUNT-STEP-2b] FUSE configured for user_allow_other")
+
         # Check if nexus CLI is available
         logger.info("[MOUNT-STEP-3] Checking for nexus CLI...")
         start_time = time.time()
@@ -531,13 +562,35 @@ class DockerSandboxProvider(SandboxProvider):
             f"[MOUNT-STEP-3] which nexus completed in {time.time() - start_time:.2f}s, exit_code={check_result.exit_code}"
         )
 
-        if check_result.exit_code != 0:
+        # In dev mode, always reinstall from source even if nexus is already installed
+        needs_install = check_result.exit_code != 0 or self._dev_mode
+
+        if needs_install:
             # nexus not found, try to install with FUSE support
-            logger.info("[MOUNT-STEP-3] nexus CLI not found, installing nexus-ai-fs[fuse]...")
+            if self._dev_mode:
+                # Dev mode: install from PyPI, then copy modified Python files from source
+                # This preserves pre-built Rust extensions while using local Python changes
+                logger.info(
+                    "[MOUNT-STEP-3] Installing from PyPI, then copying local Python source (dev mode)..."
+                )
+                # Install from PyPI first, then copy ALL Python source files
+                # This ensures all optimizations (readahead, local_disk_cache, etc.) are used
+                # Use sudo for the cp since site-packages is owned by root
+                install_cmd = (
+                    "pip install -q 'nexus-ai-fs[fuse]' && "
+                    "SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])') && "
+                    "cd /nexus-src/src && "
+                    "find nexus -name '*.py' -exec sudo cp --parents {} \"$SITE_PACKAGES/\" \\;"
+                )
+            else:
+                # Production: install from PyPI
+                logger.info("[MOUNT-STEP-3] nexus CLI not found, installing nexus-ai-fs[fuse]...")
+                install_cmd = "pip install -q 'nexus-ai-fs[fuse]'"
+
             start_time = time.time()
             install_result = await asyncio.to_thread(
                 container.exec_run,
-                "pip install -q 'nexus-ai-fs[fuse]'",
+                ["bash", "-c", install_cmd],
             )
             elapsed = time.time() - start_time
             logger.info(
@@ -568,12 +621,15 @@ class DockerSandboxProvider(SandboxProvider):
             f"sudo NEXUS_API_KEY={api_key} "
             f"nexus mount {mount_path} "
             f"--remote-url {nexus_url} "
-            f"--allow-other"
+            f"--allow-other "
+            f"--daemon"  # Run in daemon mode so it doesn't block
         )
         # Add agent-id for version attribution (issue #418)
         if agent_id:
             base_mount += f" --agent-id {agent_id}"
-        mount_cmd = f"nohup {base_mount} > /tmp/nexus-mount.log 2>&1 &"
+        # Note: --daemon flag handles proper daemonization with double-fork
+        # The daemon writes its own log file, so we just capture any startup output
+        mount_cmd = f"{base_mount} 2>&1"
         logger.info(f"[MOUNT-STEP-4] Mount command: {mount_cmd}")
 
         # Run mount in background (wrap in shell)
@@ -655,10 +711,11 @@ class DockerSandboxProvider(SandboxProvider):
             ls_result = None
 
         # Check mount log for success message
+        # Note: --daemon mode creates timestamped log files like /tmp/nexus-mount-*.log
         logger.info("[MOUNT-STEP-6] Checking mount log for success message...")
         log_check = await asyncio.to_thread(
             container.exec_run,
-            "cat /tmp/nexus-mount.log 2>/dev/null || echo 'log not found'",  # Use cat instead of tail, handle missing file
+            "cat /tmp/nexus-mount-*.log 2>/dev/null | tail -50 || echo 'log not found'",
         )
         mount_log_shows_success = False
         if log_check.exit_code == 0 and log_check.output:
@@ -827,6 +884,13 @@ class DockerSandboxProvider(SandboxProvider):
                 )
                 # Continue anyway - the run() call will handle the conflict
 
+        # Build volumes for container
+        volumes = {}
+        if self._dev_mode:
+            # Mount local nexus source for development (read-only to protect host)
+            volumes[self._nexus_src_path] = {"bind": "/nexus-src", "mode": "ro"}
+            logger.info(f"[DEV-MODE] Mounting {self._nexus_src_path} -> /nexus-src")
+
         return self.docker_client.containers.run(
             image=image,
             # Use image default CMD (sleep infinity in sandbox image)
@@ -845,6 +909,7 @@ class DockerSandboxProvider(SandboxProvider):
             if self.network_name
             else None,  # Only set if network_name is provided
             remove=False,  # Don't auto-remove, we'll handle cleanup
+            volumes=volumes if volumes else None,  # Mount volumes if any
         )
 
     def _ensure_image(self, image_name: str) -> None:

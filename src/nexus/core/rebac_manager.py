@@ -1154,88 +1154,138 @@ class ReBACManager:
                 if not tuples_to_create:
                     return 0
 
-                # Step 4: Bulk insert tuples
-                for pt in tuples_to_create:
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            """
-                            INSERT INTO rebac_tuples (
-                                tuple_id, subject_type, subject_id, subject_relation, relation,
-                                object_type, object_id, created_at, expires_at, conditions,
-                                tenant_id, subject_tenant_id, object_tenant_id
-                            )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """
-                        ),
-                        (
-                            pt["tuple_id"],
-                            pt["subject_type"],
-                            pt["subject_id"],
-                            pt["subject_relation"],
-                            pt["relation"],
-                            pt["object_type"],
-                            pt["object_id"],
-                            now,
-                            pt["expires_at"].isoformat() if pt["expires_at"] else None,
-                            json.dumps(pt["conditions"]) if pt["conditions"] else None,
-                            pt["tenant_id"],
-                            pt["subject_tenant_id"],
-                            pt["object_tenant_id"],
-                        ),
+                # Step 4: PERF OPTIMIZATION - Bulk insert tuples using executemany()
+                # This is 10-50x faster than individual execute() calls
+                tuple_insert_sql = self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_tuples (
+                        tuple_id, subject_type, subject_id, subject_relation, relation,
+                        object_type, object_id, created_at, expires_at, conditions,
+                        tenant_id, subject_tenant_id, object_tenant_id
                     )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                )
 
-                    # Log to changelog (Issue #773: include tenant_id)
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            """
-                            INSERT INTO rebac_changelog (
-                                change_type, tuple_id, subject_type, subject_id,
-                                relation, object_type, object_id, tenant_id, created_at
-                            )
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """
-                        ),
-                        (
-                            "INSERT",
-                            pt["tuple_id"],
-                            pt["subject_type"],
-                            pt["subject_id"],
-                            pt["relation"],
-                            pt["object_type"],
-                            pt["object_id"],
-                            pt["tenant_id"] or "default",
-                            now,
-                        ),
-                    )
-
-                    created_count += 1
-
-                    # Invalidate cache for this tuple
-                    # FIX: Pass conn to avoid opening new connection (pool exhaustion)
-                    self._invalidate_cache_for_tuple(
-                        pt["subject_entity"],
-                        pt["relation"],
-                        pt["object_entity"],
-                        pt["tenant_id"],
+                # Prepare all tuple data for bulk insert
+                tuple_data = [
+                    (
+                        pt["tuple_id"],
+                        pt["subject_type"],
+                        pt["subject_id"],
                         pt["subject_relation"],
-                        pt["expires_at"],
-                        conn=conn,
+                        pt["relation"],
+                        pt["object_type"],
+                        pt["object_id"],
+                        now,
+                        pt["expires_at"].isoformat() if pt["expires_at"] else None,
+                        json.dumps(pt["conditions"]) if pt["conditions"] else None,
+                        pt["tenant_id"],
+                        pt["subject_tenant_id"],
+                        pt["object_tenant_id"],
                     )
+                    for pt in tuples_to_create
+                ]
 
-                    # CROSS-TENANT FIX: Also invalidate subject tenant cache if different
-                    if (
-                        pt["subject_tenant_id"] is not None
-                        and pt["subject_tenant_id"] != pt["tenant_id"]
-                    ):
-                        self._invalidate_cache_for_tuple(
-                            pt["subject_entity"],
+                # Bulk insert all tuples in one call
+                cursor.executemany(tuple_insert_sql, tuple_data)
+
+                # Step 5: PERF OPTIMIZATION - Bulk insert changelog entries
+                changelog_insert_sql = self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_changelog (
+                        change_type, tuple_id, subject_type, subject_id,
+                        relation, object_type, object_id, tenant_id, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                )
+
+                changelog_data = [
+                    (
+                        "INSERT",
+                        pt["tuple_id"],
+                        pt["subject_type"],
+                        pt["subject_id"],
+                        pt["relation"],
+                        pt["object_type"],
+                        pt["object_id"],
+                        pt["tenant_id"] or "default",
+                        now,
+                    )
+                    for pt in tuples_to_create
+                ]
+
+                cursor.executemany(changelog_insert_sql, changelog_data)
+
+                created_count = len(tuples_to_create)
+
+                # Step 6: PERF OPTIMIZATION - Batch cache invalidation
+                # Collect unique (subject, relation, object, tenant) combinations
+                # and invalidate once per combination instead of per tuple
+                invalidation_keys: set[tuple[str, str, str, str, str, str | None]] = set()
+                for pt in tuples_to_create:
+                    inv_key: tuple[str, str, str, str, str, str | None] = (
+                        pt["subject_entity"].entity_type,
+                        pt["subject_entity"].entity_id,
+                        pt["relation"],
+                        pt["object_entity"].entity_type,
+                        pt["object_entity"].entity_id,
+                        pt["tenant_id"],
+                    )
+                    invalidation_keys.add(inv_key)
+
+                    # Cross-tenant invalidation
+                    if pt["subject_tenant_id"] and pt["subject_tenant_id"] != pt["tenant_id"]:
+                        cross_inv_key: tuple[str, str, str, str, str, str | None] = (
+                            pt["subject_entity"].entity_type,
+                            pt["subject_entity"].entity_id,
                             pt["relation"],
-                            pt["object_entity"],
+                            pt["object_entity"].entity_type,
+                            pt["object_entity"].entity_id,
                             pt["subject_tenant_id"],
-                            pt["subject_relation"],
-                            pt["expires_at"],
-                            conn=conn,  # FIX: Reuse connection
                         )
+                        invalidation_keys.add(cross_inv_key)
+
+                # PERF OPTIMIZATION: For batch writes, use simple invalidation (no eager recompute)
+                # Eager recomputation is expensive and defeats the purpose of batching
+                # The next permission check will rebuild the cache as needed
+
+                # L1 cache: invalidate all affected subject-object pairs
+                if self._l1_cache:
+                    for inv_key in invalidation_keys:
+                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
+                        self._l1_cache.invalidate_subject_object_pair(
+                            subj_type, subj_id, obj_type, obj_id, tid
+                        )
+
+                # L2 cache: bulk delete affected entries
+                if invalidation_keys:
+                    # Build bulk delete for all subject-object pairs
+                    delete_conditions = []
+                    delete_params: list[str] = []
+                    for inv_key in invalidation_keys:
+                        subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
+                        delete_conditions.append(
+                            "(tenant_id = ? AND subject_type = ? AND subject_id = ? "
+                            "AND object_type = ? AND object_id = ?)"
+                        )
+                        delete_params.extend(
+                            [tid or "default", subj_type, subj_id, obj_type, obj_id]
+                        )
+
+                    # Chunk the deletes to avoid too large SQL
+                    CHUNK_SIZE = 50
+                    for i in range(0, len(delete_conditions), CHUNK_SIZE):
+                        chunk_conditions = delete_conditions[i : i + CHUNK_SIZE]
+                        chunk_params = delete_params[i * 5 : (i + CHUNK_SIZE) * 5]
+
+                        if chunk_conditions:
+                            delete_sql = f"""
+                                DELETE FROM rebac_check_cache
+                                WHERE {" OR ".join(chunk_conditions)}
+                            """
+                            cursor.execute(self._fix_sql_placeholders(delete_sql), chunk_params)
 
                 # Increment revision for all affected tenants before commit (Issue #909)
                 if created_count > 0:
@@ -3203,6 +3253,41 @@ class ReBACManager:
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
+
+                # Check 2b: Cross-tenant wildcard access (Issue #1064)
+                # Wildcards should grant access across ALL tenants, not just the owner's tenant.
+                # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
+                # Only check cross-tenant if tenant_id is provided (multi-tenant mode).
+                if tenant_id is not None:
+                    cursor.execute(
+                        self._fix_sql_placeholders(
+                            """
+                            SELECT tuple_id, subject_type, subject_id, subject_relation,
+                                   relation, object_type, object_id, conditions, expires_at
+                            FROM rebac_tuples
+                            WHERE subject_type = ? AND subject_id = ?
+                              AND subject_relation IS NULL
+                              AND relation = ?
+                              AND object_type = ? AND object_id = ?
+                              AND (expires_at IS NULL OR expires_at >= ?)
+                            LIMIT 1
+                            """
+                        ),
+                        (
+                            wildcard_entity.entity_type,
+                            wildcard_entity.entity_id,
+                            relation,
+                            obj.entity_type,
+                            obj.entity_id,
+                            datetime.now(UTC).isoformat(),
+                        ),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        logger.debug(
+                            f"    ✅ Cross-tenant wildcard access: *:* -> {relation} -> {obj}"
+                        )
+                        return dict(row)
 
             # Check 3: Userset-as-subject grants
             # Find tuples like (group:eng#member, editor-of, file:readme)

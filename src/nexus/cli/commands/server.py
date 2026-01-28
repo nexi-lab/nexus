@@ -696,8 +696,12 @@ def serve(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
 
-                                # Create backend instance
-                                backend = create_backend_from_config(backend_type, backend_cfg)
+                                # Create backend instance with session factory for caching
+                                backend = create_backend_from_config(
+                                    backend_type,
+                                    backend_cfg,
+                                    session_factory=nx.metadata.SessionLocal,
+                                )
 
                                 # Add mount to router
                                 nx.router.add_mount(

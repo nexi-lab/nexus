@@ -442,6 +442,11 @@ warn_unused_ignores = false
 disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]
 
 [[tool.mypy.overrides]]
+module = "nexus.core.tiger_cache"
+# redis library has complex types that mypy struggles with
+disable_error_code = ["import-untyped"]
+
+[[tool.mypy.overrides]]
 module = "nexus.storage.cache"
 # cachetools library has complex generic types
 disable_error_code = ["no-any-return", "misc", "call-overload", "import-untyped"]

@@ -2593,7 +2593,7 @@ class AsyncRemoteNexusFS:
             "extend_lock",
             {"lock_id": lock_id, "path": path, "ttl": ttl},
         )
-        return result.get("extended", False) if result else False
+        return bool(result.get("extended", False)) if result else False
 
     async def unlock(
         self,
@@ -2619,7 +2619,7 @@ class AsyncRemoteNexusFS:
             "unlock",
             {"lock_id": lock_id, "path": path},
         )
-        return result.get("released", False) if result else False
+        return bool(result.get("released", False)) if result else False
 
 
 class AsyncRemoteMemory:

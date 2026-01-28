@@ -861,6 +861,7 @@ class NexusFSCoreMixin:
                         # Map results back to virtual paths
                         for disk_path, content in disk_contents.items():
                             vpath, meta = disk_to_virtual[disk_path]
+                            assert meta is not None  # Guaranteed by check above
                             content = self._apply_dynamic_viewer_filter_if_needed(
                                 vpath, content, context
                             )

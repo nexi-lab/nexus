@@ -982,14 +982,12 @@ class NexusFSSearchMixin:
                     # Collect dirs needing TRAVERSE check for batch processing
                     dirs_needing_traverse.append(dir_path)
 
-                # SKIP TRAVERSE CHECK: Empty dirs without accessible files are rarely useful
-                # This saves 200-300ms per dir that would need TRAVERSE permission check
-                # Users can still navigate into these dirs if they have the direct URL
+                # Perform TRAVERSE check for empty directories
+                # This ensures empty directories with proper permissions are visible
                 _traverse_checks = len(dirs_needing_traverse)
-                # Uncomment below to enable TRAVERSE checks (slow):
-                # for dir_path in dirs_needing_traverse:
-                #     if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
-                #         directories.add(dir_path)
+                for dir_path in dirs_needing_traverse:
+                    if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
+                        directories.add(dir_path)
 
                 logger.info(
                     f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, traverse_checks={_traverse_checks}, prefix_checks={_prefix_checks}"

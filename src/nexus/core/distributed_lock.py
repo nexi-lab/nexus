@@ -331,7 +331,7 @@ class RedisLockManager(LockManagerBase):
         key = self._lock_key(tenant_id, path)
 
         try:
-            result = await self._redis.client.evalsha(  # type: ignore[misc]
+            result = await self._redis.client.evalsha(
                 self._release_script_sha,
                 1,  # Number of keys
                 key,  # KEYS[1]
@@ -377,7 +377,7 @@ class RedisLockManager(LockManagerBase):
         ttl_seconds = int(ttl)
 
         try:
-            result = await self._redis.client.evalsha(  # type: ignore[misc]
+            result = await self._redis.client.evalsha(
                 self._extend_script_sha,
                 1,  # Number of keys
                 key,  # KEYS[1]

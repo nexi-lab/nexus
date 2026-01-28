@@ -117,11 +117,16 @@ class DragonflyClient:
             pool_kwargs["socket_keepalive"] = True
             # Platform-specific keepalive options
             try:
-                pool_kwargs["socket_keepalive_options"] = {
-                    socket.TCP_KEEPIDLE: 60,  # Start probes after 60s idle
-                    socket.TCP_KEEPINTVL: 10,  # Probe every 10s
-                    socket.TCP_KEEPCNT: 3,  # 3 failed probes = dead
-                }
+                keepalive_options: dict[int, int] = {}
+                # TCP_KEEPIDLE may not be available on all platforms (e.g., macOS)
+                if hasattr(socket, "TCP_KEEPIDLE"):
+                    keepalive_options[socket.TCP_KEEPIDLE] = 60  # Start probes after 60s idle
+                if hasattr(socket, "TCP_KEEPINTVL"):
+                    keepalive_options[socket.TCP_KEEPINTVL] = 10  # Probe every 10s
+                if hasattr(socket, "TCP_KEEPCNT"):
+                    keepalive_options[socket.TCP_KEEPCNT] = 3  # 3 failed probes = dead
+                if keepalive_options:
+                    pool_kwargs["socket_keepalive_options"] = keepalive_options
             except AttributeError:
                 # Some platforms (e.g., macOS) may not have all options
                 logger.debug("TCP keepalive options not fully supported on this platform")

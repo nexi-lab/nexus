@@ -298,7 +298,7 @@ wait_for_health() {
             echo -e "${GREEN}✓ Server is ready${NC}"
             return 0
         fi
-        sleep 1
+        sleep 5
     done
     echo -e "${YELLOW}⚠ Server health check timeout after ${max}s (continuing anyway)${NC}"
     return 1
@@ -346,7 +346,8 @@ start_nexus_server() {
     SERVER_PID=$!
 
     trap 'cleanup TERM' SIGTERM SIGINT
-    wait_for_health "${NEXUS_PORT:-2026}" 30
+    # Allow more time for server initialization (GCS sync, cache population, etc.)
+    wait_for_health "${NEXUS_PORT:-2026}" 60
     sleep 2
 
     load_saved_mounts_if_needed

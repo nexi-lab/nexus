@@ -54,9 +54,12 @@ check_docker() {
         exit 1
     fi
 
-    if ! docker info > /dev/null 2>&1; then
-        echo "❌ Docker is not running"
+    # Use docker ps instead of docker info as it's more reliable
+    # docker info can fail with permission errors even when Docker is running
+    if ! docker ps > /dev/null 2>&1; then
+        echo "❌ Docker is not running or not accessible"
         echo "   Please start Docker Desktop or Docker daemon"
+        echo "   If Docker is running, check permissions on Docker socket"
         exit 1
     fi
 }

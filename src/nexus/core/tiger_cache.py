@@ -2467,6 +2467,40 @@ class TigerCache:
         if added_count > 0:
             logger.info(f"[TIGER] New file {file_path} added to {added_count} ancestor grants")
 
+            # Issue #1147: Increment tenant revision when bitmap changes
+            # This enables revision-based consistency checks in list() to detect
+            # concurrent writes and avoid returning stale results
+            try:
+                from sqlalchemy import text
+
+                if self._is_postgresql:
+                    # PostgreSQL: Atomic upsert with increment
+                    query = text("""
+                        INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                        VALUES (:tenant_id, 1, NOW())
+                        ON CONFLICT (tenant_id)
+                        DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
+                                      updated_at = NOW()
+                    """)
+                else:
+                    # SQLite: Use INSERT OR REPLACE
+                    query = text("""
+                        INSERT OR REPLACE INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                        VALUES (
+                            :tenant_id,
+                            COALESCE((SELECT current_version FROM rebac_version_sequences WHERE tenant_id = :tenant_id), 0) + 1,
+                            CURRENT_TIMESTAMP
+                        )
+                    """)
+
+                with self._engine.begin() as conn:
+                    conn.execute(query, {"tenant_id": tenant_id})
+                    logger.debug(
+                        f"[TIGER] Incremented tenant revision for {tenant_id} after adding file to grants"
+                    )
+            except Exception as e:
+                logger.warning(f"[TIGER] Failed to increment tenant revision: {e}")
+
         return added_count
 
     def warm_from_db(self, limit: int = 1000) -> int:

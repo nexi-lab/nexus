@@ -6,11 +6,13 @@ calls to Nexus filesystem operations.
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import logging
 import os
 import stat
 import time
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from fuse import FuseOSError, Operations
@@ -62,6 +64,17 @@ except ImportError:
     RemoteConnectionError = None  # type: ignore[misc,assignment]
     RemoteFilesystemError = None  # type: ignore[misc,assignment]
     RemoteTimeoutError = None  # type: ignore[misc,assignment]
+
+# Import event system for firing events from FUSE operations (Issue #1115)
+try:
+    from nexus.core.event_bus import FileEvent, FileEventType, get_global_event_bus
+
+    HAS_EVENT_BUS = True
+except ImportError:
+    HAS_EVENT_BUS = False
+    FileEvent = None  # type: ignore[misc,assignment]
+    FileEventType = None  # type: ignore[misc,assignment]
+    get_global_event_bus = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +192,123 @@ class NexusFUSEOperations(Operations):
                 )
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize ReadaheadManager: {e}")
+
+        # Initialize event firing infrastructure (Issue #1115)
+        # Fire-and-forget events to downstream systems (webhooks, workflows, event bus)
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._enable_events = cache_config.get("events_enabled", True)
+        if self._enable_events and HAS_EVENT_BUS:
+            # Try to get the running event loop (set by mount service)
+            # No running loop yet - will be set later via set_event_loop()
+            with suppress(RuntimeError):
+                self._event_loop = asyncio.get_running_loop()
+            logger.info("[FUSE] Event firing enabled")
+
+    def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Set the event loop for async event dispatching.
+
+        Called by mount service after the event loop is available.
+
+        Args:
+            loop: The asyncio event loop to use for event dispatch
+        """
+        self._event_loop = loop
+
+    def _fire_event(
+        self,
+        event_type: Any,  # FileEventType, but may be None if not imported
+        path: str,
+        old_path: str | None = None,
+        size: int | None = None,
+    ) -> None:
+        """Fire an event to downstream systems (non-blocking).
+
+        This queues an event for async dispatch without blocking the FUSE operation.
+        Events are delivered to:
+        - GlobalEventBus (Redis Pub/Sub for distributed cache invalidation)
+        - SubscriptionManager (webhook delivery)
+        - TriggerManager (workflow triggers)
+
+        Args:
+            event_type: Type of event (FILE_WRITE, FILE_DELETE, etc.)
+            path: File path that changed
+            old_path: Previous path (for rename events)
+            size: File size in bytes (for write events)
+        """
+        if not self._enable_events or not HAS_EVENT_BUS:
+            return
+
+        if FileEvent is None or get_global_event_bus is None:
+            return
+
+        try:
+            # Build event
+            event = FileEvent(
+                type=event_type,
+                path=path,
+                tenant_id=self._get_tenant_id(),
+                old_path=old_path,
+                size=size,
+            )
+
+            # Fire-and-forget: dispatch to background without blocking
+            if self._event_loop is not None and self._event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    self._dispatch_event(event),
+                    self._event_loop,
+                )
+            else:
+                # No event loop available - log and skip
+                logger.debug(f"[FUSE-EVENT] No event loop, skipping: {event_type} {path}")
+
+        except Exception as e:
+            # Never let event firing break FUSE operations
+            logger.debug(f"[FUSE-EVENT] Failed to fire event: {e}")
+
+    async def _dispatch_event(self, event: Any) -> None:
+        """Dispatch event to all downstream systems.
+
+        Args:
+            event: FileEvent to dispatch
+        """
+        try:
+            # 1. Publish to global event bus (distributed cache invalidation)
+            event_bus = get_global_event_bus()
+            if event_bus is not None:
+                try:
+                    await event_bus.publish(event)
+                except Exception as e:
+                    logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
+
+            # 2. Broadcast to webhook subscriptions
+            # Import here to avoid circular imports
+            try:
+                from nexus.server.subscriptions import get_subscription_manager
+
+                sub_manager = get_subscription_manager()
+                if sub_manager is not None:
+                    event_type_str = (
+                        event.type.value if hasattr(event.type, "value") else str(event.type)
+                    )
+                    await sub_manager.broadcast(
+                        event_type=event_type_str,
+                        data={
+                            "file_path": event.path,
+                            "old_path": event.old_path,
+                            "size": event.size,
+                            "timestamp": event.timestamp,
+                        },
+                        tenant_id=event.tenant_id or "default",
+                    )
+            except ImportError:
+                pass  # Subscription manager not available
+            except Exception as e:
+                logger.debug(f"[FUSE-EVENT] Webhook broadcast failed: {e}")
+
+            logger.debug(f"[FUSE-EVENT] Dispatched: {event.type} {event.path}")
+
+        except Exception as e:
+            logger.debug(f"[FUSE-EVENT] Dispatch failed: {e}")
 
     # ============================================================
     # Filesystem Metadata Operations
@@ -664,6 +794,10 @@ class NexusFUSEOperations(Operations):
             if self._readahead:
                 self._readahead.invalidate_path(original_path)
 
+            # Issue #1115: Fire write event to downstream systems
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
+
             return len(data)
         except FuseOSError:
             raise
@@ -736,6 +870,10 @@ class NexusFUSEOperations(Operations):
                 "flags": os.O_RDWR,
             }
 
+            # Issue #1115: Fire create event (file_write with size=0)
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
+
             return fd
         except FuseOSError:
             raise
@@ -767,6 +905,11 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(original_path)
             if path != original_path:
                 self.cache.invalidate_path(path)
+
+            # Issue #1115: Fire delete event
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.FILE_DELETE, original_path)
+
         except FuseOSError:
             raise
         except NexusFileNotFoundError:
@@ -793,6 +936,11 @@ class NexusFUSEOperations(Operations):
                 raise FuseOSError(errno.EROFS)
 
             self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+
+            # Issue #1115: Fire directory create event
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.DIR_CREATE, path)
+
         except FuseOSError:
             raise
         except NexusPermissionError as e:
@@ -816,6 +964,11 @@ class NexusFUSEOperations(Operations):
                 raise FuseOSError(errno.EROFS)
 
             self.nexus_fs.rmdir(path, recursive=False)
+
+            # Issue #1115: Fire directory delete event
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.DIR_DELETE, path)
+
         except FuseOSError:
             raise
         except NexusFileNotFoundError:
@@ -909,6 +1062,11 @@ class NexusFUSEOperations(Operations):
                 self.cache.invalidate_path(old)
             if new != new_path:
                 self.cache.invalidate_path(new)
+
+            # Issue #1115: Fire rename event
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
+
         except FuseOSError:
             raise
         except NexusFileNotFoundError:
@@ -949,6 +1107,10 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(original_path)
             if path != original_path:
                 self.cache.invalidate_path(path)
+
+            # Issue #1115: Fire metadata change event
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
         except FuseOSError:
             raise
@@ -1015,6 +1177,10 @@ class NexusFUSEOperations(Operations):
                 if path != original_path:
                     self.cache.invalidate_path(path)
 
+                # Issue #1115: Fire metadata change event
+                if HAS_EVENT_BUS and FileEventType is not None:
+                    self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+
             except (ModuleNotFoundError, AttributeError):
                 # Windows doesn't have pwd/grp modules - silently ignore
                 pass
@@ -1068,6 +1234,11 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(original_path)
             if path != original_path:
                 self.cache.invalidate_path(path)
+
+            # Issue #1115: Fire write event (truncate modifies content)
+            if HAS_EVENT_BUS and FileEventType is not None:
+                self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
+
         except FuseOSError:
             raise
         except NexusPermissionError as e:

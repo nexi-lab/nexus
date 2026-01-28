@@ -915,6 +915,10 @@ async def lifespan(_app: FastAPI) -> Any:
 
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()
+        # Clear global singleton (Issue #1115)
+        from nexus.server.subscriptions import set_subscription_manager
+
+        set_subscription_manager(None)
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
         _app_state.nexus_fs.close()
 
@@ -982,11 +986,16 @@ def create_app(
     # Initialize subscription manager if we have a metadata store
     try:
         if hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
-            from nexus.server.subscriptions import SubscriptionManager
+            from nexus.server.subscriptions import (
+                SubscriptionManager,
+                set_subscription_manager,
+            )
 
             _app_state.subscription_manager = SubscriptionManager(nexus_fs.metadata.SessionLocal)
             # Inject into NexusFS for automatic event broadcasting
             nexus_fs.subscription_manager = _app_state.subscription_manager
+            # Set global singleton for FUSE event firing (Issue #1115)
+            set_subscription_manager(_app_state.subscription_manager)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
@@ -3215,6 +3224,44 @@ def _error_response(
     return JSONResponse(content=error_dict)
 
 
+# Issue #1115: Event firing helper for RPC handlers
+async def _fire_rpc_event(
+    event_type: str,
+    path: str,
+    context: Any,
+    old_path: str | None = None,
+    size: int | None = None,
+) -> None:
+    """Fire an event after RPC mutation operation (non-blocking).
+
+    This broadcasts events to webhook subscriptions for file operations
+    performed via the RPC API (not FUSE).
+
+    Args:
+        event_type: Event type (file_write, file_delete, etc.)
+        path: File/directory path
+        context: Request context with tenant info
+        old_path: Old path for rename operations
+        size: File size for write operations
+    """
+    if not _app_state.subscription_manager:
+        return
+
+    try:
+        tenant_id = getattr(context, "tenant_id", None) or "default"
+        data: dict[str, Any] = {"file_path": path}
+        if old_path:
+            data["old_path"] = old_path
+        if size is not None:
+            data["size"] = size
+
+        # Await broadcast to ensure webhook delivery before response
+        # This adds slight latency but ensures reliable event delivery
+        await _app_state.subscription_manager.broadcast(event_type, data, tenant_id)
+    except Exception as e:
+        logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
+
+
 async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     """Dispatch RPC method call.
 
@@ -3251,25 +3298,36 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
 
     # Manual dispatch for core filesystem operations
     # Use to_thread_with_timeout to run sync handlers with timeout (Issue #932)
+    # Issue #1115: Fire events after mutation operations
     if method == "read":
         # Use async handler for read to support async parsing
         return await _handle_read_async(params, context)
     elif method == "write":
-        return await to_thread_with_timeout(_handle_write, params, context)
+        result = await to_thread_with_timeout(_handle_write, params, context)
+        await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
+        return result
     elif method == "exists":
         return await to_thread_with_timeout(_handle_exists, params, context)
     elif method == "list":
         return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
-        return await to_thread_with_timeout(_handle_delete, params, context)
+        result = await to_thread_with_timeout(_handle_delete, params, context)
+        await _fire_rpc_event("file_delete", params.path, context)
+        return result
     elif method == "rename":
-        return await to_thread_with_timeout(_handle_rename, params, context)
+        result = await to_thread_with_timeout(_handle_rename, params, context)
+        await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
+        return result
     elif method == "copy":
         return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
-        return await to_thread_with_timeout(_handle_mkdir, params, context)
+        result = await to_thread_with_timeout(_handle_mkdir, params, context)
+        await _fire_rpc_event("dir_create", params.path, context)
+        return result
     elif method == "rmdir":
-        return await to_thread_with_timeout(_handle_rmdir, params, context)
+        result = await to_thread_with_timeout(_handle_rmdir, params, context)
+        await _fire_rpc_event("dir_delete", params.path, context)
+        return result
     elif method == "get_metadata":
         return await to_thread_with_timeout(_handle_get_metadata, params, context)
     elif method == "glob":

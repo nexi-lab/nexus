@@ -41,7 +41,14 @@ class SubscriptionCreate(BaseModel):
     @field_validator("event_types")
     @classmethod
     def validate_event_types(cls, v: list[str]) -> list[str]:
-        valid_events = {"file_write", "file_delete", "file_rename", "metadata_change"}
+        valid_events = {
+            "file_write",
+            "file_delete",
+            "file_rename",
+            "metadata_change",
+            "dir_create",
+            "dir_delete",
+        }
         for event in v:
             if event not in valid_events:
                 raise ValueError(f"Invalid event type: {event}. Valid: {valid_events}")
@@ -71,7 +78,14 @@ class SubscriptionUpdate(BaseModel):
     @classmethod
     def validate_event_types(cls, v: list[str] | None) -> list[str] | None:
         if v is not None:
-            valid_events = {"file_write", "file_delete", "file_rename", "metadata_change"}
+            valid_events = {
+                "file_write",
+                "file_delete",
+                "file_rename",
+                "metadata_change",
+                "dir_create",
+                "dir_delete",
+            }
             for event in v:
                 if event not in valid_events:
                     raise ValueError(f"Invalid event type: {event}. Valid: {valid_events}")

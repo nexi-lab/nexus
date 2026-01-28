@@ -292,7 +292,7 @@ ensure_skills_available() {
 }
 
 run_provisioning() {
-    echo "📦 Running provisioning inside nexus-server..."
+    echo "📦 Running provisioning via API..."
 
     # Get the admin API key from the container (file first, then logs fallback)
     local API_KEY=""
@@ -305,14 +305,46 @@ run_provisioning() {
         echo "⚠️  Could not retrieve admin API key; skipping provisioning"
         return
     fi
-    # Run provisioning in embedded mode (no NEXUS_URL) so it talks directly to DB/files
-    docker exec \
-        -e NEXUS_API_KEY="$API_KEY" \
-        -e NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}" \
-        -e NEXUS_DATA_DIR="/app/data" \
-        nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant default" \
-        && echo "✅ Provisioning completed" \
-        || echo "⚠️  Provisioning encountered errors (see container logs)"
+
+    # Get Nexus server URL (use localhost from host, or nexus:2026 from inside container)
+    local NEXUS_URL="${NEXUS_URL:-http://localhost:2026}"
+
+    # Provision admin user for default tenant using API
+    echo "  Calling provision_user API for admin@default..."
+    local RESPONSE
+    RESPONSE=$(curl -s -X POST "${NEXUS_URL}/api/nfs/provision_user" \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "user_id": "admin",
+            "email": "admin@default",
+            "display_name": "Admin User",
+            "tenant_id": "default",
+            "create_api_key": false,
+            "create_agents": true,
+            "import_skills": true
+        }' 2>&1)
+
+    # Check if the call succeeded
+    if echo "$RESPONSE" | grep -q '"result"'; then
+        echo "✅ Provisioning completed successfully"
+        # Optionally show the result (pretty-printed if jq is available)
+        if command -v jq >/dev/null 2>&1; then
+            echo "$RESPONSE" | jq '.result' 2>/dev/null || echo "$RESPONSE"
+        else
+            echo "$RESPONSE"
+        fi
+    elif echo "$RESPONSE" | grep -q '"error"'; then
+        echo "⚠️  Provisioning encountered errors:"
+        if command -v jq >/dev/null 2>&1; then
+            echo "$RESPONSE" | jq '.error' 2>/dev/null || echo "$RESPONSE"
+        else
+            echo "$RESPONSE"
+        fi
+    else
+        echo "⚠️  Unexpected response from API:"
+        echo "$RESPONSE"
+    fi
 }
 
 clean_all_data() {
@@ -581,7 +613,7 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
-    ./dockerfiles/build.sh
+    # ./dockerfiles/build.sh
 
     echo ""
     echo "🔨 Step 3/5: Building template images from config..."
@@ -596,7 +628,7 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 4/5: Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    # docker compose -f "$COMPOSE_FILE" build
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."

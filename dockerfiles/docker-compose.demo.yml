@@ -191,7 +191,7 @@ services:
       # Scripts directory (for development - allows testing script changes without rebuild)
       # Comment out this line if you want to use the scripts baked into the image
       # Note: This also mounts scripts/_core/ which contains shared utilities
-      - ../scripts:/app/scripts:ro
+      # - ../scripts:/app/scripts:ro  # TEMPORARILY DISABLED FOR TESTING
       # Uncomment below to also mount source code for testing nexus package changes:
       # - ../src:/app/src:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)

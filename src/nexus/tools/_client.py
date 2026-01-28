@@ -43,6 +43,12 @@ def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = Non
             "Frontend must pass API key via metadata: {'x_auth': 'Bearer <token>'}"
         )
 
+    if not server_url:
+        raise ValueError(
+            "Missing nexus_server_url in metadata. "
+            "Frontend must pass server URL via metadata: {'nexus_server_url': 'http://nexus:2026'}"
+        )
+
     # Strip "Bearer " prefix if present
     api_key = x_auth.removeprefix("Bearer ").strip()
 

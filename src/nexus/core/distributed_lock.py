@@ -26,7 +26,8 @@ import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from collections.abc import Awaitable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.core.cache.dragonfly import DragonflyClient
@@ -331,11 +332,14 @@ class RedisLockManager(LockManagerBase):
         key = self._lock_key(tenant_id, path)
 
         try:
-            result = await self._redis.client.evalsha(
-                self._release_script_sha,
-                1,  # Number of keys
-                key,  # KEYS[1]
-                lock_id,  # ARGV[1]
+            result = await cast(
+                Awaitable[int],
+                self._redis.client.evalsha(
+                    self._release_script_sha,
+                    1,  # Number of keys
+                    key,  # KEYS[1]
+                    lock_id,  # ARGV[1]
+                ),
             )
 
             released: bool = result == 1
@@ -377,12 +381,15 @@ class RedisLockManager(LockManagerBase):
         ttl_seconds = int(ttl)
 
         try:
-            result = await self._redis.client.evalsha(
-                self._extend_script_sha,
-                1,  # Number of keys
-                key,  # KEYS[1]
-                lock_id,  # ARGV[1]
-                ttl_seconds,  # ARGV[2]
+            result = await cast(
+                Awaitable[int],
+                self._redis.client.evalsha(
+                    self._extend_script_sha,
+                    1,  # Number of keys
+                    key,  # KEYS[1]
+                    lock_id,  # ARGV[1]
+                    ttl_seconds,  # ARGV[2]
+                ),
             )
 
             extended: bool = result == 1

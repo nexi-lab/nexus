@@ -183,6 +183,10 @@ services:
       # Reduces embedding API calls by ~90%
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+
+      # Tiger Cache - materialized permissions cache
+      # Set to 'true' to enable Tiger Cache (disabled by default for simpler debugging)
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
     volumes:
       # Persistent data directory (local backend) - shared with local development
       - ../nexus-data:/app/data

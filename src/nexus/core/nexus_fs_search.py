@@ -643,6 +643,11 @@ class NexusFSSearchMixin:
             # 2. Tiger bitmap prefix check for accessible descendants (O(allowed_paths))
             # NOTE: Skip fast path when details=True because it doesn't have file sizes
             _use_fast_path = False
+
+            # Issue #1147: Track revision for consistency check across both fast and slow paths
+            _revision_before: int | None = None
+            _rebac_manager = getattr(self._permission_enforcer, "rebac_manager", None) if self._permission_enforcer else None
+
             logger.info(
                 f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
             )
@@ -652,6 +657,13 @@ class NexusFSSearchMixin:
                 and hasattr(self.metadata, "list_directory_entries")
                 and context
             ):
+                # Issue #1147: Get revision BEFORE sparse index lookup to detect concurrent writes
+                if _rebac_manager and hasattr(_rebac_manager, "_get_tenant_revision_for_grant"):
+                    _revision_before = _rebac_manager._get_tenant_revision_for_grant(
+                        list_tenant_id or "default"
+                    )
+                    logger.debug(f"[LIST-DEBUG] Revision before sparse index: {_revision_before}")
+
                 _idx_start = _time.time()
                 dir_entries = self.metadata.list_directory_entries(path, tenant_id=list_tenant_id)
                 _idx_elapsed = (_time.time() - _idx_start) * 1000
@@ -709,7 +721,28 @@ class NexusFSSearchMixin:
                         "[LIST-TIMING] metadata.list(): SKIPPED (using sparse index + Tiger bitmap)"
                     )
                     logger.info(f"[LIST-DEBUG] preapproved_dirs: {list(_preapproved_dirs)[:5]}")
-                    _use_fast_path = True
+
+                    # Issue #1147: Check if revision changed during fast path
+                    # If so, a file may have been created and we must fall back to full list
+                    if (
+                        _revision_before is not None
+                        and _rebac_manager
+                        and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                    ):
+                        _revision_after = _rebac_manager._get_tenant_revision_for_grant(
+                            list_tenant_id or "default"
+                        )
+                        if _revision_after != _revision_before:
+                            logger.warning(
+                                f"[LIST-TIMING] Revision changed during sparse index lookup "
+                                f"({_revision_before} -> {_revision_after}), falling back to full list"
+                            )
+                            # Force fallback to slow path which gets fresh data
+                            _use_fast_path = False
+                        else:
+                            _use_fast_path = True
+                    else:
+                        _use_fast_path = True
                 else:
                     logger.info(
                         f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms (sparse index MISS - using fallback)"
@@ -725,6 +758,10 @@ class NexusFSSearchMixin:
                     "true",
                 )
 
+                # Issue #1147: _revision_before and _rebac_manager already declared above
+                # If we came here from fast path fallback, _revision_before is already set
+                # Otherwise, get it now before the bitmap lookup
+
                 if (
                     self._enforce_permissions
                     and subject_type
@@ -732,13 +769,16 @@ class NexusFSSearchMixin:
                     and not _pushdown_disabled
                 ):
                     _pushdown_start = _time.time()
-                    tiger_cache = getattr(
-                        getattr(self._permission_enforcer, "rebac_manager", None),
-                        "_tiger_cache",
-                        None,
-                    )
+                    tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
                     if tiger_cache is not None:
                         try:
+                            # Issue #1147: Get revision before bitmap for consistency check
+                            # Only get if not already fetched during fast path attempt
+                            if _revision_before is None and _rebac_manager and hasattr(_rebac_manager, "_get_tenant_revision_for_grant"):
+                                _revision_before = _rebac_manager._get_tenant_revision_for_grant(
+                                    list_tenant_id or "default"
+                                )
+
                             _accessible_int_ids = tiger_cache.get_accessible_int_ids(
                                 subject_type=subject_type,
                                 subject_id=subject_id,
@@ -779,6 +819,37 @@ class NexusFSSearchMixin:
                     f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
                     f"{len(all_files)} files{_pushdown_info}"
                 )
+
+                # Issue #1147: Check if revision changed during query (TOCTOU race detection)
+                # If data was modified while we were querying with stale bitmap, re-run without filter
+                if (
+                    _accessible_int_ids is not None
+                    and _revision_before is not None
+                    and _rebac_manager
+                    and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                ):
+                    _revision_after = _rebac_manager._get_tenant_revision_for_grant(
+                        list_tenant_id or "default"
+                    )
+                    if _revision_after != _revision_before:
+                        logger.warning(
+                            f"[PREDICATE-PUSHDOWN] Revision changed during query "
+                            f"({_revision_before} -> {_revision_after}), re-running without filter"
+                        )
+                        # Re-run without pushdown filter to ensure consistency
+                        _meta_start = _time.time()
+                        all_files = self.metadata.list(
+                            list_prefix,
+                            tenant_id=list_tenant_id,
+                            accessible_int_ids=None,  # No filter - get all, filter later
+                        )
+                        logger.info(
+                            f"[LIST-TIMING] metadata.list() retry without pushdown: "
+                            f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                        )
+                        # Clear pushdown flag so post-filtering happens
+                        _accessible_int_ids = None
+
                 # Debug: show sample paths from fallback
                 sample_paths = [m.path for m in all_files[:5]]
                 logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")

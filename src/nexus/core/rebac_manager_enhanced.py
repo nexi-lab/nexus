@@ -2652,13 +2652,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         try:
             query = text("""
-                SELECT revision FROM tenant_revisions
+                SELECT current_version FROM rebac_version_sequences
                 WHERE tenant_id = :tenant_id
             """)
             with self.engine.connect() as conn:
                 result = conn.execute(query, {"tenant_id": tenant_id})
                 row = result.fetchone()
-                return int(row.revision) if row else 0
+                return int(row.current_version) if row else 0
         except Exception:
             return 0
 

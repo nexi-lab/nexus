@@ -279,12 +279,17 @@ def get_filesystem(
         sys.exit(1)
 
 
-def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any:
+def create_backend_from_config(
+    backend_type: str, config: dict[str, Any], session_factory: Any = None
+) -> Any:
     """Create backend instance from type and config dict.
 
     Args:
         backend_type: Backend type (local, gcs, s3, gdrive, etc.)
         config: Backend-specific configuration dictionary
+        session_factory: Optional SQLAlchemy session factory for caching support.
+            Required for connector backends (gcs_connector, s3_connector) to enable
+            content caching.
 
     Returns:
         Backend instance
@@ -329,6 +334,8 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
             credentials_path=config.get("credentials_path"),
             # OAuth access token (alternative to credentials_path)
             access_token=config.get("access_token"),
+            # Session factory for content caching
+            session_factory=session_factory,
         )
 
     elif backend_type == "s3_connector":
@@ -346,6 +353,8 @@ def create_backend_from_config(backend_type: str, config: dict[str, Any]) -> Any
             access_key_id=config.get("access_key_id"),
             secret_access_key=config.get("secret_access_key"),
             session_token=config.get("session_token"),
+            # Session factory for content caching
+            session_factory=session_factory,
         )
 
     elif backend_type == "s3":

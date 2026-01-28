@@ -45,6 +45,7 @@ class FileEventType(str, Enum):
     FILE_WRITE = "file_write"
     FILE_DELETE = "file_delete"
     FILE_RENAME = "file_rename"
+    METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
     DIR_CREATE = "dir_create"
     DIR_DELETE = "dir_delete"
 

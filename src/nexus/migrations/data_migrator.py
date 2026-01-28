@@ -238,7 +238,7 @@ class DataMigrator:
         import time
 
         try:
-            from google.cloud import storage  # type: ignore[attr-defined]
+            from google.cloud import storage
         except ImportError:
             return ImportResult(
                 errors=[

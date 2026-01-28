@@ -191,7 +191,7 @@ jobs:
       - name: Test docker-demo.sh --init --build
         run: |
           echo "🚀 Testing docker-demo.sh --init --build --yes..."
-          ./scripts/docker-demo.sh --init --build --yes
+          ./scripts/docker-demo.sh --init --build --rebuild --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy

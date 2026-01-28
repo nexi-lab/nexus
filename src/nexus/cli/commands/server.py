@@ -746,9 +746,9 @@ def serve(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
                                             sync_result = nx.sync_mount(mount_point, recursive=True)
-                                            if sync_result["files_added"] > 0:
+                                            if sync_result["files_created"] > 0:
                                                 console.print(
-                                                    f"    [dim]→ Discovered {sync_result['files_added']} files[/dim]"
+                                                    f"    [dim]→ Discovered {sync_result['files_created']} files[/dim]"
                                                 )
                                             if sync_result["errors"]:
                                                 console.print(

@@ -103,9 +103,12 @@ services:
       NEXUS_DATA_DIR: /app/data
 
       # Database configuration (PostgreSQL)
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nexus}
+      # IMPORTANT: Always use the Docker service name for container-to-container DB access.
+      # Do NOT use ${POSTGRES_HOST} here, because host env vars (e.g. POSTGRES_HOST=localhost)
+      # can leak into compose interpolation and break provisioning inside the container.
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # TokenManager database (for OAuth credentials)
-      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # Increase pool size for provisioning with many files
       NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
       NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}

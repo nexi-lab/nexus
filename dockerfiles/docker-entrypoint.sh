@@ -109,12 +109,50 @@ echo -e "${GREEN}✓ Database initialized${NC}"
 # Create Admin API Key (First Run)
 # ============================================
 
-# Check if API key already exists (from previous run)
+# Check if API key file exists and if key is registered in database
+ADMIN_API_KEY=""
 if [ -f "$API_KEY_FILE" ]; then
-    echo ""
-    echo "🔑 Using existing admin API key"
     ADMIN_API_KEY=$(cat "$API_KEY_FILE")
-else
+    # Verify key exists in database (file might exist but key not registered)
+    KEY_IN_DB=$(python3 << PYTHON_CHECK_KEY
+import os
+import sys
+sys.path.insert(0, '/app/src')
+os.environ['NEXUS_DATABASE_URL'] = os.getenv('NEXUS_DATABASE_URL', '')
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+try:
+    engine = create_engine(os.environ['NEXUS_DATABASE_URL'])
+    SessionFactory = sessionmaker(bind=engine)
+    key_hash = DatabaseAPIKeyAuth._hash_key('${ADMIN_API_KEY}')
+    with SessionFactory() as session:
+        result = session.execute(
+            text('SELECT 1 FROM api_keys WHERE key_hash = :hash'),
+            {'hash': key_hash}
+        ).fetchone()
+        if result:
+            print('EXISTS')
+        else:
+            print('MISSING')
+except Exception:
+    print('MISSING')
+PYTHON_CHECK_KEY
+)
+
+    if [ "$KEY_IN_DB" = "EXISTS" ]; then
+        echo ""
+        echo "🔑 Using existing admin API key (registered in database)"
+    else
+        echo ""
+        echo "⚠️  API key file exists but key not registered in database"
+        echo "   Re-registering key..."
+        ADMIN_API_KEY=""  # Force re-registration
+    fi
+fi
+
+if [ -z "$ADMIN_API_KEY" ]; then
     echo ""
     if [ -n "$NEXUS_API_KEY" ]; then
         echo "🔑 Registering custom API key from environment..."
@@ -238,8 +276,11 @@ PYTHON_CREATE_KEY
 
     # Save API key for future runs
     echo "$ADMIN_API_KEY" > "$API_KEY_FILE"
-
-    echo -e "${GREEN}✓ Admin API key created${NC}"
+    echo -e "${GREEN}✓ Admin API key created and saved${NC}"
+else
+    # Key file exists and is registered - just display it
+    echo ""
+    echo "🔑 Using existing admin API key"
 fi
 
 # ============================================

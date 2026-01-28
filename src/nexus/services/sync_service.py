@@ -19,7 +19,6 @@ Example:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from collections import deque
@@ -459,17 +458,19 @@ class SyncService:
                     )
 
                 now = datetime.now(UTC)
-                path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
 
                 # Get file size from backend if available
-                file_size = self._get_file_size(backend, path_hash, backend_path, ctx)
+                file_size = self._get_file_size(backend, backend_path, ctx)
 
+                # Issue #1126: etag=None during metadata sync
+                # Content hash is computed later by cache_mixin.sync() when content is read
+                # This avoids the bug of storing path hash instead of content hash
                 meta = FileMetadata(
                     path=virtual_path,
                     backend_name=backend.name,
                     physical_path=backend_path,
                     size=file_size,
-                    etag=path_hash,
+                    etag=None,
                     created_at=now,
                     modified_at=now,
                     version=1,
@@ -536,14 +537,14 @@ class SyncService:
                 )
 
             now = datetime.now(UTC)
-            path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
 
+            # Issue #1126: etag=None for directories (no content to hash)
             dir_meta = FileMetadata(
                 path=virtual_path,
                 backend_name=backend.name,
                 physical_path=backend_path,
                 size=0,
-                etag=path_hash,
+                etag=None,
                 mime_type="inode/directory",
                 created_at=now,
                 modified_at=now,
@@ -827,15 +828,16 @@ class SyncService:
                     )
 
                 now = datetime.now(UTC)
-                path_hash = hashlib.sha256(backend_path.encode()).hexdigest()
-                file_size = self._get_file_size(backend, path_hash, backend_path, ctx)
+                file_size = self._get_file_size(backend, backend_path, ctx)
 
+                # Issue #1126: etag=None during metadata sync
+                # Content hash is computed later by cache_mixin.sync() when content is read
                 meta = FileMetadata(
                     path=virtual_path,
                     backend_name=backend.name,
                     physical_path=backend_path,
                     size=file_size,
-                    etag=path_hash,
+                    etag=None,
                     created_at=now,
                     modified_at=now,
                     version=1,
@@ -857,7 +859,6 @@ class SyncService:
     def _get_file_size(
         self,
         backend: Any,
-        path_hash: str,
         backend_path: str,
         _ctx: SyncContext,
     ) -> int:
@@ -865,7 +866,6 @@ class SyncService:
 
         Args:
             backend: Backend instance
-            path_hash: Hash of path
             backend_path: Backend path
             _ctx: SyncContext (unused, kept for API consistency)
 
@@ -877,7 +877,8 @@ class SyncService:
                 from nexus.core.operation_context import OperationContext
 
                 size_context = OperationContext(backend_path=backend_path)
-                result: int = backend.get_content_size(path_hash, size_context).unwrap()
+                # Note: content_hash is ignored by connectors - they use backend_path from context
+                result: int = backend.get_content_size("", size_context).unwrap()
                 return result
         except Exception:
             pass

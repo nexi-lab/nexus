@@ -515,4 +515,7 @@ volumes:
 # ============================================
 networks:
   nexus-network:
+    # Make the network name deterministic so sandboxes can join it.
+    # (The Nexus container uses NEXUS_DOCKER_NETWORK=nexus_nexus-network)
+    name: nexus_nexus-network
     driver: bridge

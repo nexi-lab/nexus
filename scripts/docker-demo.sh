@@ -543,80 +543,80 @@ cmd_clean() {
 }
 
 cmd_init() {
-    # print_banner
-    # check_docker
-    # check_env_file
-    # check_gcs_credentials
-    # check_frontend_repo
+    print_banner
+    check_docker
+    check_env_file
+    check_gcs_credentials
+    check_frontend_repo
 
-    # echo "🔧 INITIALIZATION MODE"
-    # echo ""
-    # echo "This will:"
-    # echo "  1. Clean all data (containers, volumes, sandboxes)"
-    # echo "  2. Build base runtime image for sandboxes"
-    # echo "  3. Build all template images from config (ml-heavy, web-dev, etc.)"
-    # echo "  4. Rebuild all service Docker images"
-    # echo "  5. Start all services fresh"
-    # if [ "$SKIP_PERMISSIONS" = true ]; then
-    #     echo "  (Skipping permission setup and disabling runtime permission checks)"
-    # fi
-    # echo ""
+    echo "🔧 INITIALIZATION MODE"
+    echo ""
+    echo "This will:"
+    echo "  1. Clean all data (containers, volumes, sandboxes)"
+    echo "  2. Build base runtime image for sandboxes"
+    echo "  3. Build all template images from config (ml-heavy, web-dev, etc.)"
+    echo "  4. Rebuild all service Docker images"
+    echo "  5. Start all services fresh"
+    if [ "$SKIP_PERMISSIONS" = true ]; then
+        echo "  (Skipping permission setup and disabling runtime permission checks)"
+    fi
+    echo ""
 
-    # if [ "$SKIP_CONFIRM" = false ]; then
-    #     read -p "Are you sure you want to continue? [y/N] " -n 1 -r
-    #     echo
-    #     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    #         echo ""
-    #         echo "❌ Initialization cancelled"
-    #         exit 0
-    #     fi
-    # else
-    #     echo "⚡ Skipping confirmation (--yes flag provided)"
-    # fi
+    if [ "$SKIP_CONFIRM" = false ]; then
+        read -p "Are you sure you want to continue? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo ""
+            echo "❌ Initialization cancelled"
+            exit 0
+        fi
+    else
+        echo "⚡ Skipping confirmation (--yes flag provided)"
+    fi
 
-    # echo ""
-    # echo "🧹 Step 1/5: Cleaning all data..."
-    # clean_all_data "false" ""
-    # echo ""
+    echo ""
+    echo "🧹 Step 1/5: Cleaning all data..."
+    clean_all_data "false" ""
+    echo ""
 
-    # echo ""
-    # echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
-    # ./dockerfiles/build.sh
+    echo ""
+    echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
+    ./dockerfiles/build.sh
 
-    # echo ""
-    # echo "🔨 Step 3/5: Building template images from config..."
-    # # Use uv if available, otherwise skip template building
-    # if command -v uv &> /dev/null; then
-    #     uv run python dockerfiles/build-templates.py
-    # else
-    #     echo "⚠️  uv not found - skipping template image builds"
-    #     echo "   Template images will be built on-demand when first used"
-    #     echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
-    # fi
+    echo ""
+    echo "🔨 Step 3/5: Building template images from config..."
+    # Use uv if available, otherwise skip template building
+    if command -v uv &> /dev/null; then
+        uv run python dockerfiles/build-templates.py
+    else
+        echo "⚠️  uv not found - skipping template image builds"
+        echo "   Template images will be built on-demand when first used"
+        echo "   To enable pre-building, install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    fi
 
-    # echo ""
-    # echo "🔨 Step 4/5: Building service images..."
-    # docker compose -f "$COMPOSE_FILE" build
+    echo ""
+    echo "🔨 Step 4/5: Building service images..."
+    docker compose -f "$COMPOSE_FILE" build
 
-    # echo ""
-    # echo "🚀 Step 5/5: Starting services..."
+    echo ""
+    echo "🚀 Step 5/5: Starting services..."
 
-    # # Ensure skills are available in nexus-data directory
-    # ensure_skills_available
+    # Ensure skills are available in nexus-data directory
+    ensure_skills_available
 
-    # # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
-    # if [ "$SKIP_PERMISSIONS" = true ]; then
-    #     export NEXUS_SKIP_PERMISSIONS=true
-    #     export NEXUS_ENFORCE_PERMISSIONS=false
-    #     echo "   (Skipping permission setup and disabling runtime permission checks)"
-    # fi
-    # docker compose -f "$COMPOSE_FILE" up -d
+    # Export SKIP_PERMISSIONS so Docker Compose can pass it to containers
+    if [ "$SKIP_PERMISSIONS" = true ]; then
+        export NEXUS_SKIP_PERMISSIONS=true
+        export NEXUS_ENFORCE_PERMISSIONS=false
+        echo "   (Skipping permission setup and disabling runtime permission checks)"
+    fi
+    docker compose -f "$COMPOSE_FILE" up -d
 
-    # echo ""
-    # echo "✅ Initialization complete!"
-    # echo ""
-    # cmd_status
-    # show_api_key
+    echo ""
+    echo "✅ Initialization complete!"
+    echo ""
+    cmd_status
+    show_api_key
     run_provisioning
     cmd_urls
 }

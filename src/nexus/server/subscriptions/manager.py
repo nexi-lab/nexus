@@ -439,7 +439,8 @@ class SubscriptionManager:
         for attempt in range(MAX_RETRIES):
             try:
                 # Create a fresh client for each attempt to avoid connection state issues
-                async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT) as client:
+                # trust_env=False prevents proxy interference with localhost connections
+                async with httpx.AsyncClient(timeout=WEBHOOK_TIMEOUT, trust_env=False) as client:
                     logger.debug(f"_deliver_webhook: attempt {attempt + 1} to {subscription.url}")
                     response = await client.post(
                         subscription.url,

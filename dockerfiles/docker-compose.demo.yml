@@ -40,7 +40,8 @@ services:
     volumes:
       # PostgreSQL 18 default PGDATA: /var/lib/postgresql/data
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
+      # NOTE: this compose file lives in dockerfiles/, so use ../ for repo-root paths.
+      - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
     # PostgreSQL 18 optimizations:
     # - io_method=worker: Async I/O for 2-3x I/O performance
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
@@ -184,16 +185,16 @@ services:
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
     volumes:
       # Persistent data directory (local backend) - shared with local development
-      - ./nexus-data:/app/data
+      - ../nexus-data:/app/data
       # Configuration files (includes config.demo.yaml for auto-mounting backends)
-      - ./configs:/app/configs:ro
+      - ../configs:/app/configs:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
-      - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+      - ${GCS_CREDENTIALS_PATH:-../gcs-credentials.json}:/app/gcs-credentials.json:ro
       # AWS credentials (auto-detected - see docker-start.sh)
       # Automatically finds credentials from: ~/.aws/credentials or AWS_CREDENTIALS_PATH
-      - ${AWS_CREDENTIALS_PATH:-./aws-credentials}:/app/aws-credentials:ro
-      - ${AWS_CONFIG_PATH:-./aws-config}:/app/aws-config:ro
+      - ${AWS_CREDENTIALS_PATH:-../aws-credentials}:/app/aws-credentials:ro
+      - ${AWS_CONFIG_PATH:-../aws-config}:/app/aws-config:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock
     # Run as root to access Docker socket (required for sandbox provider)
@@ -380,7 +381,7 @@ services:
       # - /data/cas/    = LOCAL backend CAS (content-addressable storage)
       # - /data/.cache/ = External connector L2 cache (GCS, S3, Gmail, etc.)
       # Note: Zoekt webserver needs write access for internal state
-      - ./nexus-data:/data
+      - ../nexus-data:/data
       # Persistent trigram index storage
       - zoekt-index:/index
     ports:
@@ -408,7 +409,7 @@ services:
       - zoekt-index  # Only runs with: docker compose --profile zoekt-index up
     volumes:
       # Content directories (need write for temp files)
-      - ./nexus-data:/data
+      - ../nexus-data:/data
       - zoekt-index:/index
     entrypoint: ["/bin/sh", "-c"]
     command:

@@ -196,7 +196,7 @@ services:
       # - ../src:/app/src:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
-      - ${GCS_CREDENTIALS_PATH:-../gcs-credentials.json}:/app/gcs-credentials.json:ro
+      - ../gcs-credentials.json:/app/gcs-credentials.json:ro
       # AWS credentials (auto-detected - see docker-start.sh)
       # Automatically finds credentials from: ~/.aws/credentials or AWS_CREDENTIALS_PATH
       - ${AWS_CREDENTIALS_PATH:-../aws-credentials}:/app/aws-credentials:ro

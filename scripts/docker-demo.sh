@@ -9,8 +9,9 @@
 #   ./scripts/docker-demo.sh --logs             # View logs (follow mode)
 #   ./scripts/docker-demo.sh --status           # Check service status
 #   ./scripts/docker-demo.sh --clean            # Stop and remove all data (volumes)
-#   ./scripts/docker-demo.sh --init             # Initialize (clean + build + start)
+#   ./scripts/docker-demo.sh --init             # Initialize (clean + start; optional rebuild via --rebuild)
 #   ./scripts/docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./scripts/docker-demo.sh --init --rebuild   # Initialize + rebuild images (runtime + services)
 #   ./scripts/docker-demo.sh --init --yes       # Initialize without confirmation (CI)
 #   ./scripts/docker-demo.sh --env=production   # Use production environment files
 #
@@ -30,6 +31,7 @@ COMPOSE_FILE="dockerfiles/docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
 SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations
+REBUILD=false  # Default: do NOT rebuild images during --init
 
 # ============================================
 # Banner
@@ -314,62 +316,35 @@ run_provisioning() {
         return
     fi
 
-    # Get Nexus server URL (use localhost from host, or nexus:2026 from inside container)
-    local NEXUS_URL="${NEXUS_URL:-http://localhost:2026}"
-
     # Provision admin user for default tenant using API
     echo "  Calling provision_user API for admin@default..."
     local RESPONSE
-    # Try API call first (requires valid API key)
-    echo "  Attempting API call to provision_user..."
-    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${NEXUS_URL}/api/nfs/provision_user" \
+    # Try API call first (requires valid API key); include headers so we can grep for HTTP/1.1 200 OK
+    echo "  Attempting API call to provision_user with API key: $API_KEY on url: $NEXUS_URL"
+    RESPONSE=$(curl -s -i -X POST "http://localhost:2026/api/nfs/provision_user" \
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d '{
-            "user_id": "admin",
-            "email": "admin@default",
-            "display_name": "Admin User",
-            "tenant_id": "default",
-            "create_api_key": false,
-            "create_agents": true,
-            "import_skills": true
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "provision_user",
+            "params": {
+                "user_id": "admin",
+                "email": "",
+                "display_name": "Admin User",
+                "tenant_id": "default",
+                "create_api_key": false,
+                "create_agents": true,
+                "import_skills": true
+            }
         }' 2>&1)
 
-    HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-    BODY=$(echo "$RESPONSE" | head -n -1)
-
-    # If API call fails due to auth, fall back to script-based provisioning
-    if [ "$HTTP_CODE" = "401" ] || echo "$BODY" | grep -q "Invalid or missing API key"; then
-        echo "  ⚠️  API authentication failed, falling back to script-based provisioning..."
-        echo "  (This is expected if the API key doesn't exist in the database yet)"
-        docker exec \
-            -e NEXUS_API_KEY="$API_KEY" \
-            -e NEXUS_DATABASE_URL="postgresql://postgres:nexus@postgres:5432/nexus" \
-            -e NEXUS_DATA_DIR="/app/data" \
-            nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant default" \
-            && echo "✅ Provisioning completed (via script)" \
-            || echo "⚠️  Provisioning encountered errors (see container logs)"
-        return
-    fi
-    # Check if the API call succeeded
-    if echo "$BODY" | grep -q '"result"'; then
+    if echo "$RESPONSE" | grep -q "HTTP/1.1 200 OK"; then
         echo "✅ Provisioning completed successfully"
-        # Optionally show the result (pretty-printed if jq is available)
-        if command -v jq >/dev/null 2>&1; then
-            echo "$RESPONSE" | jq '.result' 2>/dev/null || echo "$RESPONSE"
-        else
-            echo "$RESPONSE"
-        fi
-    elif echo "$RESPONSE" | grep -q '"error"'; then
-        echo "⚠️  Provisioning encountered errors:"
-        if command -v jq >/dev/null 2>&1; then
-            echo "$RESPONSE" | jq '.error' 2>/dev/null || echo "$RESPONSE"
-        else
-            echo "$RESPONSE"
-        fi
     else
-        echo "⚠️  Unexpected response from API:"
+        echo "❌ provision_user failed (did not see HTTP/1.1 200 OK)"
         echo "$RESPONSE"
+        exit 1
     fi
 }
 
@@ -611,9 +586,17 @@ cmd_init() {
     echo ""
     echo "This will:"
     echo "  1. Clean all data (containers, volumes, sandboxes)"
-    echo "  2. Build base runtime image for sandboxes"
+    if [ "$REBUILD" = true ]; then
+        echo "  2. Build base runtime image for sandboxes"
+    else
+        echo "  2. (Skip) Build base runtime image for sandboxes (use --rebuild to enable)"
+    fi
     echo "  3. Build all template images from config (ml-heavy, web-dev, etc.)"
-    echo "  4. Rebuild all service Docker images"
+    if [ "$REBUILD" = true ]; then
+        echo "  4. Rebuild all service Docker images"
+    else
+        echo "  4. (Skip) Rebuild all service Docker images (use --rebuild to enable)"
+    fi
     echo "  5. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
         echo "  (Skipping permission setup and disabling runtime permission checks)"
@@ -639,7 +622,15 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
-    # ./dockerfiles/build.sh
+    if [ "$REBUILD" = true ]; then
+        if [ -x "${PROJECT_ROOT}/dockerfiles/build.sh" ]; then
+            "${PROJECT_ROOT}/dockerfiles/build.sh"
+        else
+            echo "⚠️  ${PROJECT_ROOT}/dockerfiles/build.sh not found or not executable; skipping"
+        fi
+    else
+        echo "⏭️  Skipping runtime image rebuild (use --rebuild to enable)"
+    fi
 
     echo ""
     echo "🔨 Step 3/5: Building template images from config..."
@@ -654,7 +645,11 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 4/5: Building service images..."
-    # docker compose -f "$COMPOSE_FILE" build
+    if [ "$REBUILD" = true ]; then
+        docker compose -f "$COMPOSE_FILE" build
+    else
+        echo "⏭️  Skipping service image rebuild (use --rebuild to enable)"
+    fi
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."
@@ -770,6 +765,10 @@ while [ $# -gt 0 ]; do
             SKIP_PERMISSIONS=true
             shift
             ;;
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
         --yes|-y)
             SKIP_CONFIRM=true
             shift
@@ -823,7 +822,7 @@ case "$COMMAND" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--yes]"
+        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--rebuild] [--yes]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -833,9 +832,10 @@ case "$COMMAND" in
         echo "  --logs          View logs (follow mode)"
         echo "  --status        Check service status"
         echo "  --clean         Stop and remove all data (volumes)"
-        echo "  --init          Initialize (clean + build + start)"
+        echo "  --init          Initialize (clean + start; add --rebuild to rebuild images)"
         echo "  --env=MODE      Set environment mode (local|production)"
         echo "  --skip_permission  Skip permission setup and disable runtime checks (use with --init)"
+        echo "  --rebuild       Rebuild runtime + service images (use with --init)"
         echo "  --yes, -y       Skip confirmation prompts (for CI/automation)"
         echo "  --help, -h      Show this help message"
         echo ""
@@ -848,6 +848,7 @@ case "$COMMAND" in
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
         echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
+        echo "  ./docker-start.sh --init --rebuild   # Initialize and rebuild images"
         echo "  ./docker-start.sh --init --yes       # Initialize without confirmation (CI)"
         echo ""
         show_services

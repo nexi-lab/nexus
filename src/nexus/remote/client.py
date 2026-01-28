@@ -6371,7 +6371,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "extend_lock",
             {"lock_id": lock_id, "path": path, "ttl": ttl},
         )
-        return result.get("extended", False) if result else False
+        return bool(result.get("extended", False)) if result else False
 
     def unlock(
         self,
@@ -6397,7 +6397,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "unlock",
             {"lock_id": lock_id, "path": path},
         )
-        return result.get("released", False) if result else False
+        return bool(result.get("released", False)) if result else False
 
     def close(self) -> None:
         """Close the client and release resources."""

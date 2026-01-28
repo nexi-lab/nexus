@@ -186,7 +186,7 @@ jobs:
           fi
 
       - name: Make docker-demo.sh executable
-        run: chmod +x docker-demo.sh
+        run: chmod +x scripts/docker-demo.sh
 
       - name: Test docker-demo.sh --init --build
         run: |

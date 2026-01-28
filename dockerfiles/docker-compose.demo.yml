@@ -316,7 +316,7 @@ services:
   # ============================================
   frontend:
     build:
-      context: ../nexus-frontend
+      context: ../../nexus-frontend
       dockerfile: Dockerfile
       args:
         # Browser URLs - use localhost for browser to access services

@@ -225,7 +225,8 @@ check_aws_credentials() {
 check_frontend_repo() {
     echo "🔍 Checking for nexus-frontend repository..."
 
-    FRONTEND_DIR="../nexus-frontend"
+    # Clone to same level as nexus directory (not inside it)
+    FRONTEND_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)/nexus-frontend"
 
     if [ -d "$FRONTEND_DIR" ]; then
         echo "✅ Found nexus-frontend at: $FRONTEND_DIR"

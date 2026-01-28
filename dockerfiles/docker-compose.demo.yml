@@ -2,8 +2,8 @@
 # Complete stack: PostgreSQL + Nexus + LangGraph + MCP + Frontend
 #
 # Usage:
-#   ./docker-demo.sh                    # Start with local environment
-#   ./docker-demo.sh --env=production   # Start with production environment
+#   ./scripts/docker-demo.sh                    # Start with local environment
+#   ./scripts/docker-demo.sh --env=production   # Start with production environment
 #
 # Or directly with docker compose:
 #   docker compose -f docker-compose.demo.yml up          # Start all services
@@ -40,7 +40,8 @@ services:
     volumes:
       # PostgreSQL 18 default PGDATA: /var/lib/postgresql/data
       - postgres-data:/var/lib/postgresql/data
-      - ./postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
+      # NOTE: this compose file lives in dockerfiles/, so use ../ for repo-root paths.
+      - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
     # PostgreSQL 18 optimizations:
     # - io_method=worker: Async I/O for 2-3x I/O performance
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
@@ -86,7 +87,7 @@ services:
   # ============================================
   nexus:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     image: nexus-server:latest
     container_name: nexus-server
@@ -103,9 +104,12 @@ services:
       NEXUS_DATA_DIR: /app/data
 
       # Database configuration (PostgreSQL)
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nexus}
+      # IMPORTANT: Always use the Docker service name for container-to-container DB access.
+      # Do NOT use ${POSTGRES_HOST} here, because host env vars (e.g. POSTGRES_HOST=localhost)
+      # can leak into compose interpolation and break provisioning inside the container.
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # TokenManager database (for OAuth credentials)
-      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       # Increase pool size for provisioning with many files
       NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
       NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
@@ -181,16 +185,22 @@ services:
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
     volumes:
       # Persistent data directory (local backend) - shared with local development
-      - ./nexus-data:/app/data
+      - ../nexus-data:/app/data
       # Configuration files (includes config.demo.yaml for auto-mounting backends)
-      - ./configs:/app/configs:ro
+      - ../configs:/app/configs:ro
+      # Scripts directory (for development - allows testing script changes without rebuild)
+      # Comment out this line if you want to use the scripts baked into the image
+      # Note: This also mounts scripts/_core/ which contains shared utilities
+      # - ../scripts:/app/scripts:ro  # TEMPORARILY DISABLED FOR TESTING
+      # Uncomment below to also mount source code for testing nexus package changes:
+      # - ../src:/app/src:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
-      - ${GCS_CREDENTIALS_PATH:-./gcs-credentials.json}:/app/gcs-credentials.json:ro
+      - ../gcs-credentials.json:/app/gcs-credentials.json:ro
       # AWS credentials (auto-detected - see docker-start.sh)
       # Automatically finds credentials from: ~/.aws/credentials or AWS_CREDENTIALS_PATH
-      - ${AWS_CREDENTIALS_PATH:-./aws-credentials}:/app/aws-credentials:ro
-      - ${AWS_CONFIG_PATH:-./aws-config}:/app/aws-config:ro
+      - ${AWS_CREDENTIALS_PATH:-../aws-credentials}:/app/aws-credentials:ro
+      - ${AWS_CONFIG_PATH:-../aws-config}:/app/aws-config:ro
       # Docker socket for sandbox provider
       - /var/run/docker.sock:/var/run/docker.sock
     # Run as root to access Docker socket (required for sandbox provider)
@@ -262,7 +272,7 @@ services:
   # ============================================
   langgraph:
     build:
-      context: .
+      context: ..
       dockerfile: examples/langgraph/Dockerfile
     image: nexus-langgraph:latest
     container_name: nexus-langgraph
@@ -294,7 +304,7 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
     volumes:
       # Persist LangGraph dev history across container rebuilds and restarts
-      - ./examples/langgraph/.langgraph_api:/app/.langgraph_api
+      - ../examples/langgraph/.langgraph_api:/app/.langgraph_api
     ports:
       - "${LANGGRAPH_PORT:-2024}:2024"
     healthcheck:
@@ -316,7 +326,7 @@ services:
   # ============================================
   frontend:
     build:
-      context: ../nexus-frontend
+      context: ../../nexus-frontend
       dockerfile: Dockerfile
       args:
         # Browser URLs - use localhost for browser to access services
@@ -377,7 +387,7 @@ services:
       # - /data/cas/    = LOCAL backend CAS (content-addressable storage)
       # - /data/.cache/ = External connector L2 cache (GCS, S3, Gmail, etc.)
       # Note: Zoekt webserver needs write access for internal state
-      - ./nexus-data:/data
+      - ../nexus-data:/data
       # Persistent trigram index storage
       - zoekt-index:/index
     ports:
@@ -405,7 +415,7 @@ services:
       - zoekt-index  # Only runs with: docker compose --profile zoekt-index up
     volumes:
       # Content directories (need write for temp files)
-      - ./nexus-data:/data
+      - ../nexus-data:/data
       - zoekt-index:/index
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -515,4 +525,7 @@ volumes:
 # ============================================
 networks:
   nexus-network:
+    # Make the network name deterministic so sandboxes can join it.
+    # (The Nexus container uses NEXUS_DOCKER_NETWORK=nexus_nexus-network)
+    name: nexus_nexus-network
     driver: bridge

@@ -126,6 +126,14 @@ check_env_file() {
     source "$ENV_FILE"
     set +a
 
+    # Set default NEXUS_API_KEY if not provided (same as local-demo.sh)
+    # This ensures docker-entrypoint.sh can use it to create/register the admin key
+    if [ -z "${NEXUS_API_KEY:-}" ]; then
+        NEXUS_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        export NEXUS_API_KEY
+        echo "🔑 Using default admin API key (set NEXUS_API_KEY in .env to customize)"
+    fi
+
     # Load secrets file if in production mode
     if [ "$ENV_MODE" = "production" ] && [ -n "$ENV_SECRETS" ]; then
         if [ -f "$ENV_SECRETS" ]; then
@@ -312,7 +320,9 @@ run_provisioning() {
     # Provision admin user for default tenant using API
     echo "  Calling provision_user API for admin@default..."
     local RESPONSE
-    RESPONSE=$(curl -s -X POST "${NEXUS_URL}/api/nfs/provision_user" \
+    # Try API call first (requires valid API key)
+    echo "  Attempting API call to provision_user..."
+    RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${NEXUS_URL}/api/nfs/provision_user" \
         -H "Authorization: Bearer ${API_KEY}" \
         -H "Content-Type: application/json" \
         -d '{
@@ -325,8 +335,24 @@ run_provisioning() {
             "import_skills": true
         }' 2>&1)
 
-    # Check if the call succeeded
-    if echo "$RESPONSE" | grep -q '"result"'; then
+    HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+    BODY=$(echo "$RESPONSE" | head -n -1)
+
+    # If API call fails due to auth, fall back to script-based provisioning
+    if [ "$HTTP_CODE" = "401" ] || echo "$BODY" | grep -q "Invalid or missing API key"; then
+        echo "  ⚠️  API authentication failed, falling back to script-based provisioning..."
+        echo "  (This is expected if the API key doesn't exist in the database yet)"
+        docker exec \
+            -e NEXUS_API_KEY="$API_KEY" \
+            -e NEXUS_DATABASE_URL="postgresql://postgres:nexus@postgres:5432/nexus" \
+            -e NEXUS_DATA_DIR="/app/data" \
+            nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant default" \
+            && echo "✅ Provisioning completed (via script)" \
+            || echo "⚠️  Provisioning encountered errors (see container logs)"
+        return
+    fi
+    # Check if the API call succeeded
+    if echo "$BODY" | grep -q '"result"'; then
         echo "✅ Provisioning completed successfully"
         # Optionally show the result (pretty-printed if jq is available)
         if command -v jq >/dev/null 2>&1; then

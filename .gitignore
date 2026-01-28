@@ -185,6 +185,7 @@ examples/cli/
 
 # GCS credentials - never commit!
 gcs-credentials.json
+secret-manager-sa-key.json
 .env.railway
 aws-config
 aws-credentials

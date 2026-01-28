@@ -11,6 +11,7 @@ Issue #165: Migration Tools & Upgrade Paths
 from __future__ import annotations
 
 import hashlib
+import importlib
 import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -238,7 +239,9 @@ class DataMigrator:
         import time
 
         try:
-            from google.cloud import storage
+            # Dynamic import at runtime to avoid mypy errors if package not installed
+            # Type hints are provided via TYPE_CHECKING import at module level
+            storage = importlib.import_module("google.cloud.storage")
         except ImportError:
             return ImportResult(
                 errors=[

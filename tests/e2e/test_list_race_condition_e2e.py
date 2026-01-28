@@ -158,7 +158,10 @@ class TestListRaceConditionE2E:
             },
         )
         # provision_user might not be exposed as RPC - skip if not available
-        if "error" in provision_result and "not found" in str(provision_result.get("error", "")).lower():
+        if (
+            "error" in provision_result
+            and "not found" in str(provision_result.get("error", "")).lower()
+        ):
             pytest.skip("provision_user not available as RPC method")
 
         assert "error" not in provision_result, f"Provision failed: {provision_result}"
@@ -175,7 +178,7 @@ class TestListRaceConditionE2E:
                 {
                     "path": agent_dir,
                     "recursive": False,
-                    },
+                },
             )
 
             if "error" in list_result:
@@ -195,7 +198,7 @@ class TestListRaceConditionE2E:
                 "read",
                 {
                     "path": config_path,
-                    },
+                },
             )
 
             file_exists = "error" not in read_result
@@ -231,7 +234,7 @@ class TestListRaceConditionE2E:
                 {
                     "path": file_path,
                     "content": encode_bytes(f"content {i}"),
-                    },
+                },
             )
             assert "error" not in write_result, f"Write failed: {write_result}"
             created_files.append(f"file_{i}.txt")
@@ -281,7 +284,7 @@ class TestListRaceConditionE2E:
                 {
                     "path": test_dir,
                     "recursive": False,
-                    },
+                },
             )
             # Directory might not exist yet, that's OK
 
@@ -293,7 +296,7 @@ class TestListRaceConditionE2E:
                 {
                     "path": test_file,
                     "content": encode_bytes("new content"),
-                    },
+                },
             )
             assert "error" not in write_result, f"Write failed: {write_result}"
 
@@ -305,7 +308,7 @@ class TestListRaceConditionE2E:
                 {
                     "path": test_dir,
                     "recursive": False,
-                    },
+                },
             )
             assert "error" not in list_result, f"List failed: {list_result}"
 
@@ -371,7 +374,7 @@ class TestPushdownFallbackBehavior:
                 {
                     "path": f"{test_dir}/file_{i}.txt",
                     "content": encode_bytes(f"content {i}"),
-                    },
+                },
             )
             assert "error" not in write_result
 
@@ -384,7 +387,7 @@ class TestPushdownFallbackBehavior:
                 {
                     "path": test_dir,
                     "recursive": False,
-                    },
+                },
             )
             assert "error" not in list_result, f"List failed: {list_result}"
             files = parse_list_result(list_result)

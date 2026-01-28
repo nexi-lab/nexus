@@ -646,7 +646,11 @@ class NexusFSSearchMixin:
 
             # Issue #1147: Track revision for consistency check across both fast and slow paths
             _revision_before: int | None = None
-            _rebac_manager = getattr(self._permission_enforcer, "rebac_manager", None) if self._permission_enforcer else None
+            _rebac_manager = (
+                getattr(self._permission_enforcer, "rebac_manager", None)
+                if self._permission_enforcer
+                else None
+            )
 
             logger.info(
                 f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
@@ -769,12 +773,18 @@ class NexusFSSearchMixin:
                     and not _pushdown_disabled
                 ):
                     _pushdown_start = _time.time()
-                    tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
+                    tiger_cache = (
+                        getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
+                    )
                     if tiger_cache is not None:
                         try:
                             # Issue #1147: Get revision before bitmap for consistency check
                             # Only get if not already fetched during fast path attempt
-                            if _revision_before is None and _rebac_manager and hasattr(_rebac_manager, "_get_tenant_revision_for_grant"):
+                            if (
+                                _revision_before is None
+                                and _rebac_manager
+                                and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                            ):
                                 _revision_before = _rebac_manager._get_tenant_revision_for_grant(
                                     list_tenant_id or "default"
                                 )

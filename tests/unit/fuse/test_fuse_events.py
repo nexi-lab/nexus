@@ -71,9 +71,7 @@ class TestFUSEEventFiring:
         fuse_ops.set_event_loop(event_loop)
         assert fuse_ops._event_loop is event_loop
 
-    def test_fire_event_no_loop_does_not_crash(
-        self, fuse_ops: NexusFUSEOperations
-    ) -> None:
+    def test_fire_event_no_loop_does_not_crash(self, fuse_ops: NexusFUSEOperations) -> None:
         """Test _fire_event doesn't crash without event loop."""
         # Should not raise even without event loop
         fuse_ops._fire_event(FileEventType.FILE_WRITE, "/test/file.txt", size=100)
@@ -183,9 +181,7 @@ class TestFUSEEventFiring:
             assert call_args[0][1] == "/test.txt"
             assert call_args[1]["size"] == 5
 
-    def test_events_disabled_does_not_fire(
-        self, mock_nexus_fs: MagicMock
-    ) -> None:
+    def test_events_disabled_does_not_fire(self, mock_nexus_fs: MagicMock) -> None:
         """Test events not fired when disabled."""
         ops = NexusFUSEOperations(
             nexus_fs=mock_nexus_fs,

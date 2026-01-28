@@ -28,9 +28,11 @@ services:
       - NEXUS_OAUTH_ENCRYPTION_KEY=${NEXUS_OAUTH_ENCRYPTION_KEY:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_ID=${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
       - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+      # Tiger Cache - disabled by default for simpler debugging
+      - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
     volumes:
-      # Persistent data directory
-      - nexus-data:/app/data
+      # Persistent data directory - use bind mount to match docker-compose.demo.yml
+      - ./nexus-data:/app/data
       # Docker socket for sandbox container management
       - /var/run/docker.sock:/var/run/docker.sock
       # Optional: Mount GCS credentials

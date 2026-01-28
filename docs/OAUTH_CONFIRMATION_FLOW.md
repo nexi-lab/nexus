@@ -440,8 +440,8 @@ After updating the code, restart the backend:
 
 ```bash
 cd nexus
-./local-demo.sh --stop
-./local-demo.sh --start --no-langgraph
+./scripts/local-demo.sh --stop
+./scripts/local-demo.sh --start --no-langgraph
 ```
 
 Or if using manual start:

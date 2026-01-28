@@ -32,7 +32,7 @@ WORKDIR /build
 COPY pyproject.toml uv.lock* README.md Cargo.toml ./
 COPY src/ ./src/
 COPY alembic/ ./alembic/
-COPY alembic.ini ./
+COPY alembic/alembic.ini ./alembic.ini
 
 # Install dependencies to system (not editable for multi-stage build)
 # Increase timeout for large packages like onnxruntime (14.5MB)
@@ -80,16 +80,19 @@ RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || ec
 WORKDIR /app
 COPY src/ ./src/
 COPY alembic/ ./alembic/
-COPY alembic.ini pyproject.toml README.md ./
+COPY alembic/alembic.ini pyproject.toml README.md ./
 COPY configs/ ./configs/
-# Copy scripts (includes provisioning)
+# Copy scripts (includes provisioning and entrypoint helpers)
 COPY scripts/ ./scripts/
+# Ensure Python helper scripts are executable inside the image
+RUN chmod +x /app/scripts/*.py || true
 # Include bundled skills and data assets
 COPY data/ ./data/
-COPY docker-entrypoint.sh /usr/local/bin/
+COPY dockerfiles/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY dockerfiles/entrypoint-helpers.sh /usr/local/bin/entrypoint-helpers.sh
 
-# Make entrypoint executable
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Make entrypoint and helpers executable
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/entrypoint-helpers.sh
 
 # Create non-root user for security
 RUN useradd -r -m -u 1000 -s /bin/bash nexus

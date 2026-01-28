@@ -67,8 +67,8 @@ export NEXUS_RATE_LIMIT_DISABLED="true"  # Disable rate limiting for benchmarks
 
 # Use local-demo.sh --init with custom postgres URL
 # This will: stop services, clear data dir, create schema, start server
-echo "  Starting server with: ./local-demo.sh --init --postgres-url \"$BENCHMARK_DB\""
-AUTO_INIT=true ./local-demo.sh --init --postgres-url "$BENCHMARK_DB" --no-ui --no-langgraph > /tmp/nexus-benchmark-init.log 2>&1 &
+echo "  Starting server with: ./scripts/local-demo.sh --init --postgres-url \"$BENCHMARK_DB\""
+AUTO_INIT=true ./scripts/local-demo.sh --init --postgres-url "$BENCHMARK_DB" --no-ui --no-langgraph > /tmp/nexus-benchmark-init.log 2>&1 &
 INIT_PID=$!
 
 # Wait for initialization to complete
@@ -151,7 +151,7 @@ echo ""
 # Cleanup: Stop server
 echo "Stopping benchmark server..."
 cd "$NEXUS_ROOT"
-./local-demo.sh --stop 2>&1 | grep -v "No such file" || true
+./scripts/local-demo.sh --stop 2>&1 | grep -v "No such file" || true
 echo "  ✓ Server stopped"
 echo ""
 

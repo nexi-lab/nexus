@@ -529,17 +529,27 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
     api_key: str | None = env_vars.get("NEXUS_API_KEY")
 
     # Get database URL
+    # IMPORTANT: Inside Docker containers, always use 'postgres' service name, not 'localhost'
     database_url = os.getenv("NEXUS_DATABASE_URL")
     if not database_url:
         # Try to construct from common defaults
         if "NEXUS_DATABASE_URL" in env_vars:
             database_url = env_vars["NEXUS_DATABASE_URL"]
         else:
-            print("  ⚠  NEXUS_DATABASE_URL not set, cannot verify/create API key")
-            if api_key:
-                print(f"  ℹ  Using API key from {env_file}: {api_key[:20]}...")
-                return api_key
-            return None
+            # Default to postgres service name (works in Docker)
+            database_url = "postgresql://postgres:nexus@postgres:5432/nexus"
+            print(
+                "  ℹ  NEXUS_DATABASE_URL not set, using default: postgresql://...@postgres:5432/nexus"
+            )
+
+    # Safety check: if database_url contains localhost, replace with postgres (Docker service name)
+    if database_url and "localhost" in database_url:
+        print(
+            "  ⚠  WARNING: Database URL contains 'localhost', replacing with 'postgres' for Docker"
+        )
+        database_url = database_url.replace("localhost", "postgres").replace(
+            "127.0.0.1", "postgres"
+        )
 
     # At this point database_url is guaranteed to be a string
     assert database_url is not None

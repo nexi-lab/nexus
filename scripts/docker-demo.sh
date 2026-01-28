@@ -2,17 +2,18 @@
 # docker-demo.sh - Start Nexus services using Docker Compose
 #
 # Usage:
-#   ./docker-demo.sh                    # Start all services (detached)
-#   ./docker-demo.sh --build            # Rebuild images and start
-#   ./docker-demo.sh --stop             # Stop all services
-#   ./docker-demo.sh --restart          # Restart all services
-#   ./docker-demo.sh --logs             # View logs (follow mode)
-#   ./docker-demo.sh --status           # Check service status
-#   ./docker-demo.sh --clean            # Stop and remove all data (volumes)
-#   ./docker-demo.sh --init             # Initialize (clean + build + start)
-#   ./docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
-#   ./docker-demo.sh --init --yes       # Initialize without confirmation (CI)
-#   ./docker-demo.sh --env=production   # Use production environment files
+#   ./scripts/docker-demo.sh                    # Start all services (detached)
+#   ./scripts/docker-demo.sh --build            # Rebuild images and start
+#   ./scripts/docker-demo.sh --stop             # Stop all services
+#   ./scripts/docker-demo.sh --restart          # Restart all services
+#   ./scripts/docker-demo.sh --logs             # View logs (follow mode)
+#   ./scripts/docker-demo.sh --status           # Check service status
+#   ./scripts/docker-demo.sh --clean            # Stop and remove all data (volumes)
+#   ./scripts/docker-demo.sh --init             # Initialize (clean + start; optional rebuild via --rebuild)
+#   ./scripts/docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./scripts/docker-demo.sh --init --rebuild   # Initialize + rebuild images (runtime + services)
+#   ./scripts/docker-demo.sh --init --yes       # Initialize without confirmation (CI)
+#   ./scripts/docker-demo.sh --env=production   # Use production environment files
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
@@ -23,12 +24,14 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
 
-COMPOSE_FILE="docker-compose.demo.yml"
+COMPOSE_FILE="dockerfiles/docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
 SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations
+REBUILD=false  # Default: do NOT rebuild images during --init
 
 # ============================================
 # Banner
@@ -124,6 +127,14 @@ check_env_file() {
     set -a  # Auto-export all variables
     source "$ENV_FILE"
     set +a
+
+    # Set default NEXUS_API_KEY if not provided (same as local-demo.sh)
+    # This ensures docker-entrypoint.sh can use it to create/register the admin key
+    if [ -z "${NEXUS_API_KEY:-}" ]; then
+        NEXUS_API_KEY="sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        export NEXUS_API_KEY
+        echo "🔑 Using default admin API key (set NEXUS_API_KEY in .env to customize)"
+    fi
 
     # Load secrets file if in production mode
     if [ "$ENV_MODE" = "production" ] && [ -n "$ENV_SECRETS" ]; then
@@ -224,7 +235,8 @@ check_aws_credentials() {
 check_frontend_repo() {
     echo "🔍 Checking for nexus-frontend repository..."
 
-    FRONTEND_DIR="../nexus-frontend"
+    # Clone to same level as nexus directory (not inside it)
+    FRONTEND_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)/nexus-frontend"
 
     if [ -d "$FRONTEND_DIR" ]; then
         echo "✅ Found nexus-frontend at: $FRONTEND_DIR"
@@ -290,7 +302,7 @@ ensure_skills_available() {
 }
 
 run_provisioning() {
-    echo "📦 Running provisioning inside nexus-server..."
+    echo "📦 Running provisioning via API..."
 
     # Get the admin API key from the container (file first, then logs fallback)
     local API_KEY=""
@@ -304,14 +316,36 @@ run_provisioning() {
         return
     fi
 
-    # Run provisioning in embedded mode (no NEXUS_URL) so it talks directly to DB/files
-    docker exec \
-        -e NEXUS_API_KEY="$API_KEY" \
-        -e NEXUS_DATABASE_URL="${NEXUS_DATABASE_URL:-postgresql://postgres:nexus@postgres:5432/nexus}" \
-        -e NEXUS_DATA_DIR="/app/data" \
-        nexus-server sh -c "unset NEXUS_URL && cd /app && python3 scripts/provision_namespace.py --tenant default" \
-        && echo "✅ Provisioning completed" \
-        || echo "⚠️  Provisioning encountered errors (see container logs)"
+    # Provision admin user for default tenant using API
+    echo "  Calling provision_user API for admin@default..."
+    local RESPONSE
+    # Try API call first (requires valid API key); include headers so we can grep for HTTP/1.1 200 OK
+    echo "  Attempting API call to provision_user with API key: $API_KEY on url: $NEXUS_URL"
+    RESPONSE=$(curl -s -i -X POST "http://localhost:2026/api/nfs/provision_user" \
+        -H "Authorization: Bearer ${API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "provision_user",
+            "params": {
+                "user_id": "admin",
+                "email": "",
+                "display_name": "Admin User",
+                "tenant_id": "default",
+                "create_api_key": false,
+                "create_agents": true,
+                "import_skills": true
+            }
+        }' 2>&1)
+
+    if echo "$RESPONSE" | grep -q "HTTP/1.1 200 OK"; then
+        echo "✅ Provisioning completed successfully"
+    else
+        echo "❌ provision_user failed (did not see HTTP/1.1 200 OK)"
+        echo "$RESPONSE"
+        exit 1
+    fi
 }
 
 clean_all_data() {
@@ -552,9 +586,17 @@ cmd_init() {
     echo ""
     echo "This will:"
     echo "  1. Clean all data (containers, volumes, sandboxes)"
-    echo "  2. Build base runtime image for sandboxes"
+    if [ "$REBUILD" = true ]; then
+        echo "  2. Build base runtime image for sandboxes"
+    else
+        echo "  2. (Skip) Build base runtime image for sandboxes (use --rebuild to enable)"
+    fi
     echo "  3. Build all template images from config (ml-heavy, web-dev, etc.)"
-    echo "  4. Rebuild all service Docker images"
+    if [ "$REBUILD" = true ]; then
+        echo "  4. Rebuild all service Docker images"
+    else
+        echo "  4. (Skip) Rebuild all service Docker images (use --rebuild to enable)"
+    fi
     echo "  5. Start all services fresh"
     if [ "$SKIP_PERMISSIONS" = true ]; then
         echo "  (Skipping permission setup and disabling runtime permission checks)"
@@ -580,7 +622,15 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
-    ./dockerfiles/build.sh
+    if [ "$REBUILD" = true ]; then
+        if [ -x "${PROJECT_ROOT}/dockerfiles/build.sh" ]; then
+            "${PROJECT_ROOT}/dockerfiles/build.sh"
+        else
+            echo "⚠️  ${PROJECT_ROOT}/dockerfiles/build.sh not found or not executable; skipping"
+        fi
+    else
+        echo "⏭️  Skipping runtime image rebuild (use --rebuild to enable)"
+    fi
 
     echo ""
     echo "🔨 Step 3/5: Building template images from config..."
@@ -595,7 +645,11 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 4/5: Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    if [ "$REBUILD" = true ]; then
+        docker compose -f "$COMPOSE_FILE" build
+    else
+        echo "⏭️  Skipping service image rebuild (use --rebuild to enable)"
+    fi
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."
@@ -711,6 +765,10 @@ while [ $# -gt 0 ]; do
             SKIP_PERMISSIONS=true
             shift
             ;;
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
         --yes|-y)
             SKIP_CONFIRM=true
             shift
@@ -764,7 +822,7 @@ case "$COMMAND" in
         ;;
     --help|-h)
         print_banner
-        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--yes]"
+        echo "Usage: $0 [OPTION] [--env=MODE] [--skip_permission] [--rebuild] [--yes]"
         echo ""
         echo "Options:"
         echo "  (none)          Start all services (detached)"
@@ -774,9 +832,10 @@ case "$COMMAND" in
         echo "  --logs          View logs (follow mode)"
         echo "  --status        Check service status"
         echo "  --clean         Stop and remove all data (volumes)"
-        echo "  --init          Initialize (clean + build + start)"
+        echo "  --init          Initialize (clean + start; add --rebuild to rebuild images)"
         echo "  --env=MODE      Set environment mode (local|production)"
         echo "  --skip_permission  Skip permission setup and disable runtime checks (use with --init)"
+        echo "  --rebuild       Rebuild runtime + service images (use with --init)"
         echo "  --yes, -y       Skip confirmation prompts (for CI/automation)"
         echo "  --help, -h      Show this help message"
         echo ""
@@ -789,6 +848,7 @@ case "$COMMAND" in
         echo "  ./docker-start.sh --env=production   # Start with production env"
         echo "  ./docker-start.sh --build --env=production  # Rebuild with production env"
         echo "  ./docker-start.sh --init --skip_permission  # Initialize with permissions disabled"
+        echo "  ./docker-start.sh --init --rebuild   # Initialize and rebuild images"
         echo "  ./docker-start.sh --init --yes       # Initialize without confirmation (CI)"
         echo ""
         show_services

@@ -16,7 +16,7 @@ docker compose -f docker-compose.demo.yml up postgres -d
 Or use the full demo stack:
 
 ```bash
-./docker-demo.sh
+./scripts/docker-demo.sh
 ```
 
 ### Running Tests

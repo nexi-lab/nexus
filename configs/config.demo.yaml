@@ -37,15 +37,16 @@ backends:
   # GCS Connector backend for external bucket access
   # This provides direct path mapping to a GCS bucket, allowing external tools
   # to browse the bucket as if it were a local filesystem.
-  # - type: gcs_connector
-  #   mount_point: /mnt/gcs_demo
-  #   config:
-  #     bucket: nexus-connector-test-1763281655
-  #     project_id: nexi-lab-888
-  #     prefix: nexus-demo
-  #   priority: 10
-  #   readonly: false
-  #   description: "GCS test bucket for Nexus connector demo"
+  - type: gcs_connector
+    # For single-tenant demo, include tenant prefix so sync_service can infer tenant_id
+    mount_point: /tenant:default/connector/gcs_demo
+    config:
+      bucket: nexus-connector-test-1763281655
+      project_id: nexi-lab-888
+      prefix: nexus-demo
+    priority: 10
+    readonly: false
+    description: "GCS test bucket for Nexus connector demo"
 
   # AWS S3 Connector backend for external bucket access
   # This provides direct path mapping to an S3 bucket, allowing external tools

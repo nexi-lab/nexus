@@ -132,6 +132,13 @@ scripts/*.py
 !scripts/init_database.py
 # Keep provisioning script for docker-start --init
 !scripts/provision_namespace.py
+# Keep Docker entrypoint helper scripts (used by docker-entrypoint.sh)
+!scripts/check_api_key.py
+!scripts/create_admin_key.py
+!scripts/check_semantic_search_config.py
+!scripts/init_semantic_search.py
+!scripts/parse_db_url.py
+!scripts/load_saved_mounts.py
 *.sh
 # But keep docker-entrypoint.sh for container startup
 !docker-entrypoint.sh

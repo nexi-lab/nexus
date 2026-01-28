@@ -69,8 +69,8 @@ theme:
     view: material/eye
 
   # Logo and favicon
-  logo: assets/logo_pure.png
-  favicon: assets/logo_pure.png
+  logo: assets/logo.png
+  favicon: assets/logo.png
 
   # Font
   font:

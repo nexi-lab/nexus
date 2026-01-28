@@ -64,7 +64,7 @@ COPY src/ ./nexus-src/src/
 COPY rust/ ./nexus-src/rust/
 COPY Cargo.lock ./nexus-src/
 COPY alembic/ ./nexus-src/alembic/
-COPY alembic.ini ./nexus-src/
+COPY alembic/alembic.ini ./nexus-src/alembic.ini
 
 # Install Nexus CLI with FUSE support (from local source with latest fix)
 # This allows the sandbox to mount Nexus filesystems via FUSE

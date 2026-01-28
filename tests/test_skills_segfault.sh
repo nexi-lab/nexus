@@ -11,7 +11,7 @@ ADMIN_KEY="${ADMIN_KEY:-sk-default_admin_d38a7427_244c5f756dcc064eea6e68a64aa211
 
 echo "Step 1: Verify server is running..."
 if ! curl -s http://localhost:2026/health > /dev/null 2>&1; then
-    echo "❌ Server is not running. Start it with: ./local-demo.sh --start --sqlite"
+    echo "❌ Server is not running. Start it with: ./scripts/local-demo.sh --start --sqlite"
     exit 1
 fi
 echo "✅ Server is running"

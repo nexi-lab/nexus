@@ -84,7 +84,6 @@ class TestConcurrentRaceCondition:
 
         num_files = 20
         num_list_ops = 50
-        race_detected = []
 
         def write_file(file_num: int) -> dict[str, Any]:
             """Write a file and return its name."""
@@ -152,7 +151,7 @@ class TestConcurrentRaceCondition:
         min_count = min(list_counts) if list_counts else 0
         max_count = max(list_counts) if list_counts else 0
 
-        print(f"\nResults:")
+        print("\nResults:")
         print(f"  Successful writes: {successful_writes}/{num_files}")
         print(f"  Final file count: {final_count}")
         print(f"  List count range: {min_count} - {max_count}")
@@ -241,7 +240,7 @@ class TestConcurrentRaceCondition:
                     {
                         "user_id": test_user,
                         "email": f"{test_user}@test.com",
-                        "display_name": f"Race Test User",
+                        "display_name": "Race Test User",
                         "create_agents": True,
                         "import_skills": False,
                     },

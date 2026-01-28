@@ -213,7 +213,9 @@ ensure_core_python_env() {
 
 # Ensure frontend deps are installed once before running dev server
 ensure_frontend_ready() {
-    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
+    # Clone to same level as nexus directory (not inside it)
+    local NEXUS_PARENT_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)"
+    local FRONTEND_DIR="${NEXUS_PARENT_DIR}/nexus-frontend"
     local FRONTEND_URL="${FRONTEND_REPO_URL:-https://github.com/nexi-lab/nexus-frontend.git}"
 
     if [ ! -d "$FRONTEND_DIR" ]; then
@@ -248,7 +250,9 @@ ensure_frontend_ready() {
 
 # Ensure LangGraph repo is cloned and dependencies are installed
 ensure_langgraph_env() {
-    local LANGGRAPH_DIR="${PROJECT_ROOT}/../nexus-langgraph"
+    # Clone to same level as nexus directory (not inside it)
+    local NEXUS_PARENT_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)"
+    local LANGGRAPH_DIR="${NEXUS_PARENT_DIR}/nexus-langgraph"
     local LANGGRAPH_URL="${LANGGRAPH_REPO_URL:-https://github.com/nexi-lab/nexus-langgraph.git}"
     local python_bin="${PYTHON:-python3}"
 
@@ -580,7 +584,9 @@ ensure_postgres_running() {
 
 # Function to start the frontend
 start_frontend() {
-    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
+    # Use same level as nexus directory (not inside it)
+    local NEXUS_PARENT_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)"
+    local FRONTEND_DIR="${NEXUS_PARENT_DIR}/nexus-frontend"
 
     ensure_frontend_ready || return 1
 
@@ -602,7 +608,9 @@ start_frontend() {
 
 # Function to start langgraph
 start_langgraph() {
-    local LANGGRAPH_DIR="${PROJECT_ROOT}/../nexus-langgraph"
+    # Use same level as nexus directory (not inside it)
+    local NEXUS_PARENT_DIR="$(cd "${PROJECT_ROOT}/.." && pwd)"
+    local LANGGRAPH_DIR="${NEXUS_PARENT_DIR}/nexus-langgraph"
 
     ensure_docker_for_langgraph
     ensure_langgraph_env || return 1

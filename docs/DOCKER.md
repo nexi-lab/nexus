@@ -97,31 +97,31 @@ The `docker-demo.sh` script provides a convenient interface to manage the Docker
 
 ```bash
 # Start all services (default)
-./docker-demo.sh
+./scripts/docker-demo.sh
 
 # Rebuild images and start
-./docker-demo.sh --build
+./scripts/docker-demo.sh --build
 
 # View logs in real-time
-./docker-demo.sh --logs
+./scripts/docker-demo.sh --logs
 
 # Check service status
-./docker-demo.sh --status
+./scripts/docker-demo.sh --status
 
 # Restart all services
-./docker-demo.sh --restart
+./scripts/docker-demo.sh --restart
 
 # Stop all services
-./docker-demo.sh --stop
+./scripts/docker-demo.sh --stop
 
 # Clean everything (remove volumes/data)
-./docker-demo.sh --clean
+./scripts/docker-demo.sh --clean
 
 # Full initialization (clean + build + start)
-./docker-demo.sh --init
+./scripts/docker-demo.sh --init
 
 # Show help
-./docker-demo.sh --help
+./scripts/docker-demo.sh --help
 ```
 
 ## Docker Compose Commands
@@ -525,7 +525,7 @@ sed -i 's/\r$//' docker-entrypoint.sh
 sed -i 's/\r$//' docker-demo.sh
 
 # Then rebuild
-./docker-demo.sh --build
+./scripts/docker-demo.sh --build
 ```
 
 c) **Prevention**: Configure Git to not convert line endings:

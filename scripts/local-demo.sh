@@ -5,8 +5,8 @@
 # iteration while keeping other services (postgres, langgraph, frontend) in Docker.
 #
 # Usage:
-#   ./local-demo.sh --start    # Start the local server
-#   ./local-demo.sh --stop     # Stop the local server
+#   ./scripts/local-demo.sh --start    # Start the local server
+#   ./scripts/local-demo.sh --stop     # Stop the local server
 
 set -e
 
@@ -19,7 +19,8 @@ NC='\033[0m' # No Color
 
 # Load configuration from .env file (same as docker-demo.sh)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${SCRIPT_DIR}/.env"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${PROJECT_ROOT}/.env"
 
 if [ -f "$ENV_FILE" ]; then
     # Save any already-set variables before loading .env
@@ -48,13 +49,13 @@ if [ -f "$ENV_FILE" ]; then
     # Set defaults for variables that might not be in .env
     NEXUS_DATA_DIR="${NEXUS_DATA_DIR:-./nexus-data-local}"
     POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-nexus-postgres}"
-elif [ -f "${SCRIPT_DIR}/.env.example" ]; then
+    elif [ -f "${PROJECT_ROOT}/.env.example" ]; then
     echo -e "${YELLOW}⚠️  No .env file found, using .env.example${NC}"
     echo "   💡 Tip: Create .env for your personal config"
     echo "   Run: cp .env.example .env"
     echo ""
     set -a
-    source "${SCRIPT_DIR}/.env.example"
+    source "${PROJECT_ROOT}/.env.example"
     set +a
 
     # Construct database URL from primitives
@@ -83,7 +84,7 @@ else
 fi
 
 # Set sane defaults (explicit paths, no legacy overrides)
-DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${SCRIPT_DIR}/nexus-data-local}"
+DEFAULT_DATA_DIR="${NEXUS_DATA_DIR:-${PROJECT_ROOT}/nexus-data-local}"
 DEFAULT_POSTGRES_URL="${POSTGRES_URL:-postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}}"
 
 # Function to get data directory path
@@ -192,7 +193,7 @@ parse_args() {
 
 # Ensure core Python virtual environment exists and nexus is installed
 ensure_core_python_env() {
-    local venv_path="${SCRIPT_DIR}/.venv"
+    local venv_path="${PROJECT_ROOT}/.venv"
     local python_bin="${PYTHON:-python3}"
 
     if [ ! -d "$venv_path" ]; then
@@ -206,13 +207,13 @@ ensure_core_python_env() {
     if ! python -c "import nexus" >/dev/null 2>&1; then
         echo -e "${YELLOW}Installing nexus in editable mode (first-time setup)...${NC}"
         pip install --upgrade pip
-        pip install -e "${SCRIPT_DIR}"
+        pip install -e "${PROJECT_ROOT}"
     fi
 }
 
 # Ensure frontend deps are installed once before running dev server
 ensure_frontend_ready() {
-    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
     local FRONTEND_URL="${FRONTEND_REPO_URL:-https://github.com/nexi-lab/nexus-frontend.git}"
 
     if [ ! -d "$FRONTEND_DIR" ]; then
@@ -247,7 +248,7 @@ ensure_frontend_ready() {
 
 # Ensure LangGraph repo is cloned and dependencies are installed
 ensure_langgraph_env() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/../nexus-langgraph"
+    local LANGGRAPH_DIR="${PROJECT_ROOT}/../nexus-langgraph"
     local LANGGRAPH_URL="${LANGGRAPH_REPO_URL:-https://github.com/nexi-lab/nexus-langgraph.git}"
     local python_bin="${PYTHON:-python3}"
 
@@ -373,9 +374,9 @@ ensure_docker_sandbox_image() {
 
     echo -e "${YELLOW}Docker image '${image}' not found.${NC}"
     # Prefer dockerfiles/build.sh if present to build runtime image (matches docker-demo.sh)
-    if [ -x "${SCRIPT_DIR}/dockerfiles/build.sh" ]; then
+    if [ -x "${PROJECT_ROOT}/dockerfiles/build.sh" ]; then
         echo -e "${YELLOW}Building sandbox runtime via dockerfiles/build.sh ...${NC}"
-        if "${SCRIPT_DIR}/dockerfiles/build.sh"; then
+        if "${PROJECT_ROOT}/dockerfiles/build.sh"; then
             echo -e "${GREEN}✓ Built sandbox runtime image via dockerfiles/build.sh${NC}"
             docker image inspect "${image}" >/dev/null 2>&1 && return 0
             echo -e "${YELLOW}Build succeeded but image '${image}' not visible in this Docker context.${NC}"
@@ -384,13 +385,13 @@ ensure_docker_sandbox_image() {
         fi
     fi
 
-    echo -e "${YELLOW}Building '${image}' from ${SCRIPT_DIR}/Dockerfile...${NC}"
-    if docker build -t "${image}" -f "${SCRIPT_DIR}/Dockerfile" "${SCRIPT_DIR}"; then
+    echo -e "${YELLOW}Building '${image}' from ${PROJECT_ROOT}/Dockerfile...${NC}"
+    if docker build -t "${image}" -f "${PROJECT_ROOT}/Dockerfile" "${PROJECT_ROOT}"; then
         echo -e "${GREEN}✓ Built Docker image '${image}'${NC}"
     else
         echo -e "${RED}✗ Failed to build Docker image '${image}'${NC}"
         echo "  You can build manually with:"
-        echo "    docker build -t ${image} -f ${SCRIPT_DIR}/Dockerfile ${SCRIPT_DIR}"
+        echo "    docker build -t ${image} -f ${PROJECT_ROOT}/Dockerfile ${PROJECT_ROOT}"
         return 1
     fi
 
@@ -418,8 +419,8 @@ check_port_2026_available() {
             done
             echo ""
             echo "Stop the server first using one of these commands:"
-            echo "   ./local-demo.sh --stop              # Stop local Nexus server"
-            echo "   ./docker-demo.sh --stop             # Stop Docker-based server"
+            echo "   ./scripts/local-demo.sh --stop              # Stop local Nexus server"
+            echo "   ./scripts/docker-demo.sh --stop             # Stop Docker-based server"
             echo ""
             echo "Or manually kill the process(es):"
             for PID in $PIDS; do
@@ -486,10 +487,50 @@ ensure_postgres_running() {
     if ! docker ps | grep -q "nexus.*postgres"; then
         echo -e "${YELLOW}PostgreSQL container not running, starting...${NC}"
 
+        # Check if port is already in use
+        if lsof -i :${DB_PORT} > /dev/null 2>&1 || netstat -an 2>/dev/null | grep -q ":${DB_PORT}.*LISTEN"; then
+            echo -e "${YELLOW}Port ${DB_PORT} is already in use.${NC}"
+
+            # Check if it's another Docker container using the port
+            CONFLICTING_CONTAINER=$(docker ps --format '{{.Names}}' --filter "publish=${DB_PORT}" | head -1)
+            if [ -n "$CONFLICTING_CONTAINER" ]; then
+                echo -e "${YELLOW}Port ${DB_PORT} is used by container: ${CONFLICTING_CONTAINER}${NC}"
+                if [ "$CONFLICTING_CONTAINER" = "${CONTAINER_NAME}" ]; then
+                    echo "Container exists but may be in a bad state. Attempting to remove and recreate..."
+                    docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+                else
+                    echo -e "${RED}ERROR: Port ${DB_PORT} is already allocated by container '${CONFLICTING_CONTAINER}'${NC}"
+                    echo ""
+                    echo "Please either:"
+                    echo "  1. Stop the conflicting container: docker stop ${CONFLICTING_CONTAINER}"
+                    echo "  2. Use a different port: POSTGRES_PORT=5433 $0 --start"
+                    return 1
+                fi
+            else
+                echo -e "${RED}ERROR: Port ${DB_PORT} is already allocated by a non-Docker process${NC}"
+                echo ""
+                echo "Please either:"
+                echo "  1. Stop the process using port ${DB_PORT}"
+                echo "  2. Use a different port: POSTGRES_PORT=5433 $0 --start"
+                return 1
+            fi
+        fi
+
         # Check if container exists but is stopped
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo "Starting existing container: ${CONTAINER_NAME}"
-            docker start ${CONTAINER_NAME}
+            if ! docker start ${CONTAINER_NAME} 2>/dev/null; then
+                echo -e "${YELLOW}Failed to start existing container. Removing and recreating...${NC}"
+                docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+                # Fall through to create new container
+            else
+                # Successfully started, wait for it to be ready
+                sleep 2
+                if docker exec ${CONTAINER_NAME} pg_isready -U ${DB_USER} > /dev/null 2>&1; then
+                    echo -e "${GREEN}✓ PostgreSQL container started successfully${NC}"
+                    return 0
+                fi
+            fi
         else
             # Create new container
             echo "Creating new PostgreSQL container: ${CONTAINER_NAME}"
@@ -539,7 +580,7 @@ ensure_postgres_running() {
 
 # Function to start the frontend
 start_frontend() {
-    local FRONTEND_DIR="${SCRIPT_DIR}/../nexus-frontend"
+    local FRONTEND_DIR="${PROJECT_ROOT}/../nexus-frontend"
 
     ensure_frontend_ready || return 1
 
@@ -561,7 +602,7 @@ start_frontend() {
 
 # Function to start langgraph
 start_langgraph() {
-    local LANGGRAPH_DIR="${SCRIPT_DIR}/../nexus-langgraph"
+    local LANGGRAPH_DIR="${PROJECT_ROOT}/../nexus-langgraph"
 
     ensure_docker_for_langgraph
     ensure_langgraph_env || return 1
@@ -1023,14 +1064,13 @@ init_database() {
 
     # Run database initialization script
     echo "📊 Running database initialization..."
-    cd "$(dirname "$0")"
 
-    if [ ! -f "scripts/init_database.py" ]; then
-        echo -e "${RED}ERROR: scripts/init_database.py not found${NC}"
+    if [ ! -f "${SCRIPT_DIR}/init_database.py" ]; then
+        echo -e "${RED}ERROR: ${SCRIPT_DIR}/init_database.py not found${NC}"
         exit 1
     fi
 
-    python3 scripts/init_database.py
+    python3 "${SCRIPT_DIR}/init_database.py"
 
     if [ $? -ne 0 ]; then
         echo ""
@@ -1048,7 +1088,7 @@ init_database() {
     # Create admin user and API key using the extracted Python script
     # Always use "system" tenant for admin API keys created via --init
     TENANT_ID="system"
-    python3 "${SCRIPT_DIR}/scripts/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
+    python3 "${SCRIPT_DIR}/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Failed to create admin API key${NC}"

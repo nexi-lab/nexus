@@ -2,17 +2,17 @@
 # docker-demo.sh - Start Nexus services using Docker Compose
 #
 # Usage:
-#   ./docker-demo.sh                    # Start all services (detached)
-#   ./docker-demo.sh --build            # Rebuild images and start
-#   ./docker-demo.sh --stop             # Stop all services
-#   ./docker-demo.sh --restart          # Restart all services
-#   ./docker-demo.sh --logs             # View logs (follow mode)
-#   ./docker-demo.sh --status           # Check service status
-#   ./docker-demo.sh --clean            # Stop and remove all data (volumes)
-#   ./docker-demo.sh --init             # Initialize (clean + build + start)
-#   ./docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
-#   ./docker-demo.sh --init --yes       # Initialize without confirmation (CI)
-#   ./docker-demo.sh --env=production   # Use production environment files
+#   ./scripts/docker-demo.sh                    # Start all services (detached)
+#   ./scripts/docker-demo.sh --build            # Rebuild images and start
+#   ./scripts/docker-demo.sh --stop             # Stop all services
+#   ./scripts/docker-demo.sh --restart          # Restart all services
+#   ./scripts/docker-demo.sh --logs             # View logs (follow mode)
+#   ./scripts/docker-demo.sh --status           # Check service status
+#   ./scripts/docker-demo.sh --clean            # Stop and remove all data (volumes)
+#   ./scripts/docker-demo.sh --init             # Initialize (clean + build + start)
+#   ./scripts/docker-demo.sh --init --skip_permission  # Initialize with permissions disabled
+#   ./scripts/docker-demo.sh --init --yes       # Initialize without confirmation (CI)
+#   ./scripts/docker-demo.sh --env=production   # Use production environment files
 #
 # Services:
 #   - postgres:    PostgreSQL database (port 5432)
@@ -23,9 +23,10 @@
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+cd "$PROJECT_ROOT"
 
-COMPOSE_FILE="docker-compose.demo.yml"
+COMPOSE_FILE="dockerfiles/docker-compose.demo.yml"
 ENV_MODE="local"  # Default: local development
 SKIP_PERMISSIONS=false  # Default: set up permissions
 SKIP_CONFIRM=false  # Default: ask for confirmation on destructive operations

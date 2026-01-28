@@ -2,8 +2,8 @@
 # Complete stack: PostgreSQL + Nexus + LangGraph + MCP + Frontend
 #
 # Usage:
-#   ./docker-demo.sh                    # Start with local environment
-#   ./docker-demo.sh --env=production   # Start with production environment
+#   ./scripts/docker-demo.sh                    # Start with local environment
+#   ./scripts/docker-demo.sh --env=production   # Start with production environment
 #
 # Or directly with docker compose:
 #   docker compose -f docker-compose.demo.yml up          # Start all services
@@ -86,7 +86,7 @@ services:
   # ============================================
   nexus:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     image: nexus-server:latest
     container_name: nexus-server
@@ -262,7 +262,7 @@ services:
   # ============================================
   langgraph:
     build:
-      context: .
+      context: ..
       dockerfile: examples/langgraph/Dockerfile
     image: nexus-langgraph:latest
     container_name: nexus-langgraph
@@ -294,7 +294,7 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
     volumes:
       # Persist LangGraph dev history across container rebuilds and restarts
-      - ./examples/langgraph/.langgraph_api:/app/.langgraph_api
+      - ../examples/langgraph/.langgraph_api:/app/.langgraph_api
     ports:
       - "${LANGGRAPH_PORT:-2024}:2024"
     healthcheck:

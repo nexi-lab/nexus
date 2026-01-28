@@ -191,7 +191,7 @@ jobs:
       - name: Test docker-demo.sh --init --build
         run: |
           echo "🚀 Testing docker-demo.sh --init --build --yes..."
-          ./docker-demo.sh --init --build --yes
+          ./scripts/docker-demo.sh --init --build --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy
@@ -1675,7 +1675,7 @@ jobs:
           echo ""
 
           # Restart services
-          ./docker-demo.sh --restart
+          ./scripts/docker-demo.sh --restart
 
           echo "⏳ Waiting for services to become healthy after restart..."
           MAX_WAIT=180  # 3 minutes
@@ -1752,7 +1752,7 @@ jobs:
           echo ""
 
           # Run status command and capture output
-          STATUS_OUTPUT=$(./docker-demo.sh --status 2>&1)
+          STATUS_OUTPUT=$(./scripts/docker-demo.sh --status 2>&1)
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1784,7 +1784,7 @@ jobs:
           echo ""
 
           # Run logs command in background and capture output for 5 seconds
-          timeout 5s ./docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
+          timeout 5s ./scripts/docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
 
           # Verify log file has content
           if [ ! -s /tmp/docker_logs_test.txt ]; then
@@ -1815,7 +1815,7 @@ jobs:
           echo "Containers running before stop: $CONTAINERS_BEFORE"
 
           # Run stop command
-          ./docker-demo.sh --stop
+          ./scripts/docker-demo.sh --stop
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1871,5 +1871,5 @@ jobs:
         if: always()
         run: |
           echo "🧹 Cleaning up containers..."
-          ./docker-demo.sh --stop || true
+          ./scripts/docker-demo.sh --stop || true
           docker system prune -af || true

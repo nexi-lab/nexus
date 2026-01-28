@@ -497,10 +497,10 @@ def serve(
                     console.print()
                     console.print("Stop the server first using one of these commands:")
                     console.print(
-                        "   ./local-demo.sh --stop              # Stop local Nexus server"
+                        "   ./scripts/local-demo.sh --stop              # Stop local Nexus server"
                     )
                     console.print(
-                        "   ./docker-demo.sh --stop             # Stop Docker-based server"
+                        "   ./scripts/docker-demo.sh --stop             # Stop Docker-based server"
                     )
                     console.print()
                     console.print("Or manually kill the process(es):")

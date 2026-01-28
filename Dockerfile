@@ -32,7 +32,7 @@ WORKDIR /build
 COPY pyproject.toml uv.lock* README.md Cargo.toml ./
 COPY src/ ./src/
 COPY alembic/ ./alembic/
-COPY alembic.ini ./
+COPY alembic/alembic.ini ./alembic.ini
 
 # Install dependencies to system (not editable for multi-stage build)
 # Increase timeout for large packages like onnxruntime (14.5MB)
@@ -80,7 +80,7 @@ RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || ec
 WORKDIR /app
 COPY src/ ./src/
 COPY alembic/ ./alembic/
-COPY alembic.ini pyproject.toml README.md ./
+COPY alembic/alembic.ini pyproject.toml README.md ./
 COPY configs/ ./configs/
 # Copy scripts (includes provisioning)
 COPY scripts/ ./scripts/

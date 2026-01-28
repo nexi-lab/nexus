@@ -188,6 +188,12 @@ services:
       - ../nexus-data:/app/data
       # Configuration files (includes config.demo.yaml for auto-mounting backends)
       - ../configs:/app/configs:ro
+      # Scripts directory (for development - allows testing script changes without rebuild)
+      # Comment out this line if you want to use the scripts baked into the image
+      # Note: This also mounts scripts/_core/ which contains shared utilities
+      - ../scripts:/app/scripts:ro
+      # Uncomment below to also mount source code for testing nexus package changes:
+      # - ../src:/app/src:ro
       # GCS credentials (auto-detected - see docker-gcs-setup.sh)
       # Automatically finds credentials from: gcloud, ./gcs-credentials.json, or GCS_CREDENTIALS_PATH
       - ${GCS_CREDENTIALS_PATH:-../gcs-credentials.json}:/app/gcs-credentials.json:ro

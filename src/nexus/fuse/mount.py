@@ -93,6 +93,9 @@ class NexusFUSE:
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
         self._warmup_thread: threading.Thread | None = None
+        # Issue #1115: Event loop for async event dispatch from FUSE operations
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._event_loop_thread: threading.Thread | None = None
 
     def mount(
         self,
@@ -128,6 +131,33 @@ class NexusFUSE:
 
         # Create FUSE operations
         operations = NexusFUSEOperations(self.nexus_fs, self.mode, self.cache_config)
+
+        # Issue #1115: Set up event loop for async event dispatch
+        # FUSE operations are synchronous, but event dispatch is async.
+        # We create a dedicated event loop thread and pass it to operations.
+        def start_event_loop() -> None:
+            """Run event loop in dedicated thread for async event dispatch."""
+            self._event_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._event_loop)
+            operations.set_event_loop(self._event_loop)
+            logger.info("[FUSE] Event loop started for async event dispatch")
+            self._event_loop.run_forever()
+
+        self._event_loop_thread = threading.Thread(
+            target=start_event_loop, daemon=True, name="fuse-event-loop"
+        )
+        self._event_loop_thread.start()
+
+        # Wait for event loop to be ready
+        import time
+
+        for _ in range(50):  # 500ms timeout
+            if self._event_loop is not None:
+                break
+            time.sleep(0.01)
+
+        if self._event_loop is None:
+            logger.warning("[FUSE] Event loop failed to start, events will be disabled")
 
         # Build FUSE options
         # Note: Always use foreground=True because we handle backgrounding ourselves via threading
@@ -286,6 +316,13 @@ class NexusFUSE:
 
             self._mounted = False
             logger.info(f"Unmounted {self.mount_point}")
+
+            # Issue #1115: Stop event loop thread
+            if self._event_loop is not None:
+                self._event_loop.call_soon_threadsafe(self._event_loop.stop)
+                self._event_loop = None
+                logger.info("[FUSE] Event loop stopped")
+
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to unmount: {e.stderr.decode()}")
             raise RuntimeError(f"Failed to unmount: {e.stderr.decode()}") from e

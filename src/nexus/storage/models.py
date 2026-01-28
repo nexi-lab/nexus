@@ -3361,7 +3361,7 @@ class SubscriptionModel(Base):
                 event_list = json.loads(self.event_types)
                 if not isinstance(event_list, list):
                     raise ValidationError("event_types must be a JSON array")
-                valid_events = ["file_write", "file_delete", "file_rename", "metadata_change"]
+                valid_events = ["file_write", "file_delete", "file_rename", "metadata_change", "dir_create", "dir_delete"]
                 for evt in event_list:
                     if evt not in valid_events:
                         raise ValidationError(f"Invalid event type: {evt}")

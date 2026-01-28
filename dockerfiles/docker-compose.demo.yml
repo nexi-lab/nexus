@@ -183,6 +183,10 @@ services:
       # Reduces embedding API calls by ~90%
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+
+      # Tiger Cache - materialized permissions cache
+      # Set to 'true' to enable Tiger Cache (disabled by default for simpler debugging)
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
     volumes:
       # Persistent data directory (local backend) - shared with local development
       - ../nexus-data:/app/data
@@ -272,11 +276,13 @@ services:
   # ============================================
   langgraph:
     build:
-      context: ..
-      dockerfile: examples/langgraph/Dockerfile
+      context: ../..  # nexi-lab/ (parent of nexus/ and nexus-langgraph/)
+      dockerfile: nexus/dockerfiles/langgraph.Dockerfile
     image: nexus-langgraph:latest
     container_name: nexus-langgraph
     restart: unless-stopped
+    env_file:
+      - ../.env  # Load environment variables from nexus/.env
     depends_on:
       nexus:
         condition: service_healthy
@@ -288,23 +294,18 @@ services:
       # Nexus server URL (internal Docker network)
       NEXUS_SERVER_URL: http://nexus:2026
 
-      # API Keys for LLM providers (required)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # API Keys for LLM providers (REQUIRED - at least one must be set)
+      # Loaded from ../.env via env_file above
+      # Set in .env file: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY
 
-      # Optional: Additional tool API keys
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
-      E2B_API_KEY: ${E2B_API_KEY:-}
-      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      # Optional: Additional tool API keys (loaded from .env via env_file)
+      # TAVILY_API_KEY, E2B_API_KEY, FIRECRAWL_API_KEY
 
-      # LangSmith tracing (optional)
-      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
-      LANGCHAIN_ENDPOINT: ${LANGCHAIN_ENDPOINT:-}
-      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-}
-      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      # LangSmith tracing (loaded from .env via env_file)
+      # LANGCHAIN_TRACING_V2, LANGCHAIN_ENDPOINT, LANGCHAIN_PROJECT, LANGCHAIN_API_KEY, LANGSMITH_API_KEY
     volumes:
       # Persist LangGraph dev history across container rebuilds and restarts
-      - ../examples/langgraph/.langgraph_api:/app/.langgraph_api
+      - ../../nexus-langgraph/.langgraph_api:/app/.langgraph_api
     ports:
       - "${LANGGRAPH_PORT:-2024}:2024"
     healthcheck:

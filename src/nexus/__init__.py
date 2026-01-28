@@ -353,6 +353,12 @@ def connect(
             # Dict config without explicit setting - use secure default
             enforce_tenant_isolation = True
 
+        # Handle Tiger Cache configuration
+        # Default: enabled for PostgreSQL backends (provides materialized permissions)
+        # Can be disabled via NEXUS_ENABLE_TIGER_CACHE=false env var
+        enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
+        enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+
         # Create NexusFS instance
         nx_fs = NexusFS(
             backend=backend,
@@ -372,6 +378,7 @@ def connect(
             allow_admin_bypass=cfg.allow_admin_bypass,  # P0-4: Admin bypass setting
             enforce_tenant_isolation=enforce_tenant_isolation,  # P0-2: Tenant isolation setting
             enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
+            enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
         )
 
         # Set memory config for Memory API

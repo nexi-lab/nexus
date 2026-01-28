@@ -87,9 +87,9 @@ def create_admin_key(
                     HMAC_SALT.encode("utf-8"), custom_key.encode("utf-8"), hashlib.sha256
                 ).hexdigest()
 
-                # Check if key already exists
+                # Check if this specific key already exists (by hash)
                 existing = session.execute(
-                    select(APIKeyModel).where(APIKeyModel.user_id == admin_user)
+                    select(APIKeyModel).where(APIKeyModel.key_hash == key_hash)
                 ).scalar_one_or_none()
                 if existing:
                     print(f"API Key: {custom_key}", file=sys.stdout)

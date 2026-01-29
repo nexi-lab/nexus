@@ -652,3 +652,10 @@ if sys.platform == "win32":
                         self._callback(change)
                     except Exception as e:
                         logger.error(f"Error in file change callback: {e}")
+
+else:
+    # Stub for type checking on non-Windows platforms
+    class _WindowsWatch:  # noqa: F811
+        """Stub class - only used for type checking on Linux."""
+
+        pass

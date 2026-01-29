@@ -417,237 +417,238 @@ class FileWatcher:
 # Windows Watch Implementation
 # =============================================================================
 
+if sys.platform == "win32":
 
-class _WindowsWatch:
-    """Manages a single Windows directory watch with OS-level callback.
+    class _WindowsWatch:
+        """Manages a single Windows directory watch with OS-level callback.
 
-    Uses RegisterWaitForSingleObject for true event-driven callbacks.
-    """
+        Uses RegisterWaitForSingleObject for true event-driven callbacks.
+        """
 
-    # Windows constants
-    FILE_LIST_DIRECTORY = 1
-    FILE_SHARE_READ = 1
-    FILE_SHARE_WRITE = 2
-    FILE_SHARE_DELETE = 4
-    OPEN_EXISTING = 3
-    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
-    FILE_FLAG_OVERLAPPED = 0x40000000
-    FILE_NOTIFY_CHANGE_FILE_NAME = 0x01
-    FILE_NOTIFY_CHANGE_DIR_NAME = 0x02
-    FILE_NOTIFY_CHANGE_SIZE = 0x08
-    FILE_NOTIFY_CHANGE_LAST_WRITE = 0x10
-    INFINITE = 0xFFFFFFFF
-    WT_EXECUTEDEFAULT = 0x00000000
-    WT_EXECUTEONLYONCE = 0x00000008
+        # Windows constants
+        FILE_LIST_DIRECTORY = 1
+        FILE_SHARE_READ = 1
+        FILE_SHARE_WRITE = 2
+        FILE_SHARE_DELETE = 4
+        OPEN_EXISTING = 3
+        FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+        FILE_FLAG_OVERLAPPED = 0x40000000
+        FILE_NOTIFY_CHANGE_FILE_NAME = 0x01
+        FILE_NOTIFY_CHANGE_DIR_NAME = 0x02
+        FILE_NOTIFY_CHANGE_SIZE = 0x08
+        FILE_NOTIFY_CHANGE_LAST_WRITE = 0x10
+        INFINITE = 0xFFFFFFFF
+        WT_EXECUTEDEFAULT = 0x00000000
+        WT_EXECUTEONLYONCE = 0x00000008
 
-    def __init__(
-        self,
-        path: Path,
-        callback: FileChangeCallback,
-        recursive: bool,
-        loop: asyncio.AbstractEventLoop | None,
-    ):
-        self._path = path
-        self._callback = callback
-        self._recursive = recursive
-        self._loop = loop
-        self._running = False
+        def __init__(
+            self,
+            path: Path,
+            callback: FileChangeCallback,
+            recursive: bool,
+            loop: asyncio.AbstractEventLoop | None,
+        ):
+            self._path = path
+            self._callback = callback
+            self._recursive = recursive
+            self._loop = loop
+            self._running = False
 
-        # Windows handles
-        self._dir_handle: Any = None
-        self._event_handle: Any = None
-        self._wait_handle = ctypes.c_void_p()
-        self._overlapped: Any = None
-        self._buffer: Any = None
-
-        # Action code mapping
-        self._action_map = {
-            1: ChangeType.CREATED,  # FILE_ACTION_ADDED
-            2: ChangeType.DELETED,  # FILE_ACTION_REMOVED
-            3: ChangeType.MODIFIED,  # FILE_ACTION_MODIFIED
-            4: ChangeType.RENAMED,  # FILE_ACTION_RENAMED_OLD_NAME
-            5: ChangeType.RENAMED,  # FILE_ACTION_RENAMED_NEW_NAME
-        }
-
-        # Keep reference to prevent GC
-        self._wait_callback: Any = None
-
-    def start(self) -> None:
-        """Start watching the directory."""
-        if self._running:
-            return
-
-        try:
-            import pywintypes
-            import win32event
-            import win32file
-        except ImportError as e:
-            raise ImportError(
-                "pywin32 is required for Windows file watching. Install with: pip install pywin32"
-            ) from e
-
-        # Open directory handle
-        self._dir_handle = win32file.CreateFile(
-            str(self._path),
-            self.FILE_LIST_DIRECTORY,
-            self.FILE_SHARE_READ | self.FILE_SHARE_WRITE | self.FILE_SHARE_DELETE,
-            None,
-            self.OPEN_EXISTING,
-            self.FILE_FLAG_BACKUP_SEMANTICS | self.FILE_FLAG_OVERLAPPED,
-            None,
-        )
-
-        # Create event for overlapped I/O
-        self._event_handle = win32event.CreateEvent(None, True, False, None)
-
-        # Create overlapped structure
-        self._overlapped = pywintypes.OVERLAPPED()
-        self._overlapped.hEvent = self._event_handle
-
-        # Allocate buffer
-        self._buffer = win32file.AllocateReadBuffer(65536)
-
-        # Start first async read
-        self._start_read()
-
-        # Register OS callback using ctypes
-        self._register_wait_callback()
-
-        self._running = True
-        logger.debug(f"Windows watch started: {self._path}")
-
-    def stop(self) -> None:
-        """Stop watching and clean up resources."""
-        if not self._running:
-            return
-
-        import win32api
-        import win32file
-
-        self._running = False
-
-        # Unregister wait callback
-        if self._wait_handle:
-            try:
-                kernel32 = ctypes.windll.kernel32
-                kernel32.UnregisterWait(self._wait_handle)
-            except Exception:
-                pass
+            # Windows handles
+            self._dir_handle: Any = None
+            self._event_handle: Any = None
             self._wait_handle = ctypes.c_void_p()
+            self._overlapped: Any = None
+            self._buffer: Any = None
 
-        # Cancel pending I/O
-        if self._dir_handle:
-            with contextlib.suppress(Exception):
-                win32file.CancelIo(self._dir_handle)
+            # Action code mapping
+            self._action_map = {
+                1: ChangeType.CREATED,  # FILE_ACTION_ADDED
+                2: ChangeType.DELETED,  # FILE_ACTION_REMOVED
+                3: ChangeType.MODIFIED,  # FILE_ACTION_MODIFIED
+                4: ChangeType.RENAMED,  # FILE_ACTION_RENAMED_OLD_NAME
+                5: ChangeType.RENAMED,  # FILE_ACTION_RENAMED_NEW_NAME
+            }
 
-        # Close handles
-        if self._event_handle:
-            with contextlib.suppress(Exception):
-                win32api.CloseHandle(self._event_handle)
-            self._event_handle = None
+            # Keep reference to prevent GC
+            self._wait_callback: Any = None
 
-        if self._dir_handle:
-            with contextlib.suppress(Exception):
-                win32api.CloseHandle(self._dir_handle)
-            self._dir_handle = None
-
-        logger.debug(f"Windows watch stopped: {self._path}")
-
-    def _start_read(self) -> None:
-        """Start an async ReadDirectoryChangesW operation."""
-        import win32event
-        import win32file
-
-        # Reset event
-        win32event.ResetEvent(self._event_handle)
-
-        # Start async read
-        watch_flags = (
-            self.FILE_NOTIFY_CHANGE_FILE_NAME
-            | self.FILE_NOTIFY_CHANGE_DIR_NAME
-            | self.FILE_NOTIFY_CHANGE_SIZE
-            | self.FILE_NOTIFY_CHANGE_LAST_WRITE
-        )
-
-        win32file.ReadDirectoryChangesW(
-            self._dir_handle,
-            self._buffer,
-            self._recursive,
-            watch_flags,
-            self._overlapped,
-        )
-
-    def _register_wait_callback(self) -> None:
-        """Register callback with Windows thread pool using RegisterWaitForSingleObject."""
-        kernel32 = ctypes.windll.kernel32
-
-        # Define callback type: VOID CALLBACK WaitOrTimerCallback(PVOID, BOOLEAN)
-        WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_ubyte)
-
-        def wait_callback(_context: Any, timed_out: bool) -> None:
-            """Called by Windows when event is signaled."""
-            if timed_out or not self._running:
+        def start(self) -> None:
+            """Start watching the directory."""
+            if self._running:
                 return
 
             try:
-                self._process_events()
-            except Exception as e:
-                logger.error(f"Error processing Windows file events: {e}")
+                import pywintypes
+                import win32event
+                import win32file
+            except ImportError as e:
+                raise ImportError(
+                    "pywin32 is required for Windows file watching. Install with: pip install pywin32"
+                ) from e
 
-            # Re-register for next event (if still running)
-            if self._running:
+            # Open directory handle
+            self._dir_handle = win32file.CreateFile(
+                str(self._path),
+                self.FILE_LIST_DIRECTORY,
+                self.FILE_SHARE_READ | self.FILE_SHARE_WRITE | self.FILE_SHARE_DELETE,
+                None,
+                self.OPEN_EXISTING,
+                self.FILE_FLAG_BACKUP_SEMANTICS | self.FILE_FLAG_OVERLAPPED,
+                None,
+            )
+
+            # Create event for overlapped I/O
+            self._event_handle = win32event.CreateEvent(None, True, False, None)
+
+            # Create overlapped structure
+            self._overlapped = pywintypes.OVERLAPPED()
+            self._overlapped.hEvent = self._event_handle
+
+            # Allocate buffer
+            self._buffer = win32file.AllocateReadBuffer(65536)
+
+            # Start first async read
+            self._start_read()
+
+            # Register OS callback using ctypes
+            self._register_wait_callback()
+
+            self._running = True
+            logger.debug(f"Windows watch started: {self._path}")
+
+        def stop(self) -> None:
+            """Stop watching and clean up resources."""
+            if not self._running:
+                return
+
+            import win32api
+            import win32file
+
+            self._running = False
+
+            # Unregister wait callback
+            if self._wait_handle:
                 try:
-                    self._start_read()
-                    self._register_wait_callback()
-                except Exception as e:
-                    logger.error(f"Error re-registering Windows watch: {e}")
+                    kernel32 = ctypes.windll.kernel32
+                    kernel32.UnregisterWait(self._wait_handle)
+                except Exception:
+                    pass
+                self._wait_handle = ctypes.c_void_p()
 
-        # Keep reference to prevent garbage collection
-        self._wait_callback = WAITORTIMERCALLBACK(wait_callback)
+            # Cancel pending I/O
+            if self._dir_handle:
+                with contextlib.suppress(Exception):
+                    win32file.CancelIo(self._dir_handle)
 
-        # Get event handle as integer
-        event_handle_int = int(self._event_handle)
+            # Close handles
+            if self._event_handle:
+                with contextlib.suppress(Exception):
+                    win32api.CloseHandle(self._event_handle)
+                self._event_handle = None
 
-        # Register wait
-        result = kernel32.RegisterWaitForSingleObject(
-            ctypes.byref(self._wait_handle),
-            ctypes.c_void_p(event_handle_int),
-            self._wait_callback,
-            None,  # Context
-            self.INFINITE,
-            self.WT_EXECUTEONLYONCE,  # Execute once, we re-register after
-        )
+            if self._dir_handle:
+                with contextlib.suppress(Exception):
+                    win32api.CloseHandle(self._dir_handle)
+                self._dir_handle = None
 
-        if not result:
-            error = ctypes.get_last_error()
-            raise OSError(f"RegisterWaitForSingleObject failed: {error}")
+            logger.debug(f"Windows watch stopped: {self._path}")
 
-    def _process_events(self) -> None:
-        """Process completed ReadDirectoryChangesW results."""
-        import win32file
+        def _start_read(self) -> None:
+            """Start an async ReadDirectoryChangesW operation."""
+            import win32event
+            import win32file
 
-        try:
-            nbytes = win32file.GetOverlappedResult(self._dir_handle, self._overlapped, False)
-        except Exception:
-            return
+            # Reset event
+            win32event.ResetEvent(self._event_handle)
 
-        if not nbytes:
-            return
+            # Start async read
+            watch_flags = (
+                self.FILE_NOTIFY_CHANGE_FILE_NAME
+                | self.FILE_NOTIFY_CHANGE_DIR_NAME
+                | self.FILE_NOTIFY_CHANGE_SIZE
+                | self.FILE_NOTIFY_CHANGE_LAST_WRITE
+            )
 
-        # Parse results
-        results = win32file.FILE_NOTIFY_INFORMATION(self._buffer, nbytes)
+            win32file.ReadDirectoryChangesW(
+                self._dir_handle,
+                self._buffer,
+                self._recursive,
+                watch_flags,
+                self._overlapped,
+            )
 
-        for action, filename in results:
-            change_type = self._action_map.get(action, ChangeType.MODIFIED)
-            full_path = str(self._path / filename)
+        def _register_wait_callback(self) -> None:
+            """Register callback with Windows thread pool using RegisterWaitForSingleObject."""
+            kernel32 = ctypes.windll.kernel32
 
-            change = FileChange(type=change_type, path=full_path)
+            # Define callback type: VOID CALLBACK WaitOrTimerCallback(PVOID, BOOLEAN)
+            WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_ubyte)
 
-            # Invoke callback in event loop if available
-            if self._loop and self._callback:  # type: ignore[truthy-function]
-                self._loop.call_soon_threadsafe(self._callback, change)
-            elif self._callback:  # type: ignore[truthy-function]
+            def wait_callback(_context: Any, timed_out: bool) -> None:
+                """Called by Windows when event is signaled."""
+                if timed_out or not self._running:
+                    return
+
                 try:
-                    self._callback(change)
+                    self._process_events()
                 except Exception as e:
-                    logger.error(f"Error in file change callback: {e}")
+                    logger.error(f"Error processing Windows file events: {e}")
+
+                # Re-register for next event (if still running)
+                if self._running:
+                    try:
+                        self._start_read()
+                        self._register_wait_callback()
+                    except Exception as e:
+                        logger.error(f"Error re-registering Windows watch: {e}")
+
+            # Keep reference to prevent garbage collection
+            self._wait_callback = WAITORTIMERCALLBACK(wait_callback)
+
+            # Get event handle as integer
+            event_handle_int = int(self._event_handle)
+
+            # Register wait
+            result = kernel32.RegisterWaitForSingleObject(
+                ctypes.byref(self._wait_handle),
+                ctypes.c_void_p(event_handle_int),
+                self._wait_callback,
+                None,  # Context
+                self.INFINITE,
+                self.WT_EXECUTEONLYONCE,  # Execute once, we re-register after
+            )
+
+            if not result:
+                error = ctypes.get_last_error()
+                raise OSError(f"RegisterWaitForSingleObject failed: {error}")
+
+        def _process_events(self) -> None:
+            """Process completed ReadDirectoryChangesW results."""
+            import win32file
+
+            try:
+                nbytes = win32file.GetOverlappedResult(self._dir_handle, self._overlapped, False)
+            except Exception:
+                return
+
+            if not nbytes:
+                return
+
+            # Parse results
+            results = win32file.FILE_NOTIFY_INFORMATION(self._buffer, nbytes)
+
+            for action, filename in results:
+                change_type = self._action_map.get(action, ChangeType.MODIFIED)
+                full_path = str(self._path / filename)
+
+                change = FileChange(type=change_type, path=full_path)
+
+                # Invoke callback in event loop if available
+                if self._loop is not None:
+                    self._loop.call_soon_threadsafe(self._callback, change)
+                else:
+                    try:
+                        self._callback(change)
+                    except Exception as e:
+                        logger.error(f"Error in file change callback: {e}")

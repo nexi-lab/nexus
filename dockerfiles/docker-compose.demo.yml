@@ -484,7 +484,7 @@ services:
     profiles:
       - test  # Only runs with: --profile test
     volumes:
-      - .:/app
+      - ..:/app  # Mount project root (compose file is in dockerfiles/)
       - test-cache:/root/.cache  # Cache pip/uv downloads
     environment:
       PYTHONUNBUFFERED: "1"
@@ -501,7 +501,12 @@ services:
         echo "🐧 Platform: $$(python -c "import sys; print(sys.platform)")"
         echo ""
         echo "🧪 Running tests..."
-        pytest tests/unit/backends/test_passthrough.py tests/integration/test_wait_for_changes.py -v --no-header -n 0
+        # Run default tests or custom pytest args passed via docker run
+        if [ -z "$$@" ]; then
+          pytest tests/unit/backends/test_local_connector.py tests/integration/test_local_connector.py -v --no-header
+        else
+          pytest "$$@"
+        fi
       '
     networks:
       - nexus-network

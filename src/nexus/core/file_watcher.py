@@ -529,7 +529,7 @@ class _WindowsWatch:
         # Unregister wait callback
         if self._wait_handle:
             try:
-                kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+                kernel32 = ctypes.windll.kernel32
                 kernel32.UnregisterWait(self._wait_handle)
             except Exception:
                 pass
@@ -579,12 +579,10 @@ class _WindowsWatch:
 
     def _register_wait_callback(self) -> None:
         """Register callback with Windows thread pool using RegisterWaitForSingleObject."""
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32
 
         # Define callback type: VOID CALLBACK WaitOrTimerCallback(PVOID, BOOLEAN)
-        WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(  # type: ignore[attr-defined]
-            None, ctypes.c_void_p, ctypes.c_ubyte
-        )
+        WAITORTIMERCALLBACK = ctypes.WINFUNCTYPE(None, ctypes.c_void_p, ctypes.c_ubyte)
 
         def wait_callback(_context: Any, timed_out: bool) -> None:
             """Called by Windows when event is signaled."""
@@ -621,7 +619,7 @@ class _WindowsWatch:
         )
 
         if not result:
-            error = ctypes.get_last_error()  # type: ignore[attr-defined]
+            error = ctypes.get_last_error()
             raise OSError(f"RegisterWaitForSingleObject failed: {error}")
 
     def _process_events(self) -> None:

@@ -658,4 +658,17 @@ else:
     class _WindowsWatch:  # noqa: F811
         """Stub class - only used for type checking on Linux."""
 
-        pass
+        def __init__(
+            self,
+            path: Path,
+            callback: FileChangeCallback,
+            recursive: bool,
+            loop: asyncio.AbstractEventLoop | None,
+        ) -> None:
+            raise NotImplementedError("Windows only")
+
+        def start(self) -> None:
+            raise NotImplementedError("Windows only")
+
+        def stop(self) -> None:
+            raise NotImplementedError("Windows only")

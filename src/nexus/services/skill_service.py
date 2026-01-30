@@ -150,7 +150,7 @@ class SkillService:
         logger.info(f"Shared skill '{skill_path}' with '{share_with}'")
         # rebac_create returns a dict with tuple_id, revision, consistency_token
         # Extract just the tuple_id string for the API contract
-        return result["tuple_id"]
+        return cast(str, result["tuple_id"])
 
     def unshare(
         self,

@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     from nexus.core.metadata import FileMetadata
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
-    from nexus.core.rebac_manager_enhanced import WriteResult
     from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
@@ -262,7 +261,7 @@ class NexusFSGateway:
         relation: str,
         object: tuple[str, str],
         tenant_id: str | None = None,
-    ) -> WriteResult | None:
+    ) -> dict[str, Any] | None:
         """Create ReBAC permission tuple.
 
         Args:

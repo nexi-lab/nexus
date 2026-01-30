@@ -33,10 +33,17 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_rebac() -> MagicMock:
     """Create a mock ReBAC manager."""
+    from nexus.core.rebac_manager_enhanced import WriteResult
+
     rebac = MagicMock()
     rebac.rebac_check = MagicMock(return_value=True)
     # NexusFS.rebac_create internally calls _rebac_manager.rebac_write
-    rebac.rebac_write = MagicMock(return_value="tuple-123")
+    # Return a WriteResult object since rebac_create accesses its attributes
+    rebac.rebac_write = MagicMock(
+        return_value=WriteResult(
+            tuple_id="tuple-123", revision=0, consistency_token="v0", written_at_ms=0.0
+        )
+    )
     rebac.rebac_delete = MagicMock(return_value=True)
     rebac.rebac_list_tuples = MagicMock(return_value=[])
     return rebac

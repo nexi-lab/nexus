@@ -29,7 +29,6 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.core.rebac_manager_enhanced import WriteResult
 
 # Mark all tests in this module to run sequentially to avoid SQLite locking issues
 # when running tests in parallel with pytest-xdist
@@ -68,8 +67,8 @@ class TestRebacCreate:
             tenant_id="default",
         )
         assert result is not None
-        assert isinstance(result, WriteResult)
-        assert isinstance(result.tuple_id, str)
+        assert isinstance(result, dict)
+        assert isinstance(result["tuple_id"], str)
 
     def test_create_with_different_tenant(self, nx: NexusFS) -> None:
         """Test creating tuple with specific tenant_id."""
@@ -165,7 +164,7 @@ class TestRebacDelete:
             object=("file", "/doc.txt"),
             tenant_id="default",
         )
-        result = nx.rebac_delete(write_result.tuple_id)
+        result = nx.rebac_delete(write_result["tuple_id"])
         assert result is True
 
     def test_delete_nonexistent_tuple(self, nx: NexusFS) -> None:
@@ -190,7 +189,7 @@ class TestRebacDelete:
             tenant_id="default",
         )
         # Delete and verify permission revoked
-        nx.rebac_delete(write_result.tuple_id)
+        nx.rebac_delete(write_result["tuple_id"])
         assert not nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
@@ -444,7 +443,7 @@ class TestConcurrency:
             )
             results.append(result)
         assert len(results) == 5
-        assert all(isinstance(r, WriteResult) for r in results)
+        assert all(isinstance(r, dict) for r in results)
 
     def test_sequential_checks(self, nx: NexusFS) -> None:
         """Test that multiple permission checks work correctly."""

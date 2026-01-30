@@ -3182,9 +3182,12 @@ class NexusFSCoreMixin:
                     if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
                         return False
                 else:
-                    # For real files, use hierarchical access check
-                    if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
-                        # No permission to path or any descendant = treat as non-existent for security
+                    # Issue #1147: OPTIMIZATION for real files - use direct permission check (O(1))
+                    # instead of _has_descendant_access (O(n) fallback).
+                    # Real files have no descendants, so descendant check is unnecessary.
+                    # This reduces exists() latency from 300-500ms to 10-20ms.
+                    if not self._permission_enforcer.check(path, Permission.READ, ctx):
+                        # No direct READ permission = treat as non-existent for security
                         return False
 
             # Check if file exists explicitly

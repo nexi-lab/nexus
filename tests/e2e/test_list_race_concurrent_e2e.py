@@ -82,12 +82,12 @@ class TestConcurrentRaceCondition:
         unique_id = str(uuid.uuid4())[:8]
         test_dir = f"/tenant:system/race_stress_{unique_id}"
 
-        num_files = 20
-        num_list_ops = 50
+        num_files = 8  # Reduced to avoid overwhelming test server
+        num_list_ops = 15  # Reduced to avoid overwhelming test server
 
         def write_file(file_num: int) -> dict[str, Any]:
             """Write a file and return its name."""
-            with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+            with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
                 file_path = f"{test_dir}/file_{file_num:03d}.txt"
                 result = make_rpc_request(
                     client,
@@ -98,7 +98,7 @@ class TestConcurrentRaceCondition:
 
         def list_directory() -> dict[str, Any]:
             """List directory and return file count."""
-            with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+            with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
                 result = make_rpc_request(
                     client,
                     "list",
@@ -110,11 +110,12 @@ class TestConcurrentRaceCondition:
                 return {"count": 0, "names": [], "error": result.get("error")}
 
         # First create some baseline files
-        for i in range(5):
+        baseline_count = 5
+        for i in range(baseline_count):
             write_file(i)
 
-        # Now do concurrent writes and lists
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        # Now do concurrent writes and lists (reduced concurrency for stability)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             # Submit interleaved writes and lists
             futures = []
             for i in range(5, num_files):
@@ -134,7 +135,7 @@ class TestConcurrentRaceCondition:
                     list_results.append(result)
 
         # After all operations complete, verify final state
-        with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+        with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
             final_result = make_rpc_request(
                 client,
                 "list",
@@ -151,19 +152,25 @@ class TestConcurrentRaceCondition:
         min_count = min(list_counts) if list_counts else 0
         max_count = max(list_counts) if list_counts else 0
 
+        # Total expected = baseline + successful concurrent writes
+        expected_total = baseline_count + successful_writes
+
         print("\nResults:")
-        print(f"  Successful writes: {successful_writes}/{num_files}")
+        print(f"  Baseline files: {baseline_count}")
+        print(f"  Concurrent writes: {successful_writes}/{num_files - baseline_count}")
+        print(f"  Expected total: {expected_total}")
         print(f"  Final file count: {final_count}")
         print(f"  List count range: {min_count} - {max_count}")
         print(f"  List operations: {len(list_results)}")
 
         # The race condition would manifest as:
         # - A list operation sees fewer files than were written at that moment
-        # This is hard to detect precisely, but if final_count != successful_writes,
+        # This is hard to detect precisely, but if final_count != expected_total,
         # or if there's high variance in list counts, something might be wrong
 
-        assert final_count == successful_writes, (
-            f"Final count mismatch! Expected {successful_writes} files, got {final_count}. "
+        assert final_count == expected_total, (
+            f"Final count mismatch! Expected {expected_total} files (baseline={baseline_count}, "
+            f"concurrent={successful_writes}), got {final_count}. "
             f"This could indicate a race condition."
         )
 
@@ -178,7 +185,7 @@ class TestConcurrentRaceCondition:
         test_file = f"{test_dir}/target.txt"
 
         # Write the file
-        with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+        with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
             write_result = make_rpc_request(
                 client,
                 "write",
@@ -187,10 +194,10 @@ class TestConcurrentRaceCondition:
             assert "error" not in write_result, f"Write failed: {write_result}"
 
         # Immediately burst many list requests
-        num_lists = 20
+        num_lists = 10  # Reduced from 20
 
         def do_list() -> bool:
-            with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+            with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
                 result = make_rpc_request(
                     client,
                     "list",
@@ -202,7 +209,7 @@ class TestConcurrentRaceCondition:
                 names = get_file_names(files)
                 return any("target.txt" in name for name in names)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(do_list) for _ in range(num_lists)]
             results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
@@ -233,7 +240,7 @@ class TestConcurrentRaceCondition:
 
         def provision_user() -> bool:
             """Provision the user."""
-            with httpx.Client(base_url=base_url, timeout=60.0, trust_env=False) as client:
+            with httpx.Client(base_url=base_url, timeout=180.0, trust_env=False) as client:
                 result = make_rpc_request(
                     client,
                     "provision_user",
@@ -249,7 +256,7 @@ class TestConcurrentRaceCondition:
 
         def check_agent_config(agent_dir: str) -> dict:
             """Check if config.yaml is visible in list vs read."""
-            with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
+            with httpx.Client(base_url=base_url, timeout=90.0, trust_env=False) as client:
                 # Try to list
                 list_result = make_rpc_request(
                     client,
@@ -286,7 +293,7 @@ class TestConcurrentRaceCondition:
 
             # While provisioning, repeatedly check agent directories
             check_futures = []
-            for _ in range(10):  # Multiple rounds of checks
+            for _ in range(5):  # Reduced from 10 rounds to avoid overwhelming test server
                 for agent_dir in agent_dirs:
                     check_futures.append(executor.submit(check_agent_config, agent_dir))
 

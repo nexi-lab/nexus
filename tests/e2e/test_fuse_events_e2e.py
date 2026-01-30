@@ -340,7 +340,7 @@ class TestFUSEEventsE2E:
             assert events[0].get("data", {}).get("_test") is True
 
 
-def is_redis_available(host: str = "127.0.0.1", port: int = 7899) -> bool:
+def is_redis_available(host: str = "127.0.0.1", port: int = 1778) -> bool:
     """Check if Redis is available on the specified host:port."""
     import socket
 
@@ -359,7 +359,7 @@ class TestEventBusIntegration:
 
     @pytest.mark.skipif(
         not is_redis_available(),
-        reason="Requires Redis/Dragonfly to be running on port 7899",
+        reason="Requires Redis/Dragonfly to be running on port 1778",
     )
     @pytest.mark.asyncio
     async def test_event_bus_publish(self) -> None:
@@ -373,7 +373,7 @@ class TestEventBusIntegration:
         from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
 
         # Connect to Redis on port 7899
-        redis_client = DragonflyClient(url="redis://127.0.0.1:7899")
+        redis_client = DragonflyClient(url="redis://127.0.0.1:1778")
         await redis_client.connect()
 
         try:
@@ -405,7 +405,7 @@ class TestEventBusIntegration:
 
     @pytest.mark.skipif(
         not is_redis_available(),
-        reason="Requires Redis/Dragonfly to be running on port 7899",
+        reason="Requires Redis/Dragonfly to be running on port 1778",
     )
     @pytest.mark.asyncio
     async def test_event_bus_subscribe_and_receive(self) -> None:
@@ -419,7 +419,7 @@ class TestEventBusIntegration:
         from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
 
         # Connect to Redis on port 7899
-        redis_client = DragonflyClient(url="redis://127.0.0.1:7899")
+        redis_client = DragonflyClient(url="redis://127.0.0.1:1778")
         await redis_client.connect()
 
         try:

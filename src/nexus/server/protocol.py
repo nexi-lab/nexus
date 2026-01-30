@@ -175,6 +175,12 @@ class RPCEncoder(json.JSONEncoder):
             return {
                 k: v for k, v in obj.__dict__.items() if not k.startswith("_") and not callable(v)
             }
+        elif hasattr(obj, "__slots__"):
+            # Handle slotted dataclasses (slots=True) which have no __dict__
+            from dataclasses import fields, is_dataclass
+
+            if is_dataclass(obj):
+                return {f.name: getattr(obj, f.name) for f in fields(obj)}
         return super().default(obj)
 
 
@@ -227,6 +233,13 @@ def _prepare_for_orjson(obj: Any) -> Any:
             for k, v in obj.__dict__.items()
             if not k.startswith("_") and not callable(v)
         }
+    elif hasattr(obj, "__slots__"):
+        # Handle slotted dataclasses (slots=True) which have no __dict__
+        from dataclasses import fields, is_dataclass
+
+        if is_dataclass(obj):
+            return {f.name: _prepare_for_orjson(getattr(obj, f.name)) for f in fields(obj)}
+        return obj
     else:
         return obj
 

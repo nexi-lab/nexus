@@ -59,17 +59,23 @@ def write_rebac_tuple(
     object_type: str,
     object_id: str,
     tenant_id: str = "default",
+    subject_tenant_id: str | None = None,
+    object_tenant_id: str | None = None,
 ) -> str:
     """Write a ReBAC tuple directly to the database."""
     engine = create_engine(f"sqlite:///{db_path}")
     tuple_id = str(uuid.uuid4())
+    effective_subject_tenant = subject_tenant_id or tenant_id
+    effective_object_tenant = object_tenant_id or tenant_id
 
     with engine.connect() as conn:
         conn.execute(
             text("""
                 INSERT INTO rebac_tuples
-                (tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id)
-                VALUES (:tuple_id, :subject_type, :subject_id, :relation, :object_type, :object_id, :tenant_id)
+                (tuple_id, subject_type, subject_id, relation, object_type, object_id,
+                 tenant_id, subject_tenant_id, object_tenant_id)
+                VALUES (:tuple_id, :subject_type, :subject_id, :relation, :object_type, :object_id,
+                        :tenant_id, :subject_tenant_id, :object_tenant_id)
             """),
             {
                 "tuple_id": tuple_id,
@@ -79,6 +85,8 @@ def write_rebac_tuple(
                 "object_type": object_type,
                 "object_id": object_id,
                 "tenant_id": tenant_id,
+                "subject_tenant_id": effective_subject_tenant,
+                "object_tenant_id": effective_object_tenant,
             },
         )
         conn.commit()
@@ -89,60 +97,65 @@ def write_rebac_tuple(
 class TestWildcardPublicAccessE2E:
     """E2E tests for wildcard public access."""
 
-    @pytest.mark.skip(reason="Requires full server setup - run manually")
     def test_wildcard_grants_read_to_any_user(self, nexus_server, test_app: httpx.Client):
-        """Test that wildcard (*:*) tuple grants read access to any user via API."""
+        """Test that wildcard (*:*) tuple grants read access to any user via API.
+
+        Uses RPC write/read to verify access: write a file as system, create
+        a wildcard tuple via rebac_create RPC, then check that both same-tenant
+        and cross-tenant users can read it.
+        """
+        import base64
+
         db_path = nexus_server["db_path"]
+
+        def rpc(method: str, params: dict, headers: dict | None = None) -> dict:
+            resp = test_app.post(
+                f"/api/nfs/{method}",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": str(uuid.uuid4()),
+                    "method": method,
+                    "params": params,
+                },
+                headers=headers or {"X-Tenant-ID": "system"},
+            )
+            return resp.json()
 
         # Create two users in different tenants
         user_a = create_test_user(db_path, tenant_id="tenant-a")
         user_b = create_test_user(db_path, tenant_id="tenant-b")
 
-        # Create a file path
+        # Write a file as system
         test_file = "/public/shared-doc.txt"
-
-        # Write wildcard tuple: (*:*) -> reader -> file
-        write_rebac_tuple(
-            db_path,
-            subject_type="*",
-            subject_id="*",
-            relation="reader",
-            object_type="file",
-            object_id=test_file,
-            tenant_id="tenant-a",  # Owner's tenant
-        )
-
-        # User A (same tenant) should have access
-        response = test_app.get(
-            "/api/v1/permissions/check",
-            params={
-                "subject_type": "user",
-                "subject_id": user_a["user_id"],
-                "permission": "read",
-                "object_type": "file",
-                "object_id": test_file,
+        content = b"public content for wildcard test"
+        write_result = rpc(
+            "write",
+            {
+                "path": test_file,
+                "content": {"__type__": "bytes", "data": base64.b64encode(content).decode()},
             },
-            headers=user_a["headers"],
         )
-        assert response.status_code == 200
-        result = response.json()
-        assert result.get("allowed") is True, f"User A should have access: {result}"
+        assert "error" not in write_result, f"Write failed: {write_result}"
+
+        # Create wildcard tuple via rebac_create RPC: (*:*) -> reader -> file
+        rebac_result = rpc(
+            "rebac_create",
+            {
+                "subject": ["*", "*"],
+                "relation": "reader",
+                "object": ["file", test_file],
+                "tenant_id": "tenant-a",
+            },
+        )
+        assert "error" not in rebac_result, f"rebac_create failed: {rebac_result}"
+
+        # User A (same tenant) should have access — read via RPC
+        result_a = rpc("read", {"path": test_file}, headers=user_a["headers"])
+        assert "error" not in result_a, f"User A should have read access: {result_a}"
 
         # User B (different tenant) should also have access via wildcard
-        response = test_app.get(
-            "/api/v1/permissions/check",
-            params={
-                "subject_type": "user",
-                "subject_id": user_b["user_id"],
-                "permission": "read",
-                "object_type": "file",
-                "object_id": test_file,
-            },
-            headers=user_b["headers"],
-        )
-        assert response.status_code == 200
-        result = response.json()
-        assert result.get("allowed") is True, f"User B should have access via wildcard: {result}"
+        result_b = rpc("read", {"path": test_file}, headers=user_b["headers"])
+        assert "error" not in result_b, f"User B should have access via wildcard: {result_b}"
 
 
 class TestWildcardDirectDB:

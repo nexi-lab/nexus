@@ -393,14 +393,14 @@ class TestDirectoryGrantWorker:
             metadata_store=None,  # No metadata store for this test
         )
 
-        # Insert a pending grant manually
+        # Insert a pending grant manually (provide explicit grant_id for SQLite BigInteger compatibility)
         with standalone_engine.begin() as conn:
             conn.execute(
                 text(
                     """
                 INSERT INTO tiger_directory_grants
-                (subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, expansion_status)
-                VALUES ('user', 'testuser', 'read', '/test/dir/', 'default', 0, 'pending')
+                (grant_id, subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
+                VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )
@@ -426,14 +426,14 @@ class TestDirectoryGrantWorker:
             metadata_store=None,
         )
 
-        # Insert a pending grant
+        # Insert a pending grant (provide explicit grant_id for SQLite BigInteger compatibility)
         with standalone_engine.begin() as conn:
             conn.execute(
                 text(
                     """
                 INSERT INTO tiger_directory_grants
-                (subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, expansion_status)
-                VALUES ('user', 'emptyuser', 'read', '/empty/dir/', 'default', 0, 'pending')
+                (grant_id, subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
+                VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
             )

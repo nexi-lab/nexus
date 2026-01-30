@@ -497,10 +497,10 @@ def serve(
                     console.print()
                     console.print("Stop the server first using one of these commands:")
                     console.print(
-                        "   ./local-demo.sh --stop              # Stop local Nexus server"
+                        "   ./scripts/local-demo.sh --stop              # Stop local Nexus server"
                     )
                     console.print(
-                        "   ./docker-demo.sh --stop             # Stop Docker-based server"
+                        "   ./scripts/docker-demo.sh --stop             # Stop Docker-based server"
                     )
                     console.print()
                     console.print("Or manually kill the process(es):")
@@ -696,8 +696,12 @@ def serve(
                                     m["mount_point"] == mount_point for m in existing_mounts
                                 )
 
-                                # Create backend instance
-                                backend = create_backend_from_config(backend_type, backend_cfg)
+                                # Create backend instance with session factory for caching
+                                backend = create_backend_from_config(
+                                    backend_type,
+                                    backend_cfg,
+                                    session_factory=nx.metadata.SessionLocal,
+                                )
 
                                 # Add mount to router
                                 nx.router.add_mount(
@@ -746,9 +750,9 @@ def serve(
                                                 f"    [dim]→ Syncing metadata from {backend_type}...[/dim]"
                                             )
                                             sync_result = nx.sync_mount(mount_point, recursive=True)
-                                            if sync_result["files_added"] > 0:
+                                            if sync_result["files_created"] > 0:
                                                 console.print(
-                                                    f"    [dim]→ Discovered {sync_result['files_added']} files[/dim]"
+                                                    f"    [dim]→ Discovered {sync_result['files_created']} files[/dim]"
                                                 )
                                             if sync_result["errors"]:
                                                 console.print(

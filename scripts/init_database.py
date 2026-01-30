@@ -13,12 +13,18 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+SCRIPT_DIR = Path(__file__).parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from alembic.config import Config
-from sqlalchemy import create_engine, inspect, text
+# Imports after path modification
+from alembic.config import Config  # noqa: E402
+from sqlalchemy import create_engine, inspect, text  # noqa: E402
 
-from alembic import command
+from alembic import command  # noqa: E402
+
+# Path to alembic.ini (located in alembic/ directory)
+ALEMBIC_INI_PATH = PROJECT_ROOT / "alembic" / "alembic.ini"
 
 
 def init_database(database_url: str) -> None:
@@ -51,7 +57,7 @@ def init_database(database_url: str) -> None:
         print("✓ Database has migration history")
         print("🔄 Running pending migrations...")
 
-        alembic_cfg = Config("alembic.ini")
+        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
         command.upgrade(alembic_cfg, "head")
 
         print("✓ Database migrations up to date")
@@ -62,7 +68,7 @@ def init_database(database_url: str) -> None:
         print("⚠️  Database has tables but no migration history")
         print("📌 Stamping database with latest migration version...")
 
-        alembic_cfg = Config("alembic.ini")
+        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
         command.stamp(alembic_cfg, "head")
 
         print("✓ Database stamped with current schema version")
@@ -80,7 +86,7 @@ def init_database(database_url: str) -> None:
         print("✓ Database schema created")
         print("📌 Stamping with latest migration version...")
 
-        alembic_cfg = Config("alembic.ini")
+        alembic_cfg = Config(str(ALEMBIC_INI_PATH))
         command.stamp(alembic_cfg, "head")
 
         print("✓ Database initialized successfully")
@@ -88,7 +94,7 @@ def init_database(database_url: str) -> None:
     engine.dispose()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     database_url = os.getenv("NEXUS_DATABASE_URL")
     if not database_url:

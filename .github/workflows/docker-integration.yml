@@ -46,8 +46,22 @@ jobs:
       NEXUS_PORT: 2026
 
     steps:
-      - name: Checkout code
+      - name: Checkout nexus
         uses: actions/checkout@v4
+        with:
+          path: nexus
+
+      - name: Checkout nexus-langgraph
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-langgraph
+          path: nexus-langgraph
+
+      - name: Checkout nexus-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: nexi-lab/nexus-frontend
+          path: nexus-frontend
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -59,6 +73,7 @@ jobs:
           docker-compose --version
 
       - name: Create required credentials files
+        working-directory: nexus
         run: |
           # Create GCS credentials from GitHub secret
           echo '${{ secrets.NEXUS_GCS_CREDENTIALS }}' > gcs-credentials.json
@@ -118,6 +133,7 @@ jobs:
           echo "NEXUS_SKIP_HEAVY_SKILLS=true" >> .env
 
       - name: Verify credentials setup
+        working-directory: nexus
         run: |
           echo "✅ Verifying credentials files..."
 
@@ -186,15 +202,18 @@ jobs:
           fi
 
       - name: Make docker-demo.sh executable
-        run: chmod +x docker-demo.sh
+        working-directory: nexus
+        run: chmod +x scripts/docker-demo.sh
 
       - name: Test docker-demo.sh --init --build
+        working-directory: nexus
         run: |
           echo "🚀 Testing docker-demo.sh --init --build --yes..."
-          ./docker-demo.sh --init --build --yes
+          ./scripts/docker-demo.sh --init --build --rebuild --yes
         timeout-minutes: 20
 
       - name: Wait for services to be healthy
+        working-directory: nexus
         run: |
           echo "⏳ Waiting for services to become healthy..."
 
@@ -227,6 +246,7 @@ jobs:
           exit 1
 
       - name: Verify service connectivity
+        working-directory: nexus
         run: |
           echo "🔍 Testing service connectivity..."
 
@@ -265,6 +285,7 @@ jobs:
           echo "✅ LangGraph health endpoint: $LANGGRAPH_RESPONSE"
 
       - name: Test API key configuration
+        working-directory: nexus
         run: |
           echo "🔑 Verifying API key configuration..."
 
@@ -294,6 +315,7 @@ jobs:
           fi
 
       - name: Test basic RPC API call
+        working-directory: nexus
         run: |
           echo "📡 Testing basic RPC API functionality..."
 
@@ -317,6 +339,7 @@ jobs:
           echo "Response: $RESPONSE"
 
       - name: End-to-End Integration Test
+        working-directory: nexus
         run: |
           echo "🧪 Running comprehensive end-to-end integration test..."
 
@@ -472,6 +495,7 @@ jobs:
           echo "🎉 End-to-end integration test completed successfully!"
 
       - name: User Permission Grant Test
+        working-directory: nexus
         run: |
           echo "🔐 Testing user permission grant workflow..."
           echo ""
@@ -662,6 +686,7 @@ jobs:
           echo "🎉 User permission grant test completed successfully!"
 
       - name: Agent Permission Management Test
+        working-directory: nexus
         run: |
           echo "🤖 Testing agent permission management..."
           echo ""
@@ -689,6 +714,7 @@ jobs:
           fi
 
       - name: User Deprovision Integration Test
+        working-directory: nexus
         run: |
           echo "🗑️ Running User Deprovision integration test..."
           echo ""
@@ -715,6 +741,7 @@ jobs:
           fi
 
       - name: Authenticate gcloud with service account
+        working-directory: nexus
         run: |
           echo "🔐 Authenticating gcloud with service account..."
 
@@ -729,6 +756,7 @@ jobs:
           gcloud auth list
 
       - name: Mount Integration Test
+        working-directory: nexus
         run: |
           echo "🗄️ Running mount integration test..."
 
@@ -876,6 +904,7 @@ jobs:
           echo "🎉 Mount integration test completed successfully!"
 
       - name: MCP Server Integration Test
+        working-directory: nexus
         run: |
           echo "🔧 Running MCP Server integration test..."
 
@@ -1434,6 +1463,7 @@ jobs:
           echo "  ℹ️  Optional tools: semantic search, memory, workflows (require additional setup)"
 
       - name: Skills Lifecycle Integration Test
+        working-directory: nexus
         run: |
           echo "📦 Running Skills Lifecycle integration test..."
 
@@ -1631,6 +1661,7 @@ jobs:
           echo "  ✅ Tested conflict detection and overwrite"
 
       - name: Agent Permission Integration Test
+        working-directory: nexus
         run: |
           echo "🤖 Running agent permission integration test..."
           echo ""
@@ -1641,7 +1672,6 @@ jobs:
           # Run the test script
           # Note: The script expects the server to be running on localhost:2026
           # and will use the default admin API key from local-dev.env
-          cd "${{ github.workspace }}"
           ./scripts/test_agent_permissions.sh
 
           if [ $? -eq 0 ]; then
@@ -1652,6 +1682,7 @@ jobs:
           fi
 
       - name: PostgreSQL Auth Integration Test
+        working-directory: nexus
         run: |
           echo "🔐 Running PostgreSQL authentication integration tests..."
           echo ""
@@ -1670,12 +1701,13 @@ jobs:
           fi
 
       - name: Test docker-demo.sh --restart
+        working-directory: nexus
         run: |
           echo "🔄 Testing docker-demo.sh --restart..."
           echo ""
 
           # Restart services
-          ./docker-demo.sh --restart
+          ./scripts/docker-demo.sh --restart
 
           echo "⏳ Waiting for services to become healthy after restart..."
           MAX_WAIT=180  # 3 minutes
@@ -1747,12 +1779,13 @@ jobs:
           echo "   All services recovered and are fully functional."
 
       - name: Test docker-demo.sh --status
+        working-directory: nexus
         run: |
           echo "📊 Testing docker-demo.sh --status..."
           echo ""
 
           # Run status command and capture output
-          STATUS_OUTPUT=$(./docker-demo.sh --status 2>&1)
+          STATUS_OUTPUT=$(./scripts/docker-demo.sh --status 2>&1)
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1779,12 +1812,13 @@ jobs:
           echo "🎉 Status test completed successfully!"
 
       - name: Test docker-demo.sh --logs
+        working-directory: nexus
         run: |
           echo "📝 Testing docker-demo.sh --logs..."
           echo ""
 
           # Run logs command in background and capture output for 5 seconds
-          timeout 5s ./docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
+          timeout 5s ./scripts/docker-demo.sh --logs > /tmp/docker_logs_test.txt 2>&1 || true
 
           # Verify log file has content
           if [ ! -s /tmp/docker_logs_test.txt ]; then
@@ -1806,6 +1840,7 @@ jobs:
           echo "🎉 Logs test completed successfully!"
 
       - name: Test docker-demo.sh --stop
+        working-directory: nexus
         run: |
           echo "🛑 Testing docker-demo.sh --stop..."
           echo ""
@@ -1815,7 +1850,7 @@ jobs:
           echo "Containers running before stop: $CONTAINERS_BEFORE"
 
           # Run stop command
-          ./docker-demo.sh --stop
+          ./scripts/docker-demo.sh --stop
           EXIT_CODE=$?
 
           if [ $EXIT_CODE -ne 0 ]; then
@@ -1848,6 +1883,7 @@ jobs:
 
       - name: Display service logs on failure
         if: failure()
+        working-directory: nexus
         run: |
           echo "=== Docker Compose PS ==="
           docker-compose ps -a
@@ -1869,7 +1905,8 @@ jobs:
 
       - name: Cleanup
         if: always()
+        working-directory: nexus
         run: |
           echo "🧹 Cleaning up containers..."
-          ./docker-demo.sh --stop || true
+          ./scripts/docker-demo.sh --stop || true
           docker system prune -af || true

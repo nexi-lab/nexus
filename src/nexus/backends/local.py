@@ -5,7 +5,6 @@ import errno
 import json
 import logging
 import os
-import platform
 import shutil
 import tempfile
 import time
@@ -1262,11 +1261,13 @@ class FileLock:
         # This works better on Windows for newly created files
         self.lock_file = open(self.path, "a+b")
 
-        # Platform-specific locking
-        if platform.system() == "Windows":
+        # Platform-specific locking using sys.platform for mypy narrowing
+        import sys
+
+        if sys.platform == "win32":
             import msvcrt
 
-            msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+            msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
 
@@ -1276,12 +1277,14 @@ class FileLock:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Release lock."""
+        import sys
+
         if self.lock_file:
-            # Platform-specific unlocking
-            if platform.system() == "Windows":
+            # Platform-specific unlocking using sys.platform for mypy narrowing
+            if sys.platform == "win32":
                 import msvcrt
 
-                msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
 

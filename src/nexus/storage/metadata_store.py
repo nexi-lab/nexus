@@ -534,12 +534,17 @@ class SQLAlchemyMetadataStore(MetadataStore):
     def _run_migrations(self) -> None:
         """Run Alembic migrations to create/update schema."""
         try:
+            from pathlib import Path
+
             from alembic.config import Config
 
             from alembic import command
 
-            # Configure Alembic
-            alembic_cfg = Config("alembic.ini")
+            # Configure Alembic - try root first (Docker), then alembic/ directory
+            alembic_ini_path = Path("alembic.ini")
+            if not alembic_ini_path.exists():
+                alembic_ini_path = Path("alembic/alembic.ini")
+            alembic_cfg = Config(str(alembic_ini_path))
             alembic_cfg.set_main_option("sqlalchemy.url", self.database_url)
 
             # Run migrations

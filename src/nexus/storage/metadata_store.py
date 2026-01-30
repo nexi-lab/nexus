@@ -2716,14 +2716,19 @@ class SQLAlchemyMetadataStore(MetadataStore):
             if not parts or parts == [""]:
                 continue
 
+            # FIX: Check mime_type to determine if this is a directory
+            is_directory = metadata.mime_type == "inode/directory"
+
             for depth in range(len(parts)):
                 parent_path = "/" if depth == 0 else "/" + "/".join(parts[:depth]) + "/"
                 entry_name = parts[depth]
-                entry_type = "file" if depth == len(parts) - 1 else "directory"
+                # FIX: Only mark as "file" if it's the last segment AND not a directory
+                entry_type = "file" if depth == len(parts) - 1 and not is_directory else "directory"
 
                 key = (tenant_id, parent_path, entry_name)
-                # Only update if not already set, or if this is a file (takes precedence)
-                if key not in entries_map or entry_type == "file":
+                # FIX: Directories take precedence over files with same name
+                # (a path can be both a directory AND contain files with same prefix)
+                if key not in entries_map or entry_type == "directory":
                     entries_map[key] = {
                         "tenant_id": tenant_id,
                         "parent_path": parent_path,

@@ -201,7 +201,7 @@ class NexusFSReBACMixin:
         tenant_id: str | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
-    ) -> WriteResult:
+    ) -> dict[str, Any]:
         """Create a relationship tuple in ReBAC system.
 
         Args:
@@ -455,7 +455,14 @@ class NexusFSReBACMixin:
         # NOTE: Tiger Cache queue update is now handled in EnhancedReBACManager.rebac_write()
         # This ensures ALL write paths (rebac_create, share_with_user, etc.) get Tiger Cache updates
 
-        return result
+        # Convert WriteResult to dict for JSON serialization.
+        # WriteResult uses slots=True so it has no __dict__ and can't be
+        # auto-serialized by RPCEncoder/_prepare_for_orjson.
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
 
     def _has_descendant_access_for_traverse(
         self,
@@ -1364,7 +1371,7 @@ class NexusFSReBACMixin:
         to_subject: tuple[str, str],
         expires_at: datetime | None = None,
         tenant_id: str | None = None,
-    ) -> WriteResult:
+    ) -> dict[str, Any]:
         """Grant consent for one subject to discover another.
 
         Args:
@@ -1446,7 +1453,9 @@ class NexusFSReBACMixin:
         return False
 
     @rpc_expose(description="Make resource publicly discoverable")
-    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> WriteResult:
+    def make_public(
+        self, resource: tuple[str, str], tenant_id: str | None = None
+    ) -> dict[str, Any]:
         """Make a resource publicly discoverable.
 
         Args:
@@ -1526,7 +1535,7 @@ class NexusFSReBACMixin:
         user_tenant_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
-    ) -> WriteResult:
+    ) -> dict[str, Any]:
         """Share a resource with a specific user, regardless of tenant.
 
         This enables cross-tenant sharing - users from different organizations
@@ -1601,7 +1610,7 @@ class NexusFSReBACMixin:
 
         # Use shared-* relations which are allowed to cross tenant boundaries
         # Call underlying manager directly to support cross-tenant parameters
-        return self._rebac_manager.rebac_write(
+        result = self._rebac_manager.rebac_write(
             subject=("user", user_id),
             relation=tuple_relation,
             object=resource,
@@ -1609,6 +1618,11 @@ class NexusFSReBACMixin:
             subject_tenant_id=user_tenant_id,
             expires_at=expires_dt,
         )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
 
     @rpc_expose(description="Share a resource with a group (all members get access)")
     def share_with_group(
@@ -1620,7 +1634,7 @@ class NexusFSReBACMixin:
         group_tenant_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
-    ) -> WriteResult:
+    ) -> dict[str, Any]:
         """Share a resource with a group (all members get access).
 
         Uses userset-as-subject pattern: ("group", group_id, "member")
@@ -1700,7 +1714,7 @@ class NexusFSReBACMixin:
         # This allows all members of the group to have the specified permission
         # Use shared-* relations which are allowed to cross tenant boundaries
         # Call underlying manager directly to support cross-tenant parameters
-        return self._rebac_manager.rebac_write(
+        result = self._rebac_manager.rebac_write(
             subject=("group", group_id, "member"),  # Userset-as-subject pattern
             relation=tuple_relation,
             object=resource,
@@ -1708,6 +1722,11 @@ class NexusFSReBACMixin:
             subject_tenant_id=group_tenant_id,
             expires_at=expires_dt,
         )
+        return {
+            "tuple_id": result.tuple_id,
+            "revision": result.revision,
+            "consistency_token": result.consistency_token,
+        }
 
     @rpc_expose(description="Revoke a share by resource and user")
     def revoke_share(

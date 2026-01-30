@@ -1065,13 +1065,74 @@ class NexusFSSearchMixin:
 
                 # Perform TRAVERSE check for empty directories
                 # This ensures empty directories with proper permissions are visible
-                _traverse_checks = len(dirs_needing_traverse)
+                #
+                # Fix #1147: Two-phase optimization for TRAVERSE checks:
+                #
+                # Phase 1 — Cross-tenant shortcut: Skip directories that belong to a
+                # different tenant. Cross-tenant access uses shared-* relations on
+                # specific resources, never directory TRAVERSE grants. Applies to all
+                # tenant-scoped prefixes: /tenants/X/, /shared/X/, /archives/X/.
+                #
+                # Phase 2 — Bulk TRAVERSE check: Instead of N individual
+                # PermissionEnforcer.check() calls (each doing 4-6 SQL queries for
+                # traverse/read/write + parent walk = ~350ms), batch all remaining
+                # directories into a single rebac_check_bulk() call (1-2 SQL queries
+                # total). This reduces e.g. 15 dirs × 350ms = 5.25s → ~50ms.
+                user_tenant = ctx.tenant_id if hasattr(ctx, "tenant_id") else None
+                _skipped_cross_tenant = 0
+                _TENANT_PREFIXES = ("/tenants/", "/shared/", "/archives/")
+                dirs_to_check: list[str] = []
+
                 for dir_path in dirs_needing_traverse:
-                    if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
-                        directories.add(dir_path)
+                    # Phase 1: Cross-tenant shortcut
+                    if user_tenant:
+                        skip = False
+                        for tp in _TENANT_PREFIXES:
+                            if dir_path.startswith(tp):
+                                # Extract tenant: /tenants/<T>/... or /shared/<T>/...
+                                rest = dir_path[len(tp) :]
+                                path_tenant = rest.split("/")[0] if rest else None
+                                if path_tenant and path_tenant != user_tenant:
+                                    _skipped_cross_tenant += 1
+                                    skip = True
+                                break  # Only one prefix can match
+                        if skip:
+                            continue
+
+                    dirs_to_check.append(dir_path)
+
+                # Phase 2: Bulk TRAVERSE check via rebac_check_bulk
+                _traverse_checks = len(dirs_to_check)
+                if dirs_to_check and _rebac_manager and hasattr(_rebac_manager, "rebac_check_bulk"):
+                    subject = ctx.get_subject()
+                    tenant_id = ctx.tenant_id or "default"
+
+                    # Build bulk checks: traverse, read, write for each dir
+                    # (TRAVERSE is implied by READ or WRITE — mirrors _check_rebac logic)
+                    bulk_checks = []
+                    for dp in dirs_to_check:
+                        for perm in ("traverse", "read", "write"):
+                            bulk_checks.append((subject, perm, ("file", dp)))
+
+                    bulk_results = _rebac_manager.rebac_check_bulk(bulk_checks, tenant_id)
+
+                    for dp in dirs_to_check:
+                        if (
+                            bulk_results.get((subject, "traverse", ("file", dp)), False)
+                            or bulk_results.get((subject, "read", ("file", dp)), False)
+                            or bulk_results.get((subject, "write", ("file", dp)), False)
+                        ):
+                            directories.add(dp)
+                else:
+                    # Fallback: individual checks (no rebac_manager or no bulk support)
+                    for dir_path in dirs_to_check:
+                        if self._permission_enforcer.check(dir_path, Permission.TRAVERSE, ctx):
+                            directories.add(dir_path)
 
                 logger.info(
-                    f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, traverse_checks={_traverse_checks}, prefix_checks={_prefix_checks}"
+                    f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, "
+                    f"traverse_checks={_traverse_checks}, prefix_checks={_prefix_checks}, "
+                    f"skipped_cross_tenant={_skipped_cross_tenant}, bulk={'yes' if _traverse_checks > 0 and _rebac_manager else 'no'}"
                 )
             else:
                 # No permissions: infer directories from all files

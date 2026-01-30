@@ -36,7 +36,19 @@ from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from anyio import to_thread
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi import (
+    status as http_status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
@@ -298,6 +310,8 @@ class AppState:
         self.directory_grant_expander: Any = None
         # Cache factory for Dragonfly/Redis (Issue #1075)
         self.cache_factory: Any = None
+        # WebSocket Manager for real-time events (Issue #1116)
+        self.websocket_manager: Any = None
 
 
 # Global state (set during app creation)
@@ -679,6 +693,22 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize cache factory: {e}")
 
+    # WebSocket Manager for real-time events (Issue #1116)
+    # Bridges Redis Pub/Sub to WebSocket clients for push notifications
+    try:
+        from nexus.server.websocket import WebSocketManager
+
+        # Get event bus from NexusFS if available
+        event_bus = None
+        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
+            event_bus = _app_state.nexus_fs._event_bus
+
+        _app_state.websocket_manager = WebSocketManager(event_bus=event_bus)
+        await _app_state.websocket_manager.start()
+        logger.info("WebSocket manager started for real-time events")
+    except Exception as e:
+        logger.warning(f"Failed to start WebSocket manager: {e}")
+
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
     # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
@@ -912,6 +942,14 @@ async def lifespan(_app: FastAPI) -> Any:
             with suppress(asyncio.CancelledError):
                 await asyncio.gather(*event_tasks, return_exceptions=True)
             logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
+
+    # Shutdown WebSocket manager (Issue #1116)
+    if _app_state.websocket_manager:
+        try:
+            await _app_state.websocket_manager.stop()
+            logger.info("WebSocket manager stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down WebSocket manager: {e}")
 
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()
@@ -1403,6 +1441,19 @@ def _register_routes(app: FastAPI) -> None:
         health["components"]["subscriptions"] = {
             "status": "healthy" if _app_state.subscription_manager else "disabled",
         }
+
+        # Check WebSocket manager (Issue #1116)
+        if _app_state.websocket_manager:
+            ws_stats = _app_state.websocket_manager.get_stats()
+            health["components"]["websocket"] = {
+                "status": "healthy",
+                "current_connections": ws_stats["current_connections"],
+                "total_connections": ws_stats["total_connections"],
+                "total_messages_sent": ws_stats["total_messages_sent"],
+                "connections_by_tenant": ws_stats["connections_by_tenant"],
+            }
+        else:
+            health["components"]["websocket"] = {"status": "disabled"}
 
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}
@@ -2687,6 +2738,123 @@ def _register_routes(app: FastAPI) -> None:
         tenant_id = auth_result.get("tenant_id") or "default"
         result = await _app_state.subscription_manager.test(subscription_id, tenant_id)
         return JSONResponse(content=result)
+
+    # ========================================================================
+    # WebSocket Endpoint for Real-Time Events (Issue #1116)
+    # ========================================================================
+
+    @app.websocket("/ws/events/{subscription_id}")
+    async def websocket_events(
+        websocket: WebSocket,
+        subscription_id: str,
+        token: str = Query(None, description="Authentication token"),
+    ) -> None:
+        """WebSocket endpoint for real-time file system events.
+
+        Clients connect with a subscription ID to receive filtered events.
+        Authentication is via query parameter token (browser compatible).
+
+        Protocol:
+        - Server sends: {"type": "event", "data": {...}}
+        - Server sends: {"type": "ping"}
+        - Client sends: {"type": "pong"}
+        - Client sends: {"type": "subscribe", "patterns": [...], "event_types": [...]}
+
+        Args:
+            websocket: WebSocket connection
+            subscription_id: Subscription ID for event filtering
+            token: Bearer token for authentication
+
+        Close Codes:
+            1000: Normal closure
+            1008: Policy violation (auth failed)
+            1011: Internal error
+        """
+        import uuid
+
+        if not _app_state.websocket_manager:
+            await websocket.close(
+                code=http_status.WS_1011_INTERNAL_ERROR, reason="WebSocket manager not available"
+            )
+            return
+
+        # Authenticate
+        auth_result = None
+        if token:
+            # Reuse existing auth validation
+            auth_result = await get_auth_result(authorization=f"Bearer {token}")
+
+        # Allow unauthenticated if no auth configured (open access mode)
+        if not auth_result and (_app_state.api_key or _app_state.auth_provider):
+            await websocket.close(
+                code=http_status.WS_1008_POLICY_VIOLATION, reason="Authentication required"
+            )
+            return
+
+        tenant_id = (auth_result or {}).get("tenant_id") or "default"
+        user_id = (auth_result or {}).get("subject_id")
+
+        # Lookup subscription to get patterns and event types
+        patterns: list[str] = []
+        event_types: list[str] = []
+
+        if _app_state.subscription_manager and subscription_id != "all":
+            subscription = _app_state.subscription_manager.get(subscription_id, tenant_id)
+            if subscription:
+                patterns = subscription.patterns or []
+                event_types = subscription.event_types or []
+            else:
+                # Allow connection even without valid subscription - can subscribe dynamically
+                logger.debug(
+                    f"Subscription {subscription_id} not found, allowing dynamic subscription"
+                )
+
+        # Generate unique connection ID
+        connection_id = f"{subscription_id}:{uuid.uuid4().hex[:8]}"
+
+        # Connect
+        _conn_info = await _app_state.websocket_manager.connect(
+            websocket=websocket,
+            tenant_id=tenant_id,
+            connection_id=connection_id,
+            user_id=user_id,
+            subscription_id=subscription_id if subscription_id != "all" else None,
+            patterns=patterns,
+            event_types=event_types,
+        )
+
+        # Send welcome message
+        await websocket.send_json(
+            {
+                "type": "connected",
+                "connection_id": connection_id,
+                "tenant_id": tenant_id,
+                "patterns": patterns,
+                "event_types": event_types,
+            }
+        )
+
+        try:
+            # Handle client messages (ping/pong, subscribe, etc.)
+            await _app_state.websocket_manager.handle_client(websocket, connection_id)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.warning(f"WebSocket error for {connection_id}: {e}")
+        finally:
+            await _app_state.websocket_manager.disconnect(connection_id)
+
+    @app.websocket("/ws/events")
+    async def websocket_events_all(
+        websocket: WebSocket,
+        token: str = Query(None, description="Authentication token"),
+    ) -> None:
+        """WebSocket endpoint for all tenant events (no subscription filter).
+
+        Same as /ws/events/{subscription_id} but receives all events for the tenant.
+        """
+        # Redirect to the subscription handler with "all" as subscription_id
+        await websocket_events(websocket, "all", token)
 
     # ========================================================================
     # Streaming Endpoint for Local Backend

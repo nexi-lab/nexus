@@ -104,7 +104,7 @@ class SkillService:
         skill_path: str,
         share_with: str,
         context: OperationContext | None,
-    ) -> dict[str, Any]:
+    ) -> str:
         """Grant read permission on a skill to users, groups, or make public.
 
         Only the skill owner can share a skill. Uses ReBAC to manage permissions.
@@ -140,7 +140,7 @@ class SkillService:
         # Normalize path to remove trailing slash - must match hierarchy_manager's parent tuple format
         # for permission inheritance to work correctly.
         normalized_path = skill_path.rstrip("/")
-        tuple_id = self._gw._fs.rebac_create(
+        result = self._gw._fs.rebac_create(
             subject=cast(Any, share_subject),  # 3-tuple for userset-as-subject
             relation="direct_viewer",
             object=("file", normalized_path),
@@ -148,7 +148,9 @@ class SkillService:
         )
 
         logger.info(f"Shared skill '{skill_path}' with '{share_with}'")
-        return tuple_id
+        # rebac_create returns a dict with tuple_id, revision, consistency_token
+        # Extract just the tuple_id string for the API contract
+        return result["tuple_id"]
 
     def unshare(
         self,

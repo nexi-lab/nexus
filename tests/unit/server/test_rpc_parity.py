@@ -297,6 +297,10 @@ def test_all_public_methods_are_exposed_or_excluded():
         "asemantic_search_index",  # Delegates to search_service.semantic_search_index()
         "asemantic_search_stats",  # Delegates to search_service.semantic_search_stats()
         "ainitialize_semantic_search",  # Delegates to search_service.initialize_semantic_search()
+        # Distributed Lock methods - async context managers require special handling
+        # Tracked in Issue #1141
+        "atomic_update",  # Async - read-modify-write with distributed lock
+        "locked",  # Async context manager - distributed lock acquisition
     }
 
     # Get all public methods

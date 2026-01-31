@@ -16,7 +16,7 @@ import hashlib
 import logging
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -181,6 +181,144 @@ class NexusFSCoreMixin:
                 threading.Thread(target=publish_in_thread, daemon=True).start()
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
+
+    # =========================================================================
+    # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
+    # =========================================================================
+
+    def _acquire_lock_sync(
+        self,
+        path: str,
+        timeout: float,
+        context: OperationContext | None,
+    ) -> str | None:
+        """Acquire distributed lock synchronously (for use in sync write()).
+
+        This method bridges sync write() with async lock operations.
+        For async contexts, use `async with locked()` instead.
+
+        Args:
+            path: Path to lock
+            timeout: Lock acquisition timeout
+            context: Operation context
+
+        Returns:
+            lock_id if acquired, None if lock manager not available
+
+        Raises:
+            LockTimeout: If lock cannot be acquired within timeout
+        """
+        # Check if lock manager is available
+        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+            raise RuntimeError(
+                "write(lock=True) called but distributed lock manager not configured. "
+                "Set NEXUS_DRAGONFLY_COORDINATION_URL environment variable "
+                "or pass coordination_url to NexusFS constructor."
+            )
+
+        from nexus.core.exceptions import LockTimeout
+
+        # Run async lock in sync context
+        # Check if we're in an async context - if so, user should use locked() instead
+        try:
+            asyncio.get_running_loop()
+            # There's a running event loop - write(lock=True) won't work properly
+            raise RuntimeError(
+                "write(lock=True) cannot be used from async context (event loop detected). "
+                "Use `async with nx.locked(path):` and `write(lock=False)` instead."
+            )
+        except RuntimeError as e:
+            if "event loop detected" in str(e):
+                raise  # Re-raise our custom error
+            # No running loop - safe to proceed
+
+        # For sync context, we need to create a fresh Redis connection for each operation
+        # because asyncio.run() creates/closes event loops, and connections are loop-bound
+        tenant_id = self._get_tenant_id(context)  # type: ignore[attr-defined]  # allowed
+
+        async def acquire_with_fresh_connection() -> str | None:
+            from nexus.core.cache.dragonfly import DragonflyClient
+            from nexus.core.distributed_lock import RedisLockManager
+
+            # Get Redis URL from the existing lock manager's client
+            redis_url = self._lock_manager._redis._url
+
+            # Create fresh connection for this operation
+            client = DragonflyClient(url=redis_url)
+            await client.connect()
+            try:
+                manager = RedisLockManager(client)
+                return await manager.acquire(
+                    tenant_id=tenant_id,
+                    path=path,
+                    timeout=timeout,
+                )
+            finally:
+                await client.disconnect()
+
+        lock_id = asyncio.run(acquire_with_fresh_connection())
+
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+
+        return lock_id
+
+    def _release_lock_sync(
+        self,
+        lock_id: str,
+        path: str,
+        context: OperationContext | None,
+    ) -> None:
+        """Release distributed lock synchronously.
+
+        Args:
+            lock_id: Lock ID from _acquire_lock_sync()
+            path: Path that was locked
+            context: Operation context
+        """
+        if not lock_id:
+            return
+
+        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+            return
+
+        try:
+            asyncio.get_running_loop()
+            # There's a running event loop - shouldn't reach here if acquire worked
+            logger.error(f"_release_lock_sync called from async context for {path}")
+            return
+        except RuntimeError:
+            pass  # No running loop - safe to proceed
+
+        tenant_id = self._get_tenant_id(context)  # type: ignore[attr-defined]  # allowed
+
+        async def release_with_fresh_connection() -> None:
+            from nexus.core.cache.dragonfly import DragonflyClient
+            from nexus.core.distributed_lock import RedisLockManager
+
+            # Get Redis URL from the existing lock manager's client
+            redis_url = self._lock_manager._redis._url
+
+            # Create fresh connection for this operation
+            client = DragonflyClient(url=redis_url)
+            await client.connect()
+            try:
+                manager = RedisLockManager(client)
+                await manager.release(lock_id, tenant_id, path)
+            finally:
+                await client.disconnect()
+
+        try:
+            asyncio.run(release_with_fresh_connection())
+        except RuntimeError as e:
+            if "cannot be called from a running event loop" in str(e):
+                logger.error(
+                    f"Failed to release lock {lock_id} for {path}: called from async context"
+                )
+            else:
+                logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
     def _apply_dynamic_viewer_filter_if_needed(
         self, path: str, content: bytes, context: OperationContext | None
@@ -1212,6 +1350,8 @@ class NexusFSCoreMixin:
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
     ) -> dict[str, Any]:
         """
         Write content to a file with optional optimistic concurrency control.
@@ -1230,6 +1370,10 @@ class NexusFSCoreMixin:
                      Prevents concurrent modification conflicts.
             if_none_match: If True, write only if file doesn't exist (create-only mode)
             force: If True, skip version check and overwrite unconditionally (dangerous!)
+            lock: If True, acquire distributed lock before writing (default: False for backward compatibility).
+                  Use this for single-write operations that need mutual exclusion.
+                  For read-modify-write patterns, use locked() context manager or atomic_update() instead.
+            lock_timeout: Maximum time to wait for lock in seconds (only used if lock=True)
 
         Returns:
             Dict with metadata about the written file:
@@ -1243,7 +1387,9 @@ class NexusFSCoreMixin:
             BackendError: If write operation fails
             AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
-            ConflictError: If if_match is provided and doesn't match current etag            FileExistsError: If if_none_match=True and file already exists
+            ConflictError: If if_match is provided and doesn't match current etag
+            FileExistsError: If if_none_match=True and file already exists
+            LockTimeout: If lock=True and lock cannot be acquired within lock_timeout
 
         Examples:
             >>> # Simple write (no version checking)
@@ -1261,7 +1407,11 @@ class NexusFSCoreMixin:
             >>> # Create-only mode
             >>> nx.write("/workspace/new.txt", b'content', if_none_match=True)
 
-            >>> # Write memory via virtual path            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
+            >>> # Write with distributed lock (mutual exclusion)
+            >>> nx.write("/shared/config.json", b'{"v": 1}', lock=True)
+
+            >>> # Write memory via virtual path
+            >>> nx.write("/workspace/alice/agent1/memory/facts", b'Python is great')
             >>> nx.write("/memory/by-user/alice/facts", b'Update')  # Same memory!
         """
         # Auto-convert str to bytes for convenience
@@ -1276,6 +1426,38 @@ class NexusFSCoreMixin:
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
 
+        # Issue #1106 Block 3: Acquire distributed lock if requested
+        lock_id = None
+        if lock:
+            lock_id = self._acquire_lock_sync(path, lock_timeout, context)
+
+        try:
+            return self._write_internal(
+                path=path,
+                content=content,
+                context=context,
+                if_match=if_match,
+                if_none_match=if_none_match,
+                force=force,
+            )
+        finally:
+            if lock_id:
+                self._release_lock_sync(lock_id, path, context)
+
+    def _write_internal(
+        self,
+        path: str,
+        content: bytes,
+        context: OperationContext | None,
+        if_match: str | None,
+        if_none_match: bool,
+        force: bool,
+    ) -> dict[str, Any]:
+        """Internal write implementation (extracted for lock support).
+
+        This method contains the actual write logic, extracted to support
+        both locked and non-locked write paths without code duplication.
+        """
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         tenant_id, agent_id, is_admin = self._get_routing_params(context)
@@ -1644,6 +1826,89 @@ class NexusFSCoreMixin:
             "modified_at": now,
             "size": len(content),
         }
+
+    async def atomic_update(
+        self,
+        path: str,
+        update_fn: Callable[[bytes], bytes],
+        context: OperationContext | None = None,
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+    ) -> dict[str, Any]:
+        """Atomically read-modify-write a file with distributed locking.
+
+        This is the recommended API for concurrent file updates where you need
+        to read existing content, modify it, and write back atomically.
+
+        The operation:
+        1. Acquires distributed lock on the path
+        2. Reads current file content
+        3. Applies your update function
+        4. Writes modified content
+        5. Releases lock (even on failure)
+
+        For simple writes without reading, use `write(lock=True)` instead.
+        For multiple operations within one lock, use `async with locked()` instead.
+
+        Args:
+            path: Virtual path to update
+            update_fn: Function that transforms content (bytes -> bytes).
+                      Receives current file content, returns new content.
+            context: Operation context (optional)
+            timeout: Maximum time to wait for lock in seconds (default: 30.0)
+            ttl: Lock TTL in seconds (default: 30.0)
+
+        Returns:
+            Dict with metadata about the written file:
+                - etag: Content hash of the new content
+                - version: New version number
+                - modified_at: Modification timestamp
+                - size: File size in bytes
+
+        Raises:
+            LockTimeout: If lock cannot be acquired within timeout
+            NexusFileNotFoundError: If file doesn't exist
+            BackendError: If read or write operation fails
+
+        Example:
+            >>> # Increment a counter atomically
+            >>> import json
+            >>> await nx.atomic_update(
+            ...     "/counters/visits.json",
+            ...     lambda c: json.dumps({"count": json.loads(c)["count"] + 1}).encode()
+            ... )
+
+            >>> # Append to a log file atomically
+            >>> await nx.atomic_update(
+            ...     "/logs/access.log",
+            ...     lambda c: c + b"New log entry\\n"
+            ... )
+
+            >>> # Update config safely across multiple agents
+            >>> await nx.atomic_update(
+            ...     "/shared/config.json",
+            ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
+            ... )
+        """
+        # Check if lock manager is available
+        if not hasattr(self, "_lock_manager") or self._lock_manager is None:
+            raise RuntimeError(
+                "atomic_update() requires distributed lock manager. "
+                "Set NEXUS_DRAGONFLY_COORDINATION_URL environment variable "
+                "or pass coordination_url to NexusFS constructor."
+            )
+
+        # self.locked() is from NexusFSEventsMixin
+        async with self.locked(path, timeout=timeout, ttl=ttl, _context=context):  # type: ignore[attr-defined]  # allowed
+            # Read current content (return_metadata=False ensures bytes return)
+            content = self.read(path, context=context, return_metadata=False)
+            assert isinstance(content, bytes), "Expected bytes from read()"
+
+            # Apply update function
+            new_content = update_fn(content)
+
+            # Write back (no lock needed since we hold the lock)
+            return self.write(path, new_content, context=context, lock=False)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     def append(

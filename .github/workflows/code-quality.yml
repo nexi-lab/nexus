@@ -129,8 +129,8 @@ jobs:
           echo "count=$CURRENT_COUNT" >> $GITHUB_OUTPUT
           echo "Current type: ignore count: $CURRENT_COUNT"
 
-          # Baseline updated for Issue #1115 (552 = 549 + 3 type ignores for event bus optional imports)
-          BASELINE=552
+          # Baseline updated for Issue #1141 (553 = 552 + 1 type ignore for distributed lock federation)
+          BASELINE=553
 
           if [ "$CURRENT_COUNT" -gt "$BASELINE" ]; then
             echo "::error::Type ignore count increased from $BASELINE to $CURRENT_COUNT"

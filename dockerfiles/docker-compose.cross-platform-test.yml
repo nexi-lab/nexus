@@ -1,0 +1,110 @@
+# Cross-Platform Integration Test Environment
+# Usage: docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#
+# This setup enables testing distributed locks and events across:
+# - Windows host (pytest runner)
+# - Linux container (NexusFS node)
+# With shared PostgreSQL (SSOT) and Dragonfly (coordination)
+#
+# Test Matrix (Issue #1141):
+# - Win holds lock -> Linux waits
+# - Linux holds lock -> Win waits
+# - Cross-platform atomic_update()
+# - startup_sync reconciliation
+# - Lock TTL expiry and crash recovery
+
+version: "3.8"
+
+services:
+  # PostgreSQL - Single Source of Truth (SSOT)
+  postgres:
+    image: postgres:17
+    container_name: nexus-test-postgres
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus_test_pass
+      POSTGRES_DB: nexus_test
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Dragonfly for Coordination (noeviction policy for locks)
+  dragonfly-coordination:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: nexus-test-dragonfly-coordination
+    command: dragonfly --maxmemory=256mb --maxmemory-policy=noeviction --logtostderr
+    ports:
+      - "6379:6379"
+    volumes:
+      - dragonfly_coordination_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Dragonfly for Cache (can use eviction, has PG backup)
+  dragonfly-cache:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: nexus-test-dragonfly-cache
+    command: dragonfly --maxmemory=512mb --logtostderr
+    ports:
+      - "6380:6379"
+    volumes:
+      - dragonfly_cache_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Linux NexusFS Node (for cross-platform tests)
+  nexus-linux:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: nexus-test-linux
+    environment:
+      - NEXUS_DATABASE_URL=postgresql://nexus:nexus_test_pass@postgres:5432/nexus_test
+      - NEXUS_DRAGONFLY_COORDINATION_URL=redis://dragonfly-coordination:6379
+      - NEXUS_DRAGONFLY_CACHE_URL=redis://dragonfly-cache:6379
+      - NEXUS_HOST=0.0.0.0
+      - NEXUS_PORT=2026
+    ports:
+      - "2027:2026"  # Linux node on host port 2027
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly-coordination:
+        condition: service_healthy
+      dragonfly-cache:
+        condition: service_healthy
+    volumes:
+      - nexus_linux_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  dragonfly_coordination_data:
+  dragonfly_cache_data:
+  nexus_linux_data:
+
+# Windows host configuration (for pytest runner):
+# Set these environment variables on Windows:
+#   NEXUS_DATABASE_URL=postgresql://nexus:nexus_test_pass@localhost:5432/nexus_test
+#   NEXUS_DRAGONFLY_COORDINATION_URL=redis://localhost:6379
+#   NEXUS_DRAGONFLY_CACHE_URL=redis://localhost:6380
+#
+# Then run tests:
+#   pytest tests/integration/test_distributed_lock_cross_platform.py -v
+#   pytest tests/integration/test_startup_sync.py -v

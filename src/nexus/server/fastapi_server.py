@@ -1528,9 +1528,9 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.core.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
-            if cache_factory.is_using_dragonfly and cache_factory._dragonfly_client:
-                dragonfly_stats = cache_factory._dragonfly_client.get_pool_stats()
-                dragonfly_info = await cache_factory._dragonfly_client.get_info()
+            if cache_factory.is_using_dragonfly and cache_factory._cache_client:
+                dragonfly_stats = cache_factory._cache_client.get_pool_stats()
+                dragonfly_info = await cache_factory._cache_client.get_info()
                 metrics["dragonfly"] = {
                     **dragonfly_stats,
                     "server_info": dragonfly_info,

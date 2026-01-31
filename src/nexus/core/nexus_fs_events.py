@@ -21,7 +21,9 @@ Selection Logic:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.rpc_decorator import rpc_expose
@@ -535,6 +537,74 @@ class NexusFSEventsMixin:
         )
 
     # =========================================================================
+    # Lock Context Manager (Issue #1106 Block 3)
+    # =========================================================================
+
+    @contextlib.asynccontextmanager
+    async def locked(
+        self,
+        path: str,
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+        _context: OperationContext | None = None,
+    ) -> AsyncIterator[str]:
+        """Acquire a distributed lock as an async context manager.
+
+        This is the recommended API for read-modify-write operations where you
+        need to hold a lock across multiple operations. The lock is automatically
+        released when exiting the context, even if an exception occurs.
+
+        For simple single-write locking, use `write(lock=True)` instead.
+        For atomic read-modify-write, use `atomic_update()` instead.
+
+        Args:
+            path: Virtual path to lock
+            timeout: Maximum time to wait for lock in seconds (default: 30.0)
+            ttl: Lock TTL in seconds - auto-expires after this (default: 30.0)
+            _context: Operation context (optional)
+
+        Yields:
+            lock_id: Lock identifier (can be used for extend_lock if needed)
+
+        Raises:
+            LockTimeout: If lock cannot be acquired within timeout
+            NotImplementedError: If no lock manager is available
+
+        Example:
+            >>> # Read-modify-write with explicit locking
+            >>> async with nx.locked("/config.json") as lock_id:
+            ...     config = nx.read("/config.json")
+            ...     config = json.loads(config)
+            ...     config["version"] += 1
+            ...     nx.write("/config.json", json.dumps(config), lock=False)
+
+            >>> # Long-running operation with heartbeat
+            >>> async with nx.locked("/meeting/floor", ttl=30.0) as lock_id:
+            ...     async def heartbeat():
+            ...         while speaking:
+            ...             await nx.extend_lock(lock_id, "/meeting/floor")
+            ...             await asyncio.sleep(15)
+            ...     task = asyncio.create_task(heartbeat())
+            ...     try:
+            ...         await do_speech()
+            ...     finally:
+            ...         task.cancel()
+        """
+        from nexus.core.exceptions import LockTimeout
+
+        # Acquire lock
+        lock_id = await self.lock(path, timeout=timeout, ttl=ttl, _context=_context)
+
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+
+        try:
+            yield lock_id
+        finally:
+            # Always release lock on exit
+            await self.unlock(lock_id, path, _context=_context)
+
+    # =========================================================================
     # Cache Invalidation via Events (Issue #1106 Block 2)
     # =========================================================================
 
@@ -624,6 +694,15 @@ class NexusFSEventsMixin:
         """
         self._handle_cache_invalidation_event(event.type, event.path, event.old_path)
 
+    async def _async_handle_event(self, event: Any) -> None:
+        """Async wrapper for handling events during startup sync.
+
+        Args:
+            event: FileEvent from event_bus.py
+        """
+        # Delegate to sync handler (cache invalidation is sync)
+        self._on_distributed_event(event)
+
     def _start_cache_invalidation(self) -> None:
         """Start cache invalidation listeners for both Layer 1 and Layer 2.
 
@@ -658,6 +737,18 @@ class NexusFSEventsMixin:
             async def _subscribe_loop() -> None:
                 """Background task to subscribe to distributed events."""
                 try:
+                    # Phase E: Startup Sync - reconcile missed events from PG SSOT
+                    # This must happen BEFORE subscribing to new events
+                    if hasattr(self._event_bus, "startup_sync"):
+                        try:
+                            synced = await self._event_bus.startup_sync(  # type: ignore[union-attr]  # allowed
+                                event_handler=self._async_handle_event,
+                            )
+                            if synced > 0:
+                                logger.info(f"Startup sync: processed {synced} missed events")
+                        except Exception as e:
+                            logger.warning(f"Startup sync failed (continuing anyway): {e}")
+
                     logger.info(f"Starting distributed cache invalidation for tenant: {tenant_id}")
                     async for event in self._event_bus.subscribe(tenant_id):  # type: ignore[union-attr]
                         self._on_distributed_event(event)

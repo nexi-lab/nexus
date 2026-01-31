@@ -324,8 +324,11 @@ class TestLockWorkflow:
     @pytest.mark.asyncio
     async def test_double_acquire_fails(self, lock_manager, mock_redis_client):
         """Test that double acquire fails (lock is exclusive)."""
-        # First acquire succeeds, second fails
-        mock_redis_client.client.set = AsyncMock(side_effect=[True, False, False, False])
+        # First acquire succeeds, subsequent attempts fail
+        # With exponential backoff, more attempts may be made, so provide many False values
+        mock_redis_client.client.set = AsyncMock(
+            side_effect=[True] + [False] * 50  # First succeeds, rest fail
+        )
 
         lock_id1 = await lock_manager.acquire("tenant1", "/file.txt", timeout=5.0)
         assert lock_id1 is not None
@@ -460,10 +463,13 @@ class TestLockManagerDefaults:
         """Test default timeout value."""
         assert LockManagerBase.DEFAULT_TIMEOUT == 30.0
 
-    def test_retry_interval(self, mock_redis_client):
-        """Test retry interval value."""
+    def test_retry_backoff_params(self, mock_redis_client):
+        """Test retry backoff parameters (exponential with jitter)."""
         manager = RedisLockManager(mock_redis_client)
-        assert manager.RETRY_INTERVAL == 0.1
+        assert manager.RETRY_BASE_INTERVAL == 0.05  # Start at 50ms
+        assert manager.RETRY_MAX_INTERVAL == 1.0  # Cap at 1s
+        assert manager.RETRY_MULTIPLIER == 2.0  # Double each retry
+        assert manager.RETRY_JITTER == 0.5  # 50% jitter
 
     def test_lock_prefix(self, mock_redis_client):
         """Test lock key prefix."""

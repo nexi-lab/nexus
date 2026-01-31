@@ -27,9 +27,9 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -37,6 +37,15 @@ if TYPE_CHECKING:
     from nexus.core.cache.dragonfly import DragonflyClient
 
 logger = logging.getLogger(__name__)
+
+
+def _utcnow_naive() -> datetime:
+    """Get current UTC time as a naive datetime (no timezone info).
+
+    PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns don't store timezone info,
+    so we need naive datetimes. This avoids the deprecated datetime.utcnow().
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class FileEventType(str, Enum):
@@ -346,14 +355,20 @@ class EventBusBase(ABC):
 
 
 class RedisEventBus(EventBusBase):
-    """Redis Pub/Sub implementation of the event bus.
+    """Redis Pub/Sub implementation of the event bus with PG SSOT.
 
     Uses per-tenant channels for efficient event routing.
     Channel format: nexus:events:{tenant_id}
 
+    SSOT Architecture:
+        - PostgreSQL (operation_log) is the source of truth
+        - Redis Pub/Sub is best-effort notification
+        - Startup sync reconciles missed events from PG
+
     Example:
-        >>> bus = RedisEventBus(redis_client)
+        >>> bus = RedisEventBus(redis_client, session_factory=SessionLocal)
         >>> await bus.start()
+        >>> await bus.startup_sync()  # Sync missed events from PG
         >>>
         >>> # Publish event
         >>> event = FileEvent(
@@ -362,23 +377,40 @@ class RedisEventBus(EventBusBase):
         ...     tenant_id="default",
         ... )
         >>> await bus.publish(event)
-        >>>
-        >>> # Wait for events
-        >>> event = await bus.wait_for_event("default", "/inbox/", timeout=30.0)
     """
 
     CHANNEL_PREFIX = "nexus:events"
+    CHECKPOINT_KEY_PREFIX = "node_sync_checkpoint"
 
-    def __init__(self, redis_client: DragonflyClient):
+    def __init__(
+        self,
+        redis_client: DragonflyClient,
+        session_factory: Any | None = None,
+        node_id: str | None = None,
+    ):
         """Initialize RedisEventBus.
 
         Args:
             redis_client: DragonflyClient instance for Redis connection
+            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
+            node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
         """
         self._redis = redis_client
+        self._session_factory = session_factory
+        self._node_id = node_id or self._generate_node_id()
         self._pubsub: Any = None
         self._started = False
         self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _generate_node_id() -> str:
+        """Generate a unique node ID based on hostname and process."""
+        import os
+        import socket
+
+        hostname = socket.gethostname()
+        pid = os.getpid()
+        return f"{hostname}-{pid}"
 
     def _channel_name(self, tenant_id: str) -> str:
         """Get Redis channel name for a tenant."""
@@ -564,14 +596,172 @@ class RedisEventBus(EventBusBase):
             logger.warning(f"Event bus health check failed: {e}")
             return False
 
+    # =========================================================================
+    # SSOT: Startup Sync (Phase E)
+    # =========================================================================
+
+    def _get_checkpoint_key(self) -> str:
+        """Get the SystemSettings key for this node's checkpoint."""
+        return f"{self.CHECKPOINT_KEY_PREFIX}:{self._node_id}"
+
+    async def _get_checkpoint(self) -> datetime | None:
+        """Get the last sync checkpoint from PG."""
+        if not self._session_factory:
+            return None
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import SystemSettingsModel
+
+        with self._session_factory() as session:
+            stmt = select(SystemSettingsModel).where(
+                SystemSettingsModel.key == self._get_checkpoint_key()
+            )
+            setting = session.execute(stmt).scalar_one_or_none()
+
+            if setting:
+                return datetime.fromisoformat(setting.value)
+            return None
+
+    async def _update_checkpoint(self, timestamp: datetime) -> None:
+        """Update the sync checkpoint in PG."""
+        if not self._session_factory:
+            return
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import SystemSettingsModel
+
+        with self._session_factory() as session:
+            key = self._get_checkpoint_key()
+            stmt = select(SystemSettingsModel).where(SystemSettingsModel.key == key)
+            setting = session.execute(stmt).scalar_one_or_none()
+
+            if setting:
+                setting.value = timestamp.isoformat()
+            else:
+                setting = SystemSettingsModel(
+                    key=key,
+                    value=timestamp.isoformat(),
+                    description=f"Event sync checkpoint for node {self._node_id}",
+                )
+                session.add(setting)
+
+            session.commit()
+
+    async def startup_sync(
+        self,
+        event_handler: Callable[[FileEvent], Awaitable[None]] | None = None,
+        default_lookback_hours: int = 1,
+    ) -> int:
+        """Sync missed events from PG SSOT on startup.
+
+        This method should be called after start() to reconcile any events
+        that were missed while this node was down.
+
+        Args:
+            event_handler: Async callback to handle each missed event.
+                          If None, events are logged but not processed.
+            default_lookback_hours: If no checkpoint exists, look back this many hours.
+
+        Returns:
+            Number of events synced.
+        """
+        if not self._session_factory:
+            logger.warning("startup_sync skipped: no session_factory configured")
+            return 0
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import OperationLogModel
+
+        # Get last checkpoint
+        checkpoint = await self._get_checkpoint()
+        if checkpoint is None:
+            # First run: use default lookback
+            # Use naive datetime to match database (TIMESTAMP WITHOUT TIME ZONE)
+            checkpoint = _utcnow_naive() - timedelta(hours=default_lookback_hours)
+            logger.info(f"No checkpoint found, using default lookback: {default_lookback_hours}h")
+        elif checkpoint.tzinfo is not None:
+            # Convert to naive if checkpoint has timezone info
+            checkpoint = checkpoint.replace(tzinfo=None)
+
+        logger.info(f"Starting sync from checkpoint: {checkpoint.isoformat()}")
+
+        # Query operations since checkpoint
+        with self._session_factory() as session:
+            stmt = (
+                select(OperationLogModel)
+                .where(OperationLogModel.created_at > checkpoint)
+                .where(OperationLogModel.status == "success")
+                .order_by(OperationLogModel.created_at)
+            )
+            operations = session.execute(stmt).scalars().all()
+
+            if not operations:
+                logger.info("No missed events to sync")
+                await self._update_checkpoint(_utcnow_naive())
+                return 0
+
+            logger.info(f"Found {len(operations)} missed events to sync")
+
+            # Process each operation
+            synced_count = 0
+            latest_timestamp = checkpoint
+
+            for op in operations:
+                # Convert OperationLogModel to FileEvent
+                event = FileEvent(
+                    type=self._operation_type_to_event_type(op.operation_type),
+                    path=op.path,
+                    tenant_id=op.tenant_id,
+                    timestamp=op.created_at.isoformat(),
+                    old_path=op.new_path,  # new_path in operation_log is old_path for rename
+                )
+
+                if event_handler:
+                    try:
+                        await event_handler(event)
+                        synced_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to handle event {event.event_id}: {e}")
+                else:
+                    logger.debug(f"Synced event: {event.type} on {event.path}")
+                    synced_count += 1
+
+                if op.created_at > latest_timestamp:
+                    latest_timestamp = op.created_at
+
+            # Update checkpoint
+            await self._update_checkpoint(latest_timestamp)
+            logger.info(f"Startup sync complete: {synced_count} events processed")
+
+            return synced_count
+
+    @staticmethod
+    def _operation_type_to_event_type(op_type: str) -> FileEventType | str:
+        """Convert operation_log type to FileEventType."""
+        mapping = {
+            "write": FileEventType.FILE_WRITE,
+            "delete": FileEventType.FILE_DELETE,
+            "rename": FileEventType.FILE_RENAME,
+            "mkdir": FileEventType.DIR_CREATE,
+            "rmdir": FileEventType.DIR_DELETE,
+        }
+        return mapping.get(op_type, op_type)
+
     async def get_stats(self) -> dict[str, Any]:
         """Get event bus statistics."""
         redis_info = await self._redis.get_info()
+        checkpoint = await self._get_checkpoint()
         return {
             "backend": "redis_pubsub",
             "status": "running" if self._started else "stopped",
             "channel_prefix": self.CHANNEL_PREFIX,
             "redis_status": redis_info.get("status", "unknown"),
+            "node_id": self._node_id,
+            "last_checkpoint": checkpoint.isoformat() if checkpoint else None,
+            "ssot_enabled": self._session_factory is not None,
         }
 
 

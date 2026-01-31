@@ -216,6 +216,35 @@ class ConflictError(NexusError):
         super().__init__(message, path)
 
 
+class LockTimeout(NexusError):
+    """Raised when a distributed lock cannot be acquired within timeout.
+
+    This is an expected error - indicates the resource is currently locked
+    by another agent/process. The caller should retry or abort.
+
+    Examples:
+        >>> try:
+        ...     async with nx.locked("/shared/config.json", timeout=5.0):
+        ...         # do work
+        ... except LockTimeout:
+        ...     print("Resource is busy, try again later")
+    """
+
+    is_expected = True  # Normal condition in concurrent systems
+
+    def __init__(self, path: str, timeout: float, message: str | None = None):
+        """Initialize lock timeout error.
+
+        Args:
+            path: Virtual file path that could not be locked
+            timeout: The timeout value that was exceeded
+            message: Optional custom message
+        """
+        self.timeout = timeout
+        msg = message or f"Could not acquire lock within {timeout}s"
+        super().__init__(msg, path)
+
+
 class AuditLogError(NexusError):
     """Raised when audit logging fails and audit_strict_mode is enabled.
 

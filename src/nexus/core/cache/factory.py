@@ -78,7 +78,8 @@ class CacheFactory:
         """
         self._settings = settings
         self._db_engine = db_engine
-        self._dragonfly_client: DragonflyClient | None = None
+        self._cache_client: DragonflyClient | None = None
+        self._coordination_client: DragonflyClient | None = None
         self._initialized = False
         self._using_dragonfly = False
 
@@ -86,19 +87,20 @@ class CacheFactory:
         """Initialize cache backends.
 
         Connects to Dragonfly if configured, otherwise uses PostgreSQL.
+        Also initializes coordination client if configured separately.
         """
         if self._initialized:
             return
 
         self._settings.validate()
 
-        if self._settings.should_use_dragonfly():
+        if self._settings.should_use_dragonfly_cache():
             try:
                 from nexus.core.cache.dragonfly import DragonflyClient
 
-                # Issue #1075: Pass all connection pool settings
-                self._dragonfly_client = DragonflyClient(
-                    url=self._settings.dragonfly_url,  # type: ignore[arg-type]
+                # Initialize cache client
+                self._cache_client = DragonflyClient(
+                    url=self._settings.dragonfly_cache_url,  # type: ignore[arg-type]  # allowed
                     pool_size=self._settings.dragonfly_pool_size,
                     timeout=self._settings.dragonfly_timeout,
                     connect_timeout=self._settings.dragonfly_connect_timeout,
@@ -106,13 +108,44 @@ class CacheFactory:
                     socket_keepalive=self._settings.dragonfly_keepalive,
                     retry_on_timeout=self._settings.dragonfly_retry_on_timeout,
                 )
-                await self._dragonfly_client.connect()
+                await self._cache_client.connect()
                 self._using_dragonfly = True
-                logger.info(
-                    f"Cache factory initialized with Dragonfly backend "
-                    f"(pool_size={self._settings.dragonfly_pool_size}, "
-                    f"keepalive={self._settings.dragonfly_keepalive})"
-                )
+
+                # Initialize coordination client
+                if self._settings.is_coordination_separate():
+                    # Separate coordination instance (recommended for production)
+                    self._coordination_client = DragonflyClient(
+                        url=self._settings.dragonfly_coordination_url,  # type: ignore[arg-type]  # allowed
+                        pool_size=self._settings.dragonfly_pool_size,
+                        timeout=self._settings.dragonfly_timeout,
+                        connect_timeout=self._settings.dragonfly_connect_timeout,
+                        pool_timeout=self._settings.dragonfly_pool_timeout,
+                        socket_keepalive=self._settings.dragonfly_keepalive,
+                        retry_on_timeout=self._settings.dragonfly_retry_on_timeout,
+                    )
+                    await self._coordination_client.connect()
+                    logger.info(
+                        "Cache factory initialized with separate Dragonfly instances "
+                        "(cache + coordination)"
+                    )
+                else:
+                    # Single instance mode: reuse cache client for coordination
+                    # This is risky because cache eviction may delete locks
+                    if not self._settings.allow_single_dragonfly:
+                        raise RuntimeError(
+                            "Single Dragonfly instance mode is not allowed. "
+                            "Either set NEXUS_DRAGONFLY_COORDINATION_URL for a separate "
+                            "coordination instance (recommended), or set "
+                            "NEXUS_ALLOW_SINGLE_DRAGONFLY=true to use single instance "
+                            "(NOT recommended for production - locks may be evicted)."
+                        )
+                    self._coordination_client = self._cache_client
+                    logger.warning(
+                        "Cache factory using single Dragonfly instance for both cache and "
+                        "coordination. Locks may be evicted unexpectedly. "
+                        "Set NEXUS_DRAGONFLY_COORDINATION_URL for production use."
+                    )
+
             except ImportError:
                 logger.warning("redis package not installed, falling back to PostgreSQL cache")
                 self._using_dragonfly = False
@@ -132,9 +165,15 @@ class CacheFactory:
 
     async def shutdown(self) -> None:
         """Shutdown cache backends and cleanup connections."""
-        if self._dragonfly_client:
-            await self._dragonfly_client.disconnect()
-            self._dragonfly_client = None
+        # Shutdown coordination client first (if separate from cache)
+        if self._coordination_client and self._coordination_client is not self._cache_client:
+            await self._coordination_client.disconnect()
+        self._coordination_client = None
+
+        # Shutdown cache client
+        if self._cache_client:
+            await self._cache_client.disconnect()
+        self._cache_client = None
 
         self._initialized = False
         self._using_dragonfly = False
@@ -149,6 +188,26 @@ class CacheFactory:
     def backend_name(self) -> str:
         """Get the name of the active backend."""
         return "dragonfly" if self._using_dragonfly else "postgres"
+
+    def get_coordination_client(self) -> "DragonflyClient":
+        """Get the coordination client for locks, events, pub/sub.
+
+        Returns:
+            DragonflyClient configured for coordination (noeviction policy recommended)
+
+        Raises:
+            RuntimeError: If factory not initialized or coordination not available
+        """
+        if not self._initialized:
+            raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
+
+        if not self._coordination_client:
+            raise RuntimeError(
+                "Coordination client not available. "
+                "Dragonfly must be configured for coordination features (locks, events)."
+            )
+
+        return self._coordination_client
 
     def get_permission_cache(self) -> PermissionCacheProtocol:
         """Get permission cache instance.
@@ -166,11 +225,11 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_dragonfly and self._dragonfly_client:
+        if self._using_dragonfly and self._cache_client:
             from nexus.core.cache.dragonfly import DragonflyPermissionCache
 
             return DragonflyPermissionCache(
-                client=self._dragonfly_client,
+                client=self._cache_client,
                 ttl=self._settings.permission_ttl,
                 denial_ttl=self._settings.permission_denial_ttl,
             )
@@ -198,11 +257,11 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_dragonfly and self._dragonfly_client:
+        if self._using_dragonfly and self._cache_client:
             from nexus.core.cache.dragonfly import DragonflyTigerCache
 
             return DragonflyTigerCache(
-                client=self._dragonfly_client,
+                client=self._cache_client,
                 ttl=self._settings.tiger_ttl,
             )
 
@@ -225,10 +284,10 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_dragonfly and self._dragonfly_client:
+        if self._using_dragonfly and self._cache_client:
             from nexus.core.cache.dragonfly import DragonflyResourceMapCache
 
-            return DragonflyResourceMapCache(client=self._dragonfly_client)
+            return DragonflyResourceMapCache(client=self._cache_client)
 
         # PostgreSQL fallback
         from nexus.core.cache.postgres import PostgresResourceMapCache
@@ -252,9 +311,9 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_dragonfly and self._dragonfly_client:
+        if self._using_dragonfly and self._cache_client:
             return DragonflyEmbeddingCache(
-                client=self._dragonfly_client,
+                client=self._cache_client,
                 ttl=self._settings.embedding_ttl,
             )
 
@@ -269,14 +328,24 @@ class CacheFactory:
         Returns:
             Dict with health status for each component
         """
-        result = {
+        result: dict = {
             "backend": self.backend_name,
             "initialized": self._initialized,
         }
 
-        if self._using_dragonfly and self._dragonfly_client:
-            result["dragonfly"] = await self._dragonfly_client.health_check()
-            result["dragonfly_info"] = await self._dragonfly_client.get_info()
+        if self._using_dragonfly and self._cache_client:
+            result["dragonfly_cache"] = await self._cache_client.health_check()
+            result["dragonfly_cache_info"] = await self._cache_client.get_info()
+
+            # Check coordination client (may be same as cache or separate)
+            if self._coordination_client:
+                is_separate = self._coordination_client is not self._cache_client
+                result["dragonfly_coordination"] = await self._coordination_client.health_check()
+                result["dragonfly_coordination_separate"] = is_separate
+                if is_separate:
+                    result[
+                        "dragonfly_coordination_info"
+                    ] = await self._coordination_client.get_info()
         else:
             result["postgres"] = self._db_engine is not None
 

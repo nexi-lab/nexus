@@ -117,11 +117,11 @@ class NexusFS(  # type: ignore[misc]
         enable_tiger_cache: bool = True,  # Enable Tiger Cache for materialized permissions (default: True)
         enable_deferred_permissions: bool = True,  # Issue #1071: Defer permission ops for faster writes (default: True)
         deferred_flush_interval: float = 0.05,  # Flush interval in seconds (50ms default - balance latency vs batching)
-        # Issue #1106 Block 2: Distributed event system
-        redis_url: str
-        | None = None,  # Redis/Dragonfly URL for distributed events/locks (e.g., "redis://localhost:6379")
-        enable_distributed_events: bool = True,  # Enable GlobalEventBus if Redis available (default: True)
-        enable_distributed_locks: bool = True,  # Enable DistributedLockManager if Redis available (default: True)
+        # Issue #1106 Block 2: Distributed event system (coordination layer)
+        coordination_url: str
+        | None = None,  # Dragonfly coordination URL (requires noeviction policy for locks)
+        enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
+        enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -442,55 +442,80 @@ class NexusFS(  # type: ignore[misc]
         self._file_watcher: Any = None
 
         # Issue #1106 Block 2: Distributed event bus and lock manager
-        # Initialize when Redis URL is provided and feature is enabled
+        # Locks: MUST use noeviction dragonfly (coordination_url)
+        # Events: CAN fallback to evictable dragonfly (has PG SSOT backup)
         self._event_bus: Any = None
         self._lock_manager: Any = None
-        self._redis_client: Any = None
+        self._coordination_client: Any = None
+        self._event_client: Any = None  # May be same as coordination or separate
 
         # Issue #1106: Auto-start flag for cache invalidation
         # Note: Event bus has its own _started flag, so we don't duplicate it here
         # This flag tracks whether _start_cache_invalidation() has been called
         self._cache_invalidation_started: bool = False
 
-        if redis_url and (enable_distributed_events or enable_distributed_locks):
+        if enable_distributed_locks or enable_distributed_events:
             try:
+                import logging
                 import os
 
                 from nexus.core.cache.dragonfly import DragonflyClient
 
-                # Use provided URL or fall back to environment variable
-                actual_redis_url = redis_url or os.getenv("NEXUS_REDIS_URL")
+                logger = logging.getLogger(__name__)
 
-                if actual_redis_url:
-                    import logging
+                # Coordination URL (noeviction) - required for locks
+                coordination_url_resolved = coordination_url or os.getenv(
+                    "NEXUS_DRAGONFLY_COORDINATION_URL"
+                )
 
-                    logger = logging.getLogger(__name__)
+                # Event URL - can fallback to cache URL (has PG SSOT backup)
+                event_url_resolved = coordination_url_resolved or os.getenv(
+                    "NEXUS_DRAGONFLY_CACHE_URL"
+                )
 
-                    # Create Redis client (reuse existing DragonflyClient)
-                    self._redis_client = DragonflyClient(url=actual_redis_url)
-
-                    # Initialize event bus if enabled
-                    if enable_distributed_events:
-                        from nexus.core.event_bus import RedisEventBus, set_global_event_bus
-
-                        self._event_bus = RedisEventBus(self._redis_client)
-                        set_global_event_bus(self._event_bus)
-                        logger.info(
-                            f"🔔 Distributed event bus initialized (Redis: {actual_redis_url})"
+                # Initialize lock manager if enabled (requires noeviction)
+                if enable_distributed_locks:
+                    if not coordination_url_resolved:
+                        # Graceful degradation: log warning and skip distributed lock setup
+                        logger.warning(
+                            "⚠️ Distributed locks disabled: NEXUS_DRAGONFLY_COORDINATION_URL not set. "
+                            "Multi-node write coordination will use local locks only."
                         )
-
-                    # Initialize lock manager if enabled
-                    if enable_distributed_locks:
+                    else:
                         from nexus.core.distributed_lock import (
                             RedisLockManager,
                             set_distributed_lock_manager,
                         )
 
-                        self._lock_manager = RedisLockManager(self._redis_client)
+                        self._coordination_client = DragonflyClient(url=coordination_url_resolved)
+                        self._lock_manager = RedisLockManager(self._coordination_client)
                         set_distributed_lock_manager(self._lock_manager)
                         logger.info(
-                            f"🔐 Distributed lock manager initialized (Redis: {actual_redis_url})"
+                            f"🔐 Distributed lock manager initialized (coordination: {coordination_url_resolved})"
                         )
+
+                # Initialize event bus if enabled (can use evictable dragonfly)
+                if enable_distributed_events and event_url_resolved:
+                    from nexus.core.event_bus import RedisEventBus, set_global_event_bus
+
+                    # Reuse coordination client if same URL, otherwise create new
+                    if (
+                        coordination_url_resolved
+                        and event_url_resolved == coordination_url_resolved
+                    ):
+                        self._event_client = self._coordination_client
+                    else:
+                        self._event_client = DragonflyClient(url=event_url_resolved)
+
+                    # Pass metadata session for PG SSOT persistence
+                    self._event_bus = RedisEventBus(
+                        self._event_client,
+                        session_factory=self.metadata.SessionLocal,
+                    )
+                    set_global_event_bus(self._event_bus)
+                    logger.info(
+                        f"🔔 Distributed event bus initialized (dragonfly: {event_url_resolved}, SSOT: PostgreSQL)"
+                    )
 
             except ImportError as e:
                 import logging

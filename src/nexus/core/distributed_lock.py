@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
@@ -239,7 +240,11 @@ class RedisLockManager(LockManagerBase):
     """
 
     LOCK_PREFIX = "nexus:lock"
-    RETRY_INTERVAL = 0.1  # Retry interval when waiting for lock
+    # Exponential backoff parameters
+    RETRY_BASE_INTERVAL = 0.05  # Start with 50ms
+    RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
+    RETRY_MULTIPLIER = 2.0  # Double each retry
+    RETRY_JITTER = 0.5  # Add up to 50% random jitter
 
     def __init__(self, redis_client: DragonflyClient):
         """Initialize RedisLockManager.
@@ -285,6 +290,7 @@ class RedisLockManager(LockManagerBase):
         ttl_ms = int(ttl * 1000)
 
         deadline = asyncio.get_event_loop().time() + timeout
+        retry_interval = self.RETRY_BASE_INTERVAL
 
         while True:
             # Try to acquire lock atomically
@@ -305,8 +311,17 @@ class RedisLockManager(LockManagerBase):
                 logger.debug(f"Lock acquisition timeout: {key}")
                 return None
 
-            # Wait before retry
-            await asyncio.sleep(min(self.RETRY_INTERVAL, remaining))
+            # Exponential backoff with jitter to reduce thundering herd
+            # Jitter adds randomness so competing clients don't all retry at once
+            jitter = random.uniform(0, retry_interval * self.RETRY_JITTER)
+            sleep_time = min(retry_interval + jitter, remaining)
+            await asyncio.sleep(sleep_time)
+
+            # Increase interval for next retry (exponential backoff)
+            retry_interval = min(
+                retry_interval * self.RETRY_MULTIPLIER,
+                self.RETRY_MAX_INTERVAL,
+            )
 
     async def release(
         self,

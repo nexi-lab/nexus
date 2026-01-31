@@ -1,9 +1,15 @@
 """Cache configuration settings.
 
 Environment variables:
-    NEXUS_DRAGONFLY_URL: Redis-compatible URL for Dragonfly
+    NEXUS_DRAGONFLY_CACHE_URL: Redis-compatible URL for Dragonfly cache instance
         Example: redis://localhost:6379
         If not set, PostgreSQL-based caching is used
+        (Legacy: NEXUS_DRAGONFLY_URL is also supported for backward compatibility)
+
+    NEXUS_DRAGONFLY_COORDINATION_URL: Redis-compatible URL for Dragonfly coordination instance
+        Used for distributed locks, events, pub/sub (requires noeviction policy)
+        Example: redis://localhost:6380
+        If not set, falls back to NEXUS_DRAGONFLY_CACHE_URL (single instance mode)
 
     NEXUS_CACHE_BACKEND: Cache backend selection
         - "auto": Use Dragonfly if URL set, else PostgreSQL (default)
@@ -44,8 +50,26 @@ from typing import Literal
 class CacheSettings:
     """Configuration for Nexus cache layer."""
 
-    # Dragonfly connection (optional - if not set, use PostgreSQL)
-    dragonfly_url: str | None = field(default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL"))
+    # Dragonfly cache connection (optional - if not set, use PostgreSQL)
+    # Supports both new NEXUS_DRAGONFLY_CACHE_URL and legacy NEXUS_DRAGONFLY_URL
+    dragonfly_cache_url: str | None = field(
+        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_CACHE_URL")
+        or os.environ.get("NEXUS_DRAGONFLY_URL")  # Backward compatibility
+    )
+
+    # Dragonfly coordination connection (for locks, events - requires noeviction policy)
+    # If not set, falls back to dragonfly_cache_url (single instance mode)
+    dragonfly_coordination_url: str | None = field(
+        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_COORDINATION_URL")
+    )
+
+    # Allow single Dragonfly instance for both cache and coordination (NOT recommended for production)
+    # When true, coordination uses cache instance which may have eviction enabled
+    # This can cause locks to be unexpectedly evicted - use only for development/testing
+    allow_single_dragonfly: bool = field(
+        default_factory=lambda: os.environ.get("NEXUS_ALLOW_SINGLE_DRAGONFLY", "false").lower()
+        == "true"
+    )
 
     # Backend selection: auto, dragonfly, postgres
     cache_backend: Literal["auto", "dragonfly", "postgres"] = field(
@@ -142,16 +166,32 @@ class CacheSettings:
         default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "50000"))
     )
 
-    def should_use_dragonfly(self) -> bool:
-        """Determine if Dragonfly should be used based on config."""
+    def should_use_dragonfly_cache(self) -> bool:
+        """Determine if Dragonfly should be used for caching."""
         if self.cache_backend == "dragonfly":
-            if not self.dragonfly_url:
-                raise ValueError("NEXUS_CACHE_BACKEND=dragonfly but NEXUS_DRAGONFLY_URL not set")
+            if not self.dragonfly_cache_url:
+                raise ValueError(
+                    "NEXUS_CACHE_BACKEND=dragonfly but NEXUS_DRAGONFLY_CACHE_URL not set"
+                )
             return True
         if self.cache_backend == "postgres":
             return False
         # "auto" mode - use Dragonfly if URL is set
-        return self.dragonfly_url is not None
+        return self.dragonfly_cache_url is not None
+
+    # Backward compatibility alias
+    should_use_dragonfly = should_use_dragonfly_cache
+
+    def get_coordination_url(self) -> str | None:
+        """Get the coordination URL (falls back to cache URL if not set)."""
+        return self.dragonfly_coordination_url or self.dragonfly_cache_url
+
+    def is_coordination_separate(self) -> bool:
+        """Check if coordination uses a separate instance from cache."""
+        return (
+            self.dragonfly_coordination_url is not None
+            and self.dragonfly_coordination_url != self.dragonfly_cache_url
+        )
 
     def validate(self) -> None:
         """Validate configuration."""
@@ -161,8 +201,10 @@ class CacheSettings:
                 "Must be 'auto', 'dragonfly', or 'postgres'"
             )
 
-        if self.cache_backend == "dragonfly" and not self.dragonfly_url:
-            raise ValueError("NEXUS_CACHE_BACKEND=dragonfly requires NEXUS_DRAGONFLY_URL to be set")
+        if self.cache_backend == "dragonfly" and not self.dragonfly_cache_url:
+            raise ValueError(
+                "NEXUS_CACHE_BACKEND=dragonfly requires NEXUS_DRAGONFLY_CACHE_URL to be set"
+            )
 
         if self.permission_ttl <= 0:
             raise ValueError("NEXUS_CACHE_PERMISSION_TTL must be positive")
@@ -243,18 +285,22 @@ class CacheSettings:
         settings.validate()
         return settings
 
+    def _mask_url(self, url: str | None) -> str | None:
+        """Hide password in URL for display."""
+        if url and "@" in url:
+            parts = url.split("@")
+            return f"{parts[0].split(':')[0]}:***@{parts[1]}"
+        return url
+
     def __repr__(self) -> str:
-        # Hide URL password if present
-        url_display = self.dragonfly_url
-        if url_display and "@" in url_display:
-            # redis://:password@host:port -> redis://***@host:port
-            parts = url_display.split("@")
-            url_display = f"{parts[0].split(':')[0]}:***@{parts[1]}"
+        cache_url = self._mask_url(self.dragonfly_cache_url)
+        coord_url = self._mask_url(self.dragonfly_coordination_url)
 
         return (
             f"CacheSettings("
             f"backend={self.cache_backend}, "
-            f"dragonfly_url={url_display}, "
+            f"cache_url={cache_url}, "
+            f"coordination_url={coord_url}, "
             f"permission_ttl={self.permission_ttl}s, "
             f"denial_ttl={self.permission_denial_ttl}s, "
             f"tiger_ttl={self.tiger_ttl}s, "

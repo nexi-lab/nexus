@@ -177,9 +177,7 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_broadcast_to_tenant(
-        self, manager: WebSocketManager
-    ) -> None:
+    async def test_broadcast_to_tenant(self, manager: WebSocketManager) -> None:
         """Test broadcasting events to tenant connections."""
         await manager.start()
 
@@ -219,9 +217,7 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_broadcast_with_pattern_filter(
-        self, manager: WebSocketManager
-    ) -> None:
+    async def test_broadcast_with_pattern_filter(self, manager: WebSocketManager) -> None:
         """Test that pattern filters are applied during broadcast."""
         await manager.start()
 
@@ -261,9 +257,7 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_broadcast_with_event_type_filter(
-        self, manager: WebSocketManager
-    ) -> None:
+    async def test_broadcast_with_event_type_filter(self, manager: WebSocketManager) -> None:
         """Test that event type filters are applied during broadcast."""
         await manager.start()
 
@@ -331,9 +325,7 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_tenant_isolation(
-        self, manager: WebSocketManager
-    ) -> None:
+    async def test_tenant_isolation(self, manager: WebSocketManager) -> None:
         """Test that events are isolated by tenant."""
         await manager.start()
 
@@ -368,9 +360,7 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_graceful_shutdown(
-        self, manager: WebSocketManager
-    ) -> None:
+    async def test_graceful_shutdown(self, manager: WebSocketManager) -> None:
         """Test that shutdown closes all connections gracefully."""
         await manager.start()
 

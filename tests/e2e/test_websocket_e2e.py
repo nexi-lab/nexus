@@ -78,11 +78,13 @@ class TestWebSocketHealthIntegration:
             ws.receive_json()
 
             # Send subscribe message
-            ws.send_json({
-                "type": "subscribe",
-                "patterns": ["/workspace/**/*.py"],
-                "event_types": ["file_write"],
-            })
+            ws.send_json(
+                {
+                    "type": "subscribe",
+                    "patterns": ["/workspace/**/*.py"],
+                    "event_types": ["file_write"],
+                }
+            )
 
             # Should receive subscribed confirmation
             data = ws.receive_json()
@@ -95,9 +97,7 @@ class TestWebSocketHealthIntegration:
 
         app = create_app(nexus_fs)
 
-        with TestClient(app) as client, client.websocket_connect(
-            "/ws/events/test-sub-123"
-        ) as ws:
+        with TestClient(app) as client, client.websocket_connect("/ws/events/test-sub-123") as ws:
             data = ws.receive_json()
             assert data["type"] == "connected"
             # Connection ID should contain the subscription ID
@@ -137,11 +137,13 @@ class TestWebSocketPatternFiltering:
             ws.receive_json()  # welcome
 
             # Subscribe to Python files only
-            ws.send_json({
-                "type": "subscribe",
-                "patterns": ["/src/**/*.py"],
-                "event_types": ["file_write"],
-            })
+            ws.send_json(
+                {
+                    "type": "subscribe",
+                    "patterns": ["/src/**/*.py"],
+                    "event_types": ["file_write"],
+                }
+            )
 
             response = ws.receive_json()
             assert response["type"] == "subscribed"
@@ -150,7 +152,7 @@ class TestWebSocketPatternFiltering:
 
 @pytest.mark.skipif(
     sys.version_info >= (3, 14),
-    reason="websockets library has compatibility issues with Python 3.14"
+    reason="websockets library has compatibility issues with Python 3.14",
 )
 class TestWebSocketE2EWithRealServer:
     """E2E tests with real server process (requires websockets library to work)."""
@@ -166,6 +168,6 @@ class TestWebSocketE2EWithRealServer:
         async with websockets.connect(ws_url) as ws:
             msg = await ws.recv()
             import json
+
             data = json.loads(msg)
             assert data["type"] == "connected"
-

@@ -122,9 +122,7 @@ class WebSocketManager:
             return
 
         self._started = True
-        self._heartbeat_task = asyncio.create_task(
-            self._heartbeat_loop(), name="ws-heartbeat"
-        )
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(), name="ws-heartbeat")
         logger.info("WebSocket manager started")
 
     async def stop(self) -> None:
@@ -154,9 +152,7 @@ class WebSocketManager:
             for tenant_connections in self._connections.values():
                 for conn_info in tenant_connections.values():
                     with suppress(Exception):
-                        await conn_info.websocket.close(
-                            code=1001, reason="Server shutting down"
-                        )
+                        await conn_info.websocket.close(code=1001, reason="Server shutting down")
             self._connections.clear()
             self._connection_to_tenant.clear()
 
@@ -212,11 +208,7 @@ class WebSocketManager:
             )
 
             # Start Redis subscription for this tenant if needed
-            if (
-                self._event_bus
-                and tenant_id not in self._subscription_tasks
-                and self._started
-            ):
+            if self._event_bus and tenant_id not in self._subscription_tasks and self._started:
                 task = asyncio.create_task(
                     self._redis_subscription_loop(tenant_id),
                     name=f"ws-redis-{tenant_id}",
@@ -262,9 +254,7 @@ class WebSocketManager:
 
         logger.info(f"WebSocket disconnected: connection_id={connection_id}")
 
-    async def handle_client(
-        self, websocket: WebSocket, connection_id: str
-    ) -> None:
+    async def handle_client(self, websocket: WebSocket, connection_id: str) -> None:
         """Handle messages from a WebSocket client.
 
         This is the main loop for handling client messages. It processes
@@ -287,9 +277,7 @@ class WebSocketManager:
             logger.warning(f"Error handling client message: {e}")
             raise WebSocketDisconnect(code=1011) from e
 
-    async def _handle_client_message(
-        self, connection_id: str, data: dict[str, Any]
-    ) -> None:
+    async def _handle_client_message(self, connection_id: str, data: dict[str, Any]) -> None:
         """Process a message from a client.
 
         Args:
@@ -327,9 +315,7 @@ class WebSocketManager:
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 
-    async def broadcast_to_tenant(
-        self, tenant_id: str, event: FileEvent
-    ) -> int:
+    async def broadcast_to_tenant(self, tenant_id: str, event: FileEvent) -> int:
         """Broadcast an event to all connections for a tenant.
 
         Args:
@@ -451,9 +437,7 @@ class WebSocketManager:
         # Simple patterns without ** use fnmatch
         return fnmatch.fnmatch(path, pattern)
 
-    async def _send_to_connection(
-        self, conn_info: ConnectionInfo, message: dict[str, Any]
-    ) -> None:
+    async def _send_to_connection(self, conn_info: ConnectionInfo, message: dict[str, Any]) -> None:
         """Send a message to a specific connection.
 
         Args:
@@ -486,9 +470,7 @@ class WebSocketManager:
                 # Broadcast to all WebSocket clients for this tenant
                 sent = await self.broadcast_to_tenant(tenant_id, event)
                 if sent > 0:
-                    logger.debug(
-                        f"Broadcast {event.type} on {event.path} to {sent} clients"
-                    )
+                    logger.debug(f"Broadcast {event.type} on {event.path} to {sent} clients")
 
         except asyncio.CancelledError:
             logger.debug(f"Redis subscription cancelled for tenant {tenant_id}")
@@ -515,8 +497,7 @@ class WebSocketManager:
                         time_since_pong = now - conn_info.last_pong
                         if time_since_pong > PING_INTERVAL + PING_TIMEOUT:
                             logger.warning(
-                                f"Connection {conn_id} stale "
-                                f"(no pong in {time_since_pong:.1f}s)"
+                                f"Connection {conn_id} stale (no pong in {time_since_pong:.1f}s)"
                             )
                             stale_connections.append(conn_id)
                             continue
@@ -533,9 +514,7 @@ class WebSocketManager:
                     with suppress(Exception):
                         stale_tenant_id = self._connection_to_tenant.get(conn_id)
                         if stale_tenant_id:
-                            stale_conn = self._connections.get(
-                                stale_tenant_id, {}
-                            ).get(conn_id)
+                            stale_conn = self._connections.get(stale_tenant_id, {}).get(conn_id)
                             if stale_conn:
                                 await stale_conn.websocket.close(
                                     code=1001, reason="Connection timeout"

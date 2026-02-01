@@ -225,10 +225,7 @@ mod tests {
         let handler = RejectAllHandler;
 
         // Test vote rejection
-        let (term, granted) = handler
-            .handle_vote_request(1, 1, 0, 0)
-            .await
-            .unwrap();
+        let (term, granted) = handler.handle_vote_request(1, 1, 0, 0).await.unwrap();
         assert_eq!(term, 1);
         assert!(!granted);
 

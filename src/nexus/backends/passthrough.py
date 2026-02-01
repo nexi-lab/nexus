@@ -48,7 +48,7 @@ POINTER_PREFIX = "cas:"
 
 @dataclass
 class _LockInfo:
-    """Internal lock information."""
+    """Internal lock information for a single holder."""
 
     lock_id: str
     path: str
@@ -104,8 +104,11 @@ class PassthroughBackend(Backend):
         self.pointers_root = self.base_path / "pointers"
         self.cas_root = self.base_path / "cas"
 
-        # In-memory lock manager for same-box locking
-        self._locks: dict[str, _LockInfo] = {}
+        # In-memory lock manager for same-box locking (supports multi-slot)
+        # path -> list of holders (empty list = unlocked, mutex = max 1 holder)
+        self._locks: dict[str, list[_LockInfo]] = {}
+        # path -> max_holders (SSOT for consistency checking)
+        self._lock_limits: dict[str, int] = {}
         self._locks_mutex = threading.Lock()
 
         self._ensure_roots()
@@ -618,28 +621,56 @@ class PassthroughBackend(Backend):
 
     # === Locking Operations (In-Memory for Same-Box) ===
 
-    def lock(self, path: str, timeout: float = 30.0) -> str | None:
+    def lock(self, path: str, timeout: float = 30.0, max_holders: int = 1) -> str | None:
         """Acquire an advisory lock on a path.
+
+        Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
 
         Args:
             path: Virtual path to lock
             timeout: Maximum time to wait for lock (seconds)
+            max_holders: Maximum concurrent holders (1=mutex, >1=semaphore)
 
         Returns:
             Lock ID if acquired, None if timeout
+
+        Raises:
+            ValueError: If max_holders < 1 or max_holders mismatch (SSOT violation)
         """
+        if max_holders < 1:
+            raise ValueError(f"max_holders must be >= 1, got {max_holders}")
+
         lock_id = str(uuid.uuid4())
         deadline = time.time() + timeout
 
         while time.time() < deadline:
             with self._locks_mutex:
-                if path not in self._locks:
-                    self._locks[path] = _LockInfo(
+                # Check SSOT: if path has existing config, must match
+                if path in self._lock_limits:
+                    existing_max = self._lock_limits[path]
+                    if existing_max != max_holders:
+                        raise ValueError(
+                            f"max_holders mismatch for {path}: "
+                            f"expected {existing_max}, got {max_holders}"
+                        )
+
+                holders = self._locks.get(path, [])
+
+                if len(holders) < max_holders:
+                    # Has available slot
+                    info = _LockInfo(
                         lock_id=lock_id,
                         path=path,
                         acquired_at=time.time(),
                     )
-                    logger.debug(f"Lock acquired: {path} -> {lock_id}")
+                    if path not in self._locks:
+                        self._locks[path] = []
+                        self._lock_limits[path] = max_holders  # Set SSOT config
+                    self._locks[path].append(info)
+                    logger.debug(
+                        f"Lock acquired: {path} -> {lock_id} "
+                        f"(holders: {len(self._locks[path])}/{max_holders})"
+                    )
                     return lock_id
 
             time.sleep(0.1)
@@ -657,16 +688,25 @@ class PassthroughBackend(Backend):
             True if released, False if not found
         """
         with self._locks_mutex:
-            for path, info in list(self._locks.items()):
-                if info.lock_id == lock_id:
-                    del self._locks[path]
-                    logger.debug(f"Lock released: {path} <- {lock_id}")
-                    return True
+            for path, holders in list(self._locks.items()):
+                for i, info in enumerate(holders):
+                    if info.lock_id == lock_id:
+                        holders.pop(i)
+                        logger.debug(
+                            f"Lock released: {path} <- {lock_id} (remaining: {len(holders)})"
+                        )
+                        # Auto-cleanup: if no holders left, remove path and config
+                        if not holders:
+                            del self._locks[path]
+                            del self._lock_limits[path]
+                            logger.debug(f"Lock config cleaned up: {path}")
+                        return True
 
         logger.warning(f"Lock not found: {lock_id}")
         return False
 
     def is_locked(self, path: str) -> bool:
-        """Check if a path is currently locked."""
+        """Check if a path is currently locked (has any holders)."""
         with self._locks_mutex:
-            return path in self._locks
+            holders = self._locks.get(path, [])
+            return len(holders) > 0

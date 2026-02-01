@@ -46,7 +46,16 @@ def mock_redis_client():
     client.client.delete = AsyncMock(return_value=1)
     client.client.exists = AsyncMock(return_value=0)
     client.client.ttl = AsyncMock(return_value=30)
-    client.client.script_load = AsyncMock(side_effect=["release_sha", "extend_sha"])
+    # 5 scripts: release, extend, sem_acquire, sem_release, sem_extend
+    client.client.script_load = AsyncMock(
+        side_effect=[
+            "release_sha",
+            "extend_sha",
+            "sem_acquire_sha",
+            "sem_release_sha",
+            "sem_extend_sha",
+        ]
+    )
     client.client.evalsha = AsyncMock(return_value=1)
 
     return client
@@ -475,3 +484,103 @@ class TestLockManagerDefaults:
         """Test lock key prefix."""
         manager = RedisLockManager(mock_redis_client)
         assert manager.LOCK_PREFIX == "nexus:lock"
+
+    def test_semaphore_prefixes(self, mock_redis_client):
+        """Test semaphore key prefixes."""
+        manager = RedisLockManager(mock_redis_client)
+        assert manager.SEMAPHORE_PREFIX == "nexus:semaphore"
+        assert manager.SEMAPHORE_CONFIG_PREFIX == "nexus:semaphore_config"
+
+
+# =============================================================================
+# Multi-Slot Lock (Semaphore) Tests
+# =============================================================================
+
+
+class TestMultiSlotLock:
+    """Tests for multi-slot lock (semaphore) functionality."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_mutex_default(self, lock_manager, mock_redis_client):
+        """Test that max_holders=1 (default) uses mutex path."""
+        mock_redis_client.client.set = AsyncMock(return_value=True)
+
+        lock_id = await lock_manager.acquire("tenant1", "/file.txt")
+
+        assert lock_id is not None
+        # Should call set (mutex path), not evalsha (semaphore path)
+        mock_redis_client.client.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_acquire_semaphore_success(self, lock_manager, mock_redis_client):
+        """Test acquiring semaphore slot with max_holders > 1."""
+        # Mock evalsha to return 1 (success)
+        mock_redis_client.client.evalsha = AsyncMock(return_value=1)
+
+        lock_id = await lock_manager.acquire("tenant1", "/room", max_holders=5, timeout=1.0)
+
+        assert lock_id is not None
+        # Should call evalsha with semaphore acquire script
+        mock_redis_client.client.evalsha.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_acquire_semaphore_no_slot(self, lock_manager, mock_redis_client):
+        """Test semaphore acquire when no slots available."""
+        # Mock evalsha to return 0 (no slot)
+        mock_redis_client.client.evalsha = AsyncMock(return_value=0)
+
+        lock_id = await lock_manager.acquire("tenant1", "/room", max_holders=5, timeout=0.1)
+
+        assert lock_id is None
+
+    @pytest.mark.asyncio
+    async def test_acquire_semaphore_max_holders_mismatch(self, lock_manager, mock_redis_client):
+        """Test that max_holders mismatch raises ValueError."""
+        # Mock evalsha to return -1 (SSOT mismatch)
+        mock_redis_client.client.evalsha = AsyncMock(return_value=-1)
+        mock_redis_client.client.get = AsyncMock(return_value=b"5")
+
+        with pytest.raises(ValueError, match="max_holders mismatch"):
+            await lock_manager.acquire("tenant1", "/room", max_holders=3, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_acquire_invalid_max_holders(self, lock_manager):
+        """Test that max_holders < 1 raises ValueError."""
+        with pytest.raises(ValueError, match="max_holders must be >= 1"):
+            await lock_manager.acquire("tenant1", "/room", max_holders=0)
+
+        with pytest.raises(ValueError, match="max_holders must be >= 1"):
+            await lock_manager.acquire("tenant1", "/room", max_holders=-1)
+
+    @pytest.mark.asyncio
+    async def test_release_semaphore_success(self, lock_manager, mock_redis_client):
+        """Test releasing semaphore slot."""
+        # Mutex release returns 0 (not found), semaphore release returns 1 (success)
+        mock_redis_client.client.evalsha = AsyncMock(side_effect=[0, 1])
+
+        released = await lock_manager.release("lock-id", "tenant1", "/room")
+
+        assert released is True
+        # Should call evalsha twice (mutex then semaphore)
+        assert mock_redis_client.client.evalsha.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_extend_semaphore_success(self, lock_manager, mock_redis_client):
+        """Test extending semaphore slot TTL."""
+        # Mutex extend returns 0 (not found), semaphore extend returns 1 (success)
+        mock_redis_client.client.evalsha = AsyncMock(side_effect=[0, 1])
+
+        extended = await lock_manager.extend("lock-id", "tenant1", "/room", ttl=60.0)
+
+        assert extended is True
+        # Should call evalsha twice (mutex then semaphore)
+        assert mock_redis_client.client.evalsha.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_semaphore_key_format(self, lock_manager):
+        """Test semaphore key format."""
+        sem_key = lock_manager._semaphore_key("tenant1", "/room")
+        config_key = lock_manager._semaphore_config_key("tenant1", "/room")
+
+        assert sem_key == "nexus:semaphore:tenant1:/room"
+        assert config_key == "nexus:semaphore_config:tenant1:/room"

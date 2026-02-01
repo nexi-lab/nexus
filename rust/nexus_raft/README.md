@@ -13,6 +13,49 @@ Raft consensus and embedded storage for Nexus STRONG_HA zones.
 
 ## Modules
 
+### Transport (`transport/`) - Commit 2
+
+A gRPC transport layer based on [tonic](https://github.com/hyperium/tonic).
+
+**Why gRPC?**
+- Streaming: Native support for bidirectional streams (ideal for Raft heartbeats)
+- Efficiency: HTTP/2 multiplexing, long-lived connections
+- Code generation: Less boilerplate than manual HTTP
+- Compatibility: Works with tikv/raft-rs patterns
+
+**Reusable for:**
+- Raft messages (primary use case)
+- Webhook streaming (Server Streaming replaces HTTP POST)
+- Real-time event push
+
+```rust
+use nexus_raft::transport::{RaftClient, RaftClientPool, NodeAddress};
+
+// Create a client pool
+let pool = RaftClientPool::new();
+
+// Get a client for a node
+let addr = NodeAddress::new(1, "http://10.0.0.1:2026");
+let client = pool.get(&addr).await?;
+
+// Send Raft messages
+let response = client.request_vote(term, candidate_id, last_log_index, last_log_term).await?;
+```
+
+**Streaming Patterns:**
+| Pattern | Use Case | Example |
+|---------|----------|---------|
+| Unary | Request/response | Vote requests |
+| Server Streaming | Push to client | Webhook events |
+| Client Streaming | Bulk upload | Snapshots |
+| Bidirectional | Real-time sync | Heartbeats |
+
+**Feature flag required:**
+```toml
+[dependencies]
+nexus_raft = { version = "0.1", features = ["grpc"] }
+```
+
 ### Storage (`storage/`)
 
 A general-purpose embedded key-value database based on [sled](https://github.com/spacejam/sled).

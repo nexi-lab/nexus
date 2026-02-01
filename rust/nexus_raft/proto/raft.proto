@@ -1,0 +1,210 @@
+// Raft consensus protocol messages
+//
+// This proto file defines the gRPC service and messages for Raft consensus.
+// It is designed to be compatible with tikv/raft-rs message types.
+//
+// The transport layer is general-purpose and can be reused for:
+// - Raft consensus (primary use case)
+// - Webhook streaming (Server Streaming pattern)
+// - Real-time event push
+
+syntax = "proto3";
+
+package nexus.raft;
+
+// RaftService handles Raft consensus protocol messages.
+//
+// This service is used for communication between Raft nodes (leaders, followers, witnesses).
+service RaftService {
+  // RequestVote is called by candidates to gather votes during leader election.
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+
+  // AppendEntries is called by leaders to replicate log entries and send heartbeats.
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+  // InstallSnapshot is called by leaders to send a snapshot to lagging followers.
+  rpc InstallSnapshot(stream SnapshotChunk) returns (InstallSnapshotResponse);
+
+  // TransferLeader requests the current leader to transfer leadership.
+  rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
+}
+
+// EventStreamService provides streaming events (reusable for webhooks).
+//
+// This service demonstrates how gRPC Server Streaming can replace
+// HTTP-based webhooks for real-time event delivery.
+service EventStreamService {
+  // Subscribe to a stream of events.
+  // This is the streaming pattern that can be used for webhooks.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+// === Raft Protocol Messages ===
+
+// VoteRequest is sent by candidates to request votes from other nodes.
+message VoteRequest {
+  // The term of the candidate.
+  uint64 term = 1;
+  // The candidate's node ID.
+  uint64 candidate_id = 2;
+  // Index of candidate's last log entry.
+  uint64 last_log_index = 3;
+  // Term of candidate's last log entry.
+  uint64 last_log_term = 4;
+}
+
+// VoteResponse is the response to a VoteRequest.
+message VoteResponse {
+  // The current term, for candidate to update itself.
+  uint64 term = 1;
+  // True if the vote was granted.
+  bool vote_granted = 2;
+}
+
+// AppendEntriesRequest is sent by leaders to replicate log entries.
+message AppendEntriesRequest {
+  // Leader's term.
+  uint64 term = 1;
+  // Leader's node ID.
+  uint64 leader_id = 2;
+  // Index of log entry immediately preceding new ones.
+  uint64 prev_log_index = 3;
+  // Term of prev_log_index entry.
+  uint64 prev_log_term = 4;
+  // Log entries to store (empty for heartbeat).
+  repeated LogEntry entries = 5;
+  // Leader's commit index.
+  uint64 leader_commit = 6;
+}
+
+// AppendEntriesResponse is the response to an AppendEntriesRequest.
+message AppendEntriesResponse {
+  // The current term, for leader to update itself.
+  uint64 term = 1;
+  // True if follower contained entry matching prev_log_index and prev_log_term.
+  bool success = 2;
+  // Hint for the next index to try (optimization).
+  uint64 match_index = 3;
+}
+
+// LogEntry represents a single entry in the Raft log.
+message LogEntry {
+  // The term when entry was received by leader.
+  uint64 term = 1;
+  // Position in the log.
+  uint64 index = 2;
+  // Type of entry.
+  EntryType entry_type = 3;
+  // Serialized command data (application-specific).
+  bytes data = 4;
+}
+
+// EntryType indicates the type of log entry.
+enum EntryType {
+  // Normal command entry.
+  ENTRY_NORMAL = 0;
+  // Configuration change entry.
+  ENTRY_CONF_CHANGE = 1;
+}
+
+// SnapshotChunk is a chunk of snapshot data (for streaming).
+message SnapshotChunk {
+  // Metadata about the snapshot (sent with first chunk).
+  SnapshotMetadata metadata = 1;
+  // Chunk offset within the snapshot.
+  uint64 offset = 2;
+  // Snapshot data chunk.
+  bytes data = 3;
+  // True if this is the last chunk.
+  bool done = 4;
+}
+
+// SnapshotMetadata describes a snapshot.
+message SnapshotMetadata {
+  // The snapshot replaces all entries up through and including this index.
+  uint64 index = 1;
+  // The term of the last entry included in the snapshot.
+  uint64 term = 2;
+  // Total size of the snapshot in bytes.
+  uint64 size = 3;
+  // Cluster configuration at snapshot time.
+  ClusterConfig config = 4;
+}
+
+// InstallSnapshotResponse is the response to a snapshot installation.
+message InstallSnapshotResponse {
+  // The current term, for leader to update itself.
+  uint64 term = 1;
+  // True if snapshot was successfully installed.
+  bool success = 2;
+}
+
+// ClusterConfig describes the cluster membership.
+message ClusterConfig {
+  // Full voting members.
+  repeated NodeInfo voters = 1;
+  // Learners (receive log but don't vote).
+  repeated NodeInfo learners = 2;
+  // Witnesses (vote but don't store data).
+  repeated NodeInfo witnesses = 3;
+}
+
+// NodeInfo describes a node in the cluster.
+message NodeInfo {
+  // Unique node ID.
+  uint64 id = 1;
+  // gRPC endpoint address (e.g., "10.0.0.1:2026").
+  string address = 2;
+  // Node role.
+  NodeRole role = 3;
+}
+
+// NodeRole indicates the role of a node.
+enum NodeRole {
+  // Full voting member that stores data.
+  ROLE_VOTER = 0;
+  // Non-voting member that stores data (catch-up node).
+  ROLE_LEARNER = 1;
+  // Voting member that doesn't store data.
+  ROLE_WITNESS = 2;
+}
+
+// TransferLeaderRequest requests leadership transfer.
+message TransferLeaderRequest {
+  // Target node to transfer leadership to.
+  uint64 target_id = 1;
+}
+
+// TransferLeaderResponse is the response to a leadership transfer request.
+message TransferLeaderResponse {
+  // True if the transfer was initiated.
+  bool success = 1;
+  // Error message if the transfer failed.
+  string error = 2;
+}
+
+// === Event Streaming Messages (Webhook Pattern) ===
+
+// SubscribeRequest initiates an event stream subscription.
+message SubscribeRequest {
+  // Topics to subscribe to.
+  repeated string topics = 1;
+  // Optional filter expression.
+  string filter = 2;
+  // Resume from this sequence number (0 for beginning).
+  uint64 from_sequence = 3;
+}
+
+// Event represents a streaming event.
+message Event {
+  // Unique sequence number for ordering.
+  uint64 sequence = 1;
+  // Event topic/channel.
+  string topic = 2;
+  // Event type (e.g., "file.created", "lock.acquired").
+  string event_type = 3;
+  // Event payload (JSON or binary).
+  bytes payload = 4;
+  // Timestamp in milliseconds since epoch.
+  int64 timestamp_ms = 5;
+}

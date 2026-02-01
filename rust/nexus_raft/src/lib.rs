@@ -84,11 +84,50 @@
 
 pub mod storage;
 
+/// gRPC transport layer (requires `grpc` feature).
+///
+/// This module provides network transport for Raft messages using gRPC.
+/// It is also reusable for webhook streaming and real-time events.
+///
+/// Enable with:
+/// ```toml
+/// [dependencies]
+/// nexus_raft = { version = "0.1", features = ["grpc"] }
+/// ```
+#[cfg(feature = "grpc")]
+pub mod transport;
+
+// Stub module when grpc feature is disabled
+#[cfg(not(feature = "grpc"))]
+pub mod transport {
+    //! gRPC transport (requires `grpc` feature).
+    //!
+    //! Enable the `grpc` feature to use this module:
+    //!
+    //! ```toml
+    //! [dependencies]
+    //! nexus_raft = { version = "0.1", features = ["grpc"] }
+    //! ```
+
+    /// Transport error types.
+    #[derive(Debug, thiserror::Error)]
+    pub enum TransportError {
+        /// gRPC feature not enabled.
+        #[error("gRPC feature not enabled. Add `features = [\"grpc\"]` to Cargo.toml")]
+        FeatureNotEnabled,
+    }
+}
+
 // Future modules (placeholders for documentation)
-// pub mod raft;      // Coming in Commit 3
-// pub mod transport; // Coming in Commit 2
+// pub mod raft; // Coming in Commit 3
 
 /// Re-export commonly used types for convenience.
 pub mod prelude {
     pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError};
+
+    #[cfg(feature = "grpc")]
+    pub use crate::transport::{
+        ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftHandler, RaftServer,
+        ServerConfig, TransportError as GrpcError,
+    };
 }

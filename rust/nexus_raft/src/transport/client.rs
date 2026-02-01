@@ -2,7 +2,7 @@
 //!
 //! Provides a client to communicate with other Raft nodes.
 
-use super::{NodeAddress, Result, TransportError};
+use super::{NodeAddress, Result};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

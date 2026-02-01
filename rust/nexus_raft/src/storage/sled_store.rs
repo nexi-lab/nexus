@@ -208,10 +208,12 @@ impl SledTree {
     pub fn get_json<T: DeserializeOwned>(&self, key: &[u8]) -> Result<Option<T>> {
         match self.tree.get(key)? {
             Some(bytes) => {
-                let value: T = serde_json::from_slice(&bytes)
-                    .map_err(|e| StorageError::Serialization(bincode::Error::from(
-                        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-                    )))?;
+                let value: T = serde_json::from_slice(&bytes).map_err(|e| {
+                    StorageError::Serialization(bincode::Error::from(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        e,
+                    )))
+                })?;
                 Ok(Some(value))
             }
             None => Ok(None),
@@ -237,10 +239,12 @@ impl SledTree {
 
     /// Serialize and set a value using JSON.
     pub fn set_json<T: Serialize>(&self, key: &[u8], value: &T) -> Result<()> {
-        let bytes = serde_json::to_vec(value)
-            .map_err(|e| StorageError::Serialization(bincode::Error::from(
-                std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-            )))?;
+        let bytes = serde_json::to_vec(value).map_err(|e| {
+            StorageError::Serialization(bincode::Error::from(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e,
+            )))
+        })?;
         self.tree.insert(key, bytes)?;
         Ok(())
     }

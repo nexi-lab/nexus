@@ -319,6 +319,7 @@ class NexusFSEventsMixin:
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
+        max_holders: int = 1,
         _context: OperationContext | None = None,
     ) -> str | None:
         """Acquire an advisory lock on a path.
@@ -327,6 +328,7 @@ class NexusFSEventsMixin:
         - Layer 2 (preferred): Uses DistributedLockManager (Redis) for distributed locks
         - Layer 1 (fallback): Uses in-memory locks (same-box only)
 
+        Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
         For long-running operations, use extend_lock() to keep the lock alive.
 
         Args:
@@ -334,13 +336,18 @@ class NexusFSEventsMixin:
             timeout: Maximum time to wait for lock in seconds (default: 30.0)
             ttl: Lock TTL in seconds - auto-expires after this (default: 30.0)
                  Only used in distributed mode.
+            max_holders: Maximum concurrent holders (default: 1 = mutex)
+                         Set >1 for semaphore mode (e.g., boardroom with N seats)
             _context: Operation context (optional)
 
         Returns:
             Lock ID if acquired (use this to unlock/extend later)
             None if timeout reached
 
-        Example:
+        Raises:
+            ValueError: If max_holders < 1 or max_holders mismatch (SSOT violation)
+
+        Example (Mutex - exclusive lock):
             >>> lock_id = await nexus.lock("/shared/config.json", timeout=5.0)
             >>> if lock_id:
             ...     try:
@@ -351,6 +358,12 @@ class NexusFSEventsMixin:
             ...         await nexus.unlock(lock_id, "/shared/config.json")
             ... else:
             ...     print("Could not acquire lock")
+
+        Example (Semaphore - boardroom with 5 seats):
+            >>> lock_id = await nexus.lock("/rooms/board_01", max_holders=5)
+            >>> if lock_id:
+            ...     # One of up to 5 participants
+            ...     await nexus.unlock(lock_id, "/rooms/board_01")
 
         Meeting Floor Control Example:
             >>> lock_id = await nexus.lock("/meeting/floor", timeout=5.0)
@@ -373,12 +386,14 @@ class NexusFSEventsMixin:
 
         # Layer 2: Distributed lock manager (preferred)
         if self._has_distributed_locks():
-            logger.debug(f"Using distributed lock manager for {path}")
+            mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
+            logger.debug(f"Using distributed lock manager for {path} ({mode})")
             lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
                 tenant_id=tenant_id,
                 path=path,
                 timeout=timeout,
                 ttl=ttl,
+                max_holders=max_holders,
             )
             if lock_id:
                 logger.debug(f"Distributed lock acquired on {path}: {lock_id}")
@@ -388,14 +403,15 @@ class NexusFSEventsMixin:
 
         # Layer 1: Same-box in-memory locking (fallback)
         if self._is_same_box():
-            logger.debug(f"Using same-box lock for {path}")
+            mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
+            logger.debug(f"Using same-box lock for {path} ({mode})")
             from nexus.backends.passthrough import PassthroughBackend
 
             if not isinstance(self.backend, PassthroughBackend):
                 raise NotImplementedError("Backend mismatch")
 
             # Note: Same-box locks don't support TTL - they're in-memory only
-            lock_id = self.backend.lock(path, timeout=timeout)
+            lock_id = self.backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
                 logger.debug(f"Same-box lock acquired on {path}: {lock_id}")

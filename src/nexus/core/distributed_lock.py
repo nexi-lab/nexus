@@ -1,12 +1,14 @@
-"""Distributed lock manager interfaces and Redis implementation.
+"""Distributed lock and semaphore manager interfaces and Redis implementation.
 
-This module provides the lock manager abstraction and Redis implementation
+This module provides the lock/semaphore manager abstraction and Redis implementation
 for coordinating access to resources across multiple Nexus nodes. It's part
 of Block 2 (Issue #1106) for the distributed event system.
 
 Architecture:
-- LockManagerProtocol: Abstract interface for lock manager implementations
-- RedisLockManager: Redis SET NX EX implementation (default)
+- LockManagerProtocol: Abstract interface for lock manager (mutex)
+- SemaphoreManagerProtocol: Abstract interface for semaphore (N concurrent)
+- RedisLockManager: Redis SET NX EX implementation for locks
+- RedisSemaphoreManager: Redis Sorted Set implementation for semaphores (Issue #1160)
 - Future: etcd, ZooKeeper, P2P implementations (Issue #1141)
 
 Lock Implementation:
@@ -15,9 +17,16 @@ Lock Implementation:
 - Lock value: lock_id (UUID) for ownership verification
 - TTL-based auto-expiry prevents deadlocks from crashed clients
 
+Semaphore Implementation (Issue #1160):
+- Uses Redis Sorted Set for slot tracking
+- Key format: nexus:semaphore:{tenant_id}:{resource}
+- Members: slot_id (UUID), Scores: expiration timestamp
+- Automatic cleanup of expired slots before each operation
+- IMPORTANT: Uses coordination Dragonfly (noeviction) just like locks
+
 Heartbeat Support:
-- extend() method allows long-running operations to keep locks alive
-- If client crashes, lock auto-expires after TTL (default: 30s)
+- extend() method allows long-running operations to keep locks/semaphores alive
+- If client crashes, lock/slot auto-expires after TTL (default: 30s)
 """
 
 from __future__ import annotations
@@ -25,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable
@@ -60,14 +70,16 @@ class LockManagerProtocol(Protocol):
         path: str,
         timeout: float = 30.0,
         ttl: float = 30.0,
+        max_holders: int = 1,
     ) -> str | None:
-        """Acquire a distributed lock.
+        """Acquire a distributed lock or semaphore slot.
 
         Args:
             tenant_id: Tenant ID for the lock
             path: Path to lock
             timeout: Maximum time to wait for lock
             ttl: Lock TTL (auto-expires after this)
+            max_holders: Maximum concurrent holders (1=mutex, >1=semaphore)
 
         Returns:
             Lock ID if acquired, None on timeout
@@ -134,8 +146,20 @@ class LockManagerBase(ABC):
         path: str,
         timeout: float = DEFAULT_TIMEOUT,
         ttl: float = DEFAULT_TTL,
+        max_holders: int = 1,
     ) -> str | None:
-        """Acquire a distributed lock."""
+        """Acquire a distributed lock or semaphore slot.
+
+        Args:
+            tenant_id: Tenant ID for the lock
+            path: Path to lock
+            timeout: Maximum time to wait
+            ttl: Lock TTL (auto-expires)
+            max_holders: Maximum concurrent holders (1=mutex, >1=semaphore)
+
+        Returns:
+            Lock ID if acquired, None on timeout
+        """
         pass
 
     @abstractmethod
@@ -200,23 +224,89 @@ else
 end
 """
 
+# =============================================================================
+# Semaphore Lua Scripts (multi-slot lock)
+# =============================================================================
+
+# Lua script for atomic semaphore acquire
+# KEYS[1] = semaphore key (ZSET), KEYS[2] = config key
+# ARGV[1] = lock_id, ARGV[2] = max_holders, ARGV[3] = expire_ts, ARGV[4] = now_ts
+SEMAPHORE_ACQUIRE_SCRIPT = """
+-- 1. Clean up expired slots
+redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[4])
+
+-- 2. Check existing config (SSOT)
+local existing_max = redis.call("GET", KEYS[2])
+if existing_max then
+    if tonumber(existing_max) ~= tonumber(ARGV[2]) then
+        -- max_holders mismatch - return error code -1
+        return -1
+    end
+else
+    -- First holder sets the config
+    redis.call("SET", KEYS[2], ARGV[2])
+end
+
+-- 3. Check current count
+local count = redis.call("ZCARD", KEYS[1])
+if count < tonumber(ARGV[2]) then
+    -- 4. Has available slot, add holder
+    redis.call("ZADD", KEYS[1], ARGV[3], ARGV[1])
+    return 1
+end
+return 0
+"""
+
+# Lua script for atomic semaphore release with auto-cleanup
+# KEYS[1] = semaphore key (ZSET), KEYS[2] = config key
+# ARGV[1] = lock_id
+SEMAPHORE_RELEASE_SCRIPT = """
+local removed = redis.call("ZREM", KEYS[1], ARGV[1])
+if removed == 1 then
+    local remaining = redis.call("ZCARD", KEYS[1])
+    if remaining == 0 then
+        -- Last holder released, clean up config (SSOT auto-cleanup)
+        redis.call("DEL", KEYS[2])
+    end
+end
+return removed
+"""
+
+# Lua script for atomic semaphore extend
+# KEYS[1] = semaphore key (ZSET)
+# ARGV[1] = lock_id, ARGV[2] = new_expire_ts
+SEMAPHORE_EXTEND_SCRIPT = """
+-- Check if lock_id exists in ZSET
+local score = redis.call("ZSCORE", KEYS[1], ARGV[1])
+if score then
+    -- Update expiration timestamp
+    redis.call("ZADD", KEYS[1], ARGV[2], ARGV[1])
+    return 1
+end
+return 0
+"""
+
 
 class RedisLockManager(LockManagerBase):
     """Redis-based distributed locking with heartbeat support.
 
     Uses Redis atomic operations for safe distributed locking.
-    Key format: nexus:lock:{tenant_id}:{path}
+    Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
+
+    Key formats:
+    - Mutex: nexus:lock:{tenant_id}:{path} (String with SET NX EX)
+    - Semaphore: nexus:semaphore:{tenant_id}:{path} (Sorted Set)
+    - Semaphore config: nexus:semaphore_config:{tenant_id}:{path} (String, SSOT)
 
     Features:
-    - Atomic acquisition using SET NX EX
+    - Atomic acquisition using SET NX EX (mutex) or ZSET (semaphore)
     - Ownership verification on release/extend using Lua scripts
     - TTL-based auto-expiry (default: 30s)
     - Heartbeat support via extend() for long operations
+    - SSOT config with auto-cleanup for semaphores
 
-    Example:
+    Example (Mutex):
         >>> manager = RedisLockManager(redis_client)
-        >>>
-        >>> # Acquire lock
         >>> lock_id = await manager.acquire("tenant", "/file.txt", timeout=5.0)
         >>> if lock_id:
         ...     try:
@@ -225,21 +315,17 @@ class RedisLockManager(LockManagerBase):
         ...     finally:
         ...         await manager.release(lock_id, "tenant", "/file.txt")
 
-    Meeting Floor Control Example:
-        >>> lock_id = await manager.acquire("tenant", "/meeting/floor", timeout=5.0)
+    Example (Semaphore - Boardroom with 5 seats):
+        >>> lock_id = await manager.acquire("tenant", "/room", max_holders=5)
         >>> if lock_id:
-        ...     # Start heartbeat in background
-        ...     async def heartbeat():
-        ...         while speaking:
-        ...             await manager.extend(lock_id, "tenant", "/meeting/floor")
-        ...             await asyncio.sleep(15)
-        ...     task = asyncio.create_task(heartbeat())
-        ...     # Do speech...
-        ...     task.cancel()
-        ...     await manager.release(lock_id, "tenant", "/meeting/floor")
+        ...     # One of 5 participants
+        ...     await manager.release(lock_id, "tenant", "/room")
     """
 
     LOCK_PREFIX = "nexus:lock"
+    SEMAPHORE_PREFIX = "nexus:semaphore"
+    SEMAPHORE_CONFIG_PREFIX = "nexus:semaphore_config"
+
     # Exponential backoff parameters
     RETRY_BASE_INTERVAL = 0.05  # Start with 50ms
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
@@ -253,19 +339,46 @@ class RedisLockManager(LockManagerBase):
             redis_client: DragonflyClient instance for Redis connection
         """
         self._redis = redis_client
+        # Mutex scripts
         self._release_script_sha: str | None = None
         self._extend_script_sha: str | None = None
+        # Semaphore scripts
+        self._sem_acquire_script_sha: str | None = None
+        self._sem_release_script_sha: str | None = None
+        self._sem_extend_script_sha: str | None = None
 
     def _lock_key(self, tenant_id: str, path: str) -> str:
-        """Get Redis key for a lock."""
+        """Get Redis key for a mutex lock."""
         return f"{self.LOCK_PREFIX}:{tenant_id}:{path}"
+
+    def _semaphore_key(self, tenant_id: str, path: str) -> str:
+        """Get Redis key for a semaphore (ZSET)."""
+        return f"{self.SEMAPHORE_PREFIX}:{tenant_id}:{path}"
+
+    def _semaphore_config_key(self, tenant_id: str, path: str) -> str:
+        """Get Redis key for semaphore config (SSOT for max_holders)."""
+        return f"{self.SEMAPHORE_CONFIG_PREFIX}:{tenant_id}:{path}"
 
     async def _ensure_scripts_loaded(self) -> None:
         """Load Lua scripts into Redis if not already loaded."""
+        # Mutex scripts
         if self._release_script_sha is None:
             self._release_script_sha = await self._redis.client.script_load(RELEASE_SCRIPT)
         if self._extend_script_sha is None:
             self._extend_script_sha = await self._redis.client.script_load(EXTEND_SCRIPT)
+        # Semaphore scripts
+        if self._sem_acquire_script_sha is None:
+            self._sem_acquire_script_sha = await self._redis.client.script_load(
+                SEMAPHORE_ACQUIRE_SCRIPT
+            )
+        if self._sem_release_script_sha is None:
+            self._sem_release_script_sha = await self._redis.client.script_load(
+                SEMAPHORE_RELEASE_SCRIPT
+            )
+        if self._sem_extend_script_sha is None:
+            self._sem_extend_script_sha = await self._redis.client.script_load(
+                SEMAPHORE_EXTEND_SCRIPT
+            )
 
     async def acquire(
         self,
@@ -273,18 +386,40 @@ class RedisLockManager(LockManagerBase):
         path: str,
         timeout: float = LockManagerBase.DEFAULT_TIMEOUT,
         ttl: float = LockManagerBase.DEFAULT_TTL,
+        max_holders: int = 1,
     ) -> str | None:
-        """Acquire a distributed lock on a path.
+        """Acquire a distributed lock or semaphore slot on a path.
 
         Args:
             tenant_id: Tenant ID for the lock
             path: Path to lock (e.g., "/shared/config.json")
             timeout: Maximum time to wait for lock in seconds
             ttl: Lock TTL in seconds - auto-expires after this
+            max_holders: Maximum concurrent holders (1=mutex, >1=semaphore)
 
         Returns:
             Lock ID (string) if acquired, None on timeout
+
+        Raises:
+            ValueError: If max_holders < 1 or max_holders mismatch (SSOT violation)
         """
+        if max_holders < 1:
+            raise ValueError(f"max_holders must be >= 1, got {max_holders}")
+
+        # DRY: Route to appropriate implementation
+        if max_holders == 1:
+            return await self._acquire_mutex(tenant_id, path, timeout, ttl)
+        else:
+            return await self._acquire_semaphore(tenant_id, path, timeout, ttl, max_holders)
+
+    async def _acquire_mutex(
+        self,
+        tenant_id: str,
+        path: str,
+        timeout: float,
+        ttl: float,
+    ) -> str | None:
+        """Acquire an exclusive mutex lock using SET NX EX."""
         key = self._lock_key(tenant_id, path)
         lock_id = str(uuid.uuid4())
         ttl_ms = int(ttl * 1000)
@@ -302,22 +437,93 @@ class RedisLockManager(LockManagerBase):
             )
 
             if acquired:
-                logger.debug(f"Lock acquired: {key} -> {lock_id} (TTL: {ttl}s)")
+                logger.debug(f"Mutex acquired: {key} -> {lock_id} (TTL: {ttl}s)")
                 return lock_id
 
             # Check if we've exceeded timeout
             remaining = deadline - asyncio.get_event_loop().time()
             if remaining <= 0:
-                logger.debug(f"Lock acquisition timeout: {key}")
+                logger.debug(f"Mutex acquisition timeout: {key}")
                 return None
 
             # Exponential backoff with jitter to reduce thundering herd
-            # Jitter adds randomness so competing clients don't all retry at once
             jitter = random.uniform(0, retry_interval * self.RETRY_JITTER)
             sleep_time = min(retry_interval + jitter, remaining)
             await asyncio.sleep(sleep_time)
 
             # Increase interval for next retry (exponential backoff)
+            retry_interval = min(
+                retry_interval * self.RETRY_MULTIPLIER,
+                self.RETRY_MAX_INTERVAL,
+            )
+
+    async def _acquire_semaphore(
+        self,
+        tenant_id: str,
+        path: str,
+        timeout: float,
+        ttl: float,
+        max_holders: int,
+    ) -> str | None:
+        """Acquire a semaphore slot using ZSET with Lua script."""
+        await self._ensure_scripts_loaded()
+        assert self._sem_acquire_script_sha is not None
+
+        sem_key = self._semaphore_key(tenant_id, path)
+        config_key = self._semaphore_config_key(tenant_id, path)
+        lock_id = str(uuid.uuid4())
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        retry_interval = self.RETRY_BASE_INTERVAL
+
+        while True:
+            now_ts = time.time()
+            expire_ts = now_ts + ttl
+
+            # Try to acquire slot atomically via Lua script
+            result = await cast(
+                Awaitable[int],
+                self._redis.client.evalsha(
+                    self._sem_acquire_script_sha,
+                    2,  # Number of keys
+                    sem_key,  # KEYS[1]
+                    config_key,  # KEYS[2]
+                    lock_id,  # ARGV[1]
+                    max_holders,  # ARGV[2]
+                    expire_ts,  # ARGV[3]
+                    now_ts,  # ARGV[4]
+                ),
+            )
+
+            if result == 1:
+                logger.debug(
+                    f"Semaphore slot acquired: {sem_key} -> {lock_id} "
+                    f"(max_holders={max_holders}, TTL={ttl}s)"
+                )
+                return lock_id
+            elif result == -1:
+                # SSOT violation: max_holders mismatch
+                existing_max = await self._redis.client.get(config_key)
+                existing_val = (
+                    int(existing_max.decode() if isinstance(existing_max, bytes) else existing_max)
+                    if existing_max
+                    else "unknown"
+                )
+                raise ValueError(
+                    f"max_holders mismatch for {path}: expected {existing_val}, got {max_holders}"
+                )
+
+            # result == 0: No available slot, retry
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                logger.debug(f"Semaphore acquisition timeout: {sem_key}")
+                return None
+
+            # Exponential backoff with jitter
+            jitter = random.uniform(0, retry_interval * self.RETRY_JITTER)
+            sleep_time = min(retry_interval + jitter, remaining)
+            await asyncio.sleep(sleep_time)
+
             retry_interval = min(
                 retry_interval * self.RETRY_MULTIPLIER,
                 self.RETRY_MAX_INTERVAL,
@@ -329,9 +535,10 @@ class RedisLockManager(LockManagerBase):
         tenant_id: str,
         path: str,
     ) -> bool:
-        """Release a distributed lock.
+        """Release a distributed lock or semaphore slot.
 
         Only releases if caller owns the lock (lock_id matches).
+        Automatically detects whether this is a mutex or semaphore.
 
         Args:
             lock_id: Lock ID from acquire()
@@ -342,9 +549,11 @@ class RedisLockManager(LockManagerBase):
             True if released, False if not owned or expired
         """
         await self._ensure_scripts_loaded()
-        assert self._release_script_sha is not None  # Guaranteed by _ensure_scripts_loaded
+        assert self._release_script_sha is not None
+        assert self._sem_release_script_sha is not None
 
-        key = self._lock_key(tenant_id, path)
+        # Try mutex first (most common case)
+        mutex_key = self._lock_key(tenant_id, path)
 
         try:
             result = await cast(
@@ -352,21 +561,44 @@ class RedisLockManager(LockManagerBase):
                 self._redis.client.evalsha(
                     self._release_script_sha,
                     1,  # Number of keys
-                    key,  # KEYS[1]
+                    mutex_key,  # KEYS[1]
                     lock_id,  # ARGV[1]
                 ),
             )
 
-            released: bool = result == 1
-            if released:
-                logger.debug(f"Lock released: {key}")
-            else:
-                logger.debug(f"Lock release failed (not owned or expired): {key}")
-
-            return released
+            if result == 1:
+                logger.debug(f"Mutex released: {mutex_key}")
+                return True
 
         except Exception as e:
-            logger.error(f"Failed to release lock {key}: {e}")
+            logger.error(f"Failed to release mutex {mutex_key}: {e}")
+            # Fall through to try semaphore
+
+        # Try semaphore if mutex didn't match
+        sem_key = self._semaphore_key(tenant_id, path)
+        config_key = self._semaphore_config_key(tenant_id, path)
+
+        try:
+            result = await cast(
+                Awaitable[int],
+                self._redis.client.evalsha(
+                    self._sem_release_script_sha,
+                    2,  # Number of keys
+                    sem_key,  # KEYS[1]
+                    config_key,  # KEYS[2]
+                    lock_id,  # ARGV[1]
+                ),
+            )
+
+            if result == 1:
+                logger.debug(f"Semaphore slot released: {sem_key}")
+                return True
+
+            logger.debug(f"Release failed (not owned or expired): {path}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to release semaphore {sem_key}: {e}")
             return False
 
     async def extend(
@@ -376,9 +608,10 @@ class RedisLockManager(LockManagerBase):
         path: str,
         ttl: float = LockManagerBase.DEFAULT_TTL,
     ) -> bool:
-        """Extend a lock's TTL (heartbeat).
+        """Extend a lock's or semaphore slot's TTL (heartbeat).
 
         Use this to keep locks alive during long-running operations.
+        Automatically detects whether this is a mutex or semaphore.
 
         Args:
             lock_id: Lock ID from acquire()
@@ -390,9 +623,11 @@ class RedisLockManager(LockManagerBase):
             True if extended, False if not owned or expired
         """
         await self._ensure_scripts_loaded()
-        assert self._extend_script_sha is not None  # Guaranteed by _ensure_scripts_loaded
+        assert self._extend_script_sha is not None
+        assert self._sem_extend_script_sha is not None
 
-        key = self._lock_key(tenant_id, path)
+        # Try mutex first (most common case)
+        mutex_key = self._lock_key(tenant_id, path)
         ttl_seconds = int(ttl)
 
         try:
@@ -401,22 +636,45 @@ class RedisLockManager(LockManagerBase):
                 self._redis.client.evalsha(
                     self._extend_script_sha,
                     1,  # Number of keys
-                    key,  # KEYS[1]
+                    mutex_key,  # KEYS[1]
                     lock_id,  # ARGV[1]
                     ttl_seconds,  # ARGV[2]
                 ),
             )
 
-            extended: bool = result == 1
-            if extended:
-                logger.debug(f"Lock extended: {key} (new TTL: {ttl}s)")
-            else:
-                logger.debug(f"Lock extend failed (not owned or expired): {key}")
-
-            return extended
+            if result == 1:
+                logger.debug(f"Mutex extended: {mutex_key} (new TTL: {ttl}s)")
+                return True
 
         except Exception as e:
-            logger.error(f"Failed to extend lock {key}: {e}")
+            logger.error(f"Failed to extend mutex {mutex_key}: {e}")
+            # Fall through to try semaphore
+
+        # Try semaphore if mutex didn't match
+        sem_key = self._semaphore_key(tenant_id, path)
+        new_expire_ts = time.time() + ttl
+
+        try:
+            result = await cast(
+                Awaitable[int],
+                self._redis.client.evalsha(
+                    self._sem_extend_script_sha,
+                    1,  # Number of keys
+                    sem_key,  # KEYS[1]
+                    lock_id,  # ARGV[1]
+                    new_expire_ts,  # ARGV[2]
+                ),
+            )
+
+            if result == 1:
+                logger.debug(f"Semaphore slot extended: {sem_key} (new TTL: {ttl}s)")
+                return True
+
+            logger.debug(f"Extend failed (not owned or expired): {path}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to extend semaphore {sem_key}: {e}")
             return False
 
     async def is_locked(self, tenant_id: str, path: str) -> bool:

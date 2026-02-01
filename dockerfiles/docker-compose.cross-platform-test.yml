@@ -38,7 +38,7 @@ services:
   dragonfly-coordination:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: nexus-test-dragonfly-coordination
-    command: dragonfly --maxmemory=256mb --maxmemory-policy=noeviction --logtostderr
+    command: dragonfly --maxmemory=512mb --proactor_threads=2 --logtostderr
     ports:
       - "6379:6379"
     volumes:
@@ -53,7 +53,7 @@ services:
   dragonfly-cache:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: nexus-test-dragonfly-cache
-    command: dragonfly --maxmemory=512mb --logtostderr
+    command: dragonfly --maxmemory=512mb --proactor_threads=2 --logtostderr
     ports:
       - "6380:6379"
     volumes:

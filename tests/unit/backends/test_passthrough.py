@@ -258,6 +258,99 @@ class TestLocking:
         temp_backend.unlock(lock_id2)
 
 
+class TestMultiSlotLocking:
+    """Tests for multi-slot advisory locking (semaphore mode)."""
+
+    def test_semaphore_multiple_holders(self, temp_backend):
+        """Test that semaphore allows multiple concurrent holders."""
+        locks = []
+        max_holders = 5
+
+        # Acquire 5 locks (should all succeed)
+        for i in range(max_holders):
+            lock_id = temp_backend.lock("/room", timeout=1.0, max_holders=max_holders)
+            assert lock_id is not None, f"Failed to acquire lock {i + 1}"
+            locks.append(lock_id)
+
+        # 6th should timeout (no available slots)
+        lock_6 = temp_backend.lock("/room", timeout=0.2, max_holders=max_holders)
+        assert lock_6 is None
+
+        # Release one slot
+        temp_backend.unlock(locks[0])
+        locks.pop(0)
+
+        # Now 6th should succeed
+        lock_6 = temp_backend.lock("/room", timeout=1.0, max_holders=max_holders)
+        assert lock_6 is not None
+        locks.append(lock_6)
+
+        # Cleanup
+        for lock_id in locks:
+            temp_backend.unlock(lock_id)
+
+    def test_semaphore_auto_cleanup(self, temp_backend):
+        """Test that releasing last holder cleans up config."""
+        lock_id = temp_backend.lock("/auto_cleanup", timeout=1.0, max_holders=3)
+        assert lock_id is not None
+
+        # Config should exist
+        assert "/auto_cleanup" in temp_backend._lock_limits
+
+        # Release
+        temp_backend.unlock(lock_id)
+
+        # Config should be cleaned up
+        assert "/auto_cleanup" not in temp_backend._lock_limits
+        assert "/auto_cleanup" not in temp_backend._locks
+
+    def test_semaphore_max_holders_mismatch(self, temp_backend):
+        """Test that max_holders mismatch raises ValueError."""
+        # First acquire with max_holders=5
+        lock_id = temp_backend.lock("/mismatch", timeout=1.0, max_holders=5)
+        assert lock_id is not None
+
+        # Try to acquire with different max_holders
+        with pytest.raises(ValueError, match="max_holders mismatch"):
+            temp_backend.lock("/mismatch", timeout=1.0, max_holders=3)
+
+        # Cleanup
+        temp_backend.unlock(lock_id)
+
+    def test_semaphore_invalid_max_holders(self, temp_backend):
+        """Test that max_holders < 1 raises ValueError."""
+        with pytest.raises(ValueError, match="max_holders must be >= 1"):
+            temp_backend.lock("/invalid", timeout=1.0, max_holders=0)
+
+        with pytest.raises(ValueError, match="max_holders must be >= 1"):
+            temp_backend.lock("/invalid", timeout=1.0, max_holders=-1)
+
+    def test_mutex_is_semaphore_with_one_slot(self, temp_backend):
+        """Test that max_holders=1 behaves like mutex."""
+        # Default is max_holders=1
+        lock_id1 = temp_backend.lock("/mutex_test", timeout=1.0)
+        assert lock_id1 is not None
+
+        # Second lock should fail (same as mutex)
+        lock_id2 = temp_backend.lock("/mutex_test", timeout=0.2)
+        assert lock_id2 is None
+
+        # Cleanup
+        temp_backend.unlock(lock_id1)
+
+    def test_semaphore_reuse_after_cleanup(self, temp_backend):
+        """Test that path can be used with different max_holders after cleanup."""
+        # First use with max_holders=5
+        lock_id = temp_backend.lock("/reuse_test", timeout=1.0, max_holders=5)
+        assert lock_id is not None
+        temp_backend.unlock(lock_id)
+
+        # Now can use with different max_holders (config was cleaned up)
+        lock_id = temp_backend.lock("/reuse_test", timeout=1.0, max_holders=3)
+        assert lock_id is not None
+        temp_backend.unlock(lock_id)
+
+
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 

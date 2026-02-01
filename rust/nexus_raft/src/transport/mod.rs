@@ -132,6 +132,7 @@ impl NodeAddress {
     }
 
     /// Parse from "id@host:port" format.
+    #[allow(clippy::result_large_err)]
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.splitn(2, '@').collect();
         if parts.len() != 2 {

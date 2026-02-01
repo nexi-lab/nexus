@@ -284,9 +284,11 @@ impl SledTree {
 
     /// Iterate over all key-value pairs.
     pub fn iter(&self) -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + '_ {
-        self.tree
-            .iter()
-            .map(|result| result.map(|(k, v)| (k.to_vec(), v.to_vec())).map_err(Into::into))
+        self.tree.iter().map(|result| {
+            result
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(Into::into)
+        })
     }
 
     /// Iterate over keys in a range.
@@ -314,9 +316,11 @@ impl SledTree {
         R: std::ops::RangeBounds<K>,
         K: AsRef<[u8]>,
     {
-        self.tree
-            .range(range)
-            .map(|result| result.map(|(k, v)| (k.to_vec(), v.to_vec())).map_err(Into::into))
+        self.tree.range(range).map(|result| {
+            result
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(Into::into)
+        })
     }
 
     /// Scan keys with a prefix.
@@ -335,10 +339,15 @@ impl SledTree {
     ///     // Process entry...
     /// }
     /// ```
-    pub fn scan_prefix(&self, prefix: &[u8]) -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + '_ {
-        self.tree
-            .scan_prefix(prefix)
-            .map(|result| result.map(|(k, v)| (k.to_vec(), v.to_vec())).map_err(Into::into))
+    pub fn scan_prefix(
+        &self,
+        prefix: &[u8],
+    ) -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + '_ {
+        self.tree.scan_prefix(prefix).map(|result| {
+            result
+                .map(|(k, v)| (k.to_vec(), v.to_vec()))
+                .map_err(Into::into)
+        })
     }
 
     /// Compare-and-swap operation.
@@ -538,8 +547,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(entries.len(), 4);
-        assert_eq!(u64::from_be_bytes(entries[0].0.clone().try_into().unwrap()), 3);
-        assert_eq!(u64::from_be_bytes(entries[3].0.clone().try_into().unwrap()), 6);
+        assert_eq!(
+            u64::from_be_bytes(entries[0].0.clone().try_into().unwrap()),
+            3
+        );
+        assert_eq!(
+            u64::from_be_bytes(entries[3].0.clone().try_into().unwrap()),
+            6
+        );
     }
 
     #[test]

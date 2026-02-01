@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tonic_build::configure()
             .build_server(true)
             .build_client(true)
-            .compile(proto_files, includes)?;
+            .compile_protos(proto_files, includes)?;
 
         // Tell cargo to recompile if protos change
         println!("cargo:rerun-if-changed=proto/raft.proto");

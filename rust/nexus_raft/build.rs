@@ -9,10 +9,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let proto_files = &["proto/raft.proto"];
         let includes = &["proto"];
 
+        // Compile protos to OUT_DIR (standard cargo location)
         tonic_build::configure()
             .build_server(true)
             .build_client(true)
-            .out_dir("src/transport/generated")
             .compile(proto_files, includes)?;
 
         // Tell cargo to recompile if protos change

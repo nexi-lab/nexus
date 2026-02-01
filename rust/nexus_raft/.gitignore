@@ -1,6 +1,2 @@
 /target
 Cargo.lock
-
-# Generated protobuf code (created by build.rs)
-src/transport/generated/*.rs
-!src/transport/generated/.gitkeep

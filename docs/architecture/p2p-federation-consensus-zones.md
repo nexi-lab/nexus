@@ -1,9 +1,11 @@
 # P2P Federation and Consensus Zones Design
 
-**Status**: Proposed
+**Status**: Proposed (Raft design detailed in 4.8-4.12)
 **Author**: Nexus Team
 **Created**: 2025-01-29
+**Updated**: 2026-02-01 (Raft design decisions added)
 **Target Block**: Block 3+ (after P2P Foundation)
+**Issue**: #1159
 
 ## Overview
 
@@ -739,6 +741,341 @@ services:
           cpus: '0.1'
 ```
 
+#### 4.8 Raft Replication Scope: Metadata + Locks
+
+A critical design decision: **What does Raft replicate?**
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Replication Scope Decision: Metadata + Locks (NOT Full Content)        │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │  Layer         │ Consistency │ Protocol │ Storage                 │ │
+│  ├────────────────┼─────────────┼──────────┼─────────────────────────┤ │
+│  │  Metadata      │ Strong (CP) │ Raft     │ Raft Log → sled         │ │
+│  │  (path→hash,   │             │          │                         │ │
+│  │   locks, perms)│             │          │                         │ │
+│  ├────────────────┼─────────────┼──────────┼─────────────────────────┤ │
+│  │  Data (chunks) │ Eventual    │ P2P/CAS  │ PostgreSQL / S3         │ │
+│  │                │     (AP)    │          │                         │ │
+│  └────────────────┴─────────────┴──────────┴─────────────────────────┘ │
+│                                                                         │
+│  Why NOT Full Content?                                                  │
+│  - 100MB file → 100MB in Raft log → replicate 100MB × N nodes          │
+│  - Write amplification: 2x-3x network overhead                         │
+│  - Raft log compaction becomes bottleneck                              │
+│                                                                         │
+│  Why Metadata + Locks?                                                  │
+│  - Metadata is small (path, hash, size, mtime) ≈ 200 bytes per file    │
+│  - Locks/leases are critical for consistency                           │
+│  - CAS backend handles data (already has its own replication)          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight**: All `lock`, `create`, `rename` operations MUST go through Raft Log. Actual file content stays in CAS (PostgreSQL/S3).
+
+#### 4.9 Raft Log Entry Format
+
+```rust
+// rust/nexus_raft/src/commands.rs
+
+/// Raft state machine commands
+#[derive(Serialize, Deserialize)]
+pub enum RaftCommand {
+    // === Metadata Operations ===
+
+    /// Create or update file metadata
+    SetMetadata {
+        path: String,
+        hash: String,       // CAS content hash (sha256:xxx)
+        size: u64,
+        mtime: u64,         // Unix timestamp
+        mode: u32,          // Permissions
+    },
+
+    /// Delete file metadata
+    DeleteMetadata {
+        path: String,
+    },
+
+    /// Create directory
+    MkDir {
+        path: String,
+        mode: u32,
+    },
+
+    /// Remove directory
+    RmDir {
+        path: String,
+    },
+
+    // === Lock Operations (Semaphore) ===
+
+    /// Acquire lock slot
+    AcquireLock {
+        path: String,
+        lock_id: String,    // UUID
+        max_holders: u32,   // 1 = mutex, >1 = semaphore
+        ttl_secs: u32,
+        holder_info: String, // "agent:xxx" or "tenant:xxx:agent:xxx"
+    },
+
+    /// Release lock slot
+    ReleaseLock {
+        path: String,
+        lock_id: String,
+    },
+
+    /// Extend lock TTL (heartbeat)
+    ExtendLock {
+        path: String,
+        lock_id: String,
+        new_ttl_secs: u32,
+    },
+}
+
+/// Applied state machine (in-memory, rebuilt from log)
+pub struct RaftStateMachine {
+    /// Path to metadata mapping
+    pub metadata: HashMap<String, FileMetadata>,
+    /// Path to lock holders mapping
+    pub locks: HashMap<String, Vec<LockHolder>>,
+}
+```
+
+#### 4.10 Witness Node Persistence Requirements
+
+Witness nodes are lightweight, but they MUST persist certain data for correctness:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Witness Persistence: Log YES, State Machine NO                         │
+│                                                                         │
+│  "Witness 节点虽然存了 Log，但它可以不应用 (Apply) 这些日志生成最终的     │
+│   文件系统树 (State Machine)，也不存实际的文件数据。                     │
+│   它只是一个'记账员'，不负责'存货'。"                                    │
+│                                                                         │
+│  ┌──────────────────┬─────────────────┬─────────────────┐              │
+│  │    Component     │   Full Member   │     Witness     │              │
+│  ├──────────────────┼─────────────────┼─────────────────┤              │
+│  │  Raft Log        │  ✅ YES (强一致) │  ✅ YES (强一致) │              │
+│  │  State Machine   │  ✅ YES         │  ❌ NO          │              │
+│  │  File Data (CAS) │  ✅ YES         │  ❌ NO          │              │
+│  │  Can be Leader   │  ✅ YES         │  ❌ NO          │              │
+│  │  Serves Reads    │  ✅ YES         │  ❌ NO          │              │
+│  │  Participates    │  ✅ YES         │  ✅ YES         │              │
+│  │  in Vote         │                 │                 │              │
+│  └──────────────────┴─────────────────┴─────────────────┘              │
+│                                                                         │
+│  What Witness MUST Persist (for crash recovery):                        │
+│  1. voted_for     - Who did I vote for in current term?                │
+│  2. current_term  - What's the current Raft term?                      │
+│  3. Raft Log      - Log entries (for log matching during vote)         │
+│                                                                         │
+│  What Witness can skip:                                                 │
+│  - State machine (rebuild from log if ever promoted)                   │
+│  - Snapshots (no state to snapshot)                                    │
+│  - File data (never stores actual content)                             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Witness Crash Recovery Strategy:**
+1. On restart, read `voted_for` and `current_term` from disk
+2. Replay Raft log to restore log index/term state
+3. Rejoin cluster, ready to vote immediately
+4. If log is behind, request missing entries from leader
+
+#### 4.11 Write Flow with CAS Integration
+
+```
+Agent writes /cn/file.txt (100MB):
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Step 1: Write content to CAS (out of band)                              │
+│                                                                         │
+│   Agent → CAS Backend (PostgreSQL/S3)                                   │
+│   Content: <100MB bytes>                                                │
+│   Return: hash = "sha256:abc123..."                                     │
+│                                                                         │
+│   Note: CAS write happens BEFORE Raft, content is durably stored        │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Step 2: Propose metadata update via Raft (control plane)                │
+│                                                                         │
+│   Leader proposes:                                                      │
+│     SetMetadata {                                                       │
+│       path: "/cn/file.txt",                                             │
+│       hash: "sha256:abc123...",                                         │
+│       size: 104857600,                                                  │
+│       mtime: 1706812800,                                                │
+│     }                                                                   │
+│                                                                         │
+│   Proposal size: ~200 bytes (NOT 100MB!)                                │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Step 3: Raft replication                                                │
+│                                                                         │
+│   Leader → Follower: AppendEntries (log entry)                          │
+│   Leader → Witness:  AppendEntries (log entry only, no apply)           │
+│                                                                         │
+│   Quorum achieved (2/3): Commit                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Step 4: Apply to state machine (full members only)                      │
+│                                                                         │
+│   Leader State Machine:   path_to_hash["/cn/file.txt"] = "abc123"       │
+│   Follower State Machine: same                                          │
+│   Witness:               (no state machine, just log)                   │
+└─────────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Step 5: ACK to agent                                                    │
+│                                                                         │
+│   Agent receives: WriteResponse { success: true }                       │
+│                                                                         │
+│   At this point:                                                        │
+│   - Content is in CAS (durably stored)                                  │
+│   - Metadata is in Raft log (replicated to quorum)                      │
+│   - File is "visible" and can be read                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Read Flow:**
+1. Query Raft state machine for `path → hash`
+2. Fetch content from CAS using hash
+3. Return content to agent
+
+#### 4.12 Infrastructure Components
+
+The Raft implementation introduces two new infrastructure components that are designed to be **reusable** across Nexus:
+
+##### 4.12.1 sled - Embedded Key-Value Database
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  sled: Pure Rust Embedded Database                                      │
+│                                                                         │
+│  Why not PostgreSQL/Dragonfly for Raft Log?                             │
+│  - High-frequency writes (every operation → log entry)                  │
+│  - Network partition: must read local log to participate in vote        │
+│  - RTT latency kills Raft performance                                   │
+│                                                                         │
+│  Why sled over RocksDB?                                                 │
+│  - Pure Rust (no C++ dependency, cross-platform friendly)               │
+│  - Simpler build process                                                │
+│  - Good enough performance for our use case                             │
+│                                                                         │
+│  Reusability beyond Raft Log:                                           │
+│  ├── Local cache (persistent, survives restart)                         │
+│  ├── Task/event queues (persistent queue)                               │
+│  ├── Session storage                                                    │
+│  └── Any scenario needing local KV store                                │
+│                                                                         │
+│  Analogy: sled is to Rust what SQLite is to other languages             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+```rust
+// rust/nexus_raft/src/storage.rs
+use sled::Db;
+
+pub struct SledRaftStorage {
+    db: Db,
+    // Trees (namespaces)
+    log_tree: sled::Tree,      // Raft log entries
+    meta_tree: sled::Tree,     // voted_for, current_term
+}
+
+impl SledRaftStorage {
+    pub fn open(path: &str) -> Result<Self> {
+        let db = sled::open(path)?;
+        Ok(Self {
+            log_tree: db.open_tree("raft_log")?,
+            meta_tree: db.open_tree("raft_meta")?,
+            db,
+        })
+    }
+
+    pub fn append_entry(&self, index: u64, entry: &[u8]) -> Result<()> {
+        self.log_tree.insert(index.to_be_bytes(), entry)?;
+        Ok(())
+    }
+}
+```
+
+##### 4.12.2 gRPC (tonic) - RPC Framework
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  gRPC via tonic: Efficient Raft Transport                               │
+│                                                                         │
+│  Why gRPC over HTTP/JSON?                                               │
+│  ├── Streaming: Native support for bidirectional streams                │
+│  ├── Efficiency: Long-lived connections for heartbeats                  │
+│  ├── Raft examples: tikv/raft-rs examples use gRPC                      │
+│  └── Code generation: Less boilerplate than manual HTTP                 │
+│                                                                         │
+│  Reusability beyond Raft:                                               │
+│  ├── Webhook long-connections (Server Streaming replaces HTTP POST)     │
+│  ├── Real-time event push                                               │
+│  └── Any scenario needing efficient streaming RPC                       │
+│                                                                         │
+│  Streaming Patterns:                                                    │
+│  ├── Unary (like HTTP request/response)                                 │
+│  ├── Server Streaming ← ideal for webhooks                              │
+│  ├── Client Streaming                                                   │
+│  └── Bidirectional ← ideal for Raft                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+```protobuf
+// proto/raft.proto
+syntax = "proto3";
+package nexus.raft;
+
+service RaftService {
+  // Raft RPCs
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+  rpc InstallSnapshot(stream SnapshotChunk) returns (SnapshotResponse);
+
+  // Bidirectional stream for efficient heartbeats
+  rpc Heartbeat(stream HeartbeatRequest) returns (stream HeartbeatResponse);
+}
+
+message VoteRequest {
+  uint64 term = 1;
+  uint64 candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message AppendEntriesRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated bytes entries = 5;
+  uint64 leader_commit = 6;
+}
+```
+
+##### 4.12.3 Modular Commit Strategy
+
+New infrastructure is introduced via separate commits for clarity and reusability:
+
+| Commit | Content | Standalone? |
+|--------|---------|-------------|
+| **Commit 1** | `feat(infra): Add sled embedded database support` | ✅ YES |
+| **Commit 2** | `feat(infra): Add gRPC transport layer (tonic)` | ✅ YES |
+| **Commit 3** | `feat(raft): Implement Raft consensus with tikv/raft-rs` | Depends on 1+2 |
+| **Commit 4** | `feat(consensus): Add STRONG_HA zone support` | Depends on 3 |
+
+Each commit is self-contained, making it easy for other AI agents to understand and reuse individual components.
+
 ## Example: Multi-DC Configuration
 
 ### Deployment Topology
@@ -1042,9 +1379,41 @@ LocalConnectorBackend(
 
 4. **Namespace Integration**: Should consensus zones be integrated with the existing namespace concept, or remain separate?
 
+## Answered Questions (Raft Design)
+
+The following questions were resolved during design discussions:
+
+1. ✅ **Raft Replication Scope**: **Metadata + Locks** (NOT full content)
+   - File content stays in CAS backend (PostgreSQL/S3)
+   - Only metadata (~200 bytes per file) goes through Raft
+   - See Section 4.8 for details
+
+2. ✅ **Witness Persistence**: **Log YES, State Machine NO**
+   - Witness must persist `voted_for`, `current_term`, and Raft log
+   - Witness does NOT apply log entries or maintain state machine
+   - See Section 4.10 for details
+
+3. ✅ **Raft Log Storage**: **sled** (embedded, pure Rust)
+   - Cannot use network databases (PG/Dragonfly) due to partition concerns
+   - sled chosen over RocksDB for simpler build process
+   - See Section 4.12.1 for details
+
+4. ✅ **Network Transport**: **gRPC via tonic**
+   - Long-lived connections for efficient heartbeats
+   - Reusable for future webhook streaming
+   - See Section 4.12.2 for details
+
+5. ✅ **Consistency Zone Routing**: **Longest Prefix Match**
+   - Same algorithm as path routing
+   - More specific zones override general ones
+
 ## References
 
 - [Google Spanner Paper](https://research.google/pubs/pub39966/)
 - [Zanzibar Paper](https://research.google/pubs/pub48190/)
 - [Redis Cluster Specification](https://redis.io/docs/reference/cluster-spec/)
 - [Dragonfly Multi-Master](https://www.dragonflydb.io/)
+- [tikv/raft-rs](https://github.com/tikv/raft-rs) - Raft implementation used by TiKV
+- [sled](https://github.com/spacejam/sled) - Pure Rust embedded database
+- [tonic](https://github.com/hyperium/tonic) - Rust gRPC implementation
+- [Raft Paper](https://raft.github.io/raft.pdf) - In Search of an Understandable Consensus Algorithm

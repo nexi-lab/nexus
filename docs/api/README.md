@@ -21,6 +21,10 @@ This documentation is organized into focused, maintainable sections. Choose your
 - **[File Discovery](file-discovery.md)** - List, glob, and grep for finding files
 - **[Directory Operations](directory-operations.md)** - Create and manage directories
 
+### Real-Time & Events
+
+- **[WebSocket API](websocket.md)** - Real-time event streaming via WebSocket connections
+
 ### Advanced Features
 
 - **[Workflow Automation](workflows.md)** - Event-driven workflows that trigger automatically on file operations
@@ -135,6 +139,7 @@ Start with [Permissions](permissions.md) â†’ [Configuration](configuration.md) â
 | **Memories** | `register_memory()`, `unregister_memory()`, `list_memories()` | [Memory Management](memory-management.md) |
 | **Search** | `semantic_search()`, `initialize_semantic_search()` | [Semantic Search](semantic-search.md) |
 | **Metadata** | `export_metadata()`, `import_metadata()`, `batch_get_content_ids()` | [Metadata](metadata.md) |
+| **WebSocket** | Real-time events via `ws://` | [WebSocket API](websocket.md) |
 
 ### CLI Interface
 

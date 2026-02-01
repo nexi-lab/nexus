@@ -161,9 +161,13 @@ impl SledStore {
     }
 
     /// Flush asynchronously (returns immediately, flush happens in background).
-    pub fn flush_async(&self) -> Result<()> {
-        self.db.flush_async()?;
-        Ok(())
+    ///
+    /// Note: This spawns the flush as a background task. The actual completion
+    /// is not awaited. Use `flush()` if you need guaranteed durability.
+    pub fn flush_async(&self) {
+        // flush_async() returns a Future, but we just let it drop
+        // This triggers the flush but doesn't wait for completion
+        let _ = self.db.flush_async();
     }
 
     /// Get database size on disk in bytes.

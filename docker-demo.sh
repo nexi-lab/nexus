@@ -586,7 +586,6 @@ cmd_init() {
     echo "🔨 Step 3/5: Building template images from config..."
     # Use uv if available, otherwise skip template building
     if command -v uv &> /dev/null; then
-	echo ""
         uv run python dockerfiles/build-templates.py
     else
         echo "⚠️  uv not found - skipping template image builds"

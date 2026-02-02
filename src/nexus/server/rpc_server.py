@@ -1616,6 +1616,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()  # Ensure all data is sent before connection closes
 
     def _send_error_response(
         self,
@@ -1661,6 +1662,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()  # Ensure all data is sent before connection closes
 
 
 class NexusRPCServer:

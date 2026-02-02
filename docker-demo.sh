@@ -432,7 +432,7 @@ cmd_build() {
 
     echo ""
     echo "🔨 Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    docker compose -f "$COMPOSE_FILE" build --build-arg USE_CHINA_MIRROR=true
 
     echo ""
     echo "✅ All images built successfully!"
@@ -580,13 +580,14 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 2/5: Building base runtime image for sandboxes..."
-    ./dockerfiles/build.sh
+    #./dockerfiles/build.sh
 
     echo ""
     echo "🔨 Step 3/5: Building template images from config..."
     # Use uv if available, otherwise skip template building
     if command -v uv &> /dev/null; then
-        uv run python dockerfiles/build-templates.py
+	echo ""
+        #uv run python dockerfiles/build-templates.py
     else
         echo "⚠️  uv not found - skipping template image builds"
         echo "   Template images will be built on-demand when first used"
@@ -595,7 +596,7 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 4/5: Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    docker compose -f "$COMPOSE_FILE" build --build-arg USE_CHINA_MIRROR=true
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."

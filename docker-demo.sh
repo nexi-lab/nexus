@@ -432,7 +432,7 @@ cmd_build() {
 
     echo ""
     echo "🔨 Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    docker compose -f "$COMPOSE_FILE" build --build-arg USE_CHINA_MIRROR=true
 
     echo ""
     echo "✅ All images built successfully!"
@@ -595,7 +595,7 @@ cmd_init() {
 
     echo ""
     echo "🔨 Step 4/5: Building service images..."
-    docker compose -f "$COMPOSE_FILE" build
+    docker compose -f "$COMPOSE_FILE" build --build-arg USE_CHINA_MIRROR=true
 
     echo ""
     echo "🚀 Step 5/5: Starting services..."

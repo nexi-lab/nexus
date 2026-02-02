@@ -2857,6 +2857,109 @@ def _register_routes(app: FastAPI) -> None:
         await websocket_events(websocket, "all", token)
 
     # ========================================================================
+    # Long-Polling Watch Endpoint (Issue #1117)
+    # ========================================================================
+
+    @app.get("/api/watch", tags=["watch"])
+    async def watch_for_changes(
+        path: str = Query(
+            "/**/*",
+            description="Path or glob pattern to watch (e.g., /inbox/, **/*.py)",
+        ),
+        timeout: float = Query(
+            30.0,
+            ge=0.1,
+            le=300.0,
+            description="Maximum time to wait in seconds (default: 30, max: 300)",
+        ),
+        _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+    ) -> dict[str, Any]:
+        """Long-polling endpoint to wait for file system changes.
+
+        Blocks until a matching change occurs or timeout is reached.
+        This is more efficient than polling for AI agents and automation.
+
+        Args:
+            path: Virtual path or glob pattern to watch
+                - File path (e.g., "/inbox/file.txt"): Watches for content changes
+                - Directory path (e.g., "/inbox/"): Watches for file create/delete/rename
+                - Glob pattern (e.g., "**/*.py"): Watches matching files
+            timeout: Maximum wait time in seconds (0.1-300, default: 30)
+
+        Returns:
+            On change detected:
+            ```json
+            {
+                "changes": [{
+                    "type": "file_write",
+                    "path": "/inbox/new.txt",
+                    "timestamp": "2024-01-15T10:30:00Z"
+                }],
+                "timeout": false
+            }
+            ```
+
+            On timeout:
+            ```json
+            {
+                "changes": [],
+                "timeout": true
+            }
+            ```
+
+        Example:
+            ```bash
+            # Watch for Python file changes (30s timeout)
+            curl "http://localhost:2026/api/watch?path=**/*.py&timeout=30"
+
+            # Watch inbox directory for new files
+            curl "http://localhost:2026/api/watch?path=/inbox/&timeout=60"
+            ```
+        """
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+        # Create operation context for permission checks
+        context = None
+        if _auth_result:
+            context = get_operation_context(_auth_result)
+
+        try:
+            # Use the existing wait_for_changes method
+            change = await _app_state.nexus_fs.wait_for_changes(
+                path=path,
+                timeout=timeout,
+                _context=context,
+            )
+
+            if change is None:
+                # Timeout - no changes detected
+                return {
+                    "changes": [],
+                    "timeout": True,
+                }
+
+            # Change detected
+            return {
+                "changes": [change],
+                "timeout": False,
+            }
+
+        except NotImplementedError as e:
+            # No event source available (no Redis, not same-box)
+            raise HTTPException(
+                status_code=501,
+                detail=f"Watch not available: {e}. Requires Redis event bus or same-box backend.",
+            ) from None
+        except NexusFileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Path not found: {path}") from None
+        except NexusPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e)) from None
+        except Exception as e:
+            logger.error(f"Watch error for {path}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Watch error: {e}") from e
+
+    # ========================================================================
     # Streaming Endpoint for Local Backend
     # ========================================================================
 

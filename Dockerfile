@@ -1,82 +1,117 @@
 # Nexus RPC Server - Production Dockerfile
 # Multi-stage build for optimal image size
-FROM python:3.13-slim as builder
+# 国内镜像支持：APT、pip、Rust、Go
+ARG USE_CHINA_MIRROR=false
+FROM python:3.13-slim AS builder
 
-# Install build dependencies (including Rust for nexus_fast extension)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    git \
-    curl \
-    build-essential \
+# 设置国内镜像环境变量（默认 false，国外环境不使用）
+ARG USE_CHINA_MIRROR
+ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOSUMDB=off
+# ---------- 系统依赖 ----------
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        gcc \
+        git \
+        curl \
+        build-essential \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Rust toolchain for building nexus_fast extension
+# ---------- Rust Toolchain ----------
+# 使用国内 Rust 镜像加速（如果 USE_CHINA_MIRROR）
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH="/root/.cargo/bin:${PATH}"
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        rustup update stable --no-self-update; \
+        rustup set profile minimal; \
+        rustup component add rustfmt clippy; \
+    fi
 
-# Install Go toolchain for building Zoekt (detect architecture)
+# ---------- Go Toolchain ----------
 RUN ARCH=$(dpkg --print-architecture) && \
     if [ "$ARCH" = "arm64" ]; then GO_ARCH="arm64"; else GO_ARCH="amd64"; fi && \
-    curl -fsSL "https://go.dev/dl/go1.23.4.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -
+    if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        GO_DL="https://golang.google.cn/dl"; \
+    else \
+        GO_DL="https://go.dev/dl"; \
+    fi && \
+    curl -fsSL "${GO_DL}/go1.24.12.linux-${GO_ARCH}.tar.gz" | tar -C /usr/local -xzf -
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
-# Build Zoekt binaries (CGO_ENABLED=0 for static builds)
+# ---------- Build Zoekt binaries ----------
 RUN CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest && \
     CGO_ENABLED=0 go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
 
-# Install uv and maturin for faster dependency installation
-RUN pip install --no-cache-dir uv maturin
+# ---------- uv + maturin ----------
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
+    else \
+        PIP_INDEX="https://pypi.org/simple"; \
+    fi && \
+    pip install --no-cache-dir -i $PIP_INDEX uv maturin
 
-# Copy project files
+# ---------- Copy project files ----------
 WORKDIR /build
 COPY pyproject.toml uv.lock* README.md Cargo.toml ./
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic/alembic.ini ./alembic.ini
 
-# Install dependencies to system (not editable for multi-stage build)
-# Increase timeout for large packages like onnxruntime (14.5MB)
+# ---------- Install Python dependencies ----------
 ENV UV_HTTP_TIMEOUT=300
-RUN uv pip install --system .
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
+    else \
+        PIP_INDEX="https://pypi.org/simple"; \
+    fi && \
+    uv pip install --system -i $PIP_INDEX .
 
-# Install sandbox providers (e2b-code-interpreter required for sandbox_run)
-RUN uv pip install --system docker e2b e2b-code-interpreter
+# ---------- Install sandbox providers ----------
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        PIP_INDEX="https://mirrors.cloud.tencent.com/pypi/simple"; \
+    else \
+        PIP_INDEX="https://pypi.org/simple"; \
+    fi && \
+    uv pip install --system -i $PIP_INDEX docker e2b e2b-code-interpreter
 
-# Build and install Rust extension (nexus_fast)
+# ---------- Build Rust extension ----------
 COPY rust/ ./rust/
 WORKDIR /build/rust/nexus_fast
 RUN maturin build --release && \
     pip install --no-cache-dir target/wheels/nexus_fast-*.whl
 WORKDIR /build
 
-# Production image
+# ---------- Production image ----------
 FROM python:3.13-slim
 
-# Install runtime dependencies only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    netcat-openbsd \
+ARG USE_CHINA_MIRROR
+ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
+
+# ---------- Runtime dependencies ----------
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        netcat-openbsd \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python packages from builder (including Rust extension)
+# ---------- Copy Python packages + Rust extension ----------
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin/nexus /usr/local/bin/nexus
 COPY --from=builder /usr/local/bin/alembic /usr/local/bin/alembic
 
-# Copy Zoekt binaries from builder
+# ---------- Copy Zoekt binaries ----------
 COPY --from=builder /root/go/bin/zoekt-index /usr/local/bin/zoekt-index
 COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
-# Verify Rust extension is available (optional debug step)
+# ---------- Optional verifications ----------
 RUN python3 -c "import nexus_fast; print('✓ Rust acceleration available')" || echo "⚠ Rust not available"
-
-# Verify Docker sandbox provider is available
 RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
-
-# Verify Zoekt binaries are available
 RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || echo "⚠ Zoekt not available"
 
-# Copy application files
+# ---------- Copy application files ----------
 WORKDIR /app
 COPY src/ ./src/
 COPY alembic/ ./alembic/
@@ -94,42 +129,28 @@ COPY dockerfiles/entrypoint-helpers.sh /usr/local/bin/entrypoint-helpers.sh
 # Make entrypoint and helpers executable
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/entrypoint-helpers.sh
 
-# Create non-root user for security
+# ---------- Create non-root user ----------
 RUN useradd -r -m -u 1000 -s /bin/bash nexus
-
-# Add nexus user to root group for Docker socket access
-# This is safe in containers as the root group doesn't grant elevated privileges
 RUN usermod -aG root nexus
-
-# Create data directory with correct permissions
 RUN mkdir -p /app/data && chown -R nexus:nexus /app
 
-# Switch to non-root user
 USER nexus
 
-# Environment variables (can be overridden)
+# ---------- Environment variables ----------
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PORT=2026 \
     NEXUS_DATA_DIR=/app/data \
-    # Zoekt configuration (sidecar mode)
     ZOEKT_ENABLED=true \
     ZOEKT_URL=http://localhost:6070 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data
 
-# Expose ports (2026 = Nexus API, 6070 = Zoekt search)
 EXPOSE 2026 6070
 
-# Health check - updated to correct endpoint
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:${NEXUS_PORT}/health || exit 1
 
-# Run the server via entrypoint script
-# The entrypoint handles database initialization and API key creation
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-# $(date)
-# Fri Jan  2 02:28:32 PST 2026
-# Fri Jan  2 02:28:45 PST 2026
-# Fri Jan  2 02:29:00 PST 2026

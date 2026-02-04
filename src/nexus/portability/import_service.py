@@ -49,6 +49,7 @@ def _create_import_context() -> OperationContext:
         is_system=True,  # System operations bypass all checks
     )
 
+
 # Progress callback type: (current, total, phase) -> None
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -342,9 +343,7 @@ class TenantImportService:
                 else:
                     result.files_created += 1
 
-                logger.debug(
-                    f"Imported {remapped_path}: etag={write_result.get('etag', 'N/A')}"
-                )
+                logger.debug(f"Imported {remapped_path}: etag={write_result.get('etag', 'N/A')}")
 
             except Exception as e:
                 logger.warning(f"Failed to write {remapped_path}: {e}")
@@ -432,9 +431,7 @@ class TenantImportService:
         try:
             # Use metadata store to update timestamps
             if created_at:
-                self.nexus_fs.metadata.set_file_metadata(
-                    path, "created_at", created_at.isoformat()
-                )
+                self.nexus_fs.metadata.set_file_metadata(path, "created_at", created_at.isoformat())
             if updated_at:
                 self.nexus_fs.metadata.set_file_metadata(
                     path, "modified_at", updated_at.isoformat()

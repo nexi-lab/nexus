@@ -62,7 +62,7 @@ def _get_consolidation_engine(auth_result: dict[str, Any]) -> Any:
     return ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         tenant_id=context.tenant_id,
@@ -84,7 +84,7 @@ def _get_hierarchy_manager(auth_result: dict[str, Any]) -> Any:
     consolidation_engine = ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         tenant_id=context.tenant_id,

@@ -71,7 +71,7 @@ def _get_reflector(auth_result: dict[str, Any]) -> Any:
     return Reflector(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),

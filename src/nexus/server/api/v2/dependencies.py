@@ -79,7 +79,7 @@ async def get_memory_api() -> Memory:
     if not app_state.nexus_fs:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    return app_state.nexus_fs.memory
+    return app_state.nexus_fs.memory  # type: ignore[no-any-return]
 
 
 async def get_db_session() -> Any:
@@ -217,7 +217,7 @@ async def get_reflector(
     return Reflector(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
@@ -283,7 +283,7 @@ async def get_consolidation_engine(
     return ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         tenant_id=context.tenant_id,
@@ -314,7 +314,7 @@ async def get_hierarchy_manager(
     consolidation_engine = ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         tenant_id=context.tenant_id,

@@ -1602,6 +1602,28 @@ class ReBACVersionSequenceModel(Base):
     __table_args__: tuple = ()
 
 
+class FileSystemVersionSequenceModel(Base):
+    """Per-tenant version sequence for filesystem consistency tokens (Issue #1187).
+
+    Stores monotonic revision counters used to track filesystem changes
+    for each tenant. Used for Zookie consistency tokens to enable
+    read-after-write consistency guarantees.
+
+    See: nexus.core.zookie for the Zookie class implementation.
+    """
+
+    __tablename__ = "filesystem_version_sequences"
+
+    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    current_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Note: No explicit index needed - tenant_id is the primary key
+    __table_args__: tuple = ()
+
+
 class ReBACCheckCacheModel(Base):
     """Cache for ReBAC permission check results.
 

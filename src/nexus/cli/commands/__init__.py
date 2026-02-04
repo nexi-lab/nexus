@@ -41,6 +41,7 @@ from nexus.cli.commands import (
     search,
     server,
     skills,
+    tenant,
     versions,
     work,
     workflows,
@@ -78,6 +79,7 @@ def register_all_commands(cli: click.Group) -> None:
     cli.add_command(admin.admin)  # v0.5.1: Admin API commands for user management
     cli.add_command(sandbox.sandbox)  # v0.8.0: Sandbox management commands (Issue #372)
     cli.add_command(oauth.oauth)  # v0.7.0: OAuth credential management (Issue #137)
+    cli.add_command(tenant.tenant)  # v0.8.0: Tenant portability (Issue #1161)
     migrate.register_commands(cli)  # v1.0.0: Migration tools (Issue #165)
 
 
@@ -99,6 +101,7 @@ __all__ = [
     "search",
     "rebac",
     "skills",
+    "tenant",
     "versions",
     "workspace",
     "metadata",

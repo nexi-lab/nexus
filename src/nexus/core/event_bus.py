@@ -77,6 +77,7 @@ class FileEvent:
         size: File size in bytes (for write events)
         etag: Content hash (for write events)
         agent_id: Agent that performed the operation (optional)
+        revision: Filesystem revision number for consistency tracking (Issue #1187)
     """
 
     type: FileEventType | str
@@ -88,6 +89,7 @@ class FileEvent:
     size: int | None = None
     etag: str | None = None
     agent_id: str | None = None
+    revision: int | None = None  # Issue #1187: For consistency tracking
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -108,6 +110,8 @@ class FileEvent:
             result["etag"] = self.etag
         if self.agent_id is not None:
             result["agent_id"] = self.agent_id
+        if self.revision is not None:
+            result["revision"] = self.revision
         return result
 
     def to_json(self) -> str:
@@ -127,6 +131,7 @@ class FileEvent:
             size=data.get("size"),
             etag=data.get("etag"),
             agent_id=data.get("agent_id"),
+            revision=data.get("revision"),  # Issue #1187
         )
 
     @classmethod

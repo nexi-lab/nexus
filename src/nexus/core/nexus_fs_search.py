@@ -1041,6 +1041,18 @@ class NexusFSSearchMixin:
                 logger.info(
                     f"[LIST-DEBUG] allowed_set top-level prefixes: {sorted(top_level_prefixes)}"
                 )
+
+                # Precompute ancestor directories of all allowed paths - O(n*k) where k is avg depth
+                # This avoids O(n*m) quadratic scan in the loop below
+                allowed_ancestors: set[str] = set()
+                for p in allowed_set:
+                    parts = p.split("/")
+                    # Build all ancestor paths: /a, /a/b, /a/b/c for path /a/b/c/file
+                    for i in range(2, len(parts)):  # Start at 2 to skip empty string and filename
+                        ancestor = "/".join(parts[:i])
+                        if ancestor:
+                            allowed_ancestors.add(ancestor)
+
                 _bd_start = _time.time()
                 _traverse_checks = 0
                 _prefix_checks = 0
@@ -1052,10 +1064,9 @@ class NexusFSSearchMixin:
                         directories.add(dir_path)
                         continue
 
-                    # Fast path 2: check if any allowed path starts with this directory
-                    # (has accessible descendants) - do this BEFORE slow TRAVERSE check
-                    dir_prefix = dir_path.rstrip("/") + "/"
-                    if any(p.startswith(dir_prefix) for p in allowed_set):
+                    # Fast path 2: O(1) check if directory has accessible descendants
+                    # Uses precomputed ancestor set instead of O(n) scan
+                    if dir_path in allowed_ancestors:
                         _prefix_checks += 1
                         directories.add(dir_path)
                         continue

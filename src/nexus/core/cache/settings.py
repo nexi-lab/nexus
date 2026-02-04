@@ -53,8 +53,9 @@ class CacheSettings:
     # Dragonfly cache connection (optional - if not set, use PostgreSQL)
     # Supports both new NEXUS_DRAGONFLY_CACHE_URL and legacy NEXUS_DRAGONFLY_URL
     dragonfly_cache_url: str | None = field(
-        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_CACHE_URL")
-        or os.environ.get("NEXUS_DRAGONFLY_URL")  # Backward compatibility
+        default_factory=lambda: (
+            os.environ.get("NEXUS_DRAGONFLY_CACHE_URL") or os.environ.get("NEXUS_DRAGONFLY_URL")
+        )  # Backward compatibility
     )
 
     # Dragonfly coordination connection (for locks, events - requires noeviction policy)
@@ -67,8 +68,9 @@ class CacheSettings:
     # When true, coordination uses cache instance which may have eviction enabled
     # This can cause locks to be unexpectedly evicted - use only for development/testing
     allow_single_dragonfly: bool = field(
-        default_factory=lambda: os.environ.get("NEXUS_ALLOW_SINGLE_DRAGONFLY", "false").lower()
-        == "true"
+        default_factory=lambda: (
+            os.environ.get("NEXUS_ALLOW_SINGLE_DRAGONFLY", "false").lower() == "true"
+        )
     )
 
     # Backend selection: auto, dragonfly, postgres
@@ -146,14 +148,16 @@ class CacheSettings:
 
     # Enable TCP keepalive for cloud/NAT environments (Issue #1075)
     dragonfly_keepalive: bool = field(
-        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_KEEPALIVE", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.environ.get("NEXUS_DRAGONFLY_KEEPALIVE", "true").lower() == "true"
+        )
     )
 
     # Retry on timeout errors (Issue #1075)
     dragonfly_retry_on_timeout: bool = field(
-        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT", "true").lower()
-        == "true"
+        default_factory=lambda: (
+            os.environ.get("NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT", "true").lower() == "true"
+        )
     )
 
     # Enable L1 in-memory cache (optional layer before Dragonfly)

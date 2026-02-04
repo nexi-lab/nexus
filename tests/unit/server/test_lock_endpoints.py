@@ -126,9 +126,7 @@ class TestAcquireLockEndpoint:
         fas, lock_manager = app_with_mocked_locks
         lock_manager.acquire.return_value = "sem-lock-id"
 
-        request = LockAcquireRequest(
-            path="/shared/room", timeout=5, ttl=60, max_holders=5
-        )
+        request = LockAcquireRequest(path="/shared/room", timeout=5, ttl=60, max_holders=5)
         auth_result = {"tenant_id": "tenant1"}
 
         lock_id = await lock_manager.acquire(
@@ -259,9 +257,7 @@ class TestReleaseLockEndpoint:
         result = await lock_manager.release("lock-id-123", "default", "/test/file.txt")
 
         assert result is True
-        lock_manager.release.assert_called_once_with(
-            "lock-id-123", "default", "/test/file.txt"
-        )
+        lock_manager.release.assert_called_once_with("lock-id-123", "default", "/test/file.txt")
 
     @pytest.mark.asyncio
     async def test_release_wrong_owner(self, app_with_mocked_locks):
@@ -304,9 +300,7 @@ class TestExtendLockEndpoint:
         fas, lock_manager = app_with_mocked_locks
         lock_manager.extend.return_value = True
 
-        result = await lock_manager.extend(
-            "lock-id-123", "default", "/test/file.txt", ttl=60
-        )
+        result = await lock_manager.extend("lock-id-123", "default", "/test/file.txt", ttl=60)
 
         assert result is True
         lock_manager.extend.assert_called_once_with(
@@ -319,9 +313,7 @@ class TestExtendLockEndpoint:
         fas, lock_manager = app_with_mocked_locks
         lock_manager.extend.return_value = False
 
-        result = await lock_manager.extend(
-            "wrong-id", "default", "/test/file.txt", ttl=60
-        )
+        result = await lock_manager.extend("wrong-id", "default", "/test/file.txt", ttl=60)
 
         assert result is False
 
@@ -331,9 +323,7 @@ class TestExtendLockEndpoint:
         fas, lock_manager = app_with_mocked_locks
         lock_manager.extend.return_value = False  # Lock expired
 
-        result = await lock_manager.extend(
-            "expired-lock-id", "default", "/test/file.txt", ttl=60
-        )
+        result = await lock_manager.extend("expired-lock-id", "default", "/test/file.txt", ttl=60)
 
         assert result is False
 

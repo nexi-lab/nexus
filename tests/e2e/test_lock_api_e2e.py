@@ -213,7 +213,7 @@ class TestLockApiWithRedis:
                 "/api/locks",
                 json={"path": path, "timeout": 5, "ttl": 30, "max_holders": max_holders},
             )
-            assert response.status_code == 201, f"Failed to acquire slot {i+1}"
+            assert response.status_code == 201, f"Failed to acquire slot {i + 1}"
             data = response.json()
             assert data["mode"] == "semaphore"
             lock_ids.append(data["lock_id"])

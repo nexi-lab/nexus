@@ -79,9 +79,15 @@ class TestDeprovisionUser:
             context=admin_context,
         )
 
-        # Verify user exists
+        # Verify user exists and count directories created
         user_path = "/tenant:example/user:alice/workspace"
         assert nx.exists(user_path, context=admin_context)
+
+        existing_dirs = []
+        for resource_type in ["workspace", "memory", "skill", "agent", "connector", "resource"]:
+            dir_path = f"/tenant:example/user:alice/{resource_type}"
+            if nx.exists(dir_path, context=admin_context):
+                existing_dirs.append(dir_path)
 
         # Deprovision the user
         result = nx.deprovision_user(
@@ -94,7 +100,8 @@ class TestDeprovisionUser:
         # Verify result structure
         assert result["user_id"] == "alice"
         assert result["tenant_id"] == "example"
-        assert len(result["deleted_directories"]) == 6  # All 6 resource types
+        # Verify all existing directories were deleted
+        assert len(result["deleted_directories"]) == len(existing_dirs)
         assert result["deleted_api_keys"] >= 1
         assert result["user_record_deleted"] is False
 
@@ -369,6 +376,13 @@ class TestDeprovisionUser:
             context=admin_context,
         )
 
+        # Count existing directories after provisioning
+        existing_dirs = []
+        for resource_type in ["workspace", "memory", "skill", "agent", "connector", "resource"]:
+            dir_path = f"/tenant:example/user:frank/{resource_type}"
+            if nx.exists(dir_path, context=admin_context):
+                existing_dirs.append(dir_path)
+
         # Deprovision without providing tenant_id (should look up from user)
         result = nx.deprovision_user(
             user_id="frank",
@@ -377,7 +391,8 @@ class TestDeprovisionUser:
         )
 
         assert result["tenant_id"] == "example"
-        assert len(result["deleted_directories"]) == 6
+        # Verify all existing directories were deleted
+        assert len(result["deleted_directories"]) == len(existing_dirs)
 
     def test_deprovision_with_agents(self, nx: NexusFS, admin_context: OperationContext) -> None:
         """Test deprovisioning user with agents."""

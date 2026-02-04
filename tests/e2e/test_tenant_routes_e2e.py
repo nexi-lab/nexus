@@ -27,17 +27,23 @@ class TestTenantRoutesAuthentication:
         # 422 = missing Authorization header (FastAPI validation)
         # 401 = invalid/missing token
         # 503 = auth provider not configured (acceptable in minimal test setup)
-        assert response.status_code in (401, 422, 503), f"Got {response.status_code}: {response.text}"
+        assert response.status_code in (401, 422, 503), (
+            f"Got {response.status_code}: {response.text}"
+        )
 
     def test_get_tenant_requires_auth(self, test_app):
         """Test that getting a tenant without auth returns 401/422."""
         response = test_app.get("/api/tenants/some-tenant")
-        assert response.status_code in (401, 422, 503), f"Got {response.status_code}: {response.text}"
+        assert response.status_code in (401, 422, 503), (
+            f"Got {response.status_code}: {response.text}"
+        )
 
     def test_list_tenants_requires_auth(self, test_app):
         """Test that listing tenants without auth returns 401/422."""
         response = test_app.get("/api/tenants")
-        assert response.status_code in (401, 422, 503), f"Got {response.status_code}: {response.text}"
+        assert response.status_code in (401, 422, 503), (
+            f"Got {response.status_code}: {response.text}"
+        )
 
 
 class TestTenantRoutesWithAuth:

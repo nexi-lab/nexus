@@ -1413,11 +1413,11 @@ class NexusFS(  # type: ignore[misc]
         # Use provided context or default
         ctx = context if context is not None else self._default_context
 
-        # Check write permission on parent directory
-        # Only check if parent exists and we're not creating it with --parents
-        # Skip check if parent will be created as part of this mkdir operation
+        # Check write permission on parent directory if it exists
+        # The parents flag controls whether to CREATE missing parent directories,
+        # not whether to bypass permission checks on existing parents (Issue #1200)
         parent_path = self._get_parent_path(path)
-        if parent_path and self.metadata.exists(parent_path) and not parents:
+        if parent_path and self.metadata.exists(parent_path):
             self._check_permission(parent_path, Permission.WRITE, ctx)
 
         # Route to backend with write access check (mkdir requires write permission)

@@ -1650,7 +1650,9 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(consolidation.router)
         logger.info("API v2 routes registered (30 endpoints)")
     except ImportError as e:
-        logger.warning(f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available.")
+        logger.warning(
+            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
+        )
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

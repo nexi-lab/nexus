@@ -298,9 +298,7 @@ def import_tenant(
             task = progress.add_task("Importing...", total=None)
 
             def update_progress(current: int, total: int, phase: str) -> None:
-                progress.update(
-                    task, description=f"Importing {phase}... ({current}/{total})"
-                )
+                progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
             service = TenantImportService(nx)
             result = service.import_tenant(options, update_progress)

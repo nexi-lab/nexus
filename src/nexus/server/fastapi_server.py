@@ -3117,9 +3117,7 @@ def _register_routes(app: FastAPI) -> None:
             released = await lock_manager.force_release(tenant_id, path)
             if not released:
                 raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
-            logger.warning(
-                f"Lock force-released by admin: tenant={tenant_id}, path={path}"
-            )
+            logger.warning(f"Lock force-released by admin: tenant={tenant_id}, path={path}")
             return JSONResponse(content={"released": True, "forced": True})
 
         # Normal release with ownership check
@@ -3149,9 +3147,7 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         tenant_id = auth_result.get("tenant_id") or "default"
 
-        extended = await lock_manager.extend(
-            request.lock_id, tenant_id, path, ttl=request.ttl
-        )
+        extended = await lock_manager.extend(request.lock_id, tenant_id, path, ttl=request.ttl)
         if not extended:
             raise HTTPException(
                 status_code=403,

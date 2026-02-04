@@ -81,6 +81,7 @@ class TestRevisionBlocking:
 
     def test_wait_returns_immediately_when_satisfied(self):
         """_wait_for_revision should return immediately if revision is already met."""
+
         # Mock the revision check
         def mock_get_revision(tenant_id: str) -> int:
             return 100  # Already at revision 100

@@ -2690,9 +2690,7 @@ class NexusFSCoreMixin:
                 )
 
     @rpc_expose(description="Delete file")
-    def delete(
-        self, path: str, context: OperationContext | None = None
-    ) -> dict[str, Any]:
+    def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """
         Delete a file or memory.
 

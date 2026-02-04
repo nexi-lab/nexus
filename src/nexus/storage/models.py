@@ -1195,6 +1195,12 @@ class MemoryModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
+    # Bi-temporal validity period (#1183)
+    # valid_at: When the fact became true in the real world (NULL = use created_at)
+    # invalid_at: When the fact became false (NULL = still valid)
+    valid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    invalid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Indexes
     __table_args__ = (
         Index("idx_memory_tenant", "tenant_id"),
@@ -1217,6 +1223,8 @@ class MemoryModel(Base):
         Index("idx_memory_parent", "parent_memory_id"),  # #1029 - parent lookup
         Index("idx_memory_archived", "is_archived"),  # #1029 - archived filtering
         Index("idx_memory_last_accessed", "last_accessed_at"),  # #1030 - decay calculation
+        Index("idx_memory_valid_at", "valid_at"),  # #1183 - bi-temporal validity start
+        Index("idx_memory_invalid_at", "invalid_at"),  # #1183 - bi-temporal validity end
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(
@@ -1240,6 +1248,12 @@ class MemoryModel(Base):
             "idx_memory_tenant_created_brin",
             "tenant_id",
             "created_at",
+            postgresql_using="brin",
+        ),
+        # #1183: BRIN index for bi-temporal validity period queries
+        Index(
+            "idx_memory_valid_at_brin",
+            "valid_at",
             postgresql_using="brin",
         ),
     )

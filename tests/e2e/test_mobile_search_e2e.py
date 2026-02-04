@@ -39,7 +39,7 @@ class TestDeviceDetectionE2E:
         assert isinstance(config, MobileSearchConfig)
         assert config.tier in DeviceTier
         assert config.mode in SearchMode
-        print(f"\nAuto-detected config:")
+        print("\nAuto-detected config:")
         print(f"  Tier: {config.tier}")
         print(f"  Mode: {config.mode}")
         print(f"  Embedding: {config.embedding.name if config.embedding else 'API'}")
@@ -62,12 +62,13 @@ class TestTierPresetsE2E:
         # Verify mode-model consistency
         if config.mode == SearchMode.KEYWORD_ONLY:
             assert config.embedding is None, f"{tier}: keyword-only should have no embedding"
-        elif config.mode in (SearchMode.SEMANTIC_ONLY, SearchMode.HYBRID):
-            if tier != DeviceTier.SERVER:
-                assert config.embedding is not None, f"{tier}: semantic modes need embedding"
-        elif config.mode == SearchMode.HYBRID_RERANKED:
-            if tier != DeviceTier.SERVER:
-                assert config.embedding is not None, f"{tier}: reranked mode needs embedding"
+        elif (
+            config.mode in (SearchMode.SEMANTIC_ONLY, SearchMode.HYBRID)
+            and tier != DeviceTier.SERVER
+        ):
+            assert config.embedding is not None, f"{tier}: semantic modes need embedding"
+        elif config.mode == SearchMode.HYBRID_RERANKED and tier != DeviceTier.SERVER:
+            assert config.embedding is not None, f"{tier}: reranked mode needs embedding"
 
         # Verify memory budget
         if config.embedding or config.reranker:
@@ -98,7 +99,7 @@ class TestModelRegistryE2E:
         assert len(models["embeddings"]) == len(EMBEDDING_MODELS)
         assert len(models["rerankers"]) > 0
 
-        print(f"\nAvailable models:")
+        print("\nAvailable models:")
         print(f"  Embeddings: {len(models['embeddings'])}")
         for name, info in models["embeddings"].items():
             print(f"    - {name}: {info['size_mb']}MB, {info['dimensions']}d")
@@ -136,7 +137,7 @@ class TestCustomConfigE2E:
         assert config.embedding is not None
         assert config.reranker is not None
         assert config.mode == SearchMode.HYBRID_RERANKED
-        print(f"\nHigh quality config:")
+        print("\nHigh quality config:")
         print(f"  Embedding: {config.embedding.name}")
         print(f"  Reranker: {config.reranker.name}")
         print(f"  Total size: {config.total_model_size_mb()}MB")

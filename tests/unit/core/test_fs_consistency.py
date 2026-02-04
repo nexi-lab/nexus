@@ -8,7 +8,6 @@ Tests the integration of Zookie consistency tokens with file operations:
 """
 
 import time
-from unittest.mock import MagicMock, patch
 
 import pytest
 

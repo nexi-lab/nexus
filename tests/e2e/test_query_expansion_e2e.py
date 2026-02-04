@@ -72,7 +72,9 @@ class TestQueryExpansionE2E:
             # Verify we have different types
             types = {e.expansion_type for e in expansions}
             assert ExpansionType.LEX in types, "Missing lex expansions"
-            assert ExpansionType.VEC in types or ExpansionType.HYDE in types, "Missing vec/hyde expansions"
+            assert ExpansionType.VEC in types or ExpansionType.HYDE in types, (
+                "Missing vec/hyde expansions"
+            )
 
             # Verify expansions are relevant (contain related terms)
             all_text = " ".join(e.text.lower() for e in expansions)
@@ -144,8 +146,10 @@ class TestQueryExpansionE2E:
                 "database connection pooling",
                 initial_results=weak_results,
             )
-            print(f"Weak signal (0.5, 0.45): expanded={result.was_expanded}, "
-                  f"expansions={len(result.expansions)}, latency={result.latency_ms:.0f}ms")
+            print(
+                f"Weak signal (0.5, 0.45): expanded={result.was_expanded}, "
+                f"expansions={len(result.expansions)}, latency={result.latency_ms:.0f}ms"
+            )
             assert result.was_expanded is True
             assert len(result.expansions) >= 3
 
@@ -155,8 +159,10 @@ class TestQueryExpansionE2E:
                 "database connection pooling",
                 initial_results=strong_results,
             )
-            print(f"Strong signal (0.95, 0.70): expanded={result.was_expanded}, "
-                  f"reason={result.skip_reason}")
+            print(
+                f"Strong signal (0.95, 0.70): expanded={result.was_expanded}, "
+                f"reason={result.skip_reason}"
+            )
             assert result.was_expanded is False
             assert result.skip_reason == "strong_bm25_signal"
 
@@ -367,7 +373,9 @@ async def run_quick_test():
             "database connection pooling",
             initial_results=strong_results,
         )
-        print(f"Strong signal (0.95, 0.70): expanded={result.was_expanded}, reason={result.skip_reason}")
+        print(
+            f"Strong signal (0.95, 0.70): expanded={result.was_expanded}, reason={result.skip_reason}"
+        )
         assert result.was_expanded is False, "Should skip on strong signal"
         assert result.skip_reason == "strong_bm25_signal"
 

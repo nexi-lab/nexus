@@ -690,8 +690,10 @@ class QueryExpansionService:
             )
 
         # Check for strong signal (skip expansion)
-        if not force and initial_results and not self.signal_detector.should_expand(
-            initial_results
+        if (
+            not force
+            and initial_results
+            and not self.signal_detector.should_expand(initial_results)
         ):
             return ExpansionResult(
                 original_query=query,
@@ -768,10 +770,7 @@ def create_query_expander(
     if provider == "openrouter":
         return OpenRouterQueryExpander(config=config, api_key=api_key)
     else:
-        raise ValueError(
-            f"Unsupported provider: {provider}. "
-            f"Supported: openrouter"
-        )
+        raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter")
 
 
 async def create_cached_query_expander(

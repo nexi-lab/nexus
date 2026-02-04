@@ -218,9 +218,7 @@ class ChangeLogStore:
         finally:
             session.close()
 
-    def get_last_sync_time(
-        self, backend_name: str, tenant_id: str = "default"
-    ) -> datetime | None:
+    def get_last_sync_time(self, backend_name: str, tenant_id: str = "default") -> datetime | None:
         """Get the most recent sync time for a backend.
 
         Args:
@@ -253,6 +251,7 @@ class ChangeLogStore:
             return None
         finally:
             session.close()
+
 
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]

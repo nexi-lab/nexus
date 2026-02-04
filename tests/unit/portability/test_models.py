@@ -20,6 +20,8 @@ import pytest
 from nexus.portability import (
     BUNDLE_FORMAT_VERSION,
     BUNDLE_PATHS,
+    MANIFEST_SCHEMA_PATH,
+    MANIFEST_SCHEMA_URL,
     BundleChecksums,
     ConflictMode,
     ContentMode,
@@ -165,6 +167,68 @@ class TestBundleChecksums:
         assert len(restored.files) == 2
         assert "file1.txt" in restored.files
         assert "file2.txt" in restored.files
+
+    def test_compute_merkle_root(self):
+        """Test Merkle root computation."""
+        checksums = BundleChecksums()
+        checksums.add_file("a.txt", b"content a")
+        checksums.add_file("b.txt", b"content b")
+        checksums.add_file("c.txt", b"content c")
+
+        root = checksums.compute_merkle_root()
+
+        # Should be 64 hex characters (SHA-256)
+        assert len(root) == 64
+        assert all(c in "0123456789abcdef" for c in root)
+        assert checksums.merkle_root == root
+
+    def test_compute_merkle_root_empty(self):
+        """Test Merkle root with no files."""
+        checksums = BundleChecksums()
+
+        root = checksums.compute_merkle_root()
+
+        # SHA-256 of empty string
+        import hashlib
+
+        expected = hashlib.sha256(b"").hexdigest()
+        assert root == expected
+
+    def test_compute_merkle_root_deterministic(self):
+        """Test Merkle root is deterministic regardless of add order."""
+        checksums1 = BundleChecksums()
+        checksums1.add_file("a.txt", b"content a")
+        checksums1.add_file("b.txt", b"content b")
+        root1 = checksums1.compute_merkle_root()
+
+        # Add in different order
+        checksums2 = BundleChecksums()
+        checksums2.add_file("b.txt", b"content b")
+        checksums2.add_file("a.txt", b"content a")
+        root2 = checksums2.compute_merkle_root()
+
+        assert root1 == root2
+
+    def test_verify_merkle_root(self):
+        """Test Merkle root verification."""
+        checksums = BundleChecksums()
+        checksums.add_file("a.txt", b"content a")
+        checksums.add_file("b.txt", b"content b")
+        checksums.compute_merkle_root()
+
+        assert checksums.verify_merkle_root() is True
+
+        # Corrupt the root
+        checksums.merkle_root = "invalid_root"
+        assert checksums.verify_merkle_root() is False
+
+    def test_verify_merkle_root_none(self):
+        """Test verification when no Merkle root is set."""
+        checksums = BundleChecksums()
+        checksums.add_file("a.txt", b"content a")
+
+        # No Merkle root computed yet
+        assert checksums.verify_merkle_root() is False
 
 
 # =============================================================================
@@ -478,6 +542,49 @@ class TestExportManifest:
         assert result["encryption"]["method"] == "age-v1"
         assert result["encryption"]["encrypted_dek"] == "base64-encoded-key"
 
+    def test_get_schema(self):
+        """Test loading JSON schema."""
+        schema = ExportManifest.get_schema()
+
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["title"] == "Nexus Export Bundle Manifest"
+        assert "properties" in schema
+        assert "format_version" in schema["properties"]
+        assert "statistics" in schema["properties"]
+
+    def test_validate_against_schema_valid(self):
+        """Test schema validation with valid manifest."""
+        pytest.importorskip("jsonschema")
+
+        manifest = ExportManifest(
+            nexus_version="0.8.0",
+            source_instance="https://nexus.company.com",
+            source_tenant_id="tenant-123",
+            file_count=100,
+            total_size_bytes=1024000,
+            content_blob_count=50,
+            permission_count=200,
+        )
+
+        errors = manifest.validate_against_schema()
+
+        assert len(errors) == 0, f"Unexpected validation errors: {errors}"
+
+    def test_validate_against_schema_missing_required(self):
+        """Test schema validation catches missing required fields."""
+        pytest.importorskip("jsonschema")
+
+        manifest = ExportManifest(
+            format_version="",  # Invalid empty string
+            bundle_id="",  # Invalid empty string
+            source_tenant_id="tenant-123",
+        )
+
+        errors = manifest.validate_against_schema()
+
+        # Should have errors for empty format_version and bundle_id
+        assert len(errors) > 0
+
 
 # =============================================================================
 # ImportResult Tests
@@ -750,6 +857,56 @@ class TestBundlePaths:
         assert BUNDLE_PATHS["permissions"] == "permissions/rebac_tuples.jsonl"
         assert BUNDLE_PATHS["embeddings"] == "embeddings/vectors.parquet"
         assert BUNDLE_PATHS["content"] == "content/cas"
+
+
+# =============================================================================
+# Schema Constants Tests
+# =============================================================================
+
+
+class TestSchemaConstants:
+    """Tests for JSON Schema constants."""
+
+    def test_schema_url(self):
+        """Test schema URL is correctly defined."""
+        assert MANIFEST_SCHEMA_URL == "https://nexus.io/schemas/manifest-v1.json"
+
+    def test_schema_path_exists(self):
+        """Test schema file exists at expected path."""
+        assert MANIFEST_SCHEMA_PATH.exists(), f"Schema file not found: {MANIFEST_SCHEMA_PATH}"
+
+    def test_schema_is_valid_json(self):
+        """Test schema file contains valid JSON."""
+        schema_content = MANIFEST_SCHEMA_PATH.read_text()
+        schema = json.loads(schema_content)
+
+        assert "$schema" in schema
+        assert "title" in schema
+        assert "properties" in schema
+
+    def test_schema_has_required_fields(self):
+        """Test schema defines all required manifest fields."""
+        schema = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+
+        required_properties = [
+            "format_version",
+            "bundle_id",
+            "source_tenant_id",
+            "export_timestamp",
+            "statistics",
+            "options",
+            "checksums",
+        ]
+
+        for prop in required_properties:
+            assert prop in schema["properties"], f"Missing property: {prop}"
+
+    def test_schema_defs(self):
+        """Test schema contains FileChecksum definition."""
+        schema = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+
+        assert "$defs" in schema
+        assert "FileChecksum" in schema["$defs"]
 
 
 # =============================================================================

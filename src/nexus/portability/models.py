@@ -35,6 +35,7 @@ References:
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import uuid
@@ -53,6 +54,8 @@ BUNDLE_EXTENSION = ".nexus"
 MANIFEST_FILENAME = "manifest.json"
 DEFAULT_COMPRESSION_LEVEL = 6
 DEFAULT_HASH_ALGORITHM = "sha256"
+MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v1.json"
+MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v1.json"
 
 
 class ConflictMode(StrEnum):
@@ -190,6 +193,63 @@ class BundleChecksums:
         if checksum is None:
             return False
         return checksum.verify(data)
+
+    def compute_merkle_root(self) -> str:
+        """Compute Merkle tree root hash for efficient verification.
+
+        The Merkle root enables:
+        - Quick integrity check without reading all files
+        - Efficient partial verification
+        - Parallel verification of chunks
+
+        Returns:
+            Hex-encoded Merkle root hash
+
+        Example:
+            >>> checksums = BundleChecksums()
+            >>> checksums.add_file("a.txt", b"content a")
+            >>> checksums.add_file("b.txt", b"content b")
+            >>> root = checksums.compute_merkle_root()
+            >>> len(root)
+            64
+        """
+        if not self.files:
+            self.merkle_root = hashlib.sha256(b"").hexdigest()
+            return self.merkle_root
+
+        # Get sorted hashes for deterministic ordering
+        hashes = sorted([cs.hash for cs in self.files.values()])
+
+        # Build Merkle tree bottom-up
+        while len(hashes) > 1:
+            # Pad to even length by duplicating last hash
+            if len(hashes) % 2 == 1:
+                hashes.append(hashes[-1])
+
+            # Combine pairs
+            hashes = [
+                hashlib.sha256((h1 + h2).encode()).hexdigest()
+                for h1, h2 in zip(hashes[::2], hashes[1::2], strict=False)
+            ]
+
+        self.merkle_root = hashes[0]
+        return self.merkle_root
+
+    def verify_merkle_root(self) -> bool:
+        """Verify the stored Merkle root matches computed value.
+
+        Returns:
+            True if Merkle root is valid, False otherwise
+        """
+        if self.merkle_root is None:
+            return False
+
+        # Compute fresh and compare
+        stored = self.merkle_root
+        computed = self.compute_merkle_root()
+        self.merkle_root = stored  # Restore original
+
+        return stored == computed
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -647,6 +707,61 @@ class ExportManifest:
             errors.append("total_size_bytes cannot be negative")
 
         return errors
+
+    def validate_against_schema(self) -> list[str]:
+        """Validate manifest against JSON Schema.
+
+        Requires jsonschema package to be installed.
+
+        Returns:
+            List of validation errors (empty if valid)
+
+        Raises:
+            ImportError: If jsonschema package is not available
+        """
+        try:
+            import jsonschema
+        except builtins.ImportError as e:
+            raise builtins.ImportError(
+                "jsonschema package required for schema validation. "
+                "Install with: pip install jsonschema"
+            ) from e
+
+        errors: list[str] = []
+
+        # Load schema
+        if not MANIFEST_SCHEMA_PATH.exists():
+            errors.append(f"Schema file not found: {MANIFEST_SCHEMA_PATH}")
+            return errors
+
+        schema = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+        manifest_data = self.to_dict()
+
+        # Validate against schema
+        validator = jsonschema.Draft202012Validator(schema)
+        for error in validator.iter_errors(manifest_data):
+            path = ".".join(str(p) for p in error.absolute_path)
+            if path:
+                errors.append(f"{path}: {error.message}")
+            else:
+                errors.append(error.message)
+
+        return errors
+
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        """Get the JSON Schema for manifest validation.
+
+        Returns:
+            JSON Schema as dictionary
+
+        Raises:
+            FileNotFoundError: If schema file doesn't exist
+        """
+        if not MANIFEST_SCHEMA_PATH.exists():
+            raise FileNotFoundError(f"Schema file not found: {MANIFEST_SCHEMA_PATH}")
+        schema: dict[str, Any] = json.loads(MANIFEST_SCHEMA_PATH.read_text())
+        return schema
 
 
 # =============================================================================

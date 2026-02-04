@@ -277,7 +277,9 @@ async def delete_memory(
 @router.post("/{memory_id}/invalidate")
 async def invalidate_memory(
     memory_id: str,
-    invalid_at: str | None = Query(None, description="When fact became invalid (ISO-8601, default: now)"),
+    invalid_at: str | None = Query(
+        None, description="When fact became invalid (ISO-8601, default: now)"
+    ),
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> dict[str, Any]:
     """Invalidate a memory (mark as no longer valid) (#1183).

@@ -406,8 +406,10 @@ class Memory:
 
         # #1183: Parse valid_at if provided as string
         valid_at_dt = (
-            parse_datetime(valid_at) if isinstance(valid_at, str) else valid_at
-        ) if valid_at is not None else None
+            (parse_datetime(valid_at) if isinstance(valid_at, str) else valid_at)
+            if valid_at is not None
+            else None
+        )
 
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
@@ -667,8 +669,10 @@ class Memory:
 
         # #1183: Parse as_of for point-in-time queries
         valid_at_point = (
-            parse_datetime(as_of) if isinstance(as_of, str) else as_of
-        ) if as_of is not None else None
+            (parse_datetime(as_of) if isinstance(as_of, str) else as_of)
+            if as_of is not None
+            else None
+        )
 
         # Query memories
         memories = self.memory_router.query_memories(
@@ -754,7 +758,9 @@ class Memory:
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                     "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
-                    "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,  # #1183
+                    "invalid_at": memory.invalid_at.isoformat()
+                    if memory.invalid_at
+                    else None,  # #1183
                     "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
                 }
             )

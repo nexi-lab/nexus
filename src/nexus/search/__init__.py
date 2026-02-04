@@ -6,11 +6,18 @@ Provides multiple search capabilities:
 - BM25S ranked text search (Issue #796)
 - Hybrid search combining keyword and semantic search (Issue #798)
 - Hot Search Daemon for sub-50ms response (Issue #951)
+- Query Expansion for improved recall (Issue #1174)
 
 Hybrid search fusion methods (Issue #798):
 - RRF (Reciprocal Rank Fusion): Rank-based, no score normalization needed
 - Weighted: Score-based with optional min-max normalization
 - RRF Weighted: RRF with alpha weighting for BM25/vector bias
+
+Query expansion (Issue #1174):
+- LLM-based expansion generating lex/vec/hyde variants
+- Smart triggering: skips expansion on strong BM25 signal
+- Caching: reduces LLM API calls by 90%+
+- OpenRouter support: DeepSeek, Gemini, GPT-4o-mini
 
 Embedding providers:
 - OpenAI: High quality, recommended for production
@@ -87,6 +94,21 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.query_expansion import (
+    CachedQueryExpander,
+    ExpansionResult,
+    ExpansionType,
+    OpenRouterQueryExpander,
+    QueryExpander,
+    QueryExpansion,
+    QueryExpansionConfig,
+    QueryExpansionService,
+    SignalDetector,
+    create_cached_query_expander,
+    create_query_expander,
+    create_query_expansion_service,
+    get_expansion_config_from_env,
+)
 from nexus.search.query_router import (
     QueryRouter,
     RoutedQuery,
@@ -152,6 +174,20 @@ __all__ = [
     "GraphEnhancedSearchResult",
     "GraphContext",
     "graph_enhanced_fusion",
+    # Query Expansion (Issue #1174)
+    "QueryExpander",
+    "QueryExpansion",
+    "QueryExpansionConfig",
+    "QueryExpansionService",
+    "ExpansionType",
+    "ExpansionResult",
+    "OpenRouterQueryExpander",
+    "CachedQueryExpander",
+    "SignalDetector",
+    "create_query_expander",
+    "create_cached_query_expander",
+    "create_query_expansion_service",
+    "get_expansion_config_from_env",
     # Query Router (Issue #1041)
     "QueryRouter",
     "RoutedQuery",

@@ -179,6 +179,57 @@ For permission checks and multi-tenancy:
 - `X-Nexus-Subject`: Subject identity (e.g., `user:alice`, `agent:bot123`)
 - `X-Nexus-Tenant-ID`: Tenant identifier
 
+### Consistency Headers (Issue #1187)
+
+For read-after-write consistency guarantees using Zanzibar-style "zookie" tokens:
+
+- `X-Nexus-Zookie`: Consistency token from a previous write operation
+
+#### How Zookies Work
+
+1. **Write operations** (write, delete, rename) return a `zookie` token in the response
+2. **Read operations** can include the `X-Nexus-Zookie` header to ensure they see data at least as fresh as the write
+3. If the requested revision is not yet available, the server blocks until it's ready (up to 5s timeout)
+
+#### Zookie Format
+
+Zookies are opaque tokens with the format: `nz1.{tenant}.{revision}.{timestamp}.{checksum}`
+
+- `nz1`: Version prefix (Nexus Zookie v1)
+- `{tenant}`: Base64-encoded tenant ID
+- `{revision}`: Monotonic revision number
+- `{timestamp}`: Creation timestamp
+- `{checksum}`: HMAC checksum for tamper detection
+
+#### Example: Read-After-Write Consistency
+
+```bash
+# 1. Write a file and capture the zookie
+RESPONSE=$(curl -s -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:8765/api/nfs/write \
+  -d '{"path":"/important.txt","content":"critical data"}')
+
+ZOOKIE=$(echo $RESPONSE | jq -r '.result.zookie')
+
+# 2. Read with consistency guarantee (sees the write above)
+curl -H "Authorization: Bearer $API_KEY" \
+     -H "Content-Type: application/json" \
+     -H "X-Nexus-Zookie: $ZOOKIE" \
+     -X POST http://localhost:8765/api/nfs/read \
+     -d '{"path":"/important.txt"}'
+```
+
+#### Consistency Modes
+
+Following the SpiceDB/Zanzibar pattern, Nexus supports these consistency modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **Default (no zookie)** | May use cached data | ~99% of reads |
+| **AT_LEAST_AS_FRESH** | Waits for specified revision | Read-after-write |
+| **FULLY_CONSISTENT** | Bypasses all caches | Security audits |
+
 ### Example Request
 
 ```bash
@@ -404,10 +455,17 @@ curl -X POST http://localhost:2026/api/nfs/write \
     "etag": "def456",
     "version": 2,
     "size": 1024,
-    "modified_at": "2025-01-15T10:35:00Z"
+    "modified_at": "2025-01-15T10:35:00Z",
+    "zookie": "nz1.dGVuYW50.42.1704067200000.a1b2c3d4",
+    "revision": 42
   }
 }
 ```
+
+> **Note (Issue #1187)**: The `zookie` token can be used in subsequent read requests via the `X-Nexus-Zookie` header to guarantee read-after-write consistency. The `revision` field is the raw revision number for internal use.
+
+**Response Headers:**
+- `X-Nexus-Zookie`: Consistency token (same as `zookie` in body)
 
 ---
 
@@ -438,10 +496,14 @@ Delete a file.
   "jsonrpc": "2.0",
   "id": 3,
   "result": {
-    "success": true
+    "deleted": true,
+    "zookie": "nz1.dGVuYW50.43.1704067200000.b2c3d4e5",
+    "revision": 43
   }
 }
 ```
+
+> **Note (Issue #1187)**: Delete operations also return a `zookie` for consistency tracking.
 
 ---
 
@@ -467,6 +529,21 @@ Rename or move a file.
   }
 }
 ```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "renamed": true,
+    "zookie": "nz1.dGVuYW50.44.1704067200000.c3d4e5f6",
+    "revision": 44
+  }
+}
+```
+
+> **Note (Issue #1187)**: Rename operations also return a `zookie` for consistency tracking.
 
 ---
 

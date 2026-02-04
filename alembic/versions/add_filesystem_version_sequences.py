@@ -4,7 +4,7 @@ Issue #1187: Add per-tenant version sequence table for filesystem consistency to
 This enables Zookie-style consistency tokens for read-after-write guarantees.
 
 Revision ID: add_filesystem_version_sequences
-Revises: 6e9842c71775
+Revises: add_tiger_directory_grants
 Create Date: 2026-02-04 00:00:00.000000
 
 """
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_filesystem_version_sequences"
-down_revision: Union[str, Sequence[str], None] = "6e9842c71775"
+down_revision: Union[str, Sequence[str], None] = "add_tiger_directory_grants"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

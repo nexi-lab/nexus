@@ -492,15 +492,15 @@ class SignalDetector:
             return False
 
         # Get scores
-        scores = [r.get("score", 0) for r in results[:2]]
+        scores = [float(r.get("score", 0)) for r in results[:2]]
         if not scores:
             return False
 
         top_score = scores[0]
-        second_score = scores[1] if len(scores) > 1 else 0
+        second_score = scores[1] if len(scores) > 1 else 0.0
 
         # Check both conditions: high score AND good separation
-        is_strong = (
+        is_strong: bool = (
             top_score >= self.strong_signal_threshold
             and (top_score - second_score) >= self.separation_threshold
         )

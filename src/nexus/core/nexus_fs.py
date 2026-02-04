@@ -4668,11 +4668,10 @@ class NexusFS(  # type: ignore[misc]
         # Use admin context for provisioning with the correct tenant_id
         # IMPORTANT: We create a new context to ensure tenant_id matches the user's tenant
         # even if the calling context has a different tenant (e.g., admin with tenant_id=default)
-        # Note: The `context` parameter is kept for API compatibility but not used
-        _ = context  # Suppress unused parameter warning
+        # We preserve the caller's user identity from context for permission checks
         admin_context = OperationContext(
-            user=user_id,
-            groups=[],
+            user=context.user_id if context else user_id,
+            groups=context.groups if context else [],
             tenant_id=tenant_id,
             is_admin=True,
         )

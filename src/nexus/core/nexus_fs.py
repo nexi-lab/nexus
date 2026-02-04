@@ -4669,8 +4669,10 @@ class NexusFS(  # type: ignore[misc]
 
         logger.info(f"Provisioning user {user_id} (email={email}, tenant={tenant_id})")
 
-        # Use admin context for provisioning
-        admin_context = context or OperationContext(
+        # Use admin context for provisioning with the correct tenant_id
+        # IMPORTANT: We create a new context to ensure tenant_id matches the user's tenant
+        # even if the calling context has a different tenant (e.g., admin with tenant_id=default)
+        admin_context = OperationContext(
             user=user_id,
             groups=[],
             tenant_id=tenant_id,

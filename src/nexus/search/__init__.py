@@ -94,6 +94,38 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.mobile_config import (
+    EMBEDDING_MODELS,
+    RERANKER_MODELS,
+    TIER_PRESETS,
+    DeviceTier,
+    EmbeddingModelConfig,
+    MobileSearchConfig,
+    ModelProvider,
+    RerankerModelConfig,
+    SearchMode,
+    auto_detect_config,
+    create_custom_config,
+    detect_device_tier,
+    get_config_for_tier,
+    list_available_models,
+)
+from nexus.search.mobile_providers import (
+    CrossEncoderRerankerProvider,
+    FastEmbedMobileProvider,
+    MobileEmbeddingProvider,
+    MobileRerankerProvider,
+    MobileSearchService,
+    Model2VecProvider,
+    SentenceTransformersProvider,
+    check_model_available,
+    create_auto_service,
+    create_mobile_embedding_provider,
+    create_reranker_provider,
+    create_service_from_config,
+    download_model,
+    download_models_for_tier,
+)
 from nexus.search.query_expansion import (
     CachedQueryExpander,
     ExpansionResult,
@@ -124,38 +156,6 @@ from nexus.search.ranking import (
 )
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.vector_db import VectorDatabase
-from nexus.search.mobile_config import (
-    EMBEDDING_MODELS,
-    RERANKER_MODELS,
-    TIER_PRESETS,
-    DeviceTier,
-    EmbeddingModelConfig,
-    MobileSearchConfig,
-    ModelProvider,
-    RerankerModelConfig,
-    SearchMode,
-    auto_detect_config,
-    create_custom_config,
-    detect_device_tier,
-    get_config_for_tier,
-    list_available_models,
-)
-from nexus.search.mobile_providers import (
-    CrossEncoderRerankerProvider,
-    FastEmbedMobileProvider,
-    MobileEmbeddingProvider,
-    MobileRerankerProvider,
-    MobileSearchService,
-    Model2VecProvider,
-    SentenceTransformersProvider,
-    check_model_available,
-    create_auto_service,
-    create_embedding_provider,
-    create_reranker_provider,
-    create_service_from_config,
-    download_model,
-    download_models_for_tier,
-)
 from nexus.search.zoekt_client import (
     ZoektClient,
     ZoektMatch,
@@ -274,7 +274,7 @@ __all__ = [
     "SentenceTransformersProvider",
     "CrossEncoderRerankerProvider",
     "MobileSearchService",
-    "create_embedding_provider",
+    "create_mobile_embedding_provider",
     "create_reranker_provider",
     "create_service_from_config",
     "create_auto_service",

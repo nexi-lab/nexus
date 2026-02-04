@@ -446,7 +446,7 @@ def _get_reranker_provider_class(
     return provider_class
 
 
-async def create_embedding_provider(
+async def create_mobile_embedding_provider(
     config: EmbeddingModelConfig,
     load_immediately: bool = True,
 ) -> MobileEmbeddingProvider:
@@ -462,7 +462,7 @@ async def create_embedding_provider(
     Example:
         >>> from nexus.search.mobile_config import EMBEDDING_MODELS
         >>> config = EMBEDDING_MODELS["arctic-xs"]
-        >>> provider = await create_embedding_provider(config)
+        >>> provider = await create_mobile_embedding_provider(config)
         >>> embedding = await provider.embed_text("hello")
     """
     provider_class = _get_embedding_provider_class(config)
@@ -545,7 +545,7 @@ class MobileSearchService:
 
         # Create providers (lazy_load determines if models are loaded now)
         if self.config.embedding:
-            self._embedding_provider = await create_embedding_provider(
+            self._embedding_provider = await create_mobile_embedding_provider(
                 self.config.embedding,
                 load_immediately=not self.config.lazy_load,
             )

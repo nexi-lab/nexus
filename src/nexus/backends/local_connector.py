@@ -24,6 +24,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import time
+from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -230,7 +231,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     def get_file_info(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """
         Get file metadata for delta sync change detection (Issue #1127).
@@ -248,7 +249,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             - mtime: Last modification time
             - backend_version: inode:mtime_ns string (changes on content/metadata change)
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from nexus.backends.backend import FileInfo
 
@@ -268,7 +269,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             stat = physical.stat(follow_symlinks=self.follow_symlinks)
 
             size = stat.st_size
-            mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
 
             # Build backend_version: inode + mtime_ns for robust change detection
             # This combination detects both content changes (mtime) and file replacement (inode)

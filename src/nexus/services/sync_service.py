@@ -70,7 +70,7 @@ class ChangeLogStore:
         """
         self._gw = gateway
 
-    def _get_session(self):
+    def _get_session(self) -> Any:
         """Get a database session from the gateway."""
         # Use gateway's session_factory property
         if hasattr(self._gw, "session_factory") and self._gw.session_factory:
@@ -187,7 +187,7 @@ class ChangeLogStore:
             except Exception:
                 # Fall back to SQLite INSERT OR REPLACE pattern
                 session.rollback()
-                stmt = sqlite_insert(BackendChangeLogModel).values(
+                stmt = sqlite_insert(BackendChangeLogModel).values(  # type: ignore[assignment]
                     path=path,
                     backend_name=backend_name,
                     tenant_id=tenant_id,
@@ -245,7 +245,7 @@ class ChangeLogStore:
                 )
                 .scalar()
             )
-            return result
+            return result  # type: ignore[no-any-return]
         except Exception as e:
             logger.warning(f"Failed to get last sync time for {backend_name}: {e}")
             return None

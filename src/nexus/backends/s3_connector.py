@@ -427,6 +427,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             version_id = response.get("VersionId")
 
             # Build backend_version: prefer version ID, fallback to ETag
+            backend_version: str | None = None
             if version_id and version_id != "null":
                 backend_version = str(version_id)
             else:

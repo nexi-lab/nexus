@@ -446,7 +446,7 @@ def get_system_memory_gb() -> float:
     try:
         import psutil
 
-        return psutil.virtual_memory().total / (1024**3)
+        return psutil.virtual_memory().total / (1024**3)  # type: ignore[no-any-return]
     except ImportError:
         logger.warning("psutil not available, using fallback memory detection")
 
@@ -486,7 +486,7 @@ def get_available_memory_gb() -> float:
     try:
         import psutil
 
-        return psutil.virtual_memory().available / (1024**3)
+        return psutil.virtual_memory().available / (1024**3)  # type: ignore[no-any-return]
     except ImportError:
         pass
 

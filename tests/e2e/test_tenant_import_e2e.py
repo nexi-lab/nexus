@@ -18,8 +18,6 @@ from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.portability import (
     ConflictMode,
-    TenantExportOptions,
-    TenantExportService,
     TenantImportOptions,
     TenantImportService,
     export_tenant_bundle,

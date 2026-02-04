@@ -304,19 +304,18 @@ class TenantImportService:
                         f"Content blob not found: {record.content_hash} for {remapped_path}"
                     )
 
-        elif options.content_mode == ContentMode.REFERENCE:
+        elif options.content_mode == ContentMode.REFERENCE and record.content_hash:
             # Reference mode: verify content exists in backend
-            if record.content_hash:
-                try:
-                    response = self.nexus_fs.backend.read_content(record.content_hash)
-                    if not response.success:
-                        result.add_warning(
-                            f"Referenced content not found: {record.content_hash} for {remapped_path}"
-                        )
-                except Exception as e:
+            try:
+                response = self.nexus_fs.backend.read_content(record.content_hash)
+                if not response.success:
                     result.add_warning(
-                        f"Failed to verify content reference: {record.content_hash}: {e}"
+                        f"Referenced content not found: {record.content_hash} for {remapped_path}"
                     )
+            except Exception as e:
+                result.add_warning(
+                    f"Failed to verify content reference: {record.content_hash}: {e}"
+                )
 
         # Write file to NexusFS
         if content is not None:

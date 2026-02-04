@@ -118,6 +118,12 @@ def nexus_server(isolated_db, tmp_path):
     env["NEXUS_DATABASE_URL"] = f"sqlite:///{isolated_db}"
     env["PYTHONPATH"] = str(_src_path)
 
+    # Issue #1186: Enable lock manager if Dragonfly/Redis is available
+    dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
+    if dragonfly_url:
+        env["NEXUS_DRAGONFLY_COORDINATION_URL"] = dragonfly_url
+        env["NEXUS_ALLOW_SINGLE_DRAGONFLY"] = "true"
+
     # Start nexus serve process
     # Using python -c to invoke the CLI entry point from source
     # --data-dir sets both storage path and database location

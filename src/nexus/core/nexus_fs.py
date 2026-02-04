@@ -5075,10 +5075,15 @@ class NexusFS(  # type: ignore[misc]
                 for resource_type in ALL_RESOURCE_TYPES:
                     dir_path = f"{user_base_path}/{resource_type}"
                     try:
+                        # Check if directory exists before deletion attempt
+                        existed = self.exists(dir_path, context=admin_context)
+                        
                         # Try to delete even if exists() returns False
                         # (subdirectories may exist even if parent has no metadata)
-                        was_deleted = self._delete_directory_recursive(dir_path, admin_context)
-                        if was_deleted:
+                        self._delete_directory_recursive(dir_path, admin_context)
+                        
+                        # Track as deleted if it existed (even if empty/no physical content)
+                        if existed:
                             result["deleted_directories"].append(dir_path)
                             logger.info(f"Deleted directory: {dir_path}")
                     except Exception as e:

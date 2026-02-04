@@ -3552,11 +3552,7 @@ class NexusFS(  # type: ignore[misc]
         # 1. created_by matches user_id (workspaces the user registered)
         # 2. OR path follows tenant/user pattern (workspaces in user's directory)
         user_prefix = f"/tenant:{tenant_id}/user:{user_id}/workspace/"
-        configs = [
-            c for c in configs
-            if c.created_by == user_id
-            or c.path.startswith(user_prefix)
-        ]
+        configs = [c for c in configs if c.created_by == user_id or c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
 

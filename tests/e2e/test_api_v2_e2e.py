@@ -664,10 +664,7 @@ class TestApiV2Authentication:
         ]
 
         for method, path in endpoints:
-            if method == "GET":
-                response = test_app.get(path)
-            else:
-                response = test_app.post(path, json={})
+            response = test_app.get(path) if method == "GET" else test_app.post(path, json={})
 
             # Should not be 500 (server error)
             assert response.status_code != 500, f"{method} {path} returned 500: {response.text}"

@@ -159,9 +159,7 @@ class TestMobileSearchConfig:
         embedding = EmbeddingModelConfig(
             name="test", provider=ModelProvider.GGUF, size_mb=50, dimensions=384
         )
-        reranker = RerankerModelConfig(
-            name="test", provider=ModelProvider.GGUF, size_mb=40
-        )
+        reranker = RerankerModelConfig(name="test", provider=ModelProvider.GGUF, size_mb=40)
 
         config = MobileSearchConfig(
             tier=DeviceTier.MEDIUM,
@@ -206,9 +204,7 @@ class TestMobileSearchConfig:
 
     def test_requires_reranker(self):
         """Test requires_reranker for different modes."""
-        config_rerank = MobileSearchConfig(
-            tier=DeviceTier.MEDIUM, mode=SearchMode.HYBRID_RERANKED
-        )
+        config_rerank = MobileSearchConfig(tier=DeviceTier.MEDIUM, mode=SearchMode.HYBRID_RERANKED)
         assert config_rerank.requires_reranker() is True
 
         for mode in [SearchMode.KEYWORD_ONLY, SearchMode.SEMANTIC_ONLY, SearchMode.HYBRID]:
@@ -221,9 +217,7 @@ class TestMobileSearchConfig:
             config = MobileSearchConfig(tier=DeviceTier.MEDIUM, mode=mode)
             assert config.requires_bm25() is True
 
-        config_semantic = MobileSearchConfig(
-            tier=DeviceTier.MEDIUM, mode=SearchMode.SEMANTIC_ONLY
-        )
+        config_semantic = MobileSearchConfig(tier=DeviceTier.MEDIUM, mode=SearchMode.SEMANTIC_ONLY)
         assert config_semantic.requires_bm25() is False
 
 
@@ -424,7 +418,7 @@ class TestListAvailableModels:
     def test_embeddings_have_expected_fields(self):
         """Test embedding entries have expected fields."""
         models = list_available_models()
-        for name, info in models["embeddings"].items():
+        for _name, info in models["embeddings"].items():
             assert "name" in info
             assert "provider" in info
             assert "size_mb" in info
@@ -433,7 +427,7 @@ class TestListAvailableModels:
     def test_rerankers_have_expected_fields(self):
         """Test reranker entries have expected fields."""
         models = list_available_models()
-        for name, info in models["rerankers"].items():
+        for _name, info in models["rerankers"].items():
             assert "name" in info
             assert "provider" in info
             assert "size_mb" in info

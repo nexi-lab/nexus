@@ -32,8 +32,227 @@ from nexus.core.context_utils import get_tenant_id, get_user_identity
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
+    from nexus.backends.backend import FileInfo
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Change Log Store for Delta Sync (Issue #1127)
+# =============================================================================
+
+
+@dataclass
+class ChangeLogEntry:
+    """Cached change log entry for delta sync comparison."""
+
+    path: str
+    backend_name: str
+    size_bytes: int | None = None
+    mtime: datetime | None = None
+    backend_version: str | None = None
+    content_hash: str | None = None
+    synced_at: datetime | None = None
+
+
+class ChangeLogStore:
+    """Lightweight store for change log operations (Issue #1127).
+
+    Provides CRUD operations for BackendChangeLogModel to support delta sync.
+    Uses the gateway's session factory for database access.
+    """
+
+    def __init__(self, gateway: "NexusFSGateway"):
+        """Initialize change log store.
+
+        Args:
+            gateway: NexusFSGateway for database session access
+        """
+        self._gw = gateway
+
+    def _get_session(self):
+        """Get a database session from the gateway."""
+        # Access the metadata store's session factory
+        if hasattr(self._gw, "_metadata_store") and self._gw._metadata_store:
+            return self._gw._metadata_store.SessionLocal()
+        return None
+
+    def get_change_log(
+        self, path: str, backend_name: str, tenant_id: str = "default"
+    ) -> ChangeLogEntry | None:
+        """Get change log entry for a path.
+
+        Args:
+            path: Virtual file path
+            backend_name: Backend identifier
+            tenant_id: Tenant ID
+
+        Returns:
+            ChangeLogEntry if found, None otherwise
+        """
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if not session:
+            return None
+
+        try:
+            entry = (
+                session.query(BackendChangeLogModel)
+                .filter(
+                    BackendChangeLogModel.path == path,
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.tenant_id == tenant_id,
+                )
+                .first()
+            )
+
+            if entry:
+                return ChangeLogEntry(
+                    path=entry.path,
+                    backend_name=entry.backend_name,
+                    size_bytes=entry.size_bytes,
+                    mtime=entry.mtime,
+                    backend_version=entry.backend_version,
+                    content_hash=entry.content_hash,
+                    synced_at=entry.synced_at,
+                )
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get change log for {path}: {e}")
+            return None
+        finally:
+            session.close()
+
+    def upsert_change_log(
+        self,
+        path: str,
+        backend_name: str,
+        tenant_id: str = "default",
+        size_bytes: int | None = None,
+        mtime: datetime | None = None,
+        backend_version: str | None = None,
+        content_hash: str | None = None,
+    ) -> bool:
+        """Insert or update change log entry.
+
+        Args:
+            path: Virtual file path
+            backend_name: Backend identifier
+            tenant_id: Tenant ID
+            size_bytes: File size in bytes
+            mtime: Last modification time
+            backend_version: Backend-specific version (GCS generation, S3 version ID)
+            content_hash: Content hash if computed
+
+        Returns:
+            True if successful, False otherwise
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if not session:
+            return False
+
+        try:
+            now = datetime.now(UTC)
+
+            # Try PostgreSQL upsert first, fall back to SQLite
+            try:
+                # PostgreSQL ON CONFLICT DO UPDATE
+                stmt = pg_insert(BackendChangeLogModel).values(
+                    path=path,
+                    backend_name=backend_name,
+                    tenant_id=tenant_id,
+                    size_bytes=size_bytes,
+                    mtime=mtime,
+                    backend_version=backend_version,
+                    content_hash=content_hash,
+                    synced_at=now,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_backend_change_log",
+                    set_={
+                        "size_bytes": size_bytes,
+                        "mtime": mtime,
+                        "backend_version": backend_version,
+                        "content_hash": content_hash,
+                        "synced_at": now,
+                    },
+                )
+                session.execute(stmt)
+            except Exception:
+                # Fall back to SQLite INSERT OR REPLACE pattern
+                session.rollback()
+                stmt = sqlite_insert(BackendChangeLogModel).values(
+                    path=path,
+                    backend_name=backend_name,
+                    tenant_id=tenant_id,
+                    size_bytes=size_bytes,
+                    mtime=mtime,
+                    backend_version=backend_version,
+                    content_hash=content_hash,
+                    synced_at=now,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["path", "backend_name", "tenant_id"],
+                    set_={
+                        "size_bytes": size_bytes,
+                        "mtime": mtime,
+                        "backend_version": backend_version,
+                        "content_hash": content_hash,
+                        "synced_at": now,
+                    },
+                )
+                session.execute(stmt)
+
+            session.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to upsert change log for {path}: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    def get_last_sync_time(
+        self, backend_name: str, tenant_id: str = "default"
+    ) -> datetime | None:
+        """Get the most recent sync time for a backend.
+
+        Args:
+            backend_name: Backend identifier
+            tenant_id: Tenant ID
+
+        Returns:
+            Most recent synced_at timestamp, or None if no entries
+        """
+        from sqlalchemy import func
+
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if not session:
+            return None
+
+        try:
+            result = (
+                session.query(func.max(BackendChangeLogModel.synced_at))
+                .filter(
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.tenant_id == tenant_id,
+                )
+                .scalar()
+            )
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to get last sync time for {backend_name}: {e}")
+            return None
+        finally:
+            session.close()
 
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
@@ -56,6 +275,8 @@ class SyncContext:
     generate_embeddings: bool = False
     context: OperationContext | None = None
     progress_callback: ProgressCallback | None = None
+    # Issue #1127: Delta sync support
+    full_sync: bool = False  # Force full scan, bypassing delta checks
 
 
 @dataclass
@@ -66,6 +287,8 @@ class SyncResult:
     files_created: int = 0
     files_updated: int = 0
     files_deleted: int = 0
+    # Issue #1127: Delta sync metrics
+    files_skipped: int = 0  # Files skipped due to no changes (delta sync)
     cache_synced: int = 0
     cache_bytes: int = 0
     cache_skipped: int = 0
@@ -101,6 +324,8 @@ class SyncService:
             gateway: NexusFSGateway for NexusFS access
         """
         self._gw = gateway
+        # Issue #1127: Initialize change log store for delta sync
+        self._change_log = ChangeLogStore(gateway)
 
     def sync_mount(self, ctx: SyncContext) -> SyncResult:
         """Sync metadata and content from connector backend(s).
@@ -225,6 +450,7 @@ class SyncService:
                 result.files_created += mount_result.files_created
                 result.files_updated += mount_result.files_updated
                 result.files_deleted += mount_result.files_deleted
+                result.files_skipped += mount_result.files_skipped  # Issue #1127
                 result.cache_synced += mount_result.cache_synced
                 result.cache_bytes += mount_result.cache_bytes
                 result.embeddings_generated += mount_result.embeddings_generated
@@ -406,6 +632,9 @@ class SyncService:
     ) -> None:
         """Sync a single file entry.
 
+        Issue #1127: Implements delta sync with change tracking.
+        Skips unchanged files based on size, mtime, or backend_version comparison.
+
         Args:
             ctx: SyncContext
             backend: Backend instance
@@ -440,18 +669,41 @@ class SyncService:
         if ctx.dry_run:
             return
 
+        # Extract tenant_id early (needed for delta sync and metadata creation)
+        tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+        if not tenant_id and ctx.mount_point:
+            match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+            if match:
+                tenant_id = match.group(1)
+
+        # Issue #1127: Delta sync - check if file has changed
+        file_info = None
+        if not ctx.full_sync and hasattr(backend, "get_file_info"):
+            try:
+                # Get current file info from backend
+                file_info_response = backend.get_file_info(backend_path, context=ctx.context)
+                if file_info_response.success and file_info_response.data:
+                    file_info = file_info_response.data
+
+                    # Check change log for cached state
+                    cached = self._change_log.get_change_log(
+                        virtual_path, backend.name, tenant_id or "default"
+                    )
+
+                    if cached and self._file_unchanged(file_info, cached):
+                        # File hasn't changed - skip sync
+                        result.files_skipped += 1
+                        logger.debug(f"[DELTA_SYNC] Skipping unchanged file: {virtual_path}")
+                        return
+            except Exception as e:
+                # Delta check failed - proceed with full sync for this file
+                logger.debug(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
+
         # Check if file exists in metadata
         existing_meta = self._gw.metadata_get(virtual_path)
 
         if not existing_meta:
             try:
-                # Extract tenant_id from context or mount point path
-                tenant_id = get_tenant_id(ctx.context) if ctx.context else None
-                if not tenant_id and ctx.mount_point:
-                    match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
-                    if match:
-                        tenant_id = match.group(1)
-
                 if not tenant_id:
                     raise ValueError(
                         f"Cannot sync file {virtual_path}: tenant_id not found in context or mount point path"
@@ -459,8 +711,11 @@ class SyncService:
 
                 now = datetime.now(UTC)
 
-                # Get file size from backend if available
-                file_size = self._get_file_size(backend, backend_path, ctx)
+                # Get file size from backend if available (use cached file_info if we have it)
+                if file_info and file_info.size is not None:
+                    file_size = file_info.size
+                else:
+                    file_size = self._get_file_size(backend, backend_path, ctx)
 
                 # Issue #1126: etag=None during metadata sync
                 # Content hash is computed later by cache_mixin.sync() when content is read
@@ -485,8 +740,77 @@ class SyncService:
                 if self._gw.hierarchy_enabled:
                     paths_needing_tuples.append(virtual_path)
 
+                # Issue #1127: Update change log after successful sync
+                if file_info:
+                    self._change_log.upsert_change_log(
+                        path=virtual_path,
+                        backend_name=backend.name,
+                        tenant_id=tenant_id or "default",
+                        size_bytes=file_info.size,
+                        mtime=file_info.mtime,
+                        backend_version=file_info.backend_version,
+                        content_hash=file_info.content_hash,
+                    )
+
             except Exception as e:
                 result.errors.append(f"Failed to add {virtual_path}: {e}")
+        else:
+            # File exists - check if it needs updating (for existing files)
+            # Issue #1127: Update change log even for existing files
+            if file_info:
+                self._change_log.upsert_change_log(
+                    path=virtual_path,
+                    backend_name=backend.name,
+                    tenant_id=tenant_id or "default",
+                    size_bytes=file_info.size,
+                    mtime=file_info.mtime,
+                    backend_version=file_info.backend_version,
+                    content_hash=file_info.content_hash,
+                )
+
+    def _file_unchanged(self, file_info: "FileInfo", cached: ChangeLogEntry) -> bool:
+        """Check if file is unchanged based on rsync-style comparison (Issue #1127).
+
+        Uses tiered comparison strategy:
+        1. Backend version (GCS generation, S3 version ID) - most reliable
+        2. Size + mtime - quick check, catches most changes
+        3. Content hash - fallback if available
+
+        Args:
+            file_info: Current file info from backend
+            cached: Cached change log entry from previous sync
+
+        Returns:
+            True if file is unchanged, False if changed or unknown
+        """
+        # Strategy 1: Backend version comparison (most reliable)
+        if file_info.backend_version and cached.backend_version:
+            if file_info.backend_version == cached.backend_version:
+                return True
+            # Version changed - file has changed
+            return False
+
+        # Strategy 2: Size + mtime comparison (rsync quick check)
+        if file_info.size is not None and cached.size_bytes is not None:
+            if file_info.size != cached.size_bytes:
+                return False  # Size changed
+
+        if file_info.mtime and cached.mtime:
+            # Compare timestamps with 1-second tolerance for filesystem precision
+            time_diff = abs((file_info.mtime - cached.mtime).total_seconds())
+            if time_diff > 1.0:
+                return False  # mtime changed
+
+            # If we get here with matching size and mtime, consider unchanged
+            if file_info.size is not None and cached.size_bytes is not None:
+                return True
+
+        # Strategy 3: Content hash fallback
+        if file_info.content_hash and cached.content_hash:
+            return file_info.content_hash == cached.content_hash
+
+        # Cannot determine - assume changed to be safe
+        return False
 
     def _sync_directory(
         self,

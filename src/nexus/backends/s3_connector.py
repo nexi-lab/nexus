@@ -386,6 +386,71 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception:
             return None
 
+    def get_file_info(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> HandlerResponse:
+        """
+        Get file metadata for delta sync change detection (Issue #1127).
+
+        Returns S3 object metadata including size, mtime, and version ID
+        for efficient change detection during incremental sync.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            HandlerResponse with FileInfo containing:
+            - size: Object size in bytes
+            - mtime: Last modified time
+            - backend_version: S3 version ID (if versioning enabled)
+        """
+        from nexus.backends.backend import FileInfo
+
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+
+            # Get object metadata via head_object (no content download)
+            response = self.client.head_object(Bucket=self.bucket_name, Key=blob_path)
+
+            # Extract metadata
+            size = response.get("ContentLength", 0)
+            mtime = response.get("LastModified")  # datetime object
+            version_id = response.get("VersionId")
+
+            # Build backend_version: prefer version ID, fallback to ETag
+            if version_id and version_id != "null":
+                backend_version = str(version_id)
+            else:
+                # Use ETag as fallback (changes on content change)
+                etag = response.get("ETag", "").strip('"')
+                backend_version = f"etag:{etag}" if etag else None
+
+            file_info = FileInfo(
+                size=size,
+                mtime=mtime,
+                backend_version=backend_version,
+                content_hash=None,  # Not computed to avoid content download
+            )
+
+            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code == "404" or error_code == "NoSuchKey":
+                return HandlerResponse.not_found(path, backend_name=self.name)
+            return HandlerResponse.error(f"S3 error: {error_code}", backend_name=self.name)
+        except Exception as e:
+            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
+
     def generate_presigned_url(
         self,
         path: str,

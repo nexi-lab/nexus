@@ -227,6 +227,69 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """
         return self.local_path
 
+    def get_file_info(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> HandlerResponse:
+        """
+        Get file metadata for delta sync change detection (Issue #1127).
+
+        Returns local file metadata including size, mtime, and inode-based version
+        for efficient change detection during incremental sync.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            HandlerResponse with FileInfo containing:
+            - size: File size in bytes
+            - mtime: Last modification time
+            - backend_version: inode:mtime_ns string (changes on content/metadata change)
+        """
+        from datetime import datetime, timezone
+
+        from nexus.backends.backend import FileInfo
+
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            physical = self._to_physical(backend_path)
+
+            if not physical.exists():
+                return HandlerResponse.not_found(path, backend_name=self.name)
+
+            # Get file stats
+            stat = physical.stat(follow_symlinks=self.follow_symlinks)
+
+            size = stat.st_size
+            mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+
+            # Build backend_version: inode + mtime_ns for robust change detection
+            # This combination detects both content changes (mtime) and file replacement (inode)
+            backend_version = f"{stat.st_ino}:{stat.st_mtime_ns}"
+
+            file_info = FileInfo(
+                size=size,
+                mtime=mtime,
+                backend_version=backend_version,
+                content_hash=None,  # Not computed to avoid reading file content
+            )
+
+            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
+
+        except FileNotFoundError:
+            return HandlerResponse.not_found(path, backend_name=self.name)
+        except PermissionError as e:
+            return HandlerResponse.error(f"Permission denied: {path} - {e}", backend_name=self.name)
+        except OSError as e:
+            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
+
     # =========================================================================
     # Content Operations (with L1 Caching)
     # =========================================================================

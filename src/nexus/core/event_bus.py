@@ -273,6 +273,7 @@ class EventBusProtocol(Protocol):
         tenant_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_revision: int | None = None,
     ) -> FileEvent | None:
         """Wait for an event matching the path pattern.
 
@@ -280,6 +281,8 @@ class EventBusProtocol(Protocol):
             tenant_id: Tenant ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
+            since_revision: Only return events with revision > this value (Issue #1187).
+                           Used for zookie-based watch resumption.
 
         Returns:
             FileEvent if matched, None on timeout
@@ -323,8 +326,19 @@ class EventBusBase(ABC):
         tenant_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_revision: int | None = None,
     ) -> FileEvent | None:
-        """Wait for an event matching the path pattern."""
+        """Wait for an event matching the path pattern.
+
+        Args:
+            tenant_id: Tenant ID to subscribe to
+            path_pattern: Path pattern to match
+            timeout: Maximum time to wait in seconds
+            since_revision: Only return events with revision > this value (Issue #1187)
+
+        Returns:
+            FileEvent if matched, None on timeout
+        """
         pass
 
     @abstractmethod
@@ -475,8 +489,20 @@ class RedisEventBus(EventBusBase):
         tenant_id: str,
         path_pattern: str,
         timeout: float = 30.0,
+        since_revision: int | None = None,
     ) -> FileEvent | None:
-        """Wait for an event matching the path pattern."""
+        """Wait for an event matching the path pattern.
+
+        Args:
+            tenant_id: Tenant ID to subscribe to
+            path_pattern: Path pattern to match
+            timeout: Maximum time to wait in seconds
+            since_revision: Only return events with revision > this value (Issue #1187).
+                           Events with revision <= since_revision are skipped.
+
+        Returns:
+            FileEvent if matched, None on timeout
+        """
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
@@ -514,6 +540,15 @@ class RedisEventBus(EventBusBase):
                         continue
 
                     if event.matches_path_pattern(path_pattern):
+                        # Issue #1187: Filter by revision if specified
+                        if since_revision is not None and (
+                            event.revision is None or event.revision <= since_revision
+                        ):
+                            logger.debug(
+                                f"Skipping event {event.type} on {event.path}: "
+                                f"revision {event.revision} <= since_revision {since_revision}"
+                            )
+                            continue
                         logger.debug(f"Matched event: {event.type} on {event.path}")
                         return event
 

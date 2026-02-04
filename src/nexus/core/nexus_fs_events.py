@@ -191,6 +191,7 @@ class NexusFSEventsMixin:
         self,
         path: str,
         timeout: float = 30.0,
+        since_revision: int | None = None,
         _context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
@@ -206,6 +207,9 @@ class NexusFSEventsMixin:
         Args:
             path: Virtual path to watch
             timeout: Maximum time to wait in seconds (default: 30.0)
+            since_revision: Only return events with revision > this value (Issue #1187).
+                           Use this with zookie tokens for watch resumption:
+                           ``zookie = Zookie.decode(token); since_revision=zookie.revision``
             _context: Operation context (optional)
 
         Returns:
@@ -213,6 +217,7 @@ class NexusFSEventsMixin:
                 - type: "file_write", "file_delete", "file_rename", etc.
                 - path: Path that changed
                 - old_path: Previous path (for rename events only)
+                - revision: Event revision number (for zookie-based resumption)
             None if timeout reached
 
         Raises:
@@ -223,6 +228,10 @@ class NexusFSEventsMixin:
             >>> change = await nexus.wait_for_changes("/inbox/", timeout=60)
             >>> if change:
             ...     print(f"Detected {change['type']} on {change['path']}")
+
+            >>> # Resume watching from a zookie (Issue #1187)
+            >>> zookie = Zookie.decode(write_result["zookie"])
+            >>> change = await nexus.wait_for_changes("/inbox/", since_revision=zookie.revision)
         """
         # Auto-start distributed system and cache invalidation if needed
         await self._ensure_distributed_system_ready()
@@ -237,6 +246,7 @@ class NexusFSEventsMixin:
                 tenant_id=tenant_id,
                 path_pattern=path,
                 timeout=timeout,
+                since_revision=since_revision,  # Issue #1187: Zookie-based resumption
             )
             if event is None:
                 return None

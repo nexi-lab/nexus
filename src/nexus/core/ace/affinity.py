@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
-from sklearn.cluster import AgglomerativeClustering
+
+# sklearn is imported lazily inside cluster_by_affinity() to avoid
+# making it a hard dependency for other ACE components that don't need clustering.
 
 if TYPE_CHECKING:
     pass
@@ -303,6 +305,15 @@ def cluster_by_affinity(
     # Convert affinity to distance (AgglomerativeClustering uses distance)
     # Distance = 1 - Affinity (higher affinity = lower distance)
     distance_matrix = 1.0 - affinity_matrix
+
+    # Lazy import sklearn to avoid making it a hard dependency
+    try:
+        from sklearn.cluster import AgglomerativeClustering
+    except ImportError as e:
+        raise ImportError(
+            "sklearn is required for affinity-based clustering. "
+            "Install with: pip install scikit-learn"
+        ) from e
 
     # Agglomerative clustering with precomputed distance
     clustering = AgglomerativeClustering(

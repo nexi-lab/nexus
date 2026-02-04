@@ -181,7 +181,7 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(None, lambda: list(self._model.embed([text])))
-        return embeddings[0].tolist()
+        return embeddings[0].tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts."""
@@ -243,7 +243,7 @@ class Model2VecProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(None, lambda: self._model.encode(text))
-        return embedding.tolist()
+        return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts."""
@@ -252,7 +252,7 @@ class Model2VecProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(None, lambda: self._model.encode(texts))
-        return embeddings.tolist()
+        return embeddings.tolist()  # type: ignore[no-any-return]
 
 
 # =============================================================================
@@ -313,7 +313,7 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(None, lambda: self._model.encode(text))
-        return embedding.tolist()
+        return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts."""
@@ -322,7 +322,7 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
 
         loop = asyncio.get_event_loop()
         embeddings = await loop.run_in_executor(None, lambda: self._model.encode(texts))
-        return embeddings.tolist()
+        return embeddings.tolist()  # type: ignore[no-any-return]
 
 
 # =============================================================================

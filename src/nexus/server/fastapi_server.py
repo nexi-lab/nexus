@@ -1631,6 +1631,29 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
 
+    # API v2 routes - Memory & ACE endpoints (Issue #1193)
+    try:
+        from nexus.server.api.v2.routers import (
+            consolidation,
+            feedback,
+            memories,
+            playbooks,
+            reflection,
+            trajectories,
+        )
+
+        app.include_router(memories.router)
+        app.include_router(trajectories.router)
+        app.include_router(feedback.router)
+        app.include_router(playbooks.router)
+        app.include_router(reflection.router)
+        app.include_router(consolidation.router)
+        logger.info("API v2 routes registered (30 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
+        )
+
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
     async def debug_asyncio() -> dict[str, Any]:

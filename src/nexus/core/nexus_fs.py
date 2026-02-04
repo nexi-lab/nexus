@@ -5422,6 +5422,33 @@ class NexusFS(  # type: ignore[misc]
         ALL_RESOURCE_TYPES = ["workspace", "memory", "skill", "agent", "connector", "resource"]
         created_paths = []
 
+        # First, grant ownership on user's base directory (Issue #1200)
+        # This allows users to write files/create dirs directly in their base path
+        user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+        try:
+            # Create base directory (idempotent)
+            self.mkdir(user_base_path, parents=True, exist_ok=True, context=context)
+
+            # Grant user ownership on base directory
+            try:
+                self.rebac_create(
+                    subject=("user", user_id),
+                    relation="direct_owner",
+                    object=("file", user_base_path),
+                    tenant_id=tenant_id,
+                    context=context,
+                )
+                logger.info(f"Granted ownership on user base directory: {user_base_path}")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logger.debug(f"Permission already exists for {user_base_path}")
+                else:
+                    raise
+
+            created_paths.append(user_base_path)
+        except Exception as e:
+            logger.warning(f"Failed to create user base directory {user_base_path}: {e}")
+
         for resource_type in ALL_RESOURCE_TYPES:
             folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
 

@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexus.io/schemas/manifest-v1.json",
+  "title": "Nexus Export Bundle Manifest",
+  "description": "JSON Schema for .nexus export bundle manifest.json file. Defines the structure for tenant data portability bundles.",
+  "type": "object",
+  "required": [
+    "format_version",
+    "bundle_id",
+    "source_tenant_id",
+    "export_timestamp",
+    "statistics",
+    "options",
+    "checksums"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Reference to this JSON Schema",
+      "const": "https://nexus.io/schemas/manifest-v1.json"
+    },
+    "format_version": {
+      "type": "string",
+      "description": "Bundle format version (semantic versioning)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0", "1.1.0"]
+    },
+    "nexus_version": {
+      "type": "string",
+      "description": "Version of Nexus that created this bundle",
+      "examples": ["0.8.0", "1.0.0"]
+    },
+    "bundle_id": {
+      "type": "string",
+      "description": "Unique identifier for this bundle (UUIDv4)",
+      "format": "uuid",
+      "examples": ["550e8400-e29b-41d4-a716-446655440000"]
+    },
+    "source_instance": {
+      "type": "string",
+      "description": "URL or identifier of the source Nexus instance",
+      "examples": ["https://nexus.company.com", "production-cluster-1"]
+    },
+    "source_tenant_id": {
+      "type": "string",
+      "description": "Original tenant ID from the source instance",
+      "minLength": 1,
+      "examples": ["company-a", "tenant-123"]
+    },
+    "export_timestamp": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when the export was created",
+      "format": "date-time",
+      "examples": ["2025-01-31T14:30:00Z"]
+    },
+    "statistics": {
+      "type": "object",
+      "description": "Summary statistics about the bundle contents",
+      "required": ["file_count", "total_size_bytes"],
+      "properties": {
+        "file_count": {
+          "type": "integer",
+          "description": "Number of file records in metadata/files.jsonl",
+          "minimum": 0
+        },
+        "total_size_bytes": {
+          "type": "integer",
+          "description": "Total size of all content in bytes",
+          "minimum": 0
+        },
+        "content_blob_count": {
+          "type": "integer",
+          "description": "Number of unique content blobs in content/cas/",
+          "minimum": 0,
+          "default": 0
+        },
+        "permission_count": {
+          "type": "integer",
+          "description": "Number of ReBAC permission tuples",
+          "minimum": 0,
+          "default": 0
+        },
+        "embedding_count": {
+          "type": "integer",
+          "description": "Number of vector embeddings",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "options": {
+      "type": "object",
+      "description": "Export options that were used to create this bundle",
+      "required": ["include_content", "include_permissions"],
+      "properties": {
+        "include_content": {
+          "type": "boolean",
+          "description": "Whether content blobs are included in content/cas/",
+          "default": true
+        },
+        "include_permissions": {
+          "type": "boolean",
+          "description": "Whether ReBAC permissions are included",
+          "default": true
+        },
+        "include_embeddings": {
+          "type": "boolean",
+          "description": "Whether vector embeddings are included in embeddings/",
+          "default": false
+        },
+        "include_deleted": {
+          "type": "boolean",
+          "description": "Whether soft-deleted files are included",
+          "default": false
+        },
+        "include_versions": {
+          "type": "boolean",
+          "description": "Whether version history is included",
+          "default": true
+        },
+        "path_prefix_filter": {
+          "type": ["string", "null"],
+          "description": "Path prefix filter applied during export (null = no filter)",
+          "examples": ["/workspace/", "/projects/project-a/"]
+        },
+        "after_time_filter": {
+          "type": ["string", "null"],
+          "description": "ISO 8601 timestamp filter - only files modified after this time",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": false
+    },
+    "checksums": {
+      "type": "object",
+      "description": "Integrity verification data for bundle contents",
+      "required": ["algorithm", "files"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "description": "Hash algorithm used for all checksums",
+          "enum": ["sha256", "sha512"],
+          "default": "sha256"
+        },
+        "files": {
+          "type": "object",
+          "description": "Map of relative paths to their checksum information",
+          "additionalProperties": {
+            "$ref": "#/$defs/FileChecksum"
+          }
+        },
+        "merkle_root": {
+          "type": ["string", "null"],
+          "description": "Merkle tree root hash for efficient partial verification",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "encryption": {
+      "type": ["object", "null"],
+      "description": "Encryption metadata for sensitive data (API keys). Null if no encryption.",
+      "properties": {
+        "method": {
+          "type": "string",
+          "description": "Encryption method used",
+          "enum": ["age-v1", "aes-256-gcm"],
+          "examples": ["age-v1", "aes-256-gcm"]
+        },
+        "encrypted_dek": {
+          "type": "string",
+          "description": "Base64-encoded encrypted Data Encryption Key (wrapped with KEK)",
+          "contentEncoding": "base64"
+        }
+      },
+      "required": ["method"],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extensible metadata for custom fields",
+      "additionalProperties": true,
+      "examples": [
+        {
+          "export_reason": "GDPR data portability request",
+          "requested_by": "user@example.com"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "FileChecksum": {
+      "type": "object",
+      "description": "Checksum information for a single file in the bundle",
+      "required": ["path", "algorithm", "hash", "size_bytes"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Relative path within the bundle",
+          "examples": ["metadata/files.jsonl", "permissions/rebac_tuples.jsonl"]
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Hash algorithm used",
+          "enum": ["sha256", "sha512", "md5"]
+        },
+        "hash": {
+          "type": "string",
+          "description": "Hex-encoded hash value",
+          "pattern": "^[a-f0-9]+$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "description": "File size in bytes",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "$schema": "https://nexus.io/schemas/manifest-v1.json",
+      "format_version": "1.0.0",
+      "nexus_version": "0.8.0",
+      "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
+      "source_instance": "https://nexus.company.com",
+      "source_tenant_id": "company-a",
+      "export_timestamp": "2025-01-31T14:30:00Z",
+      "statistics": {
+        "file_count": 1500,
+        "total_size_bytes": 52428800,
+        "content_blob_count": 1200,
+        "permission_count": 3500,
+        "embedding_count": 0
+      },
+      "options": {
+        "include_content": true,
+        "include_permissions": true,
+        "include_embeddings": false,
+        "include_deleted": false,
+        "include_versions": true,
+        "path_prefix_filter": null,
+        "after_time_filter": null
+      },
+      "checksums": {
+        "algorithm": "sha256",
+        "files": {
+          "metadata/files.jsonl": {
+            "path": "metadata/files.jsonl",
+            "algorithm": "sha256",
+            "hash": "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f",
+            "size_bytes": 245760
+          },
+          "permissions/rebac_tuples.jsonl": {
+            "path": "permissions/rebac_tuples.jsonl",
+            "algorithm": "sha256",
+            "hash": "abc123def456789012345678901234567890123456789012345678901234abcd",
+            "size_bytes": 102400
+          }
+        },
+        "merkle_root": null
+      },
+      "encryption": null,
+      "metadata": {
+        "export_reason": "GDPR data portability request",
+        "requested_by": "admin@company.com"
+      }
+    }
+  ]
+}

@@ -3520,28 +3520,43 @@ class NexusFS(  # type: ignore[misc]
         """List all registered workspaces for the current user.
 
         Args:
-            context: Optional operation context (passed by RPC auto-dispatch)
+            context: Operation context with user_id and tenant_id (required for filtering)
 
         Returns:
             List of workspace configuration dicts filtered by current user
+
+        Raises:
+            ValueError: If context is missing or user_id/tenant_id are not set
 
         Example:
             >>> workspaces = nx.list_workspaces()
             >>> for ws in workspaces:
             ...     print(f"{ws['path']}: {ws['name']}")
         """
-        configs = self._workspace_registry.list_workspaces()
-
-        # Filter by current user if context is available
+        # Extract user identity from context (Issue #1201)
+        user_id = None
+        tenant_id = None
         if context is not None:
-            user_id = getattr(context, "user_id", None)
+            user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
             tenant_id = getattr(context, "tenant_id", None)
 
-            if user_id and tenant_id:
-                # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /tenant:{tenant_id}/user:{user_id}/workspace/...
-                user_prefix = f"/tenant:{tenant_id}/user:{user_id}/workspace/"
-                configs = [c for c in configs if c.path.startswith(user_prefix)]
+        # Require authentication context to list workspaces
+        if not user_id or not tenant_id:
+            raise ValueError(
+                "list_workspaces requires authenticated context with user_id and tenant_id"
+            )
+
+        configs = self._workspace_registry.list_workspaces()
+
+        # Filter workspaces that belong to the current user by:
+        # 1. created_by matches user_id (workspaces the user registered)
+        # 2. OR path follows tenant/user pattern (workspaces in user's directory)
+        user_prefix = f"/tenant:{tenant_id}/user:{user_id}/workspace/"
+        configs = [
+            c for c in configs
+            if c.created_by == user_id
+            or c.path.startswith(user_prefix)
+        ]
 
         return [c.to_dict() for c in configs]
 

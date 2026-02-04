@@ -3056,6 +3056,10 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         tenant_id = auth_result.get("tenant_id") or "default"
 
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
+
         # Check mutex lock first (most common)
         lock_info = await lock_manager.get_lock_info(tenant_id, path)
         if lock_info:
@@ -3107,6 +3111,10 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         tenant_id = auth_result.get("tenant_id") or "default"
 
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
+
         if force:
             # Check admin permission
             if not auth_result.get("is_admin", False):
@@ -3146,6 +3154,10 @@ def _register_routes(app: FastAPI) -> None:
         """
         lock_manager = _get_lock_manager()
         tenant_id = auth_result.get("tenant_id") or "default"
+
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
 
         extended = await lock_manager.extend(request.lock_id, tenant_id, path, ttl=request.ttl)
         if not extended:

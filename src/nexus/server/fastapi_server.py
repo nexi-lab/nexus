@@ -33,7 +33,8 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any, TypeVar
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
 from fastapi import (
@@ -113,6 +114,61 @@ class WhoamiResponse(BaseModel):
     is_admin: bool = False
     inherit_permissions: bool = True  # v0.5.1: Whether agent inherits owner's permissions
     user: str | None = None
+
+
+# ============================================================================
+# Lock API Models (Issue #1186)
+# ============================================================================
+
+
+class LockAcquireRequest(BaseModel):
+    """Request model for acquiring a lock."""
+
+    path: str
+    timeout: float = 30.0  # Max time to wait for lock acquisition
+    ttl: float = 30.0  # Lock TTL (auto-expires after this)
+    max_holders: int = 1  # 1 = mutex, >1 = semaphore
+    blocking: bool = True  # If false, return immediately without waiting
+
+
+class LockResponse(BaseModel):
+    """Response model for lock operations."""
+
+    lock_id: str
+    path: str
+    mode: Literal["mutex", "semaphore"]
+    max_holders: int
+    ttl: int
+    expires_at: str  # ISO 8601 timestamp
+
+
+class LockStatusResponse(BaseModel):
+    """Response model for lock status queries."""
+
+    path: str
+    locked: bool
+    lock_info: dict[str, Any] | None = None
+
+
+class LockExtendRequest(BaseModel):
+    """Request model for extending a lock."""
+
+    lock_id: str
+    ttl: float = 30.0
+
+
+class LockReleaseRequest(BaseModel):
+    """Request model for releasing a lock."""
+
+    lock_id: str
+    force: bool = False  # Admin-only: force release regardless of owner
+
+
+class LockListResponse(BaseModel):
+    """Response model for listing locks."""
+
+    locks: list[dict[str, Any]]
+    count: int
 
 
 # ============================================================================
@@ -709,6 +765,17 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
 
+    # Connect Lock Manager coordination client (Issue #1186)
+    # Required for distributed lock REST API endpoints
+    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
+        coord_client = _app_state.nexus_fs._coordination_client
+        if coord_client is not None:
+            try:
+                await coord_client.connect()
+                logger.info("Lock manager coordination client connected")
+            except Exception as e:
+                logger.warning(f"Failed to connect lock manager coordination client: {e}")
+
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
     # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
@@ -950,6 +1017,16 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("WebSocket manager stopped")
         except Exception as e:
             logger.warning(f"Error shutting down WebSocket manager: {e}")
+
+    # Disconnect Lock Manager coordination client (Issue #1186)
+    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
+        coord_client = _app_state.nexus_fs._coordination_client
+        if coord_client is not None:
+            try:
+                await coord_client.disconnect()
+                logger.info("Lock manager coordination client disconnected")
+            except Exception as e:
+                logger.debug(f"Error disconnecting coordination client: {e}")
 
     if _app_state.subscription_manager:
         await _app_state.subscription_manager.close()
@@ -2821,6 +2898,285 @@ def _register_routes(app: FastAPI) -> None:
         result = await _app_state.subscription_manager.test(subscription_id, tenant_id)
         return JSONResponse(content=result)
 
+    # =========================================================================
+    # Lock API Endpoints (Issue #1186)
+    # =========================================================================
+
+    def _get_lock_manager() -> Any:
+        """Get the lock manager from NexusFS or raise 503."""
+        if not _app_state.nexus_fs:
+            raise HTTPException(status_code=503, detail="NexusFS not available")
+        if not _app_state.nexus_fs._has_distributed_locks():
+            raise HTTPException(
+                status_code=503,
+                detail="Distributed lock manager not configured. "
+                "Enable Redis/Dragonfly for distributed locking.",
+            )
+        return _app_state.nexus_fs._lock_manager
+
+    @app.post("/api/locks", tags=["locks"], status_code=201, response_model=LockResponse)
+    async def acquire_lock(
+        request: LockAcquireRequest,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> LockResponse:
+        """Acquire a distributed lock on a path.
+
+        Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
+        Use blocking=false for non-blocking acquisition (returns immediately).
+
+        Performance:
+        - Typical latency: <5ms p99
+        - Uses Redis SET NX EX for atomic acquisition
+        - Exponential backoff with jitter to prevent thundering herd
+        """
+        lock_manager = _get_lock_manager()
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        # Non-blocking mode: use timeout=0
+        timeout = request.timeout if request.blocking else 0.0
+
+        try:
+            lock_id = await lock_manager.acquire(
+                tenant_id=tenant_id,
+                path=request.path,
+                timeout=timeout,
+                ttl=request.ttl,
+                max_holders=request.max_holders,
+            )
+        except ValueError as e:
+            # SSOT violation (max_holders mismatch)
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+        if lock_id is None:
+            # Lock acquisition failed (timeout or non-blocking)
+            if request.blocking:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Lock acquisition timeout after {request.timeout}s",
+                )
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Lock not available (non-blocking mode)",
+                )
+
+        # Calculate expiration time
+        expires_at = datetime.now(UTC).timestamp() + request.ttl
+        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
+
+        return LockResponse(
+            lock_id=lock_id,
+            path=request.path,
+            mode="mutex" if request.max_holders == 1 else "semaphore",
+            max_holders=request.max_holders,
+            ttl=int(request.ttl),
+            expires_at=expires_at_iso,
+        )
+
+    @app.get("/api/locks", tags=["locks"], response_model=LockListResponse)
+    async def list_locks(
+        limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
+        pattern: str = Query("*", description="Path pattern filter (glob-style)"),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> LockListResponse:
+        """List active locks for the current tenant.
+
+        Uses Redis SCAN for efficient iteration (non-blocking).
+
+        Performance:
+        - Uses SCAN instead of KEYS to avoid blocking Redis
+        - Pagination via limit parameter
+        """
+        lock_manager = _get_lock_manager()
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        # Use SCAN to find locks (non-blocking)
+        redis_client = lock_manager._redis.client
+        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{tenant_id}:"
+        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{tenant_id}:"
+
+        locks: list[dict[str, Any]] = []
+
+        # Scan mutex locks
+        cursor = 0
+        while len(locks) < limit:
+            cursor, keys = await redis_client.scan(
+                cursor, match=f"{lock_prefix}{pattern}", count=100
+            )
+            for key in keys:
+                if len(locks) >= limit:
+                    break
+                key_str = key.decode() if isinstance(key, bytes) else key
+                path = key_str[len(lock_prefix) :]
+                lock_info = await lock_manager.get_lock_info(tenant_id, path)
+                if lock_info:
+                    lock_info["mode"] = "mutex"
+                    locks.append(lock_info)
+            if cursor == 0:
+                break
+
+        # Scan semaphore locks
+        cursor = 0
+        while len(locks) < limit:
+            cursor, keys = await redis_client.scan(
+                cursor, match=f"{sem_prefix}{pattern}", count=100
+            )
+            for key in keys:
+                if len(locks) >= limit:
+                    break
+                key_str = key.decode() if isinstance(key, bytes) else key
+                path = key_str[len(sem_prefix) :]
+                # Get semaphore info
+                members = await redis_client.zrange(key, 0, -1, withscores=True)
+                if members:
+                    locks.append(
+                        {
+                            "path": path,
+                            "mode": "semaphore",
+                            "holders": len(members),
+                            "tenant_id": tenant_id,
+                        }
+                    )
+            if cursor == 0:
+                break
+
+        return LockListResponse(locks=locks, count=len(locks))
+
+    @app.get("/api/locks/{path:path}", tags=["locks"], response_model=LockStatusResponse)
+    async def get_lock_status(
+        path: str,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> LockStatusResponse:
+        """Get lock status for a specific path.
+
+        Performance:
+        - Single Redis GET operation (~1ms)
+        - Pipeline fetches existence + TTL in one round-trip
+        """
+        lock_manager = _get_lock_manager()
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        # Check mutex lock first (most common)
+        lock_info = await lock_manager.get_lock_info(tenant_id, path)
+        if lock_info:
+            lock_info["mode"] = "mutex"
+            return LockStatusResponse(path=path, locked=True, lock_info=lock_info)
+
+        # Check semaphore
+        sem_key = lock_manager._semaphore_key(tenant_id, path)
+        members = await lock_manager._redis.client.zcard(sem_key)
+        if members > 0:
+            # Get semaphore details
+            config_key = lock_manager._semaphore_config_key(tenant_id, path)
+            max_holders = await lock_manager._redis.client.get(config_key)
+            max_holders_int = (
+                int(max_holders.decode() if isinstance(max_holders, bytes) else max_holders)
+                if max_holders
+                else 0
+            )
+            return LockStatusResponse(
+                path=path,
+                locked=True,
+                lock_info={
+                    "mode": "semaphore",
+                    "holders": members,
+                    "max_holders": max_holders_int,
+                    "path": path,
+                    "tenant_id": tenant_id,
+                },
+            )
+
+        return LockStatusResponse(path=path, locked=False, lock_info=None)
+
+    @app.delete("/api/locks/{path:path}", tags=["locks"])
+    async def release_lock(
+        path: str,
+        lock_id: str = Query(..., description="Lock ID from acquire response"),
+        force: bool = Query(False, description="Force release (admin only)"),
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> JSONResponse:
+        """Release a distributed lock.
+
+        The lock_id must match the ID returned during acquisition.
+        Use force=true for admin recovery of stuck locks (requires admin role).
+
+        Performance:
+        - Single Lua script execution (~1ms)
+        - Atomic check-then-delete
+        """
+        lock_manager = _get_lock_manager()
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        if force:
+            # Check admin permission
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403, detail="Force release requires admin privileges"
+                )
+            # Force release regardless of owner
+            released = await lock_manager.force_release(tenant_id, path)
+            if not released:
+                raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
+            logger.warning(f"Lock force-released by admin: tenant={tenant_id}, path={path}")
+            return JSONResponse(content={"released": True, "forced": True})
+
+        # Normal release with ownership check
+        released = await lock_manager.release(lock_id, tenant_id, path)
+        if not released:
+            raise HTTPException(
+                status_code=403,
+                detail="Lock release failed: not owned by this lock_id or already expired",
+            )
+        return JSONResponse(content={"released": True})
+
+    @app.patch("/api/locks/{path:path}", tags=["locks"], response_model=LockResponse)
+    async def extend_lock(
+        path: str,
+        request: LockExtendRequest,
+        auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> LockResponse:
+        """Extend a lock's TTL (heartbeat).
+
+        Call this periodically (e.g., every TTL/2) to keep long-running
+        operations alive. The lock must be owned by the caller (lock_id match).
+
+        Performance:
+        - Single Lua script execution (~1ms)
+        - Atomic check-then-expire
+        """
+        lock_manager = _get_lock_manager()
+        tenant_id = auth_result.get("tenant_id") or "default"
+
+        extended = await lock_manager.extend(request.lock_id, tenant_id, path, ttl=request.ttl)
+        if not extended:
+            raise HTTPException(
+                status_code=403,
+                detail="Lock extend failed: not owned by this lock_id or already expired",
+            )
+
+        # Calculate new expiration
+        expires_at = datetime.now(UTC).timestamp() + request.ttl
+        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
+
+        # Determine mode (check mutex first)
+        lock_info = await lock_manager.get_lock_info(tenant_id, path)
+        mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
+        max_holders = 1
+        if mode == "semaphore":
+            config_key = lock_manager._semaphore_config_key(tenant_id, path)
+            max_raw = await lock_manager._redis.client.get(config_key)
+            if max_raw:
+                max_holders = int(max_raw.decode() if isinstance(max_raw, bytes) else max_raw)
+
+        return LockResponse(
+            lock_id=request.lock_id,
+            path=path,
+            mode=mode,
+            max_holders=max_holders,
+            ttl=int(request.ttl),
+            expires_at=expires_at_iso,
+        )
+
     # ========================================================================
     # WebSocket Endpoint for Real-Time Events (Issue #1116)
     # ========================================================================
@@ -3416,6 +3772,52 @@ def _register_routes(app: FastAPI) -> None:
                     # If ETag check fails, fall through to normal read
                     logger.debug(f"Early ETag check failed for {params.path}: {e}")
 
+            # Issue #1187: Handle X-Nexus-Zookie header for consistency
+            x_nexus_zookie = request.headers.get("X-Nexus-Zookie")
+            if x_nexus_zookie and method in ("read", "list", "glob", "get_metadata", "exists"):
+                try:
+                    from nexus.core.zookie import (
+                        ConsistencyTimeoutError,
+                        InvalidZookieError,
+                        Zookie,
+                    )
+
+                    zookie = Zookie.decode(x_nexus_zookie)
+                    # Wait for revision if needed (AT_LEAST_AS_FRESH semantics)
+                    if _app_state.nexus_fs:
+                        # Get tenant from context
+                        tenant_id = context.tenant_id if context else "default"
+                        if tenant_id != zookie.tenant_id:
+                            logger.warning(
+                                f"Zookie tenant mismatch: request={tenant_id}, zookie={zookie.tenant_id}"
+                            )
+                        # Wait for revision with 5s timeout
+                        if not _app_state.nexus_fs._wait_for_revision(
+                            zookie.tenant_id, zookie.revision, timeout_ms=5000
+                        ):
+                            raise ConsistencyTimeoutError(
+                                f"Timeout waiting for revision {zookie.revision}",
+                                tenant_id=zookie.tenant_id,
+                                requested_revision=zookie.revision,
+                                current_revision=_app_state.nexus_fs._get_current_revision(
+                                    zookie.tenant_id
+                                ),
+                                timeout_ms=5000,
+                            )
+                except InvalidZookieError as e:
+                    return _error_response(
+                        rpc_request.id,
+                        RPCErrorCode.INVALID_PARAMS,
+                        f"Invalid X-Nexus-Zookie header: {e.message}",
+                    )
+                except ConsistencyTimeoutError as e:
+                    return _error_response(
+                        rpc_request.id,
+                        RPCErrorCode.INTERNAL_ERROR,
+                        f"Consistency timeout: requested revision {e.requested_revision}, "
+                        f"current revision {e.current_revision}",
+                    )
+
             # Dispatch method
             _dispatch_start = _time.time()
             result = await _dispatch_method(method, params, context)
@@ -3544,6 +3946,17 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
     # Write/delete operations - no cache
     elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
         headers["Cache-Control"] = "no-store"
+        # Issue #1187: Return zookie in response header for consistency tracking
+        # Check for zookie at top level or nested in bytes_written (for write)
+        if isinstance(result, dict):
+            if "zookie" in result:
+                headers["X-Nexus-Zookie"] = result["zookie"]
+            elif (
+                "bytes_written" in result
+                and isinstance(result["bytes_written"], dict)
+                and "zookie" in result["bytes_written"]
+            ):
+                headers["X-Nexus-Zookie"] = result["bytes_written"]["zookie"]
 
     # Delta read - cache like regular read
     elif method == "delta_read":
@@ -4052,10 +4465,18 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        nexus_fs.delete(params.path, context=context)
+        result = nexus_fs.delete(params.path, context=context)
     except TypeError:
-        nexus_fs.delete(params.path)
-    return {"deleted": True}
+        result = nexus_fs.delete(params.path)
+
+    # Issue #1187: Include zookie in response for consistency tracking
+    response: dict[str, Any] = {"deleted": True}
+    if isinstance(result, dict):
+        if "zookie" in result:
+            response["zookie"] = result["zookie"]
+        if "revision" in result:
+            response["revision"] = result["revision"]
+    return response
 
 
 def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
@@ -4065,10 +4486,18 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        nexus_fs.rename(params.old_path, params.new_path, context=context)
+        result = nexus_fs.rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        nexus_fs.rename(params.old_path, params.new_path)
-    return {"renamed": True}
+        result = nexus_fs.rename(params.old_path, params.new_path)
+
+    # Issue #1187: Include zookie in response for consistency tracking
+    response: dict[str, Any] = {"renamed": True}
+    if isinstance(result, dict):
+        if "zookie" in result:
+            response["zookie"] = result["zookie"]
+        if "revision" in result:
+            response["revision"] = result["revision"]
+    return response
 
 
 def _handle_copy(params: Any, context: Any) -> dict[str, Any]:

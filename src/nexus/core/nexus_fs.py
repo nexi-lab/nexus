@@ -4602,7 +4602,7 @@ class NexusFS(  # type: ignore[misc]
         api_key_expires_at: datetime | None = None,
         create_agents: bool = True,
         import_skills: bool = True,
-        context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002 - reserved for future use
     ) -> dict[str, Any]:
         """Provision a new user with all default resources (Issue #820).
 
@@ -4672,6 +4672,8 @@ class NexusFS(  # type: ignore[misc]
         # Use admin context for provisioning with the correct tenant_id
         # IMPORTANT: We create a new context to ensure tenant_id matches the user's tenant
         # even if the calling context has a different tenant (e.g., admin with tenant_id=default)
+        # Note: The `context` parameter is kept for API compatibility but not used
+        _ = context  # Suppress unused parameter warning
         admin_context = OperationContext(
             user=user_id,
             groups=[],
@@ -5077,11 +5079,11 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         # Check if directory exists before deletion attempt
                         existed = self.exists(dir_path, context=admin_context)
-                        
+
                         # Try to delete even if exists() returns False
                         # (subdirectories may exist even if parent has no metadata)
                         self._delete_directory_recursive(dir_path, admin_context)
-                        
+
                         # Track as deleted if it existed (even if empty/no physical content)
                         if existed:
                             result["deleted_directories"].append(dir_path)

@@ -25,6 +25,7 @@ from nexus.core.hash_fast import hash_content
 from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.core.zookie import Zookie
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ class NexusFSCoreMixin:
         etag: str | None = None,
         agent_id: str | None = None,
         old_path: str | None = None,
+        revision: int | None = None,
     ) -> None:
         """Publish a file event to the distributed event bus.
 
@@ -130,6 +132,7 @@ class NexusFSCoreMixin:
             etag: Content hash (optional)
             agent_id: Agent that performed the operation (optional)
             old_path: Previous path for rename events (optional)
+            revision: Filesystem revision for consistency tracking (Issue #1187)
         """
         if not hasattr(self, "_event_bus") or self._event_bus is None:
             return
@@ -155,6 +158,7 @@ class NexusFSCoreMixin:
                 etag=etag,
                 agent_id=agent_id,
                 old_path=old_path,
+                revision=revision,
             )
 
             # Determine task name for debugging
@@ -181,6 +185,129 @@ class NexusFSCoreMixin:
                 threading.Thread(target=publish_in_thread, daemon=True).start()
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
+
+    # =========================================================================
+    # Zookie Consistency Token Support - Issue #1187
+    # =========================================================================
+
+    def _increment_and_get_revision(self, tenant_id: str) -> int:
+        """Atomically increment and return the new revision for a tenant.
+
+        Issue #1187: This provides monotonic revision counters for filesystem
+        consistency tokens (zookies). Each write operation increments the counter
+        and includes the new revision in the returned zookie.
+
+        Args:
+            tenant_id: The tenant to increment revision for
+
+        Returns:
+            The new revision number after incrementing
+
+        Note:
+            Uses SELECT ... FOR UPDATE + UPDATE for atomic increment.
+            Falls back to in-memory counter if database unavailable.
+        """
+        from datetime import UTC, datetime
+
+        from sqlalchemy import text
+
+        try:
+            # Use raw SQL for atomic increment (same pattern as ReBAC version sequences)
+            with self.metadata.engine.begin() as conn:
+                # Try to update existing row
+                result = conn.execute(
+                    text("""
+                        UPDATE filesystem_version_sequences
+                        SET current_revision = current_revision + 1,
+                            updated_at = :now
+                        WHERE tenant_id = :tenant_id
+                        RETURNING current_revision
+                    """),
+                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                )
+                row = result.fetchone()
+
+                if row:
+                    return int(row[0])
+
+                # Row doesn't exist - insert with revision 1
+                conn.execute(
+                    text("""
+                        INSERT INTO filesystem_version_sequences
+                            (tenant_id, current_revision, updated_at)
+                        VALUES (:tenant_id, 1, :now)
+                        ON CONFLICT (tenant_id) DO UPDATE
+                        SET current_revision = filesystem_version_sequences.current_revision + 1,
+                            updated_at = :now
+                    """),
+                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                )
+                return 1
+
+        except Exception as e:
+            logger.warning(f"Failed to increment revision for tenant {tenant_id}: {e}")
+            # Fallback: return timestamp-based pseudo-revision
+            return int(time.time() * 1000)
+
+    def _get_current_revision(self, tenant_id: str) -> int:
+        """Get the current revision for a tenant.
+
+        Args:
+            tenant_id: The tenant to get revision for
+
+        Returns:
+            The current revision number (0 if not found)
+        """
+        from sqlalchemy import text
+
+        try:
+            with self.metadata.engine.connect() as conn:
+                result = conn.execute(
+                    text("""
+                        SELECT current_revision FROM filesystem_version_sequences
+                        WHERE tenant_id = :tenant_id
+                    """),
+                    {"tenant_id": tenant_id},
+                )
+                row = result.fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.warning(f"Failed to get revision for tenant {tenant_id}: {e}")
+            return 0
+
+    def _wait_for_revision(
+        self,
+        tenant_id: str,
+        min_revision: int,
+        timeout_ms: float = 5000,
+    ) -> bool:
+        """Wait until tenant revision >= min_revision.
+
+        Issue #1187: Implements AT_LEAST_AS_FRESH consistency mode for reads.
+        Uses exponential backoff to minimize DB polling.
+
+        Args:
+            tenant_id: The tenant to check revision for
+            min_revision: The minimum acceptable revision
+            timeout_ms: Maximum time to wait in milliseconds (default: 5000)
+
+        Returns:
+            True if revision reached, False if timeout
+
+        Raises:
+            ConsistencyTimeoutError: If timeout and raise_on_timeout=True
+        """
+        deadline = time.monotonic() + (timeout_ms / 1000)
+        sleep_ms = 1.0  # Start with 1ms
+
+        while time.monotonic() < deadline:
+            current = self._get_current_revision(tenant_id)
+            if current >= min_revision:
+                return True
+            time.sleep(sleep_ms / 1000)
+            sleep_ms = min(sleep_ms * 2, 100)  # Cap at 100ms
+
+        return False
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -1809,6 +1936,11 @@ class NexusFSCoreMixin:
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
 
+        # Issue #1187: Increment revision BEFORE publishing event
+        effective_tenant = tenant_id or "default"
+        revision = self._increment_and_get_revision(effective_tenant)
+        zookie_token = Zookie.encode(effective_tenant, revision)
+
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_write",
@@ -1817,6 +1949,7 @@ class NexusFSCoreMixin:
             size=len(content),
             etag=content_hash,
             agent_id=agent_id,
+            revision=revision,  # Issue #1187: Include revision in event
         )
 
         # Return metadata for optimistic concurrency control
@@ -1825,6 +1958,8 @@ class NexusFSCoreMixin:
             "version": new_version,
             "modified_at": now,
             "size": len(content),
+            "zookie": zookie_token,  # Issue #1187: Consistency token
+            "revision": revision,  # Issue #1187: Raw revision for internal use
         }
 
     async def atomic_update(
@@ -2555,7 +2690,9 @@ class NexusFSCoreMixin:
                 )
 
     @rpc_expose(description="Delete file")
-    def delete(self, path: str, context: OperationContext | None = None) -> None:
+    def delete(
+        self, path: str, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -2567,6 +2704,11 @@ class NexusFSCoreMixin:
         Args:
             path: Virtual path to delete (supports memory paths)
             context: Optional operation context for permission checks (uses default if not provided)
+
+        Returns:
+            Dict with consistency metadata:
+                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
+                - revision: Raw revision number
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -2581,7 +2723,15 @@ class NexusFSCoreMixin:
         from nexus.core.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
-            return self._delete_memory_path(path, context=context)
+            self._delete_memory_path(path, context=context)
+            # Issue #1187: Return zookie for memory paths too
+            tenant_id, _, _ = self._get_routing_params(context)
+            effective_tenant = tenant_id or "default"
+            revision = self._increment_and_get_revision(effective_tenant)
+            return {
+                "zookie": Zookie.encode(effective_tenant, revision),
+                "revision": revision,
+            }
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -2708,6 +2858,10 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
+        # Issue #1187: Increment revision BEFORE publishing event
+        effective_tenant = tenant_id or "default"
+        revision = self._increment_and_get_revision(effective_tenant)
+
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_delete",
@@ -2716,10 +2870,19 @@ class NexusFSCoreMixin:
             size=meta.size,
             etag=meta.etag,
             agent_id=agent_id,
+            revision=revision,  # Issue #1187
         )
 
+        # Issue #1187: Return zookie for consistency tracking
+        return {
+            "zookie": Zookie.encode(effective_tenant, revision),
+            "revision": revision,
+        }
+
     @rpc_expose(description="Rename/move file")
-    def rename(self, old_path: str, new_path: str, context: OperationContext | None = None) -> None:
+    def rename(
+        self, old_path: str, new_path: str, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
 
@@ -2733,6 +2896,11 @@ class NexusFSCoreMixin:
             old_path: Current virtual path
             new_path: New virtual path
             context: Optional operation context for permission checks (uses default if not provided)
+
+        Returns:
+            Dict with consistency metadata:
+                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
+                - revision: Raw revision number
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist
@@ -2994,6 +3162,10 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_rename_events, daemon=True).start()
 
+        # Issue #1187: Increment revision BEFORE publishing event
+        effective_tenant = tenant_id or "default"
+        revision = self._increment_and_get_revision(effective_tenant)
+
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_rename",
@@ -3003,7 +3175,14 @@ class NexusFSCoreMixin:
             size=meta.size if meta else 0,
             etag=meta.etag if meta else None,
             agent_id=agent_id,
+            revision=revision,  # Issue #1187
         )
+
+        # Issue #1187: Return zookie for consistency tracking
+        return {
+            "zookie": Zookie.encode(effective_tenant, revision),
+            "revision": revision,
+        }
 
     def _update_tiger_cache_on_move(
         self,

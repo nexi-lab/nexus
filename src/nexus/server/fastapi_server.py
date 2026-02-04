@@ -1877,6 +1877,88 @@ def _register_routes(app: FastAPI) -> None:
             "change_type": change_type,
         }
 
+    @app.post("/api/search/expand", tags=["search"])
+    async def search_expand(
+        q: str = Query(..., description="Query to expand", min_length=1),
+        context: str | None = Query(None, description="Optional context about the collection"),
+        model: str = Query("deepseek/deepseek-chat", description="LLM model to use"),
+        max_lex: int = Query(2, description="Max lexical variants", ge=0, le=5),
+        max_vec: int = Query(2, description="Max vector variants", ge=0, le=5),
+        max_hyde: int = Query(2, description="Max HyDE passages", ge=0, le=5),
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict[str, Any]:
+        """Expand a search query using LLM-based query expansion (Issue #1174).
+
+        Generates multiple query variants to improve search recall:
+        - lex: Lexical variants (keywords for BM25)
+        - vec: Vector variants (natural language for embeddings)
+        - hyde: Hypothetical document passages
+
+        Requires OPENROUTER_API_KEY environment variable.
+
+        Args:
+            q: The query to expand
+            context: Optional context about the document collection
+            model: LLM model to use (default: deepseek/deepseek-chat)
+            max_lex: Maximum lexical variants (0-5)
+            max_vec: Maximum vector variants (0-5)
+            max_hyde: Maximum HyDE passages (0-5)
+
+        Returns:
+            Query expansions with metadata
+        """
+        import os
+        import time
+
+        from nexus.search.query_expansion import (
+            OpenRouterQueryExpander,
+            QueryExpansionConfig,
+        )
+
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=503,
+                detail="OPENROUTER_API_KEY not configured for query expansion",
+            )
+
+        start_time = time.perf_counter()
+
+        try:
+            config = QueryExpansionConfig(
+                model=model,
+                max_lex_variants=max_lex,
+                max_vec_variants=max_vec,
+                max_hyde_passages=max_hyde,
+                timeout=15.0,
+            )
+            expander = OpenRouterQueryExpander(config=config, api_key=api_key)
+
+            expansions = await expander.expand(q, context=context)
+            await expander.close()
+
+            latency_ms = (time.perf_counter() - start_time) * 1000
+
+            return {
+                "query": q,
+                "context": context,
+                "model": model,
+                "expansions": [
+                    {
+                        "type": e.expansion_type.value,
+                        "text": e.text,
+                        "weight": e.weight,
+                    }
+                    for e in expansions
+                ],
+                "total": len(expansions),
+                "latency_ms": round(latency_ms, 2),
+            }
+
+        except Exception as e:
+            logger.error(f"Query expansion error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Query expansion error: {e}") from e
+
     # =========================================================================
     # Memory API Endpoints (Issue #1023 - Temporal Query Operators)
     # =========================================================================

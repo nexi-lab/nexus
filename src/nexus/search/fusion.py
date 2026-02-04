@@ -15,11 +15,11 @@ Issue: #798
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class FusionMethod(str, Enum):
+class FusionMethod(StrEnum):
     """Fusion method for combining keyword and vector search results."""
 
     RRF = "rrf"  # Reciprocal Rank Fusion (default, recommended)

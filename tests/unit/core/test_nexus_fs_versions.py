@@ -46,10 +46,8 @@ class TestNexusFSVersions:
         fs.rollback = lambda path, version, context=None: NexusFSVersionsMixin.rollback(
             fs, path, version, context
         )
-        fs.diff_versions = (
-            lambda path, v1, v2, mode="metadata", context=None: NexusFSVersionsMixin.diff_versions(
-                fs, path, v1, v2, mode, context
-            )
+        fs.diff_versions = lambda path, v1, v2, mode="metadata", context=None: (
+            NexusFSVersionsMixin.diff_versions(fs, path, v1, v2, mode, context)
         )
 
         return fs

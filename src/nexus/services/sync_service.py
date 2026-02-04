@@ -30,9 +30,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.context_utils import get_tenant_id, get_user_identity
 
 if TYPE_CHECKING:
+    from nexus.backends.backend import FileInfo
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
-    from nexus.backends.backend import FileInfo
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ChangeLogStore:
     Uses the gateway's session factory for database access.
     """
 
-    def __init__(self, gateway: "NexusFSGateway"):
+    def __init__(self, gateway: NexusFSGateway):
         """Initialize change log store.
 
         Args:
@@ -72,9 +72,9 @@ class ChangeLogStore:
 
     def _get_session(self):
         """Get a database session from the gateway."""
-        # Access the metadata store's session factory
-        if hasattr(self._gw, "_metadata_store") and self._gw._metadata_store:
-            return self._gw._metadata_store.SessionLocal()
+        # Use gateway's session_factory property
+        if hasattr(self._gw, "session_factory") and self._gw.session_factory:
+            return self._gw.session_factory()
         return None
 
     def get_change_log(
@@ -364,6 +364,14 @@ class SyncService:
 
         # Step 6: Sync content cache
         self._sync_content(ctx, backend, result)
+
+        # Issue #1127: Log delta sync summary
+        if result.files_skipped > 0:
+            logger.info(
+                f"[DELTA_SYNC] Summary for {ctx.mount_point}: "
+                f"scanned={result.files_scanned}, created={result.files_created}, "
+                f"skipped={result.files_skipped} (delta sync saved {result.files_skipped} file operations)"
+            )
 
         return result
 
@@ -693,11 +701,19 @@ class SyncService:
                     if cached and self._file_unchanged(file_info, cached):
                         # File hasn't changed - skip sync
                         result.files_skipped += 1
-                        logger.debug(f"[DELTA_SYNC] Skipping unchanged file: {virtual_path}")
+                        logger.info(
+                            f"[DELTA_SYNC] Skipping unchanged: {virtual_path} "
+                            f"(size={file_info.size}, version={file_info.backend_version})"
+                        )
                         return
+                    elif cached:
+                        logger.info(
+                            f"[DELTA_SYNC] File changed: {virtual_path} "
+                            f"(old_version={cached.backend_version}, new_version={file_info.backend_version})"
+                        )
             except Exception as e:
                 # Delta check failed - proceed with full sync for this file
-                logger.debug(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
+                logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
 
         # Check if file exists in metadata
         existing_meta = self._gw.metadata_get(virtual_path)
@@ -768,7 +784,7 @@ class SyncService:
                     content_hash=file_info.content_hash,
                 )
 
-    def _file_unchanged(self, file_info: "FileInfo", cached: ChangeLogEntry) -> bool:
+    def _file_unchanged(self, file_info: FileInfo, cached: ChangeLogEntry) -> bool:
         """Check if file is unchanged based on rsync-style comparison (Issue #1127).
 
         Uses tiered comparison strategy:
@@ -785,15 +801,15 @@ class SyncService:
         """
         # Strategy 1: Backend version comparison (most reliable)
         if file_info.backend_version and cached.backend_version:
-            if file_info.backend_version == cached.backend_version:
-                return True
-            # Version changed - file has changed
-            return False
+            return file_info.backend_version == cached.backend_version
 
         # Strategy 2: Size + mtime comparison (rsync quick check)
-        if file_info.size is not None and cached.size_bytes is not None:
-            if file_info.size != cached.size_bytes:
-                return False  # Size changed
+        if (
+            file_info.size is not None
+            and cached.size_bytes is not None
+            and file_info.size != cached.size_bytes
+        ):
+            return False  # Size changed
 
         if file_info.mtime and cached.mtime:
             # Compare timestamps with 1-second tolerance for filesystem precision

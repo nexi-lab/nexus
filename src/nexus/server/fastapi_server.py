@@ -1631,6 +1631,15 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
 
+    # Tenant management routes
+    try:
+        from nexus.server.auth.tenant_routes import router as tenant_router
+
+        app.include_router(tenant_router)
+        logger.info("Tenant management routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import tenant routes: {e}. Tenant management unavailable.")
+
     # API v2 routes - Memory & ACE endpoints (Issue #1193)
     try:
         from nexus.server.api.v2.routers import (

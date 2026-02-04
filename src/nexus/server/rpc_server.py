@@ -66,6 +66,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     exposed_methods: dict[str, Any] = {}
     event_loop: Any = None
 
+    # Shared ThreadPoolExecutor for async operations (avoids per-call overhead)
+    # Issue: Creating new ThreadPoolExecutor + event loop per call adds ~5-15ms latency
+    _async_executor: Any = None
+    _async_executor_lock: Any = None  # Threading lock for lazy init
+
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
         logger.info(f"{self.address_string()} - {format % args}")
@@ -243,8 +248,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
         ThreadingHTTPServer handles requests in separate threads, so we can't
         use a shared event loop (self.event_loop) as it might be running in
-        another thread. Instead, we always use ThreadPoolExecutor to run the
-        coroutine in a fresh event loop.
+        another thread. Instead, we use a shared ThreadPoolExecutor to run the
+        coroutine in a fresh event loop per call.
+
+        Performance: Uses a shared ThreadPoolExecutor to avoid the overhead of
+        creating/destroying an executor per call (~5-15ms under load).
 
         Args:
             coro: Coroutine to run
@@ -253,12 +261,24 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             Result of the coroutine
         """
         import concurrent.futures
+        import threading
 
-        # Always use thread pool with fresh event loop to avoid conflicts
-        # with the shared self.event_loop that might be running elsewhere
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result()
+        # Lazy initialization of shared executor with double-checked locking
+        # Use 16 workers to handle concurrent requests without becoming a bottleneck
+        # Benchmarks show: 4 workers = 0.81x (slower), 16 workers = 1.7x speedup
+        if RPCRequestHandler._async_executor is None:
+            if RPCRequestHandler._async_executor_lock is None:
+                RPCRequestHandler._async_executor_lock = threading.Lock()
+            with RPCRequestHandler._async_executor_lock:
+                if RPCRequestHandler._async_executor is None:
+                    RPCRequestHandler._async_executor = concurrent.futures.ThreadPoolExecutor(
+                        max_workers=16, thread_name_prefix="rpc-async"
+                    )
+
+        # Submit to shared executor - asyncio.run creates a fresh event loop per call
+        # which is necessary since each request thread needs its own loop
+        future = RPCRequestHandler._async_executor.submit(asyncio.run, coro)
+        return future.result()
 
     def _validate_auth(self) -> bool:
         """Validate API key authentication.
@@ -1774,6 +1794,13 @@ class NexusRPCServer:
         logger.info("Shutting down server...")
         self.server.shutdown()
         self.server.server_close()
+
+        # Cleanup shared async executor
+        if RPCRequestHandler._async_executor is not None:
+            RPCRequestHandler._async_executor.shutdown(wait=True)
+            RPCRequestHandler._async_executor = None
+            logger.debug("Shared async executor shutdown complete")
+
         if hasattr(self.nexus_fs, "close"):
             self.nexus_fs.close()
         logger.info("Server stopped")

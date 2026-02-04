@@ -4598,7 +4598,7 @@ class NexusFS(  # type: ignore[misc]
         api_key_expires_at: datetime | None = None,
         create_agents: bool = True,
         import_skills: bool = True,
-        context: OperationContext | None = None,  # noqa: ARG002 - reserved for future use
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Provision a new user with all default resources (Issue #820).
 
@@ -4668,10 +4668,10 @@ class NexusFS(  # type: ignore[misc]
         # Use admin context for provisioning with the correct tenant_id
         # IMPORTANT: We create a new context to ensure tenant_id matches the user's tenant
         # even if the calling context has a different tenant (e.g., admin with tenant_id=default)
-        # Note: The `context` parameter is kept for API compatibility but not used
-        _ = context  # Suppress unused parameter warning
+        # We preserve the calling user (if provided) for permission checks
+        calling_user = getattr(context, "user", None) if context else None
         admin_context = OperationContext(
-            user=user_id,
+            user=calling_user or user_id,
             groups=[],
             tenant_id=tenant_id,
             is_admin=True,

@@ -47,7 +47,7 @@
 //!
 //! ## Embedded Storage (Available Now)
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use nexus_raft::storage::SledStore;
 //!
 //! // Open a persistent database

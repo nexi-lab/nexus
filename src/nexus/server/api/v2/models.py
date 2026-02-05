@@ -255,9 +255,7 @@ class PlaybookCreateRequest(BaseModel):
 
     name: str = Field(..., description="Playbook name")
     description: str | None = Field(None, description="Playbook description")
-    scope: Literal["agent", "user", "zone", "global"] = Field(
-        "agent", description="Playbook scope"
-    )
+    scope: Literal["agent", "user", "zone", "global"] = Field("agent", description="Playbook scope")
     visibility: Literal["private", "shared", "public"] = Field(
         "private", description="Playbook visibility"
     )

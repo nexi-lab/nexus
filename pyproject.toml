@@ -512,6 +512,11 @@ module = "nexus.llm.message"
 disable_error_code = ["no-any-return", "misc"]
 
 [[tool.mypy.overrides]]
+module = "nexus.core.metadata"
+# CompactFileMetadata.to_file_metadata() returns Any
+disable_error_code = ["no-any-return"]
+
+[[tool.mypy.overrides]]
 module = "nexus.storage.metadata_store"
 # alembic dynamic imports
 disable_error_code = ["attr-defined"]

@@ -47,7 +47,7 @@ def create_impersonated_user_agent(
     Examples:
         >>> result = create_impersonated_user_agent(nx, "alice", alice_context)
         >>> print(result.get('config_path'))
-        /zone:default/user:alice/agent/ImpersonatedUser/config.yaml
+        /zone/default/user:alice/agent/ImpersonatedUser/config.yaml
     """
     agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},ImpersonatedUser"
@@ -216,7 +216,7 @@ def grant_agent_resource_access(
         Granted 2 permissions
     """
     agent_id = f"{user_id},{agent_name}"
-    user_base_path = f"/zone:{zone_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     for resource_type in resource_types:
@@ -262,7 +262,7 @@ def grant_skill_builder_permissions(
         Granted 3 permissions to SkillBuilder
     """
     agent_id = f"{user_id},SkillBuilder"
-    user_base_path = f"/zone:{zone_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     # Grant access to skill-creator skill

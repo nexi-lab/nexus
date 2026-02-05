@@ -4421,7 +4421,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /zone:alice/user:alice/workspace/ws_personal_abc123
+            /zone/alice/user:alice/workspace/ws_personal_abc123
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -4491,7 +4491,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/zone:example/user:alice/workspace', ...]
+            ['/zone/example/user:alice/workspace', ...]
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -5527,7 +5527,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Share a skill with users, groups, or make public.
 
         Args:
-            skill_path: Path to the skill (e.g., /zone:acme/user:alice/skill/code-review/)
+            skill_path: Path to the skill (e.g., /zone/acme/user:alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make skill visible to everyone
                 - "zone" - Share with all users in current zone

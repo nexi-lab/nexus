@@ -684,32 +684,34 @@ class SyncService:
                 tenant_id = match.group(1)
 
         # Issue #1127: Delta sync - check if file has changed
+        # Optimization: Only fetch file info if we have a cached entry to compare
         file_info = None
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             try:
-                # Get current file info from backend
-                file_info_response = backend.get_file_info(backend_path, context=ctx.context)
-                if file_info_response.success and file_info_response.data:
-                    file_info = file_info_response.data
+                # First check if we have a cached entry (cheap DB lookup)
+                cached = self._change_log.get_change_log(
+                    virtual_path, backend.name, tenant_id or "default"
+                )
 
-                    # Check change log for cached state
-                    cached = self._change_log.get_change_log(
-                        virtual_path, backend.name, tenant_id or "default"
-                    )
+                if cached:
+                    # Only fetch file info from backend if we have something to compare
+                    file_info_response = backend.get_file_info(backend_path, context=ctx.context)
+                    if file_info_response.success and file_info_response.data:
+                        file_info = file_info_response.data
 
-                    if cached and self._file_unchanged(file_info, cached):
-                        # File hasn't changed - skip sync
-                        result.files_skipped += 1
-                        logger.info(
-                            f"[DELTA_SYNC] Skipping unchanged: {virtual_path} "
-                            f"(size={file_info.size}, version={file_info.backend_version})"
-                        )
-                        return
-                    elif cached:
-                        logger.info(
-                            f"[DELTA_SYNC] File changed: {virtual_path} "
-                            f"(old_version={cached.backend_version}, new_version={file_info.backend_version})"
-                        )
+                        if self._file_unchanged(file_info, cached):
+                            # File hasn't changed - skip sync
+                            result.files_skipped += 1
+                            logger.debug(
+                                f"[DELTA_SYNC] Skipping unchanged: {virtual_path} "
+                                f"(size={file_info.size}, version={file_info.backend_version})"
+                            )
+                            return
+                        else:
+                            logger.debug(
+                                f"[DELTA_SYNC] File changed: {virtual_path} "
+                                f"(old_version={cached.backend_version}, new_version={file_info.backend_version})"
+                            )
             except Exception as e:
                 # Delta check failed - proceed with full sync for this file
                 logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")

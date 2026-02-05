@@ -519,7 +519,7 @@ jobs:
           CREATE_USER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/admin_create_key \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_create_key\",\"params\":{\"user_id\":\"$TEST_USER\",\"name\":\"Test User Key\",\"is_admin\":false,\"tenant_id\":\"default\"}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin_create_key\",\"params\":{\"user_id\":\"$TEST_USER\",\"name\":\"Test User Key\",\"is_admin\":false,\"zone_id\":\"default\"}}" || echo "FAILED")
 
           if [ "$CREATE_USER_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to create user"
@@ -549,7 +549,7 @@ jobs:
           OWNER_RESPONSE=$(curl -s http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"/workspace\"],\"tenant_id\":\"default\"}}" 2>&1)
+            -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"/workspace\"],\"zone_id\":\"default\"}}" 2>&1)
 
           # Check for errors (it's okay if tuple already exists)
           ERROR_CODE=$(echo "$OWNER_RESPONSE" | python3 -c "import sys, json; data=json.load(sys.stdin); print(data.get('error', {}).get('code', ''))" 2>/dev/null || echo "")
@@ -604,7 +604,7 @@ jobs:
           OWNER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"zone_id\":\"default\"}}" || echo "FAILED")
 
           if [ "$OWNER_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to grant admin ownership"
@@ -641,7 +641,7 @@ jobs:
           GRANT_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $ADMIN_API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"tenant_id\":\"default\"}}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"$TEST_USER\"],\"relation\":\"direct_viewer\",\"object\":[\"file\",\"$ADMIN_FILE\"],\"zone_id\":\"default\"}}" || echo "FAILED")
 
           if [ "$GRANT_RESPONSE" = "FAILED" ]; then
             echo "❌ Failed to grant permission"
@@ -819,7 +819,7 @@ jobs:
           GRANT_OWNERSHIP_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/rebac_create \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$MOUNT_POINT\"],\"tenant_id\":\"default\"},\"id\":3.5}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"rebac_create\",\"params\":{\"subject\":[\"user\",\"admin\"],\"relation\":\"direct_owner\",\"object\":[\"file\",\"$MOUNT_POINT\"],\"zone_id\":\"default\"},\"id\":3.5}" || echo "FAILED")
 
           if [ "$GRANT_OWNERSHIP_RESPONSE" = "FAILED" ]; then
             echo "⚠️  Failed to grant ownership (may already exist, continuing...)"
@@ -1584,7 +1584,7 @@ jobs:
           CREATE_USER_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/admin_create_key \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d '{"jsonrpc":"2.0","id":4,"method":"admin_create_key","params":{"user_id":"test_skill_user","name":"Test Skill User","is_admin":false,"tenant_id":"default"}}' || echo "FAILED")
+            -d '{"jsonrpc":"2.0","id":4,"method":"admin_create_key","params":{"user_id":"test_skill_user","name":"Test Skill User","is_admin":false,"zone_id":"default"}}' || echo "FAILED")
 
           if [ "$CREATE_USER_RESPONSE" = "FAILED" ]; then
             echo "⚠️  Could not create test user (may not be critical)"

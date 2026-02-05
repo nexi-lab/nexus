@@ -23,14 +23,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-try:
-    from nexus.core._metadata_generated import FileMetadata, PaginatedResult
-except ImportError:
-    # Fallback when Rust-generated module is not available (CI, pure-Python installs)
-    # RaftMetadataStore requires the generated module at runtime, but the class
-    # should still be importable for type checking and conditional usage.
-    FileMetadata = None  # type: ignore[assignment,misc]
-    PaginatedResult = None  # type: ignore[assignment,misc]
+from nexus.core.metadata import FileMetadata, PaginatedResult
 
 logger = logging.getLogger(__name__)
 

@@ -388,29 +388,29 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # Use OperationContext for ReBAC/permission support
                     from nexus.core.permissions import OperationContext
 
-                    # P0-4: Grant tenant-scoped admin capabilities to admin users
+                    # P0-4: Grant zone-scoped admin capabilities to admin users
                     admin_capabilities = set()
                     if result.is_admin:
                         from nexus.core.permissions_enhanced import AdminCapability
 
-                        # Grant tenant-scoped admin capabilities for full tenant access
-                        # ReBAC enforces tenant isolation, so these capabilities are automatically
-                        # scoped to the admin's tenant (zone_id from context)
+                        # Grant zone-scoped admin capabilities for full zone access
+                        # ReBAC enforces zone isolation, so these capabilities are automatically
+                        # scoped to the admin's zone (zone_id from context)
                         #
-                        # Tenant admins can:
-                        # - Read/write/delete any file in their tenant (READ_ALL, WRITE_ALL, DELETE_ANY)
-                        # - Manage ReBAC permissions within their tenant (MANAGE_REBAC)
+                        # Zone admins can:
+                        # - Read/write/delete any file in their zone (READ_ALL, WRITE_ALL, DELETE_ANY)
+                        # - Manage ReBAC permissions within their zone (MANAGE_REBAC)
                         #
-                        # Tenant admins cannot:
+                        # Zone admins cannot:
                         # - Access system paths (/system/*) - these are system-wide infrastructure
-                        # - Manage other tenants (MANAGE_TENANTS) - system admin only
+                        # - Manage other zones (MANAGE_ZONES) - system admin only
                         admin_capabilities = {
-                            AdminCapability.READ_ALL,  # Read any file in tenant (tenant-scoped via ReBAC)
-                            AdminCapability.WRITE_ALL,  # Write any file in tenant (tenant-scoped via ReBAC)
-                            AdminCapability.DELETE_ANY,  # Delete any file in tenant (tenant-scoped via ReBAC)
-                            AdminCapability.MANAGE_REBAC,  # Manage ReBAC permissions in tenant
+                            AdminCapability.READ_ALL,  # Read any file in zone (zone-scoped via ReBAC)
+                            AdminCapability.WRITE_ALL,  # Write any file in zone (zone-scoped via ReBAC)
+                            AdminCapability.DELETE_ANY,  # Delete any file in zone (zone-scoped via ReBAC)
+                            AdminCapability.MANAGE_REBAC,  # Manage ReBAC permissions in zone
                             # Excluded: READ_SYSTEM, WRITE_SYSTEM, DELETE_SYSTEM (system paths are system-wide)
-                            # Excluded: MANAGE_TENANTS (managing other tenants is system admin only)
+                            # Excluded: MANAGE_ZONES (managing other zones is system admin only)
                         }
 
                     return OperationContext(
@@ -447,7 +447,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         """Get Memory API instance with authenticated context.
 
         Returns:
-            Memory API instance with user/agent/tenant from authentication
+            Memory API instance with user/agent/zone from authentication
         """
         context = self._get_operation_context()
 

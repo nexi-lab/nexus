@@ -60,7 +60,7 @@ async def get_auth_result(
     """Get authenticated user context.
 
     This dependency ensures the request is authenticated and returns
-    the auth result dict containing tenant_id, user_id, etc.
+    the auth result dict containing zone_id, user_id, etc.
     """
     # The actual require_auth is called via Depends
     # This is a passthrough for type hints
@@ -119,7 +119,7 @@ async def get_trajectory_manager(
     """Get TrajectoryManager with current user context.
 
     Creates a new TrajectoryManager instance configured for the
-    authenticated user/agent/tenant.
+    authenticated user/agent/zone.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
@@ -136,7 +136,7 @@ async def get_trajectory_manager(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
         context=context,
     )
 
@@ -162,7 +162,7 @@ async def get_playbook_manager(
     """Get PlaybookManager with current user context.
 
     Creates a new PlaybookManager instance configured for the
-    authenticated user/agent/tenant.
+    authenticated user/agent/zone.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
@@ -179,7 +179,7 @@ async def get_playbook_manager(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
         context=context,
     )
 
@@ -210,7 +210,7 @@ async def get_reflector(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
         context=context,
     )
 
@@ -221,7 +221,7 @@ async def get_reflector(
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
     )
 
 
@@ -231,7 +231,7 @@ async def get_curator(
     """Get Curator with current user context.
 
     Creates a new Curator instance configured for the
-    authenticated user/agent/tenant.
+    authenticated user/agent/zone.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
@@ -250,7 +250,7 @@ async def get_curator(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
         context=context,
     )
 
@@ -286,7 +286,7 @@ async def get_consolidation_engine(
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
     )
 
 
@@ -296,7 +296,7 @@ async def get_hierarchy_manager(
     """Get HierarchicalMemoryManager with current user context.
 
     Creates a new HierarchicalMemoryManager instance configured for
-    the authenticated tenant.
+    the authenticated zone.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
@@ -317,11 +317,11 @@ async def get_hierarchy_manager(
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.tenant_id,
+        tenant_id=context.zone_id,
     )
 
     return HierarchicalMemoryManager(
         consolidation_engine=consolidation_engine,
         session=session,
-        tenant_id=context.tenant_id or "default",
+        tenant_id=context.zone_id or "default",
     )

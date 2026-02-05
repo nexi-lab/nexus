@@ -88,7 +88,9 @@ pub mod storage;
 ///
 /// This module provides distributed consensus using tikv/raft-rs for
 /// linearizable operations on metadata and locks.
-pub mod raft;
+// Raft consensus module - requires source files from the raft/ directory
+// Uncomment when raft/ module source files are committed (Issue #1159)
+// pub mod raft;
 
 /// gRPC transport layer (requires `grpc` feature).
 ///
@@ -113,11 +115,12 @@ pub mod transport;
 /// [dependencies]
 /// nexus_raft = { version = "0.1", features = ["python"] }
 /// ```
-#[cfg(feature = "python")]
-mod pyo3_bindings;
-
-#[cfg(feature = "python")]
-pub use pyo3_bindings::*;
+// PyO3 bindings - requires pyo3_bindings.rs source file
+// Uncomment when pyo3_bindings.rs is committed (Issue #1159)
+// #[cfg(feature = "python")]
+// mod pyo3_bindings;
+// #[cfg(feature = "python")]
+// pub use pyo3_bindings::*;
 
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
@@ -147,15 +150,15 @@ pub mod transport {
 pub mod prelude {
     pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError, TreeBatch};
 
-    // Raft state machine types (always available)
-    pub use crate::raft::{
-        Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
-        StateMachine, WitnessStateMachine,
-    };
+    // Raft state machine types - uncomment when raft module is committed (Issue #1159)
+    // pub use crate::raft::{
+    //     Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
+    //     StateMachine, WitnessStateMachine,
+    // };
 
     // Raft consensus types (requires consensus feature)
-    #[cfg(feature = "consensus")]
-    pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
+    // #[cfg(feature = "consensus")]
+    // pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
 
     #[cfg(feature = "grpc")]
     pub use crate::transport::{

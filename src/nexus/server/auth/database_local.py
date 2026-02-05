@@ -223,8 +223,8 @@ class DatabaseLocalAuth(LocalAuth):
             metadata: Optional additional metadata (JSON)
 
         Note:
-            Tenant membership is managed via ReBAC groups only.
-            Use add_user_to_tenant() after registration to assign tenant membership.
+            Zone membership is managed via ReBAC groups only.
+            Use add_user_to_zone() after registration to assign zone membership.
 
         Returns:
             Created UserModel

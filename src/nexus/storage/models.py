@@ -1621,10 +1621,10 @@ class ReBACVersionSequenceModel(Base):
 
 
 class FileSystemVersionSequenceModel(Base):
-    """Per-tenant version sequence for filesystem consistency tokens (Issue #1187).
+    """Per-zone version sequence for filesystem consistency tokens (Issue #1187).
 
     Stores monotonic revision counters used to track filesystem changes
-    for each tenant. Used for Zookie consistency tokens to enable
+    for each zone. Used for Zookie consistency tokens to enable
     read-after-write consistency guarantees.
 
     See: nexus.core.zookie for the Zookie class implementation.
@@ -1632,13 +1632,13 @@ class FileSystemVersionSequenceModel(Base):
 
     __tablename__ = "filesystem_version_sequences"
 
-    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     current_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    # Note: No explicit index needed - tenant_id is the primary key
+    # Note: No explicit index needed - zone_id is the primary key
     __table_args__: tuple = ()
 
 
@@ -2040,17 +2040,17 @@ class BackendChangeLogModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    # Optional: tenant isolation for multi-tenant deployments
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Optional: zone isolation for multi-zone deployments
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Indexes and constraints
     __table_args__ = (
-        # Unique constraint: one entry per path per backend per tenant
-        UniqueConstraint("path", "backend_name", "tenant_id", name="uq_backend_change_log"),
+        # Unique constraint: one entry per path per backend per zone
+        UniqueConstraint("path", "backend_name", "zone_id", name="uq_backend_change_log"),
         # Lookup patterns
         Index("idx_bcl_path_backend", "path", "backend_name"),
         Index("idx_bcl_synced_at", "backend_name", "synced_at"),
-        Index("idx_bcl_tenant", "tenant_id"),
+        Index("idx_bcl_zone", "zone_id"),
         # BRIN index for time-series queries (append-only pattern)
         Index(
             "idx_bcl_synced_brin",
@@ -3799,7 +3799,7 @@ class AgentWalletMeta(Base):
     __tablename__ = "agent_wallet_meta"
 
     agent_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     tigerbeetle_account_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     x402_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     x402_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -3825,7 +3825,7 @@ class AgentWalletMeta(Base):
     )
 
     __table_args__ = (
-        Index("idx_wallet_meta_tenant", "tenant_id"),
+        Index("idx_wallet_meta_zone", "zone_id"),
         Index("idx_wallet_meta_tb_id", "tigerbeetle_account_id"),
         Index("idx_wallet_meta_daily_reset", "daily_reset_at"),
         Index("idx_wallet_meta_monthly_reset", "monthly_reset_at"),
@@ -3843,7 +3843,7 @@ class PaymentTransactionMeta(Base):
         default=_generate_uuid,
         server_default=_get_uuid_server_default(),
     )
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     tigerbeetle_transfer_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     from_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     to_agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -3862,7 +3862,7 @@ class PaymentTransactionMeta(Base):
     __table_args__ = (
         Index("idx_tx_meta_from_time", "from_agent_id", "created_at"),
         Index("idx_tx_meta_to_time", "to_agent_id", "created_at"),
-        Index("idx_tx_meta_tenant_time", "tenant_id", "created_at"),
+        Index("idx_tx_meta_zone_time", "zone_id", "created_at"),
         Index("idx_tx_meta_task", "task_id"),
         Index("idx_tx_meta_x402_hash", "x402_tx_hash"),
     )
@@ -3879,7 +3879,7 @@ class CreditReservationMeta(Base):
         default=_generate_uuid,
         server_default=_get_uuid_server_default(),
     )
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     tigerbeetle_transfer_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -3896,7 +3896,7 @@ class CreditReservationMeta(Base):
         Index("idx_reservation_agent_status", "agent_id", "status"),
         Index("idx_reservation_expires", "expires_at"),
         Index("idx_reservation_task", "task_id"),
-        Index("idx_reservation_tenant", "tenant_id", "status"),
+        Index("idx_reservation_zone", "zone_id", "status"),
     )
 
 
@@ -3911,7 +3911,7 @@ class UsageEvent(Base):
         default=_generate_uuid,
         server_default=_get_uuid_server_default(),
     )
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     agent_id: Mapped[str] = mapped_column(String(64), nullable=False)
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -3922,7 +3922,7 @@ class UsageEvent(Base):
     )
 
     __table_args__ = (
-        Index("idx_usage_tenant_type_time", "tenant_id", "event_type", "created_at"),
+        Index("idx_usage_zone_type_time", "zone_id", "event_type", "created_at"),
         Index("idx_usage_agent_time", "agent_id", "created_at"),
         Index("idx_usage_resource", "resource"),
     )

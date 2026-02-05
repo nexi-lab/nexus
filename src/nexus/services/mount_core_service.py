@@ -538,7 +538,7 @@ class MountCoreService:
             if context and hasattr(context, "user_id") and context.user_id:
                 skill_base_path = f"/skills/users/{context.user_id}/"
             elif context and hasattr(context, "zone_id") and context.zone_id:
-                skill_base_path = f"/skills/tenants/{context.zone_id}/"
+                skill_base_path = f"/skills/zones/{context.zone_id}/"
             else:
                 skill_base_path = "/skills/system/"
 

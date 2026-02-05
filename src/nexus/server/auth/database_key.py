@@ -131,7 +131,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
             logger.debug(
                 f"Authenticated subject: ({subject_type}, {subject_id}) "
-                f"[key: {api_key.key_id}, tenant: {api_key.zone_id}]"
+                f"[key: {api_key.key_id}, zone: {api_key.zone_id}]"
             )
 
             return AuthResult(
@@ -224,7 +224,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             subject_type: Type of subject ("user" or "agent") - v0.5.0 NEW
             subject_id: Custom subject ID (for agents) - v0.5.0 NEW
                        If None, defaults to user_id
-            zone_id: Optional tenant identifier
+            zone_id: Optional zone identifier
             is_admin: Whether this key has admin privileges
             expires_at: Optional expiry datetime (UTC)
             inherit_permissions: Whether agent inherits owner's permissions - v0.5.1 NEW
@@ -272,14 +272,14 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 f"subject_type must be one of {valid_subject_types}, got {subject_type}"
             )
 
-        # P0-5: Generate key with prefix, tenant, and high entropy (32+ bytes)
-        # Format: sk-<tenant>_<subject>_<id>_<random-hex>
-        tenant_prefix = f"{zone_id[:8]}_" if zone_id else ""
+        # P0-5: Generate key with prefix, zone, and high entropy (32+ bytes)
+        # Format: sk-<zone>_<subject>_<id>_<random-hex>
+        zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
         subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
         random_suffix = secrets.token_hex(16)  # 32 hex chars = 16 bytes
         key_id_part = secrets.token_hex(4)  # 8 hex chars for uniqueness
 
-        raw_key = f"{API_KEY_PREFIX}{tenant_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
+        raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
         key_hash = cls._hash_key(raw_key)
 
         # Create database record

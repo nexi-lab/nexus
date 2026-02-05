@@ -7,7 +7,7 @@ Key features:
 - Encrypted token storage in database
 - Automatic token refresh on expiry
 - Multi-provider support (Google, Microsoft, etc.)
-- Tenant isolation
+- Zone isolation
 - Audit logging
 - Token revocation
 
@@ -63,7 +63,7 @@ class TokenManager:
 
     Security features:
     - Encrypted token storage (Fernet)
-    - Tenant isolation
+    - Zone isolation
     - Audit logging
     - Automatic expiry enforcement
 
@@ -418,7 +418,7 @@ class TokenManager:
             List of credential metadata dicts
 
         Example:
-            >>> # List all credentials for a tenant
+            >>> # List all credentials for a zone
             >>> credentials = await manager.list_credentials(zone_id="org_acme")
             >>> # List credentials for a specific user (by user_id, preferred)
             >>> credentials = await manager.list_credentials(
@@ -519,7 +519,7 @@ class TokenManager:
         # TODO: Implement proper audit logging to database
         # For now, just log to application logger
         logger.info(
-            f"AUDIT: {operation} | provider={provider} | user={user_email} | tenant={zone_id}"
+            f"AUDIT: {operation} | provider={provider} | user={user_email} | zone={zone_id}"
         )
 
     def close(self) -> None:

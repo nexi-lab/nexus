@@ -223,15 +223,15 @@ class DeferredPermissionBuffer:
         hierarchy_count = 0
         grants_count = 0
 
-        # Batch hierarchy tuples (group by tenant)
+        # Batch hierarchy tuples (group by zone)
         if hierarchy_batch and self._hierarchy_manager:
             try:
                 # Group by zone_id
-                by_tenant: dict[str, list[str]] = {}
+                by_zone: dict[str, list[str]] = {}
                 for path, zone_id in hierarchy_batch:
-                    by_tenant.setdefault(zone_id, []).append(path)
+                    by_zone.setdefault(zone_id, []).append(path)
 
-                for zone_id, paths in by_tenant.items():
+                for zone_id, paths in by_zone.items():
                     self._hierarchy_manager.ensure_parent_tuples_batch(
                         paths,
                         zone_id=zone_id,

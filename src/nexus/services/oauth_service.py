@@ -257,7 +257,7 @@ class OAuthService:
             state: CSRF state token from authorization request (used to retrieve PKCE data)
             redirect_uri: OAuth redirect URI (must match authorization request)
             code_verifier: PKCE code verifier (required for X/Twitter and other PKCE providers)
-            context: Operation context for tenant isolation
+            context: Operation context for zone isolation
 
         Returns:
             Dictionary containing:
@@ -298,7 +298,7 @@ class OAuthService:
         Note:
             - For PKCE providers, code_verifier from oauth_get_auth_url is required
             - If user_email not provided, service attempts to fetch it from provider
-            - Credentials are stored per-tenant for isolation
+            - Credentials are stored per-zone for isolation
         """
         from nexus.core.context_utils import get_zone_id
 
@@ -397,12 +397,12 @@ class OAuthService:
 
         Returns credentials accessible to the current user. Non-admin users
         can only see their own credentials. Admins can see all credentials
-        in their tenant.
+        in their zone.
 
         Args:
             provider: Optional provider filter (e.g., "google")
             include_revoked: Include revoked credentials (default: False)
-            context: Operation context for user/tenant identification
+            context: Operation context for user/zone identification
 
         Returns:
             List of credential dictionaries containing:
@@ -435,8 +435,8 @@ class OAuthService:
 
         Note:
             - User isolation enforced automatically via context
-            - Admins see all credentials in their tenant
-            - Credentials from other tenants are never visible
+            - Admins see all credentials in their zone
+            - Credentials from other zones are never visible
         """
         from nexus.core.context_utils import get_zone_id
 
@@ -522,7 +522,7 @@ class OAuthService:
 
         Note:
             - Users can only revoke their own credentials
-            - Admins can revoke any credential in their tenant
+            - Admins can revoke any credential in their zone
             - Revoked credentials cannot be unrevoked (create new credential instead)
         """
         from nexus.core.context_utils import get_zone_id
@@ -1404,7 +1404,7 @@ class OAuthService:
 # 1. [ ] Extract oauth_list_providers() - Provider discovery
 # 2. [ ] Extract oauth_get_auth_url() with PKCE support
 # 3. [ ] Extract oauth_exchange_code() - Code to token exchange
-# 4. [ ] Extract oauth_list_credentials() - Credential listing with tenant isolation
+# 4. [ ] Extract oauth_list_credentials() - Credential listing with zone isolation
 # 5. [ ] Extract oauth_revoke_credential() - Credential revocation with permissions
 # 6. [ ] Extract oauth_test_credential() - Credential validation
 # 7. [ ] Extract mcp_connect() - Klavis MCP integration

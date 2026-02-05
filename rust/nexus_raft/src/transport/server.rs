@@ -3,23 +3,22 @@
 //! Provides a tonic-based server to handle incoming Raft messages from other nodes.
 
 use super::proto::nexus::raft::{
+    raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
     raft_query_response::Result as ProtoQueryResultVariant,
-    raft_service_server::{RaftService, RaftServiceServer},
-    raft_client_service_server::{RaftClientService, RaftClientServiceServer},
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotResponse, RaftCommand,
-    SnapshotChunk, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
-    ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    GetClusterInfoRequest, GetClusterInfoResponse,
-    RaftResponse, RaftQuery, RaftQueryResponse, LockResult, LockInfoResult,
-    GetMetadataResult, ListMetadataResult,
     raft_response::Result as ProtoResponseResultVariant,
+    raft_service_server::{RaftService, RaftServiceServer},
+    AppendEntriesRequest, AppendEntriesResponse, GetClusterInfoRequest, GetClusterInfoResponse,
+    GetMetadataResult, InstallSnapshotResponse, ListMetadataResult, LockInfoResult, LockResult,
+    ProposeRequest, ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQuery,
+    RaftQueryResponse, RaftResponse, SnapshotChunk, TransferLeaderRequest, TransferLeaderResponse,
+    VoteRequest, VoteResponse,
 };
 use super::{Result, TransportError};
 use crate::raft::{Command, FullStateMachine, StateMachine, WitnessStateMachine};
-use prost::Message;
 use crate::storage::SledStore;
+use prost::Message;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -73,8 +72,9 @@ impl RaftServerState {
     pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
         let store = SledStore::open(db_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-        let state_machine = FullStateMachine::new(&store)
-            .map_err(|e| TransportError::Connection(format!("Failed to create state machine: {}", e)))?;
+        let state_machine = FullStateMachine::new(&store).map_err(|e| {
+            TransportError::Connection(format!("Failed to create state machine: {}", e))
+        })?;
 
         Ok(Self {
             current_term: 0,
@@ -151,7 +151,10 @@ impl RaftServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!("Starting Raft gRPC server on {} (with shutdown signal)", addr);
+        tracing::info!(
+            "Starting Raft gRPC server on {} (with shutdown signal)",
+            addr
+        );
 
         let raft_service = RaftServiceImpl {
             state: self.state.clone(),
@@ -228,7 +231,10 @@ impl RaftService for RaftServiceImpl {
         let req = request.into_inner();
         tracing::debug!(
             "Received vote request: term={}, candidate_id={}, last_log_index={}, last_log_term={}",
-            req.term, req.candidate_id, req.last_log_index, req.last_log_term
+            req.term,
+            req.candidate_id,
+            req.last_log_index,
+            req.last_log_term
         );
 
         let mut state = self.state.write().await;
@@ -250,7 +256,9 @@ impl RaftService for RaftServiceImpl {
         } else if req.last_log_term < state.last_log_term {
             // Candidate's log is not up to date (term)
             false
-        } else if req.last_log_term == state.last_log_term && req.last_log_index < state.last_log_index {
+        } else if req.last_log_term == state.last_log_term
+            && req.last_log_index < state.last_log_index
+        {
             // Candidate's log is not up to date (index)
             false
         } else {
@@ -261,7 +269,9 @@ impl RaftService for RaftServiceImpl {
 
         tracing::debug!(
             "Vote response: term={}, granted={} (to candidate {})",
-            state.current_term, vote_granted, req.candidate_id
+            state.current_term,
+            vote_granted,
+            req.candidate_id
         );
 
         Ok(Response::new(VoteResponse {
@@ -278,7 +288,10 @@ impl RaftService for RaftServiceImpl {
         let req = request.into_inner();
         tracing::debug!(
             "Received append entries: term={}, leader_id={}, entries={}, leader_commit={}",
-            req.term, req.leader_id, req.entries.len(), req.leader_commit
+            req.term,
+            req.leader_id,
+            req.entries.len(),
+            req.leader_commit
         );
 
         let mut state = self.state.write().await;
@@ -336,7 +349,8 @@ impl RaftService for RaftServiceImpl {
 
         tracing::debug!(
             "Append entries response: term={}, success=true, match_index={}",
-            state.current_term, match_index
+            state.current_term,
+            match_index
         );
 
         Ok(Response::new(AppendEntriesResponse {
@@ -514,7 +528,10 @@ impl RaftClientService for RaftClientServiceImpl {
         request: Request<QueryRequest>,
     ) -> std::result::Result<Response<QueryResponse>, Status> {
         let req = request.into_inner();
-        tracing::debug!("Received query request, read_from_leader={}", req.read_from_leader);
+        tracing::debug!(
+            "Received query request, read_from_leader={}",
+            req.read_from_leader
+        );
 
         let state = self.state.read().await;
 
@@ -547,21 +564,22 @@ impl RaftClientService for RaftClientServiceImpl {
                 match state.state_machine.get_metadata(&gm.path) {
                     Ok(Some(data)) => {
                         // Decode the stored protobuf metadata
-                        let metadata = super::proto::nexus::core::FileMetadata::decode(data.as_slice()).ok();
+                        let metadata =
+                            super::proto::nexus::core::FileMetadata::decode(data.as_slice()).ok();
                         RaftQueryResponse {
                             success: true,
                             error: None,
-                            result: Some(ProtoQueryResultVariant::GetMetadataResult(GetMetadataResult {
-                                metadata,
-                            })),
+                            result: Some(ProtoQueryResultVariant::GetMetadataResult(
+                                GetMetadataResult { metadata },
+                            )),
                         }
                     }
                     Ok(None) => RaftQueryResponse {
                         success: true,
                         error: None,
-                        result: Some(ProtoQueryResultVariant::GetMetadataResult(GetMetadataResult {
-                            metadata: None,
-                        })),
+                        result: Some(ProtoQueryResultVariant::GetMetadataResult(
+                            GetMetadataResult { metadata: None },
+                        )),
                     },
                     Err(e) => RaftQueryResponse {
                         success: false,
@@ -576,18 +594,25 @@ impl RaftClientService for RaftClientServiceImpl {
                         let proto_items: Vec<_> = items
                             .into_iter()
                             .filter_map(|(_, data)| {
-                                super::proto::nexus::core::FileMetadata::decode(data.as_slice()).ok()
+                                super::proto::nexus::core::FileMetadata::decode(data.as_slice())
+                                    .ok()
                             })
-                            .take(if lm.limit > 0 { lm.limit as usize } else { usize::MAX })
+                            .take(if lm.limit > 0 {
+                                lm.limit as usize
+                            } else {
+                                usize::MAX
+                            })
                             .collect();
                         RaftQueryResponse {
                             success: true,
                             error: None,
-                            result: Some(ProtoQueryResultVariant::ListMetadataResult(ListMetadataResult {
-                                items: proto_items,
-                                next_cursor: None,
-                                has_more: false,
-                            })),
+                            result: Some(ProtoQueryResultVariant::ListMetadataResult(
+                                ListMetadataResult {
+                                    items: proto_items,
+                                    next_cursor: None,
+                                    has_more: false,
+                                },
+                            )),
                         }
                     }
                     Err(e) => RaftQueryResponse {
@@ -607,7 +632,9 @@ impl RaftClientService for RaftClientServiceImpl {
                             result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
                                 exists: true,
                                 holder_id: first_holder.map(|h| h.holder_info.clone()),
-                                expires_at_ms: first_holder.map(|h| (h.expires_at * 1000) as i64).unwrap_or(0),
+                                expires_at_ms: first_holder
+                                    .map(|h| (h.expires_at * 1000) as i64)
+                                    .unwrap_or(0),
                                 max_holders: lock_info.max_holders as i32,
                                 current_holders: lock_info.holders.len() as i32,
                             })),
@@ -687,7 +714,9 @@ fn command_result_to_proto(result: &crate::raft::CommandResult) -> RaftResponse 
                 result: Some(ProtoResponseResultVariant::LockResult(LockResult {
                     acquired: lock_state.acquired,
                     current_holder: first_holder.map(|h| h.holder_info.clone()),
-                    expires_at_ms: first_holder.map(|h| (h.expires_at * 1000) as i64).unwrap_or(0),
+                    expires_at_ms: first_holder
+                        .map(|h| (h.expires_at * 1000) as i64)
+                        .unwrap_or(0),
                 })),
             }
         }
@@ -726,8 +755,9 @@ impl WitnessServerState {
     pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
         let store = SledStore::open(db_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-        let state_machine = WitnessStateMachine::new(&store)
-            .map_err(|e| TransportError::Connection(format!("Failed to create witness state machine: {}", e)))?;
+        let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
+            TransportError::Connection(format!("Failed to create witness state machine: {}", e))
+        })?;
 
         Ok(Self {
             current_term: 0,
@@ -794,7 +824,10 @@ impl RaftWitnessServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!("Starting Raft Witness gRPC server on {} (with shutdown signal)", addr);
+        tracing::info!(
+            "Starting Raft Witness gRPC server on {} (with shutdown signal)",
+            addr
+        );
 
         let service = WitnessServiceImpl {
             state: self.state.clone(),
@@ -825,7 +858,8 @@ impl RaftService for WitnessServiceImpl {
         let req = request.into_inner();
         tracing::debug!(
             "[Witness] Received vote request: term={}, candidate_id={}",
-            req.term, req.candidate_id
+            req.term,
+            req.candidate_id
         );
 
         let mut state = self.state.write().await;
@@ -843,7 +877,9 @@ impl RaftService for WitnessServiceImpl {
             false
         } else if req.last_log_term < state.last_log_term {
             false
-        } else if req.last_log_term == state.last_log_term && req.last_log_index < state.last_log_index {
+        } else if req.last_log_term == state.last_log_term
+            && req.last_log_index < state.last_log_index
+        {
             false
         } else {
             state.voted_for = Some(req.candidate_id);
@@ -852,7 +888,8 @@ impl RaftService for WitnessServiceImpl {
 
         tracing::debug!(
             "[Witness] Vote response: term={}, granted={}",
-            state.current_term, vote_granted
+            state.current_term,
+            vote_granted
         );
 
         Ok(Response::new(VoteResponse {
@@ -869,7 +906,8 @@ impl RaftService for WitnessServiceImpl {
         let req = request.into_inner();
         tracing::debug!(
             "[Witness] Received append entries: term={}, entries={}",
-            req.term, req.entries.len()
+            req.term,
+            req.entries.len()
         );
 
         let mut state = self.state.write().await;
@@ -898,18 +936,24 @@ impl RaftService for WitnessServiceImpl {
 
             if is_valid {
                 // Store the log entry (witness keeps log for voting validation)
-                state.state_machine.store_log_entry(entry.index, &entry.data);
+                state
+                    .state_machine
+                    .store_log_entry(entry.index, &entry.data);
                 match_index = entry.index;
                 state.last_log_index = entry.index;
                 state.last_log_term = entry.term;
             } else {
-                tracing::warn!("[Witness] Failed to deserialize command at index {}", entry.index);
+                tracing::warn!(
+                    "[Witness] Failed to deserialize command at index {}",
+                    entry.index
+                );
             }
         }
 
         tracing::debug!(
             "[Witness] Append entries response: term={}, success=true, match_index={}",
-            state.current_term, match_index
+            state.current_term,
+            match_index
         );
 
         Ok(Response::new(AppendEntriesResponse {

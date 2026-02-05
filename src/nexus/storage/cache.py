@@ -13,8 +13,8 @@ from typing import Any, cast
 
 from cachetools import LRUCache
 
-from nexus.core._compact_generated import CompactFileMetadata
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.compact_metadata import CompactFileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.core.adaptive_ttl import AdaptiveTTLMixin
 
 
@@ -445,9 +445,9 @@ class MetadataCache(AdaptiveTTLMixin):
 
             # Add interning pool stats when using compact mode
             if self._use_compact:
-                from nexus.core._compact_generated import get_intern_pool_stats
+                from nexus.core.compact_metadata import get_pool_stats
 
-                stats["intern_pools"] = get_intern_pool_stats()
+                stats["intern_pools"] = get_pool_stats()
 
             # Add adaptive TTL stats (Issue #715)
             stats["adaptive_ttl"] = self.get_adaptive_ttl_stats()

@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nexus.io/schemas/manifest-v1.json",
   "title": "Nexus Export Bundle Manifest",
-  "description": "JSON Schema for .nexus export bundle manifest.json file. Defines the structure for tenant data portability bundles.",
+  "description": "JSON Schema for .nexus export bundle manifest.json file. Defines the structure for zone data portability bundles.",
   "type": "object",
   "required": [
     "format_version",
     "bundle_id",
-    "source_tenant_id",
+    "source_zone_id",
     "export_timestamp",
     "statistics",
     "options",
@@ -41,11 +41,11 @@
       "description": "URL or identifier of the source Nexus instance",
       "examples": ["https://nexus.company.com", "production-cluster-1"]
     },
-    "source_tenant_id": {
+    "source_zone_id": {
       "type": "string",
-      "description": "Original tenant ID from the source instance",
+      "description": "Original zone ID from the source instance",
       "minLength": 1,
-      "examples": ["company-a", "tenant-123"]
+      "examples": ["company-a", "zone-123"]
     },
     "export_timestamp": {
       "type": "string",
@@ -227,7 +227,7 @@
       "nexus_version": "0.8.0",
       "bundle_id": "550e8400-e29b-41d4-a716-446655440000",
       "source_instance": "https://nexus.company.com",
-      "source_tenant_id": "company-a",
+      "source_zone_id": "company-a",
       "export_timestamp": "2025-01-31T14:30:00Z",
       "statistics": {
         "file_count": 1500,

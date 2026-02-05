@@ -109,7 +109,7 @@ class AsyncRemoteNexusFS:
         self.timeout = timeout
         self.connect_timeout = connect_timeout
 
-        # Tenant/agent identity (populated from auth info)
+        # Zone/agent identity (populated from auth info)
         self._zone_id: str | None = None
         self._agent_id: str | None = None
 
@@ -169,7 +169,7 @@ class AsyncRemoteNexusFS:
             self._negative_bloom = None
 
     def _negative_cache_key(self, path: str) -> str:
-        """Generate cache key with tenant isolation."""
+        """Generate cache key with zone isolation."""
         return f"{self._zone_id or 'default'}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
@@ -266,7 +266,7 @@ class AsyncRemoteNexusFS:
                         self._agent_id = None
                     logger.info(
                         f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(tenant: {self._zone_id})"
+                        f"(zone: {self._zone_id})"
                     )
                 else:
                     logger.debug("Not authenticated (anonymous access)")
@@ -1768,7 +1768,7 @@ class AsyncRemoteNexusFS:
         return result  # type: ignore[no-any-return]
 
     # =========================================================================
-    # Cross-Tenant Sharing (Async)
+    # Cross-Zone Sharing (Async)
     # =========================================================================
 
     async def share_with_user(
@@ -1780,17 +1780,17 @@ class AsyncRemoteNexusFS:
         user_zone_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> str:
-        """Share a resource with a specific user (same or different tenant) - async.
+        """Share a resource with a specific user (same or different zone) - async.
 
-        This enables cross-tenant sharing - users from different organizations
+        This enables cross-zone sharing - users from different organizations
         can be granted access to specific resources.
 
         Args:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             user_id: User to share with (e.g., "bob@partner-company.com")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            zone_id: Resource owner's zone ID (defaults to current tenant)
-            user_zone_id: Recipient user's zone ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current zone)
+            user_zone_id: Recipient user's zone ID (for cross-zone shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
@@ -1800,7 +1800,7 @@ class AsyncRemoteNexusFS:
             >>> share_id = await nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="bob@partner.com",
-            ...     user_zone_id="partner-tenant",
+            ...     user_zone_id="partner-zone",
             ...     relation="viewer"
             ... )
         """
@@ -1852,11 +1852,11 @@ class AsyncRemoteNexusFS:
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[dict[str, Any]]:
-        """List shares created by the current tenant (resources shared with others) - async.
+        """List shares created by the current zone (resources shared with others) - async.
 
         Args:
             resource: Filter by specific resource (optional)
-            zone_id: Zone ID to list shares for (defaults to current tenant)
+            zone_id: Zone ID to list shares for (defaults to current zone)
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -1882,7 +1882,7 @@ class AsyncRemoteNexusFS:
     ) -> builtins.list[dict[str, Any]]:
         """List shares received by a user (resources shared with me) - async.
 
-        This includes cross-tenant shares from other organizations.
+        This includes cross-zone shares from other organizations.
 
         Args:
             user_id: User ID to list incoming shares for
@@ -2392,7 +2392,7 @@ class AsyncRemoteNexusFS:
         """List MCP server mounts.
 
         Args:
-            tier: Filter by tier (user/tenant/system)
+            tier: Filter by tier (user/zone/system)
             include_unmounted: Include unmounted configurations (default: True)
 
         Returns:
@@ -3220,7 +3220,7 @@ class AsyncACE:
         Args:
             name: Playbook name
             description: Optional description
-            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            scope: Scope level ('agent', 'user', 'zone', 'global')
 
         Returns:
             Dict with playbook_id

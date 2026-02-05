@@ -103,7 +103,7 @@ class LocalAuth(AuthProvider):
             password: Plain-text password (will be hashed)
             subject_type: Type of subject ("user", "agent", "service", "session")
             subject_id: Unique identifier (defaults to email prefix)
-            zone_id: Optional tenant/organization ID
+            zone_id: Optional zone/organization ID
             is_admin: Whether user has admin privileges
             name: Display name (defaults to email prefix)
             metadata: Optional additional metadata

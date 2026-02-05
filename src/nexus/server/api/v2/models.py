@@ -18,7 +18,7 @@ class MemoryStoreRequest(BaseModel):
     """Request model for POST /api/v2/memories."""
 
     content: str | dict[str, Any] = Field(..., description="Memory content (text or JSON)")
-    scope: Literal["agent", "user", "tenant", "global", "session"] = Field(
+    scope: Literal["agent", "user", "zone", "global", "session"] = Field(
         "user", description="Memory scope"
     )
     memory_type: str | None = Field(
@@ -255,7 +255,7 @@ class PlaybookCreateRequest(BaseModel):
 
     name: str = Field(..., description="Playbook name")
     description: str | None = Field(None, description="Playbook description")
-    scope: Literal["agent", "user", "tenant", "global"] = Field(
+    scope: Literal["agent", "user", "zone", "global"] = Field(
         "agent", description="Playbook scope"
     )
     visibility: Literal["private", "shared", "public"] = Field(

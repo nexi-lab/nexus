@@ -1629,14 +1629,14 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import auth routes: {e}. OAuth endpoints will not be available.")
 
-    # Tenant management routes
+    # Zone management routes
     try:
-        from nexus.server.auth.tenant_routes import router as tenant_router
+        from nexus.server.auth.tenant_routes import router as zone_router
 
-        app.include_router(tenant_router)
-        logger.info("Tenant management routes registered")
+        app.include_router(zone_router)
+        logger.info("Zone management routes registered")
     except ImportError as e:
-        logger.warning(f"Failed to import tenant routes: {e}. Tenant management unavailable.")
+        logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
     # API v2 routes - Memory & ACE endpoints (Issue #1193)
     try:
@@ -3011,7 +3011,7 @@ def _register_routes(app: FastAPI) -> None:
         pattern: str = Query("*", description="Path pattern filter (glob-style)"),
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> LockListResponse:
-        """List active locks for the current tenant.
+        """List active locks for the current zone.
 
         Uses Redis SCAN for efficient iteration (non-blocking).
 
@@ -3020,12 +3020,12 @@ def _register_routes(app: FastAPI) -> None:
         - Pagination via limit parameter
         """
         lock_manager = _get_lock_manager()
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         # Use SCAN to find locks (non-blocking)
         redis_client = lock_manager._redis.client
-        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{tenant_id}:"
-        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{tenant_id}:"
+        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{zone_id}:"
+        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{zone_id}:"
 
         locks: list[dict[str, Any]] = []
 
@@ -3040,7 +3040,7 @@ def _register_routes(app: FastAPI) -> None:
                     break
                 key_str = key.decode() if isinstance(key, bytes) else key
                 path = key_str[len(lock_prefix) :]
-                lock_info = await lock_manager.get_lock_info(tenant_id, path)
+                lock_info = await lock_manager.get_lock_info(zone_id, path)
                 if lock_info:
                     lock_info["mode"] = "mutex"
                     locks.append(lock_info)
@@ -3066,7 +3066,7 @@ def _register_routes(app: FastAPI) -> None:
                             "path": path,
                             "mode": "semaphore",
                             "holders": len(members),
-                            "tenant_id": tenant_id,
+                            "zone_id": zone_id,
                         }
                     )
             if cursor == 0:
@@ -3086,24 +3086,24 @@ def _register_routes(app: FastAPI) -> None:
         - Pipeline fetches existence + TTL in one round-trip
         """
         lock_manager = _get_lock_manager()
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         # Normalize path to ensure leading slash (URL path captures without leading /)
         if not path.startswith("/"):
             path = "/" + path
 
         # Check mutex lock first (most common)
-        lock_info = await lock_manager.get_lock_info(tenant_id, path)
+        lock_info = await lock_manager.get_lock_info(zone_id, path)
         if lock_info:
             lock_info["mode"] = "mutex"
             return LockStatusResponse(path=path, locked=True, lock_info=lock_info)
 
         # Check semaphore
-        sem_key = lock_manager._semaphore_key(tenant_id, path)
+        sem_key = lock_manager._semaphore_key(zone_id, path)
         members = await lock_manager._redis.client.zcard(sem_key)
         if members > 0:
             # Get semaphore details
-            config_key = lock_manager._semaphore_config_key(tenant_id, path)
+            config_key = lock_manager._semaphore_config_key(zone_id, path)
             max_holders = await lock_manager._redis.client.get(config_key)
             max_holders_int = (
                 int(max_holders.decode() if isinstance(max_holders, bytes) else max_holders)
@@ -3118,7 +3118,7 @@ def _register_routes(app: FastAPI) -> None:
                     "holders": members,
                     "max_holders": max_holders_int,
                     "path": path,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                 },
             )
 
@@ -3141,7 +3141,7 @@ def _register_routes(app: FastAPI) -> None:
         - Atomic check-then-delete
         """
         lock_manager = _get_lock_manager()
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         # Normalize path to ensure leading slash (URL path captures without leading /)
         if not path.startswith("/"):
@@ -3154,14 +3154,14 @@ def _register_routes(app: FastAPI) -> None:
                     status_code=403, detail="Force release requires admin privileges"
                 )
             # Force release regardless of owner
-            released = await lock_manager.force_release(tenant_id, path)
+            released = await lock_manager.force_release(zone_id, path)
             if not released:
                 raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
-            logger.warning(f"Lock force-released by admin: tenant={tenant_id}, path={path}")
+            logger.warning(f"Lock force-released by admin: zone={zone_id}, path={path}")
             return JSONResponse(content={"released": True, "forced": True})
 
         # Normal release with ownership check
-        released = await lock_manager.release(lock_id, tenant_id, path)
+        released = await lock_manager.release(lock_id, zone_id, path)
         if not released:
             raise HTTPException(
                 status_code=403,
@@ -3185,13 +3185,13 @@ def _register_routes(app: FastAPI) -> None:
         - Atomic check-then-expire
         """
         lock_manager = _get_lock_manager()
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         # Normalize path to ensure leading slash (URL path captures without leading /)
         if not path.startswith("/"):
             path = "/" + path
 
-        extended = await lock_manager.extend(request.lock_id, tenant_id, path, ttl=request.ttl)
+        extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
         if not extended:
             raise HTTPException(
                 status_code=403,
@@ -3203,11 +3203,11 @@ def _register_routes(app: FastAPI) -> None:
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
         # Determine mode (check mutex first)
-        lock_info = await lock_manager.get_lock_info(tenant_id, path)
+        lock_info = await lock_manager.get_lock_info(zone_id, path)
         mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
         max_holders = 1
         if mode == "semaphore":
-            config_key = lock_manager._semaphore_config_key(tenant_id, path)
+            config_key = lock_manager._semaphore_config_key(zone_id, path)
             max_raw = await lock_manager._redis.client.get(config_key)
             if max_raw:
                 max_holders = int(max_raw.decode() if isinstance(max_raw, bytes) else max_raw)
@@ -3829,22 +3829,22 @@ def _register_routes(app: FastAPI) -> None:
                     zookie = Zookie.decode(x_nexus_zookie)
                     # Wait for revision if needed (AT_LEAST_AS_FRESH semantics)
                     if _app_state.nexus_fs:
-                        # Get tenant from context
-                        tenant_id = context.tenant_id if context else "default"
-                        if tenant_id != zookie.tenant_id:
+                        # Get zone from context
+                        zone_id = context.zone_id if context else "default"
+                        if zone_id != zookie.zone_id:
                             logger.warning(
-                                f"Zookie tenant mismatch: request={tenant_id}, zookie={zookie.tenant_id}"
+                                f"Zookie zone mismatch: request={zone_id}, zookie={zookie.zone_id}"
                             )
                         # Wait for revision with 5s timeout
                         if not _app_state.nexus_fs._wait_for_revision(
-                            zookie.tenant_id, zookie.revision, timeout_ms=5000
+                            zookie.zone_id, zookie.revision, timeout_ms=5000
                         ):
                             raise ConsistencyTimeoutError(
                                 f"Timeout waiting for revision {zookie.revision}",
-                                tenant_id=zookie.tenant_id,
+                                zone_id=zookie.zone_id,
                                 requested_revision=zookie.revision,
                                 current_revision=_app_state.nexus_fs._get_current_revision(
-                                    zookie.tenant_id
+                                    zookie.zone_id
                                 ),
                                 timeout_ms=5000,
                             )
@@ -4233,10 +4233,10 @@ def _get_memory_api_with_context(context: Any) -> Any:
     """Get Memory API instance with authenticated context.
 
     Args:
-        context: Operation context with tenant/user/agent info
+        context: Operation context with zone/user/agent info
 
     Returns:
-        Memory API instance with user/agent/tenant from context
+        Memory API instance with user/agent/zone from context
     """
     nexus_fs = _app_state.nexus_fs
     if nexus_fs is None:
@@ -4245,8 +4245,8 @@ def _get_memory_api_with_context(context: Any) -> Any:
     # Convert context to dict format needed by _get_memory_api
     context_dict: dict[str, Any] = {}
     if context:
-        if hasattr(context, "tenant_id") and context.tenant_id:
-            context_dict["tenant_id"] = context.tenant_id
+        if hasattr(context, "zone_id") and context.zone_id:
+            context_dict["zone_id"] = context.zone_id
         if hasattr(context, "user_id") and context.user_id:
             context_dict["user_id"] = context.user_id
         elif hasattr(context, "user") and context.user:

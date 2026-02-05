@@ -85,7 +85,7 @@ class ChangeLogStore:
         Args:
             path: Virtual file path
             backend_name: Backend identifier
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             ChangeLogEntry if found, None otherwise
@@ -102,7 +102,7 @@ class ChangeLogStore:
                 .filter(
                     BackendChangeLogModel.path == path,
                     BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.tenant_id == tenant_id,
+                    BackendChangeLogModel.zone_id == zone_id,
                 )
                 .first()
             )
@@ -128,7 +128,7 @@ class ChangeLogStore:
         self,
         path: str,
         backend_name: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         size_bytes: int | None = None,
         mtime: datetime | None = None,
         backend_version: str | None = None,
@@ -139,7 +139,7 @@ class ChangeLogStore:
         Args:
             path: Virtual file path
             backend_name: Backend identifier
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             size_bytes: File size in bytes
             mtime: Last modification time
             backend_version: Backend-specific version (GCS generation, S3 version ID)
@@ -166,7 +166,7 @@ class ChangeLogStore:
                 stmt = pg_insert(BackendChangeLogModel).values(
                     path=path,
                     backend_name=backend_name,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     size_bytes=size_bytes,
                     mtime=mtime,
                     backend_version=backend_version,
@@ -190,7 +190,7 @@ class ChangeLogStore:
                 stmt = sqlite_insert(BackendChangeLogModel).values(  # type: ignore[assignment]
                     path=path,
                     backend_name=backend_name,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     size_bytes=size_bytes,
                     mtime=mtime,
                     backend_version=backend_version,
@@ -198,7 +198,7 @@ class ChangeLogStore:
                     synced_at=now,
                 )
                 stmt = stmt.on_conflict_do_update(
-                    index_elements=["path", "backend_name", "tenant_id"],
+                    index_elements=["path", "backend_name", "zone_id"],
                     set_={
                         "size_bytes": size_bytes,
                         "mtime": mtime,
@@ -223,7 +223,7 @@ class ChangeLogStore:
 
         Args:
             backend_name: Backend identifier
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Most recent synced_at timestamp, or None if no entries
@@ -241,7 +241,7 @@ class ChangeLogStore:
                 session.query(func.max(BackendChangeLogModel.synced_at))
                 .filter(
                     BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.tenant_id == tenant_id,
+                    BackendChangeLogModel.zone_id == zone_id,
                 )
                 .scalar()
             )

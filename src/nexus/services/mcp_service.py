@@ -98,7 +98,7 @@ class MCPService:
         their mount status, transport type, and tool counts.
 
         Args:
-            tier: Filter by tier (user/tenant/system). None for all tiers.
+            tier: Filter by tier (user/zone/system). None for all tiers.
             include_unmounted: Include unmounted configurations (default: True)
             context: Operation context for permission checks
 
@@ -270,7 +270,7 @@ class MCPService:
             env: Environment variables (for stdio transport)
             headers: HTTP headers (for sse transport)
             description: Mount description
-            tier: Target tier (user/tenant/system, default: system)
+            tier: Target tier (user/zone/system, default: system)
             context: Operation context for permission checks
 
         Returns:

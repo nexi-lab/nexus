@@ -219,7 +219,6 @@ restore_postgresql() {
                 -p "$POSTGRES_PORT" \
                 -U "$POSTGRES_USER" \
                 -d "$target_db" \
-                --verbose \
                 --no-owner \
                 --no-privileges \
                 "$backup_file" 2>&1 || true
@@ -310,7 +309,7 @@ pitr_restore() {
     # Find the latest base backup before target time
     log_info "Finding appropriate base backup..."
     local base_backup=$(find "$BACKUP_DIR/daily" "$BACKUP_DIR/weekly" "$BACKUP_DIR/monthly" \
-        -name "nexus-pg-*.sql.gz" -type f 2>/dev/null | \
+        -name "nexus-pg-*.dump" -type f 2>/dev/null | \
         sort -r | head -1)
 
     if [ -z "$base_backup" ]; then
@@ -436,7 +435,7 @@ list_backups() {
     for type in daily weekly monthly; do
         if [ -d "$BACKUP_DIR/$type" ]; then
             echo "--- $type ---"
-            ls -lh "$BACKUP_DIR/$type"/*.sql.gz "$BACKUP_DIR/$type"/*.tar.gz 2>/dev/null || echo "  (empty)"
+            ls -lh "$BACKUP_DIR/$type"/*.dump "$BACKUP_DIR/$type"/*.tar.gz 2>/dev/null || echo "  (empty)"
             echo ""
         fi
     done
@@ -464,9 +463,9 @@ print_usage() {
     echo "  --help                Show this help"
     echo ""
     echo "Examples:"
-    echo "  $0 --pg ./backups/daily/nexus-pg-latest.sql.gz"
+    echo "  $0 --pg ./backups/daily/nexus-pg-latest.dump"
     echo "  $0 --cas ./backups/daily/nexus-cas-latest.tar.gz"
-    echo "  $0 --test ./backups/daily/nexus-pg-latest.sql.gz"
+    echo "  $0 --test ./backups/daily/nexus-pg-latest.dump"
     echo "  $0 --pitr '2024-01-15 14:30:00'"
     echo "  $0 --from-gcs 20240115"
 }

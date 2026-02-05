@@ -373,7 +373,7 @@ list_backups() {
     for type in daily weekly monthly; do
         if [ -d "$BACKUP_DIR/$type" ]; then
             echo "--- $type ---"
-            ls -lh "$BACKUP_DIR/$type"/*.sql.gz "$BACKUP_DIR/$type"/*.tar.gz 2>/dev/null || echo "  (empty)"
+            ls -lh "$BACKUP_DIR/$type"/*.dump "$BACKUP_DIR/$type"/*.tar.gz 2>/dev/null || echo "  (empty)"
             echo ""
         fi
     done
@@ -420,7 +420,7 @@ full_backup() {
     echo ""
 
     # Verify backups
-    verify_backup "$BACKUP_DIR/$backup_type/nexus-pg-latest.sql.gz"
+    verify_backup "$BACKUP_DIR/$backup_type/nexus-pg-latest.dump"
     echo ""
 
     # Upload to GCS if requested

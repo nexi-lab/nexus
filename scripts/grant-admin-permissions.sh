@@ -3,7 +3,7 @@
 #
 # This script grants the admin user write permissions for:
 # - /workspace/.nexus/skills/ (agent tier)
-# - /shared/skills/ (tenant tier)
+# - /shared/skills/ (zone tier)
 # - /system/skills/ (system tier)
 #
 # Usage:
@@ -44,7 +44,7 @@ echo "1. Agent tier skills directory"
 grant_permission "/workspace/.nexus/skills"
 
 echo ""
-echo "2. Tenant tier skills directory"
+echo "2. Zone tier skills directory"
 grant_permission "/shared/skills"
 
 echo ""

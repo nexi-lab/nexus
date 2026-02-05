@@ -125,7 +125,7 @@ export NEXUS_ENFORCE_PERMISSIONS=false
 nexus mkdir /workspace 2>/dev/null && echo "✓ Created /workspace" || echo "✓ /workspace exists"
 
 # Grant admin user full ownership
-tuple_id=$(nexus rebac create user $ADMIN_USER direct_owner file /workspace --tenant-id default 2>&1 | grep -o '[0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}' | head -1 || echo "created")
+tuple_id=$(nexus rebac create user $ADMIN_USER direct_owner file /workspace --zone-id default 2>&1 | grep -o '[0-9a-f]\{8\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{4\}-[0-9a-f]\{12\}' | head -1 || echo "created")
 
 if [ -n "$tuple_id" ]; then
     echo "✓ Granted '$ADMIN_USER' ownership of /workspace"

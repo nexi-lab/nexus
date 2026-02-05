@@ -39,7 +39,7 @@ def create_admin_key(
     admin_user: str,
     custom_key: str | None = None,
     skip_permissions: bool = False,
-    tenant_id: str = "default",
+    zone_id: str = "default",
 ) -> tuple[str, bool]:
     """
     Create or register admin API key.
@@ -49,7 +49,7 @@ def create_admin_key(
         admin_user: Admin user ID
         custom_key: Optional custom API key to register (if None, generates new one)
         skip_permissions: If True, skip entity registry registration
-        tenant_id: Tenant ID (default: "default")
+        zone_id: Zone ID (default: "default")
 
     Returns:
         Tuple of (api_key, success)
@@ -66,8 +66,8 @@ def create_admin_key(
                 entity_registry.register_entity(
                     entity_type="user",
                     entity_id=admin_user,
-                    parent_type="tenant",
-                    parent_id=tenant_id,
+                    parent_type="zone",
+                    parent_id=zone_id,
                 )
             except Exception:
                 # User might already exist, that's okay
@@ -104,7 +104,7 @@ def create_admin_key(
                         user_id=admin_user,
                         key_hash=key_hash,
                         name="Admin key (from environment)",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=1,  # PostgreSQL expects integer, not boolean
                         subject_type="user",
                         subject_id=admin_user,
@@ -126,7 +126,7 @@ def create_admin_key(
                     session,
                     user_id=admin_user,
                     name="Admin key (Docker auto-generated)",
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     is_admin=True,
                     expires_at=expires_at,
                 )

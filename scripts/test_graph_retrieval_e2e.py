@@ -141,9 +141,9 @@ class UserRepository:
 class GraphRetrievalE2ETest:
     """End-to-end test runner for GraphEnhancedRetriever."""
 
-    def __init__(self, database_url: str, tenant_id: str = "graph-retrieval-e2e"):
+    def __init__(self, database_url: str, zone_id: str = "graph-retrieval-e2e"):
         self.database_url = database_url
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.engine = None
         self.session = None
         self.graph_store = None
@@ -177,8 +177,8 @@ class GraphRetrievalE2ETest:
         self.session = async_session_factory()
 
         # Initialize components
-        self.graph_store = GraphStore(self.session, tenant_id=self.tenant_id)
-        logger.info(f"GraphStore initialized with tenant_id={self.tenant_id}")
+        self.graph_store = GraphStore(self.session, zone_id=self.zone_id)
+        logger.info(f"GraphStore initialized with zone_id={self.zone_id}")
 
         # Create temp directory for test files
         self.temp_dir = tempfile.mkdtemp(prefix="nexus_graph_retrieval_test_")
@@ -199,17 +199,17 @@ class GraphRetrievalE2ETest:
                 await self.session.execute(
                     text(
                         "DELETE FROM entity_mentions WHERE entity_id IN "
-                        "(SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
+                        "(SELECT entity_id FROM entities WHERE zone_id = :zone)"
                     ),
-                    {"tenant": self.tenant_id},
+                    {"zone": self.zone_id},
                 )
                 await self.session.execute(
-                    text("DELETE FROM relationships WHERE tenant_id = :tenant"),
-                    {"tenant": self.tenant_id},
+                    text("DELETE FROM relationships WHERE zone_id = :zone"),
+                    {"zone": self.zone_id},
                 )
                 await self.session.execute(
-                    text("DELETE FROM entities WHERE tenant_id = :tenant"),
-                    {"tenant": self.tenant_id},
+                    text("DELETE FROM entities WHERE zone_id = :zone"),
+                    {"zone": self.zone_id},
                 )
                 await self.session.commit()
             except Exception as e:

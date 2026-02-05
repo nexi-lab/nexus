@@ -36,7 +36,7 @@ def create_impersonated_user_agent(
     Examples:
         >>> result = create_impersonated_user_agent(nx, "alice", alice_context)
         >>> print(result.get('config_path'))
-        /tenant:default/user:alice/agent/alice,ImpersonatedUser/config.json
+        /zone/default/user:alice/agent/alice,ImpersonatedUser/config.json
     """
     agent_metadata = metadata or DEFAULT_AGENT_METADATA
     agent_id = f"{user_id},ImpersonatedUser"
@@ -142,7 +142,7 @@ def create_standard_agents(
 def grant_agent_resource_access(
     nx: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     resource_types: list[str],
     agent_name: str = "UntrustedAgent",
 ) -> int:
@@ -152,7 +152,7 @@ def grant_agent_resource_access(
     Args:
         nx: NexusFS instance
         user_id: User ID who owns the resources
-        tenant_id: Tenant ID
+        zone_id: Zone ID
         resource_types: List of resource type names to grant access to
         agent_name: Agent name (default: "UntrustedAgent")
 
@@ -167,7 +167,7 @@ def grant_agent_resource_access(
         Granted 2 permissions
     """
     agent_id = f"{user_id},{agent_name}"
-    user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     for resource_type in resource_types:
@@ -177,7 +177,7 @@ def grant_agent_resource_access(
                 subject=("agent", agent_id),
                 relation="viewer",  # Read-only access
                 object=("file", folder_path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             print(f"  ✓ Granted viewer permission on {folder_path} to {agent_name}")
             granted_count += 1

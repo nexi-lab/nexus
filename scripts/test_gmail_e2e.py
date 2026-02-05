@@ -620,7 +620,7 @@ def main():
         user=user_email,
         groups=[],
         user_id=user_email,
-        tenant_id="default",
+        zone_id="default",
     )
 
     # Create temp directory for output

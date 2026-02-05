@@ -53,9 +53,9 @@ logger = logging.getLogger(__name__)
 class GraphStoreE2ETest:
     """End-to-end test runner for GraphStore."""
 
-    def __init__(self, database_url: str, tenant_id: str = "e2e-test"):
+    def __init__(self, database_url: str, zone_id: str = "e2e-test"):
         self.database_url = database_url
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.engine = None
         self.session = None
         self.store = None
@@ -82,8 +82,8 @@ class GraphStoreE2ETest:
             self.engine, class_=AsyncSession, expire_on_commit=False
         )
         self.session = async_session_factory()
-        self.store = GraphStore(self.session, tenant_id=self.tenant_id)
-        logger.info(f"GraphStore initialized with tenant_id={self.tenant_id}")
+        self.store = GraphStore(self.session, zone_id=self.zone_id)
+        logger.info(f"GraphStore initialized with zone_id={self.zone_id}")
 
     async def teardown(self):
         """Clean up test data and close connections."""
@@ -92,17 +92,17 @@ class GraphStoreE2ETest:
             logger.info("Cleaning up test data...")
             await self.session.execute(
                 text(
-                    "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
+                    "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE zone_id = :zone)"
                 ),
-                {"tenant": self.tenant_id},
+                {"zone": self.zone_id},
             )
             await self.session.execute(
-                text("DELETE FROM relationships WHERE tenant_id = :tenant"),
-                {"tenant": self.tenant_id},
+                text("DELETE FROM relationships WHERE zone_id = :zone"),
+                {"zone": self.zone_id},
             )
             await self.session.execute(
-                text("DELETE FROM entities WHERE tenant_id = :tenant"),
-                {"tenant": self.tenant_id},
+                text("DELETE FROM entities WHERE zone_id = :zone"),
+                {"zone": self.zone_id},
             )
             await self.session.commit()
             await self.session.close()
@@ -465,7 +465,7 @@ class GraphStoreE2ETest:
         logger.info("  Graph Storage Layer E2E Test (Issue #1039)")
         logger.info("=" * 60)
         logger.info(f"Database: {self.database_url[:50]}...")
-        logger.info(f"Tenant ID: {self.tenant_id}")
+        logger.info(f"Zone ID: {self.zone_id}")
         logger.info(f"Timestamp: {datetime.now(UTC).isoformat()}")
 
         await self.test_entity_crud()

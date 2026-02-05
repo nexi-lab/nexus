@@ -51,7 +51,7 @@ def main() -> int:
     print()
 
     # Create admin context
-    admin_context = OperationContext(user="system", groups=[], tenant_id="alice", is_admin=True)
+    admin_context = OperationContext(user="system", groups=[], zone_id="alice", is_admin=True)
 
     # Test provision_user
     print("Testing provision_user...")
@@ -66,7 +66,7 @@ def main() -> int:
             user_id=test_user,
             email=test_email,
             display_name="Alice Test User",
-            tenant_id="alice",
+            zone_id="alice",
             create_api_key=True,
             create_agents=True,
             import_skills=True,
@@ -77,7 +77,7 @@ def main() -> int:
         print()
         print("Result:")
         print(f"  User ID: {result.get('user_id')}")
-        print(f"  Tenant ID: {result.get('tenant_id')}")
+        print(f"  Zone ID: {result.get('zone_id')}")
         api_key = result.get("api_key")
         print(f"  API Key: {api_key[:30] + '...' if api_key else 'None'}")
         print(f"  Workspace: {result.get('workspace_path')}")
@@ -91,7 +91,7 @@ def main() -> int:
             user_id=test_user,
             email=test_email,
             display_name="Alice Test User",
-            tenant_id="alice",
+            zone_id="alice",
             create_api_key=False,
             create_agents=True,
             import_skills=True,
@@ -99,7 +99,7 @@ def main() -> int:
         )
         print("✓ Idempotency test passed!")
         print(f"  Same user_id: {result['user_id'] == result2['user_id']}")
-        print(f"  Same tenant_id: {result['tenant_id'] == result2['tenant_id']}")
+        print(f"  Same zone_id: {result['zone_id'] == result2['zone_id']}")
         print()
 
         print("=" * 80)

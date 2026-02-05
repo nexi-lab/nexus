@@ -83,8 +83,8 @@ python3 scripts/create-api-key.py alice "Alice's laptop" --days 90
 # Admin user with no expiry
 python3 scripts/create-api-key.py admin "Admin key" --admin
 
-# Custom tenant
-python3 scripts/create-api-key.py bob "Bob's key" --tenant-id org-acme --days 365
+# Custom zone
+python3 scripts/create-api-key.py bob "Bob's key" --zone-id org-acme --days 365
 ```
 
 **Parameters:**
@@ -92,7 +92,7 @@ python3 scripts/create-api-key.py bob "Bob's key" --tenant-id org-acme --days 36
 - `name` - Human-readable key name
 - `--admin` - Grant admin privileges
 - `--days N` - Expiry in N days (optional)
-- `--tenant-id` - Tenant ID (default: "default")
+- `--zone-id` - Zone ID (default: "default")
 
 ### Comparison: Setup Scripts
 

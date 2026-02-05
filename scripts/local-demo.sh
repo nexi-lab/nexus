@@ -133,7 +133,7 @@ parse_args() {
     START_UI=true            # default to start UI
     START_LANGGRAPH=true     # default to start LangGraph
     DISABLE_PERMISSIONS=false
-    DISABLE_TENANT_ISOLATION=false
+    DISABLE_ZONE_ISOLATION=false
     NO_AUTH=false
 
     while [[ $# -gt 0 ]]; do
@@ -175,8 +175,8 @@ parse_args() {
                 DISABLE_PERMISSIONS=true
                 shift
                 ;;
-            --no-tenant-isolation)
-                DISABLE_TENANT_ISOLATION=true
+            --no-zone-isolation)
+                DISABLE_ZONE_ISOLATION=true
                 shift
                 ;;
             --no-auth)
@@ -747,17 +747,17 @@ start_server() {
     export TOKEN_MANAGER_DB="$POSTGRES_URL"
     export NEXUS_DATA_DIR="$DATA_PATH"
 
-    # Configure permissions and tenant isolation
+    # Configure permissions and zone isolation
     if [ "$DISABLE_PERMISSIONS" = true ]; then
         export NEXUS_ENFORCE_PERMISSIONS=false
     else
         export NEXUS_ENFORCE_PERMISSIONS=true
     fi
 
-    if [ "$DISABLE_TENANT_ISOLATION" = true ]; then
-        export NEXUS_ENFORCE_TENANT_ISOLATION=false
+    if [ "$DISABLE_ZONE_ISOLATION" = true ]; then
+        export NEXUS_ENFORCE_ZONE_ISOLATION=false
     else
-        export NEXUS_ENFORCE_TENANT_ISOLATION=true
+        export NEXUS_ENFORCE_ZONE_ISOLATION=true
     fi
 
     # Ensure Python environment is ready (first-time install support)
@@ -802,10 +802,10 @@ start_server() {
     else
         echo -e "  Permissions:  ${GREEN}Enabled${NC}"
     fi
-    if [ "$DISABLE_TENANT_ISOLATION" = true ]; then
-        echo -e "  Tenant Isol:  ${YELLOW}Disabled${NC}"
+    if [ "$DISABLE_ZONE_ISOLATION" = true ]; then
+        echo -e "  Zone Isol:    ${YELLOW}Disabled${NC}"
     else
-        echo -e "  Tenant Isol:  ${GREEN}Enabled${NC}"
+        echo -e "  Zone Isol:    ${GREEN}Enabled${NC}"
     fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -1094,9 +1094,9 @@ init_database() {
     # This matches docker-integration.yml for consistency
 
     # Create admin user and API key using the extracted Python script
-    # Always use "system" tenant for admin API keys created via --init
-    TENANT_ID="system"
-    python3 "${SCRIPT_DIR}/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$TENANT_ID"
+    # Always use "system" zone for admin API keys created via --init
+    ZONE_ID="system"
+    python3 "${SCRIPT_DIR}/setup_admin_api_key.py" "$NEXUS_DATABASE_URL" "$ADMIN_API_KEY" "$ZONE_ID"
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ Failed to create admin API key${NC}"

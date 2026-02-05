@@ -42,7 +42,7 @@ def safe_operation(
         >>> result = safe_operation(
         ...     "Creating user folder",
         ...     create_folder,
-        ...     "/tenant:default/user:alice"
+        ...     "/zone/default/user:alice"
         ... )
         ✓ Creating user folder
 

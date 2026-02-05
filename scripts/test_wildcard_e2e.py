@@ -5,7 +5,7 @@ This script:
 1. Starts a real nexus serve process
 2. Creates users and files via HTTP API
 3. Creates wildcard permission tuples
-4. Verifies wildcard grants access across tenants
+4. Verifies wildcard grants access across zones
 
 Usage:
     PYTHONPATH=src uv run python scripts/test_wildcard_e2e.py
@@ -53,7 +53,7 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     return False
 
 
-def create_jwt_token(user_id: str, tenant_id: str = "default") -> str:
+def create_jwt_token(user_id: str, zone_id: str = "default") -> str:
     """Create a JWT token for testing.
 
     Token format must match what authlib.jose.jwt expects for validation.
@@ -65,7 +65,7 @@ def create_jwt_token(user_id: str, tenant_id: str = "default") -> str:
         "sub": user_id,
         "subject_id": user_id,
         "subject_type": "user",
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "email": f"{user_id}@test.com",
         "name": f"Test User {user_id[:8]}",
         "is_admin": False,
@@ -199,13 +199,13 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
         # Create users
         user_a_id = str(uuid.uuid4())
         user_b_id = str(uuid.uuid4())
-        user_a_token = create_jwt_token(user_a_id, "tenant-a")
-        user_b_token = create_jwt_token(user_b_id, "tenant-b")
+        user_a_token = create_jwt_token(user_a_id, "zone-a")
+        user_b_token = create_jwt_token(user_b_id, "zone-b")
         user_a_headers = {"Authorization": f"Bearer {user_a_token}"}
         user_b_headers = {"Authorization": f"Bearer {user_b_token}"}
 
-        print(f"\n[*] Created User A (tenant-a): {user_a_id[:8]}...")
-        print(f"[*] Created User B (tenant-b): {user_b_id[:8]}...")
+        print(f"\n[*] Created User A (zone-a): {user_a_id[:8]}...")
+        print(f"[*] Created User B (zone-b): {user_b_id[:8]}...")
 
         passed = 0
         failed = 0
@@ -255,7 +255,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
         # ==================================================================
         # Test 2: Without wildcard, User B should NOT have access
         # ==================================================================
-        print("\n--- Test 2: Cross-tenant denied without wildcard ---")
+        print("\n--- Test 2: Cross-zone denied without wildcard ---")
         try:
             result = rpc_call(
                 client,
@@ -264,7 +264,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["user", user_b_id],
                     "permission": "read",
                     "object": ["file", test_file_path],
-                    "tenant_id": "tenant-b",
+                    "zone_id": "zone-b",
                 },
                 user_b_headers,
             )
@@ -277,13 +277,13 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                 )
                 failed += 1
         except Exception as e:
-            print_result("Cross-tenant denial test", False, str(e))
+            print_result("Cross-zone denial test", False, str(e))
             failed += 1
 
         # ==================================================================
         # Test 3: Create wildcard tuple and verify User B gets access
         # ==================================================================
-        print("\n--- Test 3: Wildcard grants cross-tenant access ---")
+        print("\n--- Test 3: Wildcard grants cross-zone access ---")
         try:
             # First, list all tuples to see what's there (as admin)
             try:
@@ -305,7 +305,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["*", "*"],  # Wildcard!
                     "relation": "direct_viewer",
                     "object": ["file", test_file_path],
-                    "tenant_id": "default",  # Use default tenant where file was created
+                    "zone_id": "default",  # Use default zone where file was created
                 },
                 admin_headers,
             )
@@ -327,10 +327,10 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                 print(f"    (Could not list tuples after: {e})")
 
             # Now User B should have access via wildcard
-            # Note: The wildcard is in tenant-a, so we check from different tenants
-            print(f"    Checking permission for user {user_b_id[:8]} with tenant-b...")
+            # Note: The wildcard is in zone-a, so we check from different zones
+            print(f"    Checking permission for user {user_b_id[:8]} with zone-b...")
 
-            # Check from tenant-b (cross-tenant)
+            # Check from zone-b (cross-zone)
             result = rpc_call(
                 client,
                 "rebac_check",
@@ -338,27 +338,27 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["user", user_b_id],
                     "permission": "read",
                     "object": ["file", test_file_path],
-                    "tenant_id": "tenant-b",
+                    "zone_id": "zone-b",
                 },
                 user_b_headers,
             )
-            print(f"    Result from tenant-b: {result}")
+            print(f"    Result from zone-b: {result}")
 
-            # Also try checking from tenant-a (same tenant as wildcard)
-            result_same_tenant = rpc_call(
+            # Also try checking from zone-a (same zone as wildcard)
+            result_same_zone = rpc_call(
                 client,
                 "rebac_check",
                 {
                     "subject": ["user", user_b_id],
                     "permission": "read",
                     "object": ["file", test_file_path],
-                    "tenant_id": "tenant-a",  # Same tenant as wildcard
+                    "zone_id": "zone-a",  # Same zone as wildcard
                 },
-                user_a_headers,  # Use tenant-a headers
+                user_a_headers,  # Use zone-a headers
             )
-            print(f"    Result from tenant-a (same as wildcard): {result_same_tenant}")
+            print(f"    Result from zone-a (same as wildcard): {result_same_zone}")
 
-            # Also check with 'default' tenant (where the file owner is)
+            # Also check with 'default' zone (where the file owner is)
             result_default = rpc_call(
                 client,
                 "rebac_check",
@@ -366,20 +366,20 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["user", user_b_id],
                     "permission": "read",
                     "object": ["file", test_file_path],
-                    "tenant_id": "default",
+                    "zone_id": "default",
                 },
                 user_a_headers,
             )
-            print(f"    Result from default tenant: {result_default}")
+            print(f"    Result from default zone: {result_default}")
 
-            if result is True or result_same_tenant is True:
+            if result is True or result_same_zone is True:
                 print_result("User B has access via wildcard", True)
                 passed += 1
             else:
                 print_result(
                     "User B has access via wildcard",
                     False,
-                    f"cross-tenant={result}, same-tenant={result_same_tenant}",
+                    f"cross-zone={result}, same-zone={result_same_zone}",
                 )
                 failed += 1
         except Exception as e:
@@ -387,12 +387,12 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
             failed += 1
 
         # ==================================================================
-        # Test 4: Random user from any tenant should have access
+        # Test 4: Random user from any zone should have access
         # ==================================================================
         print("\n--- Test 4: Any random user has access via wildcard ---")
         try:
             random_user_id = str(uuid.uuid4())
-            random_token = create_jwt_token(random_user_id, "random-tenant")
+            random_token = create_jwt_token(random_user_id, "random-zone")
             random_headers = {"Authorization": f"Bearer {random_token}"}
 
             result = rpc_call(
@@ -402,7 +402,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["user", random_user_id],
                     "permission": "read",
                     "object": ["file", test_file_path],
-                    "tenant_id": "random-tenant",
+                    "zone_id": "random-zone",
                 },
                 random_headers,
             )
@@ -428,7 +428,7 @@ main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_di
                     "subject": ["user", user_b_id],
                     "permission": "write",
                     "object": ["file", test_file_path],
-                    "tenant_id": "tenant-b",
+                    "zone_id": "zone-b",
                 },
                 user_b_headers,
             )

@@ -143,12 +143,12 @@ def test_provision_user() -> bool:
 
     # Check user directories exist
     user_dirs = [
-        f"/zone/{test_zone_id}/user:{test_user_id}/workspace",
-        f"/zone/{test_zone_id}/user:{test_user_id}/memory",
-        f"/zone/{test_zone_id}/user:{test_user_id}/skill",
-        f"/zone/{test_zone_id}/user:{test_user_id}/agent",
-        f"/zone/{test_zone_id}/user:{test_user_id}/connector",
-        f"/zone/{test_zone_id}/user:{test_user_id}/resource",
+        f"/zone:{test_zone_id}/user:{test_user_id}/workspace",
+        f"/zone:{test_zone_id}/user:{test_user_id}/memory",
+        f"/zone:{test_zone_id}/user:{test_user_id}/skill",
+        f"/zone:{test_zone_id}/user:{test_user_id}/agent",
+        f"/zone:{test_zone_id}/user:{test_user_id}/connector",
+        f"/zone:{test_zone_id}/user:{test_user_id}/resource",
     ]
 
     for dir_path in user_dirs:

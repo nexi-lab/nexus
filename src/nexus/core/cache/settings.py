@@ -54,8 +54,9 @@ class CacheSettings:
 
     # Dragonfly cache connection (optional - if not set, use PostgreSQL)
     dragonfly_url: str | None = field(
-        default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL")
-        or os.environ.get("NEXUS_DRAGONFLY_CACHE_URL")  # Backward compatibility
+        default_factory=lambda: (
+            os.environ.get("NEXUS_DRAGONFLY_URL") or os.environ.get("NEXUS_DRAGONFLY_CACHE_URL")
+        )  # Backward compatibility
     )
 
     # Backend selection: auto, dragonfly, postgres

@@ -15,17 +15,17 @@ from nexus.server.auth.auth_routes import (
     get_nexus_instance,
 )
 from nexus.server.auth.database_local import DatabaseLocalAuth
-from nexus.server.auth.zone_helpers import (
-    create_zone,
-    normalize_to_slug,
-    suggest_zone_id,
-    validate_zone_id,
-)
 from nexus.server.auth.user_helpers import (
     add_user_to_zone,
     get_user_by_id,
     get_user_zones,
     user_belongs_to_zone,
+)
+from nexus.server.auth.zone_helpers import (
+    create_zone,
+    normalize_to_slug,
+    suggest_zone_id,
+    validate_zone_id,
 )
 from nexus.storage.models import ZoneModel
 

@@ -81,8 +81,11 @@ class CacheFactory:
             try:
                 from nexus.core.cache.dragonfly import DragonflyClient
 
+                assert (
+                    self._settings.dragonfly_url is not None
+                )  # guaranteed by should_use_dragonfly()
                 self._cache_client = DragonflyClient(
-                    url=self._settings.dragonfly_url,  # type: ignore[arg-type]
+                    url=self._settings.dragonfly_url,
                     pool_size=self._settings.dragonfly_pool_size,
                     timeout=self._settings.dragonfly_timeout,
                     connect_timeout=self._settings.dragonfly_connect_timeout,

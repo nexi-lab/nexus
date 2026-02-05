@@ -212,7 +212,12 @@ def ops_log(
         # Access operation logger through metadata store
         from nexus.storage.operation_logger import OperationLogger
 
-        with nx.SessionLocal() as session:  # type: ignore[attr-defined]
+        session_factory = getattr(nx, "SessionLocal", None)
+        if session_factory is None:
+            raise click.ClickException(
+                "Operation log requires a local NexusFS instance with SessionLocal"
+            )
+        with session_factory() as session:
             logger = OperationLogger(session)
 
             # List operations with filters
@@ -288,7 +293,10 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
 
         from nexus.storage.operation_logger import OperationLogger
 
-        with nx.SessionLocal() as session:  # type: ignore[attr-defined]
+        session_factory = getattr(nx, "SessionLocal", None)
+        if session_factory is None:
+            raise click.ClickException("Undo requires a local NexusFS instance with SessionLocal")
+        with session_factory() as session:
             logger = OperationLogger(session)
 
             # Get last successful operation

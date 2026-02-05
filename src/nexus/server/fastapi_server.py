@@ -1646,6 +1646,7 @@ def _register_routes(app: FastAPI) -> None:
             consolidation,
             feedback,
             memories,
+            mobile_search,
             playbooks,
             reflection,
             trajectories,
@@ -1657,7 +1658,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(playbooks.router)
         app.include_router(reflection.router)
         app.include_router(consolidation.router)
-        logger.info("API v2 routes registered (30 endpoints)")
+        app.include_router(mobile_search.router)
+        logger.info("API v2 routes registered (32 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."

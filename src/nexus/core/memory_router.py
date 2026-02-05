@@ -9,7 +9,7 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from nexus.core.entity_registry import EntityRegistry
@@ -173,6 +173,8 @@ class MemoryViewRouter:
         person: str | None = None,  # #1025: Filter by person reference
         event_after: datetime | None = None,  # #1028: Filter by event date >= value
         event_before: datetime | None = None,  # #1028: Filter by event date <= value
+        include_invalid: bool = False,  # #1183: Include invalidated memories
+        valid_at_point: datetime | None = None,  # #1183: Point-in-time query
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -192,6 +194,8 @@ class MemoryViewRouter:
             person: Filter by person name reference. #1025
             event_after: Filter by event earliest_date >= value. #1028
             event_before: Filter by event latest_date <= value. #1028
+            include_invalid: Include invalidated memories (default False). #1183
+            valid_at_point: Point-in-time query - return facts valid at this time. #1183
             limit: Maximum number of results.
 
         Returns:
@@ -243,6 +247,26 @@ class MemoryViewRouter:
         if event_before:
             stmt = stmt.where(MemoryModel.latest_date <= event_before)
 
+        # #1183: Bi-temporal filtering
+        if not include_invalid:
+            # Exclude invalidated memories (invalid_at IS NULL = still valid)
+            stmt = stmt.where(MemoryModel.invalid_at.is_(None))
+
+        if valid_at_point is not None:
+            # Point-in-time query: valid_at <= point AND (invalid_at IS NULL OR invalid_at > point)
+            stmt = stmt.where(
+                or_(
+                    MemoryModel.valid_at.is_(None),  # NULL = use created_at
+                    MemoryModel.valid_at <= valid_at_point,
+                )
+            )
+            stmt = stmt.where(
+                or_(
+                    MemoryModel.invalid_at.is_(None),
+                    MemoryModel.invalid_at > valid_at_point,
+                )
+            )
+
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
 
@@ -275,6 +299,7 @@ class MemoryViewRouter:
         latest_date: Any = None,  # #1028: Latest date mentioned
         relationships_json: str | None = None,  # #1038: Relationship extraction JSON
         relationship_count: int | None = None,  # #1038: Count of relationships
+        valid_at: Any = None,  # #1183: When fact became valid in real world
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -298,6 +323,7 @@ class MemoryViewRouter:
             temporal_refs_json: JSON string of extracted temporal references. #1028
             earliest_date: Earliest date mentioned in content. #1028
             latest_date: Latest date mentioned in content. #1028
+            valid_at: When fact became valid in real world (NULL = use created_at). #1183
 
         Returns:
             MemoryModel: Created or updated memory.
@@ -360,6 +386,9 @@ class MemoryViewRouter:
                 existing_memory.relationships_json = relationships_json
             if relationship_count is not None:
                 existing_memory.relationship_count = relationship_count
+            # Update bi-temporal validity (#1183)
+            if valid_at is not None:
+                existing_memory.valid_at = valid_at
 
             existing_memory.validate()
             self.session.commit()
@@ -389,6 +418,7 @@ class MemoryViewRouter:
                 latest_date=latest_date,  # #1028
                 relationships_json=relationships_json,  # #1038
                 relationship_count=relationship_count,  # #1038
+                valid_at=valid_at,  # #1183
             )
 
             # Validate before adding
@@ -461,6 +491,48 @@ class MemoryViewRouter:
             self.session.commit()
             return True
         return False
+
+    def invalidate_memory(self, memory_id: str, invalid_at: datetime) -> MemoryModel | None:
+        """Invalidate a memory (set invalid_at timestamp) (#1183).
+
+        This is a temporal soft-delete that marks when a fact became false,
+        without removing the historical record.
+
+        Args:
+            memory_id: Memory ID to invalidate.
+            invalid_at: When the fact became invalid.
+
+        Returns:
+            Updated MemoryModel or None if not found.
+        """
+        memory = self.get_memory_by_id(memory_id)
+        if not memory:
+            return None
+
+        memory.invalid_at = invalid_at
+        memory.validate()
+        self.session.commit()
+        return memory
+
+    def revalidate_memory(self, memory_id: str) -> MemoryModel | None:
+        """Revalidate a memory (clear invalid_at timestamp) (#1183).
+
+        Use when a previously invalidated fact becomes true again.
+
+        Args:
+            memory_id: Memory ID to revalidate.
+
+        Returns:
+            Updated MemoryModel or None if not found.
+        """
+        memory = self.get_memory_by_id(memory_id)
+        if not memory:
+            return None
+
+        memory.invalid_at = None
+        memory.validate()
+        self.session.commit()
+        return memory
 
     def update_memory_state(self, memory_id: str, state: str) -> MemoryModel | None:
         """Update memory state (#368).

@@ -310,6 +310,49 @@ class NexusFSCoreMixin:
         return False
 
     # =========================================================================
+    # Read Set Tracking - Issue #1166
+    # =========================================================================
+
+    def _record_read_if_tracking(
+        self,
+        context: OperationContext | None,
+        resource_type: str,
+        resource_id: str,
+        access_type: str = "content",
+    ) -> None:
+        """Record a read operation for dependency tracking (Issue #1166).
+
+        This is called automatically by read(), stat(), and list() operations
+        when the context has read tracking enabled.
+
+        Args:
+            context: Operation context (may have track_reads=True)
+            resource_type: Type of resource (file, directory, metadata)
+            resource_id: Path or identifier of the resource
+            access_type: Type of access (content, metadata, list, exists)
+        """
+        if context is None or not getattr(context, "track_reads", False):
+            return
+
+        if context.read_set is None:
+            return
+
+        # Get current revision for this tenant
+        tenant_id = context.tenant_id or "default"
+        revision = self._get_current_revision(tenant_id)
+
+        # Record the read
+        context.record_read(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            revision=revision,
+            access_type=access_type,
+        )
+        logger.debug(
+            f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
+        )
+
+    # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
     # =========================================================================
 
@@ -753,6 +796,9 @@ class NexusFSCoreMixin:
             # Parse the content
             content = get_parsed_content(original_content, original_path, view_type)
 
+            # Issue #1166: Record read for dependency tracking (virtual view reads original file)
+            self._record_read_if_tracking(context, "file", original_path, "content")
+
             # Return parsed content with simulated metadata
             if return_metadata:
                 return {
@@ -800,6 +846,10 @@ class NexusFSCoreMixin:
             # Dynamic connector - read directly from backend without metadata check
             # The backend handles authentication and API calls
             content = route.backend.read_content("", context=read_context).unwrap()
+
+            # Issue #1166: Record read for dependency tracking
+            self._record_read_if_tracking(context, "file", path, "content")
+
             if return_metadata:
                 # Generate synthetic metadata for dynamic content
                 from datetime import datetime
@@ -827,6 +877,9 @@ class NexusFSCoreMixin:
         # Handle parsed=True flag - return parsed content instead of raw bytes
         if parsed:
             content, parse_info = self._get_parsed_content(path, content)
+
+        # Issue #1166: Record read for dependency tracking
+        self._record_read_if_tracking(context, "file", path, "content")
 
         # Return content with metadata if requested
         if return_metadata:
@@ -3402,6 +3455,8 @@ class NexusFSCoreMixin:
 
         # Return directory info for implicit directories
         if is_implicit_dir:
+            # Issue #1166: Record metadata read for dependency tracking
+            self._record_read_if_tracking(context, "directory", path, "metadata")
             return {
                 "size": 0,
                 "etag": None,
@@ -3441,6 +3496,9 @@ class NexusFSCoreMixin:
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
         # The client expects a plain string, not the wrapped {"__type__": "datetime", ...} format
         modified_at_str = meta.modified_at.isoformat() if meta.modified_at else None
+
+        # Issue #1166: Record metadata read for dependency tracking
+        self._record_read_if_tracking(context, "file", path, "metadata")
 
         return {
             "size": size,

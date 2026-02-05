@@ -810,6 +810,67 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception:
             return None
 
+    def get_file_info(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> HandlerResponse:
+        """
+        Get file metadata for delta sync change detection (Issue #1127).
+
+        Returns GCS object metadata including size, mtime, and generation number
+        for efficient change detection during incremental sync.
+
+        Args:
+            path: Virtual file path (or backend_path from context)
+            context: Operation context with optional backend_path
+
+        Returns:
+            HandlerResponse with FileInfo containing:
+            - size: Object size in bytes
+            - mtime: Last modified time (updated time in GCS)
+            - backend_version: GCS generation number (monotonically increasing)
+        """
+        from nexus.backends.backend import FileInfo
+
+        try:
+            # Get backend path
+            if context and context.backend_path:
+                backend_path = context.backend_path
+            else:
+                backend_path = path.lstrip("/")
+
+            blob_path = self._get_blob_path(backend_path)
+            blob = self.bucket.blob(blob_path)
+
+            # Check existence and load metadata
+            if not blob.exists():
+                return HandlerResponse.not_found(path, backend_name=self.name)
+
+            blob.reload()  # Fetch latest metadata
+
+            # Extract metadata
+            size = blob.size or 0
+            mtime = blob.updated  # datetime object (GCS uses 'updated' not 'mtime')
+
+            # GCS generation number is the definitive version identifier
+            # It's monotonically increasing and changes on every object mutation
+            backend_version = str(blob.generation) if blob.generation else None
+
+            file_info = FileInfo(
+                size=size,
+                mtime=mtime,
+                backend_version=backend_version,
+                content_hash=None,  # Not computed to avoid content download
+            )
+
+            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
+
+        except NotFound:
+            return HandlerResponse.not_found(path, backend_name=self.name)
+        except Exception as e:
+            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
+
     def generate_signed_url(
         self,
         path: str,

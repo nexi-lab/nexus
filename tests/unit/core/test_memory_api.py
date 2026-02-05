@@ -314,3 +314,168 @@ class TestPhase5BackwardCompatibility:
         results = memory_api.search("Rust programming")
         # Should return empty or low-scored results (score <= 0.5 is low relevance)
         assert len(results) == 0 or results[0]["score"] <= 0.5
+
+
+class TestBitemporalMemory:
+    """Test bi-temporal memory features (#1183)."""
+
+    def test_store_with_valid_at(self, memory_api):
+        """Test storing memory with explicit valid_at."""
+        from datetime import UTC, datetime
+
+        past_date = datetime(2025, 1, 1, tzinfo=UTC)
+        memory_id = memory_api.store(
+            content="Historical fact",
+            scope="user",
+            valid_at=past_date,
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        # Compare date portion (timezone handling varies by database)
+        assert "2025-01-01" in result["valid_at"]
+
+    def test_store_with_valid_at_string(self, memory_api):
+        """Test storing memory with valid_at as ISO string."""
+        memory_id = memory_api.store(
+            content="Another historical fact",
+            scope="user",
+            valid_at="2025-06-15T10:00:00Z",
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        assert "2025-06-15" in result["valid_at"]
+
+    def test_invalidate_memory(self, memory_api):
+        """Test invalidating a memory."""
+        memory_id = memory_api.store(content="Temporary fact", scope="user")
+
+        # Verify it's current initially
+        result = memory_api.get(memory_id)
+        assert result["is_current"] is True
+        assert result["invalid_at"] is None
+
+        # Invalidate it
+        success = memory_api.invalidate(memory_id)
+        assert success is True
+
+        # Verify it's now invalidated
+        result = memory_api.get(memory_id)
+        assert result["invalid_at"] is not None
+        assert result["is_current"] is False
+
+    def test_invalidate_with_specific_date(self, memory_api):
+        """Test invalidating with a specific date."""
+        from datetime import UTC, datetime
+
+        memory_id = memory_api.store(content="Dated fact", scope="user")
+        invalid_date = datetime(2026, 1, 15, tzinfo=UTC)
+
+        success = memory_api.invalidate(memory_id, invalid_at=invalid_date)
+        assert success is True
+
+        result = memory_api.get(memory_id)
+        # Compare date portion (timezone handling varies by database)
+        assert "2026-01-15" in result["invalid_at"]
+
+    def test_invalidate_with_string_date(self, memory_api):
+        """Test invalidating with string date."""
+        memory_id = memory_api.store(content="String date fact", scope="user")
+
+        success = memory_api.invalidate(memory_id, invalid_at="2026-03-01T00:00:00Z")
+        assert success is True
+
+        result = memory_api.get(memory_id)
+        assert "2026-03-01" in result["invalid_at"]
+
+    def test_query_excludes_invalid_by_default(self, memory_api):
+        """Test that default query excludes invalidated memories."""
+        valid_id = memory_api.store(content="Valid fact", scope="user")
+        invalid_id = memory_api.store(content="Invalid fact", scope="user")
+        memory_api.invalidate(invalid_id)
+
+        results = memory_api.query()
+        memory_ids = [r["memory_id"] for r in results]
+
+        assert valid_id in memory_ids
+        assert invalid_id not in memory_ids
+
+    def test_query_include_invalid(self, memory_api):
+        """Test query with include_invalid=True."""
+        valid_id = memory_api.store(content="Valid fact 2", scope="user")
+        invalid_id = memory_api.store(content="Invalid fact 2", scope="user")
+        memory_api.invalidate(invalid_id)
+
+        # With include_invalid=True, should include both
+        results = memory_api.query(include_invalid=True)
+        memory_ids = [r["memory_id"] for r in results]
+
+        assert valid_id in memory_ids
+        assert invalid_id in memory_ids
+
+    def test_point_in_time_query(self, memory_api):
+        """Test as_of point-in-time query."""
+        from datetime import UTC, datetime
+
+        # Create memory valid from Jan 1
+        jan_1 = datetime(2026, 1, 1, tzinfo=UTC)
+        memory_id = memory_api.store(
+            content="January fact",
+            scope="user",
+            valid_at=jan_1,
+        )
+
+        # Invalidate it on Jan 15
+        jan_15 = datetime(2026, 1, 15, tzinfo=UTC)
+        memory_api.invalidate(memory_id, invalid_at=jan_15)
+
+        # Query as of Jan 10 - should include the memory
+        jan_10 = datetime(2026, 1, 10, tzinfo=UTC)
+        results = memory_api.query(as_of=jan_10, include_invalid=True)
+        memory_ids = [r["memory_id"] for r in results]
+        assert memory_id in memory_ids
+
+        # Query as of Jan 20 - should exclude the memory
+        jan_20 = datetime(2026, 1, 20, tzinfo=UTC)
+        results = memory_api.query(as_of=jan_20, include_invalid=True)
+        memory_ids = [r["memory_id"] for r in results]
+        assert memory_id not in memory_ids
+
+    def test_invalidate_batch(self, memory_api):
+        """Test batch invalidation."""
+        ids = [memory_api.store(content=f"Batch fact {i}", scope="user") for i in range(3)]
+
+        result = memory_api.invalidate_batch(ids)
+        assert result["invalidated"] == 3
+        assert result["failed"] == 0
+        assert len(result["invalidated_ids"]) == 3
+
+    def test_revalidate_memory(self, memory_api):
+        """Test revalidating a memory."""
+        memory_id = memory_api.store(content="Revalidatable fact", scope="user")
+
+        # Invalidate it
+        memory_api.invalidate(memory_id)
+        result = memory_api.get(memory_id)
+        assert result["is_current"] is False
+
+        # Revalidate it
+        success = memory_api.revalidate(memory_id)
+        assert success is True
+
+        result = memory_api.get(memory_id)
+        assert result["is_current"] is True
+        assert result["invalid_at"] is None
+
+    def test_invalidate_nonexistent_memory(self, memory_api):
+        """Test invalidating a non-existent memory."""
+        success = memory_api.invalidate("nonexistent-id")
+        assert success is False
+
+    def test_default_valid_at_is_none(self, memory_api):
+        """Test that valid_at defaults to None when not provided."""
+        memory_id = memory_api.store(content="Default validity", scope="user")
+
+        result = memory_api.get(memory_id)
+        assert result["valid_at"] is None  # NULL = use created_at semantically

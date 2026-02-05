@@ -129,8 +129,8 @@ jobs:
           echo "count=$CURRENT_COUNT" >> $GITHUB_OUTPUT
           echo "Current type: ignore count: $CURRENT_COUNT"
 
-          # Baseline updated for Issue #1193 (560 = 553 + 7 type ignores for API v2 ACE components)
-          BASELINE=560
+          # Baseline updated for Issue #1213 (569 = 560 + 9 type ignores for mobile search)
+          BASELINE=569
 
           if [ "$CURRENT_COUNT" -gt "$BASELINE" ]; then
             echo "::error::Type ignore count increased from $BASELINE to $CURRENT_COUNT"

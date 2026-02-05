@@ -20,7 +20,7 @@ from nexus.core.entity_registry import EntityRegistry
 from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
-from nexus.core.temporal import validate_temporal_params
+from nexus.core.temporal import parse_datetime, validate_temporal_params
 
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
@@ -163,6 +163,7 @@ class Memory:
         extract_relationships: bool = False,  # #1038: Extract relationships (triplets)
         relationship_types: list[str] | None = None,  # #1038: Custom relationship types
         store_to_graph: bool = False,  # #1039: Store entities/relationships to graph tables
+        valid_at: datetime | str | None = None,  # #1183: When fact became valid in real world
     ) -> str:
         """Store a memory.
 
@@ -182,6 +183,7 @@ class Memory:
             temporal_reference_time: Reference time for temporal resolution (datetime or ISO string). #1027
             extract_entities: Extract named entities for symbolic filtering. Defaults to True. #1025
             extract_temporal: Extract temporal metadata for date-based queries. Defaults to True. #1028
+            valid_at: When fact became valid in real world. Accepts datetime or ISO-8601 string. #1183
 
         Returns:
             memory_id: The created or updated memory ID.
@@ -402,6 +404,13 @@ class Memory:
                     relationships_json_str = json.dumps(rel_result.to_dicts())
                     relationship_count_val = len(rel_result.relationships)
 
+        # #1183: Parse valid_at if provided as string
+        valid_at_dt = (
+            (parse_datetime(valid_at) if isinstance(valid_at, str) else valid_at)
+            if valid_at is not None
+            else None
+        )
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -425,6 +434,7 @@ class Memory:
             latest_date=latest_date,  # #1028: Store latest date
             relationships_json=relationships_json_str,  # #1038: Store relationships
             relationship_count=relationship_count_val,  # #1038: Store relationship count
+            valid_at=valid_at_dt,  # #1183: When fact became valid
         )
 
         # #1039: Store extracted entities and relationships to graph tables
@@ -582,6 +592,8 @@ class Memory:
         person: str | None = None,  # #1025: Filter by person reference
         event_after: str | datetime | None = None,  # #1028: Filter by event date >= value
         event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
+        include_invalid: bool = False,  # #1183: Include invalidated memories
+        as_of: str | datetime | None = None,  # #1183: Point-in-time query
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -601,6 +613,8 @@ class Memory:
             person: Filter by person name reference. #1025
             event_after: Filter by event earliest_date >= value (ISO-8601 or datetime). #1028
             event_before: Filter by event latest_date <= value (ISO-8601 or datetime). #1028
+            include_invalid: Include invalidated memories. Default False (current facts only). #1183
+            as_of: Point-in-time query - return facts valid at this timestamp. #1183
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -653,6 +667,13 @@ class Memory:
             else:
                 event_before_dt = event_before
 
+        # #1183: Parse as_of for point-in-time queries
+        valid_at_point = (
+            (parse_datetime(as_of) if isinstance(as_of, str) else as_of)
+            if as_of is not None
+            else None
+        )
+
         # Query memories
         memories = self.memory_router.query_memories(
             tenant_id=tenant_id,
@@ -667,6 +688,8 @@ class Memory:
             person=person,  # #1025: Person filtering
             event_after=event_after_dt,  # #1028: Event date filtering
             event_before=event_before_dt,  # #1028: Event date filtering
+            include_invalid=include_invalid,  # #1183: Include invalidated memories
+            valid_at_point=valid_at_point,  # #1183: Point-in-time query
             limit=limit,
         )
 
@@ -734,6 +757,11 @@ class Memory:
                     "relationship_count": memory.relationship_count,  # #1038
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+                    "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
+                    "invalid_at": memory.invalid_at.isoformat()
+                    if memory.invalid_at
+                    else None,  # #1183
+                    "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
                 }
             )
 
@@ -1192,6 +1220,9 @@ class Memory:
             "path_key": memory.path_key,
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
             "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
+            "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
+            "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,  # #1183
+            "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
         }
 
     def retrieve(
@@ -1444,6 +1475,121 @@ class Memory:
             "deleted_ids": deleted,
             "failed_ids": failed,
         }
+
+    def invalidate(
+        self,
+        memory_id: str,
+        invalid_at: datetime | str | None = None,
+    ) -> bool:
+        """Invalidate a memory (mark as no longer valid) (#1183).
+
+        This is a temporal soft-delete that marks when a fact became false,
+        without removing the historical record. The memory remains queryable
+        for historical analysis but is excluded from "current facts" queries.
+
+        Args:
+            memory_id: Memory ID to invalidate.
+            invalid_at: When the fact became invalid. Defaults to now().
+
+        Returns:
+            True if invalidated, False if not found or no permission.
+
+        Example:
+            >>> # Fact is no longer true as of today
+            >>> memory.invalidate("mem_123")
+            True
+
+            >>> # Fact became false on a specific date
+            >>> memory.invalidate("mem_123", invalid_at="2026-01-15")
+            True
+
+            >>> # Query only current facts (excludes invalidated)
+            >>> current_facts = memory.query(include_invalid=False)
+
+        Note:
+            Unlike delete(), invalidate() preserves the memory for historical
+            queries. Use delete() to permanently remove data.
+        """
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return False
+
+        # Check permission
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
+            return False
+
+        # Parse invalid_at
+        invalid_at_dt: datetime = datetime.now(UTC)
+        if invalid_at is not None:
+            if isinstance(invalid_at, str):
+                parsed = parse_datetime(invalid_at)
+                if parsed is not None:
+                    invalid_at_dt = parsed
+            else:
+                invalid_at_dt = invalid_at
+
+        # Update the memory
+        result = self.memory_router.invalidate_memory(memory_id, invalid_at_dt)
+        return result is not None
+
+    def invalidate_batch(
+        self, memory_ids: list[str], invalid_at: datetime | str | None = None
+    ) -> dict[str, Any]:
+        """Invalidate multiple memories at once (#1183).
+
+        Args:
+            memory_ids: List of memory IDs to invalidate.
+            invalid_at: When facts became invalid. Defaults to now().
+
+        Returns:
+            Dictionary with success/failure counts and details.
+
+        Example:
+            >>> result = memory.invalidate_batch(["mem_1", "mem_2", "mem_3"])
+            >>> print(f"Invalidated {result['invalidated']} memories")
+        """
+        invalidated = []
+        failed = []
+
+        for memory_id in memory_ids:
+            if self.invalidate(memory_id, invalid_at=invalid_at):
+                invalidated.append(memory_id)
+            else:
+                failed.append(memory_id)
+
+        return {
+            "invalidated": len(invalidated),
+            "failed": len(failed),
+            "invalidated_ids": invalidated,
+            "failed_ids": failed,
+        }
+
+    def revalidate(self, memory_id: str) -> bool:
+        """Revalidate a memory (clear invalid_at timestamp) (#1183).
+
+        Use when a previously invalidated fact becomes true again.
+
+        Args:
+            memory_id: Memory ID to revalidate.
+
+        Returns:
+            True if revalidated, False if not found or no permission.
+
+        Example:
+            >>> # Fact is true again
+            >>> memory.revalidate("mem_123")
+            True
+        """
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return False
+
+        # Check permission
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
+            return False
+
+        result = self.memory_router.revalidate_memory(memory_id)
+        return result is not None
 
     def list(
         self,

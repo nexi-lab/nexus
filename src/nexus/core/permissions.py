@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from nexus.core.hotspot_detector import HotspotDetector
     from nexus.core.permission_boundary_cache import PermissionBoundaryCache
     from nexus.core.permissions_enhanced import AuditStore
+    from nexus.core.read_set import ReadSet
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,12 @@ class OperationContext:
     backend_path: str | None = None  # Backend-relative path for connector backends
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
 
+    # Issue #1166: Read Set Tracking for Query Dependencies
+    # When track_reads=True, operations automatically record what they read
+    # to enable precise cache invalidation and efficient subscription updates
+    read_set: ReadSet | None = None  # Read set for this operation (lazy-initialized)
+    track_reads: bool = False  # Enable read tracking for this operation
+
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
         # v0.5.0: Auto-populate user_id from user if not provided
@@ -176,6 +183,69 @@ class OperationContext:
             ('agent', 'agent_data_analyst')
         """
         return (self.subject_type, self.subject_id or self.user)
+
+    def record_read(
+        self,
+        resource_type: str,
+        resource_id: str,
+        revision: int,
+        access_type: str = "content",
+    ) -> None:
+        """Record a resource read for dependency tracking (Issue #1166).
+
+        This method is called automatically by instrumented operations
+        (read, list, stat) when track_reads=True.
+
+        Args:
+            resource_type: Type of resource (file, directory, metadata)
+            resource_id: Path or identifier of the resource
+            revision: Current revision of the resource
+            access_type: Type of access (content, metadata, list, exists)
+
+        Example:
+            >>> ctx = OperationContext(user="alice", groups=[], track_reads=True)
+            >>> ctx.enable_read_tracking("tenant1")
+            >>> ctx.record_read("file", "/inbox/a.txt", revision=10)
+            >>> len(ctx.read_set)
+            1
+        """
+        if not self.track_reads or self.read_set is None:
+            return
+
+        self.read_set.record_read(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            revision=revision,
+            access_type=access_type,
+        )
+
+    def enable_read_tracking(self, tenant_id: str | None = None) -> None:
+        """Enable read tracking and initialize read set (Issue #1166).
+
+        Call this before operations to track what resources are accessed.
+        After the operation completes, the read_set can be registered
+        with the ReadSetRegistry for subscription updates.
+
+        Args:
+            tenant_id: Tenant ID for the read set (defaults to self.tenant_id)
+
+        Example:
+            >>> ctx = OperationContext(user="alice", groups=[], tenant_id="org1")
+            >>> ctx.enable_read_tracking()
+            >>> # ... perform operations ...
+            >>> registry.register(ctx.read_set)
+        """
+        from nexus.core.read_set import ReadSet
+
+        self.track_reads = True
+        self.read_set = ReadSet.create(tenant_id=tenant_id or self.tenant_id or "default")
+
+    def disable_read_tracking(self) -> None:
+        """Disable read tracking.
+
+        The read_set is preserved so it can still be registered/inspected.
+        """
+        self.track_reads = False
 
 
 class PermissionEnforcer:

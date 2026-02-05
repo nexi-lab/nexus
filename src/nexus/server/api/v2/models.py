@@ -33,6 +33,7 @@ class MemoryStoreRequest(BaseModel):
     extract_temporal: bool = Field(True, description="Extract temporal references")
     extract_relationships: bool = Field(False, description="Extract relationships")
     store_to_graph: bool = Field(False, description="Store entities to knowledge graph")
+    valid_at: str | None = Field(None, description="When fact became valid (ISO-8601)")  # #1183
     metadata: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 

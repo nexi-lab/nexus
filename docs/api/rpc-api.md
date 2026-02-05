@@ -1689,9 +1689,19 @@ client.delete_saved_mount("/personal/alice")
 
 ## Memory API
 
-Agent memory management for trajectories, reflections, and playbooks (v0.5.0).
+Agent memory management for storing facts, preferences, experiences, and learning patterns. Includes trajectory tracking, reflection capabilities, and playbook management.
 
-### register_memory
+**Version History:**
+- v0.5.0: Initial memory API with trajectory tracking and playbooks
+- v0.8.0: Added namespace support, retrieve_memory, delete_memory
+- Issue #368: Added memory state management (approve, deactivate, batch operations)
+- Issue #406: Added semantic search support in query_memories
+
+### Memory Registration
+
+Methods for registering and managing memory storage locations.
+
+#### register_memory
 
 Register a directory as agent memory storage.
 
@@ -1708,7 +1718,7 @@ Register a directory as agent memory storage.
 
 ---
 
-### unregister_memory
+#### unregister_memory
 
 Unregister agent memory.
 
@@ -1719,20 +1729,7 @@ Unregister agent memory.
 
 ---
 
-### list_memories
-
-List registered memories.
-
-**Endpoint**: `POST /api/nfs/list_memories`
-
-**Parameters:**
-- `limit` (int, optional): Maximum memories (default: 50)
-- `scope` (string, optional): Filter by scope
-- `memory_type` (string, optional): Filter by type
-
----
-
-### get_memory_info
+#### get_memory_info
 
 Get memory information.
 
@@ -1743,7 +1740,444 @@ Get memory information.
 
 ---
 
-### start_trajectory
+### Memory Storage & Retrieval
+
+Methods for storing, retrieving, and deleting memory records.
+
+#### store_memory
+
+Store an agent memory with optional namespace organization.
+
+**Endpoint**: `POST /api/nfs/store_memory`
+
+**Parameters:**
+- `content` (string, required): Memory content
+- `memory_type` (string, optional): Memory type - "fact", "preference", "experience", "insight" (default: "fact")
+- `scope` (string, optional): Memory scope - "agent", "user", "session", "global" (default: "agent")
+- `importance` (float, optional): Importance score 0.0-1.0 (default: 0.5)
+- `namespace` (string, optional): Hierarchical namespace for organization (v0.8.0)
+- `path_key` (string, optional): Path key within namespace (v0.8.0)
+- `state` (string, optional): Initial state - "active" or "inactive" (default: "active")
+- `tags` (array[string], optional): Tags for categorization
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 25,
+  "method": "store_memory",
+  "params": {
+    "content": "User prefers Python over JavaScript",
+    "memory_type": "preference",
+    "scope": "user",
+    "importance": 0.8,
+    "namespace": "user/preferences",
+    "path_key": "language",
+    "tags": ["language", "preference"]
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 25,
+  "result": {
+    "memory_id": "mem-abc123"
+  }
+}
+```
+
+---
+
+#### retrieve_memory
+
+Retrieve a specific memory by namespace path. *(v0.8.0)*
+
+**Endpoint**: `POST /api/nfs/retrieve_memory`
+
+**Parameters:**
+- `namespace` (string, optional): Memory namespace
+- `path_key` (string, optional): Path key within namespace
+- `path` (string, optional): Combined path (alternative to namespace+path_key)
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 26,
+  "method": "retrieve_memory",
+  "params": {
+    "namespace": "user/preferences",
+    "path_key": "language"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 26,
+  "result": {
+    "memory": {
+      "memory_id": "mem-abc123",
+      "content": "User prefers Python over JavaScript",
+      "memory_type": "preference",
+      "namespace": "user/preferences",
+      "path_key": "language",
+      "importance": 0.8,
+      "state": "active",
+      "created_at": "2025-01-15T10:00:00Z"
+    }
+  }
+}
+```
+
+---
+
+#### delete_memory
+
+Delete a memory by ID. *(v0.8.0)*
+
+**Endpoint**: `POST /api/nfs/delete_memory`
+
+**Parameters:**
+- `memory_id` (string, required): Memory ID to delete
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 27,
+  "method": "delete_memory",
+  "params": {
+    "memory_id": "mem-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 27,
+  "result": {
+    "deleted": true
+  }
+}
+```
+
+---
+
+### Memory Query & Search
+
+Methods for listing, querying, and searching memories.
+
+#### list_memories
+
+List memories with filtering options.
+
+**Endpoint**: `POST /api/nfs/list_memories`
+
+**Parameters:**
+- `limit` (int, optional): Maximum memories to return (default: 50)
+- `scope` (string, optional): Filter by scope
+- `memory_type` (string, optional): Filter by type
+- `namespace` (string, optional): Filter by exact namespace (v0.8.0)
+- `namespace_prefix` (string, optional): Filter by namespace prefix for hierarchical queries (v0.8.0)
+- `state` (string, optional): Filter by state - "active", "inactive", or "all" (default: "active")
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 28,
+  "method": "list_memories",
+  "params": {
+    "scope": "user",
+    "memory_type": "preference",
+    "namespace_prefix": "user/",
+    "state": "active",
+    "limit": 20
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 28,
+  "result": {
+    "memories": [
+      {
+        "memory_id": "mem-123",
+        "content": "User prefers Python over JavaScript",
+        "memory_type": "preference",
+        "scope": "user",
+        "namespace": "user/preferences",
+        "importance": 0.8,
+        "state": "active",
+        "created_at": "2025-01-15T10:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+#### query_memories
+
+Query memories with optional semantic search. *(Enhanced in #406)*
+
+**Endpoint**: `POST /api/nfs/query_memories`
+
+**Parameters:**
+- `memory_type` (string, optional): Filter by type
+- `scope` (string, optional): Filter by scope
+- `state` (string, optional): Filter by state - "active", "inactive", or "all" (default: "active")
+- `limit` (int, optional): Maximum results (default: 50)
+- `query` (string, optional): Natural language query for semantic search (#406)
+- `search_mode` (string, optional): Search mode - "semantic", "keyword", or "hybrid" (default: "hybrid")
+- `embedding_provider` (string, optional): Embedding provider - "openai", "voyage", or "openrouter"
+
+**Example Request (Basic Query):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 29,
+  "method": "query_memories",
+  "params": {
+    "memory_type": "preference",
+    "scope": "user",
+    "state": "active",
+    "limit": 10
+  }
+}
+```
+
+**Example Request (Semantic Search):**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 30,
+  "method": "query_memories",
+  "params": {
+    "query": "What programming languages does the user prefer?",
+    "search_mode": "hybrid",
+    "limit": 5
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 30,
+  "result": {
+    "memories": [
+      {
+        "memory_id": "mem-123",
+        "content": "User prefers Python over JavaScript",
+        "memory_type": "preference",
+        "scope": "user",
+        "importance": 0.8,
+        "score": 0.92,
+        "created_at": "2025-01-15T10:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Memory State Management
+
+Methods for managing memory activation states. Supports human-in-the-loop approval workflows. *(Issue #368)*
+
+#### approve_memory
+
+Approve and activate a memory (set state to "active").
+
+**Endpoint**: `POST /api/nfs/approve_memory`
+
+**Parameters:**
+- `memory_id` (string, required): Memory ID to approve
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 31,
+  "method": "approve_memory",
+  "params": {
+    "memory_id": "mem-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 31,
+  "result": {
+    "approved": true
+  }
+}
+```
+
+---
+
+#### deactivate_memory
+
+Deactivate a memory (set state to "inactive").
+
+**Endpoint**: `POST /api/nfs/deactivate_memory`
+
+**Parameters:**
+- `memory_id` (string, required): Memory ID to deactivate
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 32,
+  "method": "deactivate_memory",
+  "params": {
+    "memory_id": "mem-abc123"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 32,
+  "result": {
+    "deactivated": true
+  }
+}
+```
+
+---
+
+#### approve_memory_batch
+
+Approve multiple memories in a single request.
+
+**Endpoint**: `POST /api/nfs/approve_memory_batch`
+
+**Parameters:**
+- `memory_ids` (array[string], required): List of memory IDs to approve
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 33,
+  "method": "approve_memory_batch",
+  "params": {
+    "memory_ids": ["mem-123", "mem-456", "mem-789"]
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 33,
+  "result": {
+    "approved": 3,
+    "failed": 0
+  }
+}
+```
+
+---
+
+#### deactivate_memory_batch
+
+Deactivate multiple memories in a single request.
+
+**Endpoint**: `POST /api/nfs/deactivate_memory_batch`
+
+**Parameters:**
+- `memory_ids` (array[string], required): List of memory IDs to deactivate
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 34,
+  "method": "deactivate_memory_batch",
+  "params": {
+    "memory_ids": ["mem-123", "mem-456"]
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 34,
+  "result": {
+    "deactivated": 2,
+    "failed": 0
+  }
+}
+```
+
+---
+
+#### delete_memory_batch
+
+Delete multiple memories in a single request.
+
+**Endpoint**: `POST /api/nfs/delete_memory_batch`
+
+**Parameters:**
+- `memory_ids` (array[string], required): List of memory IDs to delete
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 35,
+  "method": "delete_memory_batch",
+  "params": {
+    "memory_ids": ["mem-123", "mem-456"]
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 35,
+  "result": {
+    "deleted": 2,
+    "failed": 0
+  }
+}
+```
+
+---
+
+### Trajectory Tracking
+
+Methods for tracking agent execution trajectories for learning and reflection.
+
+#### start_trajectory
 
 Start tracking an execution trajectory.
 
@@ -1757,7 +2191,7 @@ Start tracking an execution trajectory.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 21,
+  "id": 36,
   "method": "start_trajectory",
   "params": {
     "task_description": "Implement user authentication",
@@ -1770,7 +2204,7 @@ Start tracking an execution trajectory.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 21,
+  "id": 36,
   "result": {
     "trajectory_id": "traj-abc123",
     "started_at": "2025-01-15T10:00:00Z",
@@ -1781,7 +2215,7 @@ Start tracking an execution trajectory.
 
 ---
 
-### log_trajectory_step
+#### log_trajectory_step
 
 Log a step in an execution trajectory.
 
@@ -1789,15 +2223,15 @@ Log a step in an execution trajectory.
 
 **Parameters:**
 - `trajectory_id` (string, required): Trajectory ID
-- `step_type` (string, required): Step type (e.g., "read", "write", "execute")
+- `step_type` (string, required): Step type (e.g., "read", "write", "execute", "decision")
 - `description` (string, required): Step description
-- `result` (any, optional): Step result
+- `result` (any, optional): Step result data
 
 **Example Request:**
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 22,
+  "id": 37,
   "method": "log_trajectory_step",
   "params": {
     "trajectory_id": "traj-abc123",
@@ -1813,7 +2247,7 @@ Log a step in an execution trajectory.
 
 ---
 
-### complete_trajectory
+#### complete_trajectory
 
 Mark a trajectory as complete.
 
@@ -1821,7 +2255,7 @@ Mark a trajectory as complete.
 
 **Parameters:**
 - `trajectory_id` (string, required): Trajectory ID
-- `status` (string, required): Completion status (e.g., "success", "failure")
+- `status` (string, required): Completion status - "success", "failure", or "partial"
 - `success_score` (float, optional): Success score (0.0-1.0)
 - `error_message` (string, optional): Error message if failed
 
@@ -1829,7 +2263,7 @@ Mark a trajectory as complete.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 23,
+  "id": 38,
   "method": "complete_trajectory",
   "params": {
     "trajectory_id": "traj-abc123",
@@ -1841,7 +2275,7 @@ Mark a trajectory as complete.
 
 ---
 
-### query_trajectories
+#### query_trajectories
 
 Query execution trajectories.
 
@@ -1856,7 +2290,7 @@ Query execution trajectories.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 24,
+  "id": 39,
   "result": [
     {
       "trajectory_id": "traj-abc123",
@@ -1872,87 +2306,27 @@ Query execution trajectories.
 
 ---
 
-### store_memory
+### Playbook & Reflection Management
 
-Store an agent memory.
+Methods for managing agent playbooks and reflection-based learning.
 
-**Endpoint**: `POST /api/nfs/store_memory`
+#### batch_reflect
 
-**Parameters:**
-- `content` (string, required): Memory content
-- `memory_type` (string, optional): Memory type (default: "fact")
-- `scope` (string, optional): Memory scope (default: "agent")
-- `importance` (float, optional): Importance score (default: 0.5)
-- `tags` (array[string], optional): Tags
-
-**Example Request:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 25,
-  "method": "store_memory",
-  "params": {
-    "content": "User prefers Python over JavaScript",
-    "memory_type": "preference",
-    "scope": "user",
-    "importance": 0.8,
-    "tags": ["language", "preference"]
-  }
-}
-```
-
----
-
-### query_memories
-
-Query stored memories.
-
-**Endpoint**: `POST /api/nfs/query_memories`
-
-**Parameters:**
-- `memory_type` (string, optional): Filter by type
-- `scope` (string, optional): Filter by scope
-- `limit` (int, optional): Maximum results (default: 50)
-
-**Example Response:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 26,
-  "result": {
-    "memories": [
-      {
-        "memory_id": "mem-123",
-        "content": "User prefers Python over JavaScript",
-        "memory_type": "preference",
-        "scope": "user",
-        "importance": 0.8,
-        "created_at": "2025-01-15T10:00:00Z"
-      }
-    ]
-  }
-}
-```
-
----
-
-### batch_reflect
-
-Batch reflection across multiple trajectories.
+Batch reflection across multiple trajectories to generate insights.
 
 **Endpoint**: `POST /api/nfs/batch_reflect`
 
 **Parameters:**
 - `agent_id` (string, optional): Filter by agent ID
 - `since` (string, optional): ISO timestamp to reflect since
-- `min_trajectories` (int, optional): Minimum trajectories (default: 10)
+- `min_trajectories` (int, optional): Minimum trajectories required (default: 10)
 - `task_type` (string, optional): Filter by task type
 
 **Example Request:**
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 27,
+  "id": 40,
   "method": "batch_reflect",
   "params": {
     "agent_id": "agent-alice",
@@ -1965,9 +2339,9 @@ Batch reflection across multiple trajectories.
 
 ---
 
-### get_playbook
+#### get_playbook
 
-Retrieve an agent playbook.
+Retrieve an agent playbook containing learned patterns.
 
 **Endpoint**: `POST /api/nfs/get_playbook`
 
@@ -1978,7 +2352,7 @@ Retrieve an agent playbook.
 ```json
 {
   "jsonrpc": "2.0",
-  "id": 28,
+  "id": 41,
   "result": {
     "playbook_name": "default",
     "patterns": [
@@ -1995,22 +2369,22 @@ Retrieve an agent playbook.
 
 ---
 
-### curate_playbook
+#### curate_playbook
 
-Auto-curate playbook from reflections.
+Auto-curate playbook from reflection memories.
 
 **Endpoint**: `POST /api/nfs/curate_playbook`
 
 **Parameters:**
-- `reflection_memory_ids` (array[string], required): Reflection memory IDs
+- `reflection_memory_ids` (array[string], required): Reflection memory IDs to curate from
 - `playbook_name` (string, optional): Playbook name (default: "default")
-- `merge_threshold` (float, optional): Similarity threshold (default: 0.7)
+- `merge_threshold` (float, optional): Similarity threshold for merging patterns (default: 0.7)
 
 ---
 
-### query_playbooks
+#### query_playbooks
 
-Query playbooks.
+Query available playbooks.
 
 **Endpoint**: `POST /api/nfs/query_playbooks`
 
@@ -2021,9 +2395,9 @@ Query playbooks.
 
 ---
 
-### process_relearning
+#### process_relearning
 
-Process re-learning queue.
+Process the re-learning queue to update agent knowledge.
 
 **Endpoint**: `POST /api/nfs/process_relearning`
 
@@ -3509,16 +3883,23 @@ Test if an OAuth credential is valid and can be refreshed.
 | `list_saved_mounts` | Mount Management | List saved mounts |
 | `load_mount` | Mount Management | Load and activate mount |
 | `delete_saved_mount` | Mount Management | Delete saved mount |
-| `register_memory` | Memory | Register memory |
+| `register_memory` | Memory | Register memory storage |
 | `unregister_memory` | Memory | Unregister memory |
-| `list_memories` | Memory | List memories |
 | `get_memory_info` | Memory | Get memory info |
-| `start_trajectory` | Memory | Start trajectory |
+| `store_memory` | Memory | Store memory record |
+| `retrieve_memory` | Memory | Retrieve memory by path (v0.8.0) |
+| `delete_memory` | Memory | Delete memory (v0.8.0) |
+| `list_memories` | Memory | List memories with filters |
+| `query_memories` | Memory | Query/search memories (#406) |
+| `approve_memory` | Memory | Approve memory (#368) |
+| `deactivate_memory` | Memory | Deactivate memory (#368) |
+| `approve_memory_batch` | Memory | Batch approve (#368) |
+| `deactivate_memory_batch` | Memory | Batch deactivate (#368) |
+| `delete_memory_batch` | Memory | Batch delete (#368) |
+| `start_trajectory` | Memory | Start trajectory tracking |
 | `log_trajectory_step` | Memory | Log trajectory step |
 | `complete_trajectory` | Memory | Complete trajectory |
 | `query_trajectories` | Memory | Query trajectories |
-| `store_memory` | Memory | Store memory |
-| `query_memories` | Memory | Query memories |
 | `batch_reflect` | Memory | Batch reflection |
 | `get_playbook` | Memory | Get playbook |
 | `curate_playbook` | Memory | Curate playbook |
@@ -3558,7 +3939,7 @@ Test if an OAuth credential is valid and can be refreshed.
 | `namespace_delete` | Namespace | Delete namespace |
 | `get_available_namespaces` | Namespace | Get available namespaces |
 
-**Total: 76 RPC Methods** (9 Mount Management methods added)
+**Total: 83 RPC Methods** (7 Memory State Management methods added in #368)
 
 ---
 

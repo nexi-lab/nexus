@@ -4158,6 +4158,27 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     # Semantic search methods (Issue #947)
     elif method == "semantic_search_index":
         return await _handle_semantic_search_index(params, context)
+    # Memory API methods (Issue #4)
+    elif method == "store_memory":
+        return await to_thread_with_timeout(_handle_store_memory, params, context)
+    elif method == "list_memories":
+        return await to_thread_with_timeout(_handle_list_memories, params, context)
+    elif method == "query_memories":
+        return await to_thread_with_timeout(_handle_query_memories, params, context)
+    elif method == "retrieve_memory":
+        return await to_thread_with_timeout(_handle_retrieve_memory, params, context)
+    elif method == "delete_memory":
+        return await to_thread_with_timeout(_handle_delete_memory, params, context)
+    elif method == "approve_memory":
+        return await to_thread_with_timeout(_handle_approve_memory, params, context)
+    elif method == "deactivate_memory":
+        return await to_thread_with_timeout(_handle_deactivate_memory, params, context)
+    elif method == "approve_memory_batch":
+        return await to_thread_with_timeout(_handle_approve_memory_batch, params, context)
+    elif method == "deactivate_memory_batch":
+        return await to_thread_with_timeout(_handle_deactivate_memory_batch, params, context)
+    elif method == "delete_memory_batch":
+        return await to_thread_with_timeout(_handle_delete_memory_batch, params, context)
     # Admin API methods (v0.5.1)
     elif method == "admin_create_key":
         return await to_thread_with_timeout(_handle_admin_create_key, params, context)
@@ -4203,6 +4224,167 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
         # Use longer timeout for sync operations (5 minutes)
         timeout = 300.0 if method == "sync_mount" else None
         return await to_thread_with_timeout(func, timeout=timeout, **kwargs)
+
+
+# ============================================================================
+# Memory API Helper
+# ============================================================================
+
+
+def _get_memory_api_with_context(context: Any) -> Any:
+    """Get Memory API instance with authenticated context.
+
+    Args:
+        context: Operation context with tenant/user/agent info
+
+    Returns:
+        Memory API instance with user/agent/tenant from context
+    """
+    nexus_fs = _app_state.nexus_fs
+    if nexus_fs is None:
+        raise RuntimeError("NexusFS not initialized")
+
+    # Convert context to dict format needed by _get_memory_api
+    context_dict: dict[str, Any] = {}
+    if context:
+        if hasattr(context, "tenant_id") and context.tenant_id:
+            context_dict["tenant_id"] = context.tenant_id
+        if hasattr(context, "user_id") and context.user_id:
+            context_dict["user_id"] = context.user_id
+        elif hasattr(context, "user") and context.user:
+            context_dict["user_id"] = context.user
+        if hasattr(context, "agent_id") and context.agent_id:
+            context_dict["agent_id"] = context.agent_id
+
+    # _get_memory_api is available on NexusFS
+    return nexus_fs._get_memory_api(context_dict if context_dict else None)
+
+
+# ============================================================================
+# Memory Method Handlers (Issue #4)
+# ============================================================================
+
+
+def _handle_store_memory(params: Any, context: Any) -> dict[str, Any]:
+    """Handle store_memory RPC method."""
+    memory_api = _get_memory_api_with_context(context)
+    memory_id = memory_api.store(
+        content=params.content,
+        memory_type=params.memory_type,
+        scope=params.scope,
+        importance=params.importance,
+        namespace=params.namespace,
+        path_key=params.path_key,
+        state=params.state,
+    )
+    return {"memory_id": memory_id}
+
+
+def _handle_list_memories(params: Any, context: Any) -> dict[str, Any]:
+    """Handle list_memories RPC method."""
+    memory_api = _get_memory_api_with_context(context)
+    memories = memory_api.list(
+        scope=params.scope,
+        memory_type=params.memory_type,
+        namespace=params.namespace,
+        namespace_prefix=params.namespace_prefix,
+        state=params.state,
+        limit=params.limit,
+    )
+    return {"memories": memories}
+
+
+def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
+    """Handle query_memories RPC method."""
+    memory_api = _get_memory_api_with_context(context)
+
+    # Support semantic search if query is provided (#406)
+    if params.query:
+        # Create embedding provider if specified
+        embedding_provider_obj = None
+        if params.embedding_provider:
+            try:
+                from nexus.search.embeddings import create_embedding_provider
+
+                embedding_provider_obj = create_embedding_provider(
+                    provider=params.embedding_provider
+                )
+            except Exception:
+                # Failed to create provider, will use default or fallback
+                pass
+
+        # Use search method with semantic search
+        search_mode = params.search_mode or "hybrid"
+        memories = memory_api.search(
+            query=params.query,
+            memory_type=params.memory_type,
+            scope=params.scope,
+            limit=params.limit,
+            search_mode=search_mode,
+            embedding_provider=embedding_provider_obj,
+        )
+    else:
+        # Use regular query method
+        memories = memory_api.query(
+            memory_type=params.memory_type,
+            scope=params.scope,
+            state=params.state,
+            limit=params.limit,
+        )
+    return {"memories": memories}
+
+
+def _handle_retrieve_memory(params: Any, context: Any) -> dict[str, Any]:
+    """Handle retrieve_memory RPC method."""
+    memory_api = _get_memory_api_with_context(context)
+    memory = memory_api.retrieve(
+        namespace=params.namespace,
+        path_key=params.path_key,
+        path=params.path,
+    )
+    return {"memory": memory}
+
+
+def _handle_delete_memory(params: Any, context: Any) -> dict[str, Any]:
+    """Handle delete_memory RPC method."""
+    memory_api = _get_memory_api_with_context(context)
+    deleted = memory_api.delete(params.memory_id)
+    return {"deleted": deleted}
+
+
+def _handle_approve_memory(params: Any, context: Any) -> dict[str, Any]:
+    """Handle approve_memory RPC method (#368)."""
+    memory_api = _get_memory_api_with_context(context)
+    approved = memory_api.approve(params.memory_id)
+    return {"approved": approved}
+
+
+def _handle_deactivate_memory(params: Any, context: Any) -> dict[str, Any]:
+    """Handle deactivate_memory RPC method (#368)."""
+    memory_api = _get_memory_api_with_context(context)
+    deactivated = memory_api.deactivate(params.memory_id)
+    return {"deactivated": deactivated}
+
+
+def _handle_approve_memory_batch(params: Any, context: Any) -> dict[str, Any]:
+    """Handle approve_memory_batch RPC method (#368)."""
+    memory_api = _get_memory_api_with_context(context)
+    result: dict[str, Any] = memory_api.approve_batch(params.memory_ids)
+    return result
+
+
+def _handle_deactivate_memory_batch(params: Any, context: Any) -> dict[str, Any]:
+    """Handle deactivate_memory_batch RPC method (#368)."""
+    memory_api = _get_memory_api_with_context(context)
+    result: dict[str, Any] = memory_api.deactivate_batch(params.memory_ids)
+    return result
+
+
+def _handle_delete_memory_batch(params: Any, context: Any) -> dict[str, Any]:
+    """Handle delete_memory_batch RPC method (#368)."""
+    memory_api = _get_memory_api_with_context(context)
+    result: dict[str, Any] = memory_api.delete_batch(params.memory_ids)
+    return result
 
 
 # ============================================================================

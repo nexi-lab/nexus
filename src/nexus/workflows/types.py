@@ -64,7 +64,7 @@ class WorkflowContext:
 
     workflow_id: UUID
     execution_id: UUID
-    tenant_id: UUID | None  # Allow None for default/global workflows
+    zone_id: UUID | None  # Allow None for default/global workflows
     trigger_type: TriggerType
     trigger_context: dict[str, Any] = field(default_factory=dict)
     variables: dict[str, Any] = field(default_factory=dict)

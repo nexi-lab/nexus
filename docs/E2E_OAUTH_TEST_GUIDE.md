@@ -50,7 +50,7 @@ This will delete:
 
 **Expected Result**:
 ```
-tenant_id = "alice"
+zone_id = "alice"
 name      = "Alice's Workspace"  (or "alice's Workspace" if no display name)
 domain    = "gmail.com"
 role      = "admin"
@@ -68,10 +68,10 @@ role      = "admin"
 docker exec -it nexus-postgres psql -U postgres -d nexus
 
 # Check user
-SELECT user_id, email, username, display_name, tenant_id FROM users;
+SELECT user_id, email, username, display_name, zone_id FROM users;
 
 # Check tenant
-SELECT tenant_id, name, domain, description FROM tenants;
+SELECT zone_id, name, domain, description FROM tenants;
 
 # Check ReBAC membership
 SELECT subject_id, relation, object_id FROM rebac_tuples WHERE object_type = 'group';
@@ -83,12 +83,12 @@ SELECT subject_id, relation, object_id FROM rebac_tuples WHERE object_type = 'gr
 **Expected Output**:
 ```sql
 -- users table
-user_id     | email           | username | display_name | tenant_id
+user_id     | email           | username | display_name | zone_id
 ------------|-----------------|----------|--------------|----------
 <uuid>      | alice@gmail.com | alice    | Alice Smith  | alice
 
 -- tenants table
-tenant_id | name              | domain     | description
+zone_id | name              | domain     | description
 ----------|-------------------|------------|-----------------------------
 alice     | Alice's Workspace | gmail.com  | Personal workspace for Alice Smith
 
@@ -107,7 +107,7 @@ subject_id | relation  | object_id
 
 **Expected Result**:
 ```
-tenant_id = "acme-com"
+zone_id = "acme-com"
 name      = "Acme"
 domain    = "acme.com"
 role      = "member"
@@ -116,12 +116,12 @@ role      = "member"
 **Verify**:
 ```sql
 -- users table
-user_id | email         | display_name | tenant_id
+user_id | email         | display_name | zone_id
 --------|---------------|--------------|----------
 <uuid>  | bob@acme.com  | Bob Jones    | acme-com
 
 -- tenants table
-tenant_id | name  | domain    | description
+zone_id | name  | domain    | description
 ----------|-------|-----------|--------------------------------
 acme-com  | Acme  | acme.com  | Organization workspace for acme.com
 
@@ -137,7 +137,7 @@ subject_id | relation   | object_id
 
 **Expected Result**:
 ```
-tenant_id = "acme-com"  (SAME tenant!)
+zone_id = "acme-com"  (SAME tenant!)
 name      = "Acme"      (existing tenant)
 domain    = "acme.com"
 role      = "member"
@@ -146,13 +146,13 @@ role      = "member"
 **Verify**:
 ```sql
 -- users table (2 users now!)
-user_id  | email            | display_name  | tenant_id
+user_id  | email            | display_name  | zone_id
 ---------|------------------|---------------|----------
 <uuid-1> | bob@acme.com     | Bob Jones     | acme-com
 <uuid-2> | charlie@acme.com | Charlie Lee   | acme-com
 
 -- tenants table (still just 1 tenant!)
-tenant_id | name  | domain
+zone_id | name  | domain
 ----------|-------|----------
 acme-com  | Acme  | acme.com
 
@@ -167,7 +167,7 @@ subject_id | relation  | object_id
 
 Test with various personal email providers:
 
-| Email | tenant_id | Tenant Name | Expected |
+| Email | zone_id | Tenant Name | Expected |
 |-------|-----------|-------------|----------|
 | alice@gmail.com | `alice` | Alice's Workspace | ✅ Personal |
 | bob@outlook.com | `bob` | Bob's Workspace | ✅ Personal |
@@ -183,12 +183,12 @@ Verify that API keys are created automatically:
 
 ```sql
 -- Check API keys
-SELECT key_id, user_id, name, tenant_id, subject_type, subject_id
+SELECT key_id, user_id, name, zone_id, subject_type, subject_id
 FROM api_keys
 ORDER BY created_at DESC;
 ```
 
-**Expected**: Each user should have 1 API key with their tenant_id.
+**Expected**: Each user should have 1 API key with their zone_id.
 
 ## Step 6: Test API with Bearer Token
 
@@ -204,7 +204,7 @@ curl -H "Authorization: Bearer <your-jwt-token>" \
   "authenticated": true,
   "subject_type": "user",
   "subject_id": "<user-uuid>",
-  "tenant_id": "alice",  # or "acme-com"
+  "zone_id": "alice",  # or "acme-com"
   "is_admin": false,
   "user": "<user-uuid>"
 }

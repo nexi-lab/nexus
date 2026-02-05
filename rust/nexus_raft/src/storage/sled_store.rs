@@ -276,8 +276,32 @@ impl SledTree {
     }
 
     /// Check if the tree is empty.
-    pub fn is_empty(&self) -> bool {
-        self.tree.is_empty()
+    pub fn is_empty(&self) -> Result<bool> {
+        Ok(self.tree.is_empty())
+    }
+
+    /// Get the first key-value pair.
+    pub fn first(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        match self.tree.first()? {
+            Some((k, v)) => Ok(Some((k.to_vec(), v.to_vec()))),
+            None => Ok(None),
+        }
+    }
+
+    /// Get the last key-value pair.
+    pub fn last(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+        match self.tree.last()? {
+            Some((k, v)) => Ok(Some((k.to_vec(), v.to_vec()))),
+            None => Ok(None),
+        }
+    }
+
+    /// Create a new batch for atomic operations.
+    pub fn batch(&self) -> TreeBatch {
+        TreeBatch {
+            tree: self.tree.clone(),
+            batch: sled::Batch::default(),
+        }
     }
 
     /// Clear all entries in this tree.
@@ -450,6 +474,30 @@ impl SledBatch {
 impl Default for SledBatch {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A batch of operations for a specific tree (used by TreeBatch).
+pub struct TreeBatch {
+    tree: sled::Tree,
+    batch: sled::Batch,
+}
+
+impl TreeBatch {
+    /// Add an insert operation to the batch.
+    pub fn insert(&mut self, key: &[u8], value: &[u8]) {
+        self.batch.insert(key, value);
+    }
+
+    /// Add a remove operation to the batch.
+    pub fn remove(&mut self, key: &[u8]) {
+        self.batch.remove(key);
+    }
+
+    /// Apply all operations atomically.
+    pub fn apply(self) -> Result<()> {
+        self.tree.apply_batch(self.batch)?;
+        Ok(())
     }
 }
 
@@ -647,6 +695,6 @@ mod tests {
 
         tree.clear().unwrap();
         assert_eq!(tree.len(), 0);
-        assert!(tree.is_empty());
+        assert!(tree.is_empty().unwrap());
     }
 }

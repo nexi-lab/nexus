@@ -57,16 +57,16 @@ class TestRegisterAgent:
         assert agent["name"] == "Data Analyst"
         assert "created_at" in agent
 
-    def test_register_agent_with_tenant(self):
-        """Test agent registration with tenant."""
+    def test_register_agent_with_zone(self):
+        """Test agent registration with zone."""
         agent = register_agent(
             user_id="alice",
             agent_id="agent_test",
             name="Test Agent",
-            tenant_id="acme",
+            zone_id="acme",
         )
 
-        assert agent["tenant_id"] == "acme"
+        assert agent["zone_id"] == "acme"
 
     def test_register_agent_with_metadata(self):
         """Test agent registration with metadata."""
@@ -119,7 +119,7 @@ class TestRegisterAgent:
         assert agent["agent_id"] == "agent_test"
         assert agent["user_id"] == "alice"
         assert agent["name"] is None
-        assert agent["tenant_id"] is None
+        assert agent["zone_id"] is None
         assert agent["metadata"] == {}
 
     def test_register_multiple_agents_same_user(self, entity_registry):
@@ -230,12 +230,12 @@ class TestCreateAgentWithAPIKey:
             user_id="alice",
             agent_id="agent_test",
             name="Test Agent",
-            tenant_id="acme",
+            zone_id="acme",
             metadata={"version": "1.0"},
             entity_registry=entity_registry,
         )
 
-        assert agent["tenant_id"] == "acme"
+        assert agent["zone_id"] == "acme"
         assert agent["metadata"]["version"] == "1.0"
 
 
@@ -322,11 +322,9 @@ class TestValidateAgentOwnership:
 
     def test_validate_agent_different_parent_type(self, entity_registry):
         """Test validation fails if agent has different parent type."""
-        # Register with tenant as parent (unusual case)
-        entity_registry.register_entity("tenant", "acme")
-        entity_registry.register_entity(
-            "agent", "agent_test", parent_type="tenant", parent_id="acme"
-        )
+        # Register with zone as parent (unusual case)
+        entity_registry.register_entity("zone", "acme")
+        entity_registry.register_entity("agent", "agent_test", parent_type="zone", parent_id="acme")
 
         # Should fail because parent_type is not "user"
         valid = validate_agent_ownership("agent_test", "acme", entity_registry)
@@ -408,22 +406,22 @@ class TestAgentIntegration:
         success = unregister_agent("agent_api", entity_registry=entity_registry)
         assert success is True
 
-    def test_multi_tenant_agent_isolation(self, session, entity_registry):
-        """Test agent isolation across tenants."""
-        # Register tenants
-        entity_registry.register_entity("tenant", "acme")
-        entity_registry.register_entity("tenant", "initech")
+    def test_multi_zone_agent_isolation(self, session, entity_registry):
+        """Test agent isolation across zones."""
+        # Register zones
+        entity_registry.register_entity("zone", "acme")
+        entity_registry.register_entity("zone", "initech")
 
-        # Register users under different tenants
-        entity_registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
-        entity_registry.register_entity("user", "bob", parent_type="tenant", parent_id="initech")
+        # Register users under different zones
+        entity_registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
+        entity_registry.register_entity("user", "bob", parent_type="zone", parent_id="initech")
 
         # Register agents
         agent_alice = register_agent(
             user_id="alice",
             agent_id="agent_acme",
             name="Acme Agent",
-            tenant_id="acme",
+            zone_id="acme",
             entity_registry=entity_registry,
         )
 
@@ -431,13 +429,13 @@ class TestAgentIntegration:
             user_id="bob",
             agent_id="agent_initech",
             name="Initech Agent",
-            tenant_id="initech",
+            zone_id="initech",
             entity_registry=entity_registry,
         )
 
         # Verify isolation
-        assert agent_alice["tenant_id"] == "acme"
-        assert agent_bob["tenant_id"] == "initech"
+        assert agent_alice["zone_id"] == "acme"
+        assert agent_bob["zone_id"] == "initech"
         assert validate_agent_ownership("agent_acme", "alice", entity_registry) is True
         assert validate_agent_ownership("agent_initech", "bob", entity_registry) is True
         assert validate_agent_ownership("agent_acme", "bob", entity_registry) is False
@@ -446,8 +444,8 @@ class TestAgentIntegration:
     def test_agent_hierarchy_relationships(self, entity_registry):
         """Test agent hierarchy and relationships."""
         # Build hierarchy
-        entity_registry.register_entity("tenant", "acme")
-        entity_registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
+        entity_registry.register_entity("zone", "acme")
+        entity_registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
         entity_registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
         entity_registry.register_entity("agent", "agent2", parent_type="user", parent_id="alice")
 
@@ -497,7 +495,7 @@ class TestAgentIntegration:
 
 
 class TestAgentPermissionManagement:
-    """Test agent permission management features (generate_api_key, inherit_permissions, tenant_id)."""
+    """Test agent permission management features (generate_api_key, inherit_permissions, zone_id)."""
 
     def test_register_agent_without_api_key(self, entity_registry):
         """Test registering agent without API key (default behavior)."""
@@ -507,42 +505,42 @@ class TestAgentPermissionManagement:
             user_id="alice",
             agent_id="agent_no_key",
             name="No Key Agent",
-            tenant_id="default",
+            zone_id="default",
             entity_registry=entity_registry,
         )
 
         assert agent is not None
         assert agent["agent_id"] == "agent_no_key"
         assert agent["user_id"] == "alice"
-        assert agent["tenant_id"] == "default"
+        assert agent["zone_id"] == "default"
 
-    def test_register_agent_with_default_tenant(self, entity_registry):
-        """Test that tenant_id defaults to None when not provided."""
+    def test_register_agent_with_default_zone(self, entity_registry):
+        """Test that zone_id defaults to None when not provided."""
         entity_registry.register_entity("user", "alice")
 
         agent = register_agent(
             user_id="alice",
-            agent_id="agent_default_tenant",
-            name="Default Tenant Agent",
+            agent_id="agent_default_zone",
+            name="Default Zone Agent",
             entity_registry=entity_registry,
         )
 
-        # When tenant_id is not provided, it should be None
-        assert agent["tenant_id"] is None
+        # When zone_id is not provided, it should be None
+        assert agent["zone_id"] is None
 
-    def test_register_agent_with_explicit_tenant(self, entity_registry):
-        """Test registering agent with explicit tenant_id."""
+    def test_register_agent_with_explicit_zone(self, entity_registry):
+        """Test registering agent with explicit zone_id."""
         entity_registry.register_entity("user", "alice")
 
         agent = register_agent(
             user_id="alice",
-            agent_id="agent_tenant",
-            name="Tenant Agent",
-            tenant_id="acme",
+            agent_id="agent_zone",
+            name="Zone Agent",
+            zone_id="acme",
             entity_registry=entity_registry,
         )
 
-        assert agent["tenant_id"] == "acme"
+        assert agent["zone_id"] == "acme"
 
     def test_register_agent_with_metadata_description(self, entity_registry):
         """Test registering agent with description in metadata."""
@@ -558,15 +556,15 @@ class TestAgentPermissionManagement:
 
         assert agent["metadata"]["description"] == "Test agent with description"
 
-    def test_register_agent_tenant_id_consistency(self, entity_registry):
-        """Test that tenant_id is consistently set across multiple registrations."""
+    def test_register_agent_zone_id_consistency(self, entity_registry):
+        """Test that zone_id is consistently set across multiple registrations."""
         entity_registry.register_entity("user", "alice")
 
         agent1 = register_agent(
             user_id="alice",
             agent_id="agent1",
             name="Agent 1",
-            tenant_id="default",
+            zone_id="default",
             entity_registry=entity_registry,
         )
 
@@ -574,23 +572,23 @@ class TestAgentPermissionManagement:
             user_id="alice",
             agent_id="agent2",
             name="Agent 2",
-            tenant_id="default",
+            zone_id="default",
             entity_registry=entity_registry,
         )
 
-        assert agent1["tenant_id"] == "default"
-        assert agent2["tenant_id"] == "default"
-        assert agent1["tenant_id"] == agent2["tenant_id"]
+        assert agent1["zone_id"] == "default"
+        assert agent2["zone_id"] == "default"
+        assert agent1["zone_id"] == agent2["zone_id"]
 
-    def test_register_agent_multiple_tenants(self, entity_registry):
-        """Test registering agents in different tenants."""
+    def test_register_agent_multiple_zones(self, entity_registry):
+        """Test registering agents in different zones."""
         entity_registry.register_entity("user", "alice")
 
         agent_acme = register_agent(
             user_id="alice",
             agent_id="agent_acme",
             name="Acme Agent",
-            tenant_id="acme",
+            zone_id="acme",
             entity_registry=entity_registry,
         )
 
@@ -598,13 +596,13 @@ class TestAgentPermissionManagement:
             user_id="alice",
             agent_id="agent_initech",
             name="Initech Agent",
-            tenant_id="initech",
+            zone_id="initech",
             entity_registry=entity_registry,
         )
 
-        assert agent_acme["tenant_id"] == "acme"
-        assert agent_initech["tenant_id"] == "initech"
-        assert agent_acme["tenant_id"] != agent_initech["tenant_id"]
+        assert agent_acme["zone_id"] == "acme"
+        assert agent_initech["zone_id"] == "initech"
+        assert agent_acme["zone_id"] != agent_initech["zone_id"]
 
     def test_register_agent_with_complex_metadata(self, entity_registry):
         """Test registering agent with complex metadata structure."""

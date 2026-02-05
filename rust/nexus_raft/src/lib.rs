@@ -84,6 +84,12 @@
 
 pub mod storage;
 
+/// Raft consensus module for STRONG_HA zones.
+///
+/// This module provides distributed consensus using tikv/raft-rs for
+/// linearizable operations on metadata and locks.
+pub mod raft;
+
 /// gRPC transport layer (requires `grpc` feature).
 ///
 /// This module provides network transport for Raft messages using gRPC.
@@ -96,6 +102,22 @@ pub mod storage;
 /// ```
 #[cfg(feature = "grpc")]
 pub mod transport;
+
+/// Python bindings via PyO3 (requires `python` feature).
+///
+/// This module provides direct FFI access to the Raft state machine
+/// for same-box deployments, bypassing gRPC for better performance (~5μs vs ~200μs).
+///
+/// Enable with:
+/// ```toml
+/// [dependencies]
+/// nexus_raft = { version = "0.1", features = ["python"] }
+/// ```
+#[cfg(feature = "python")]
+mod pyo3_bindings;
+
+#[cfg(feature = "python")]
+pub use pyo3_bindings::*;
 
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
@@ -123,11 +145,21 @@ pub mod transport {
 
 /// Re-export commonly used types for convenience.
 pub mod prelude {
-    pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError};
+    pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError, TreeBatch};
+
+    // Raft state machine types (always available)
+    pub use crate::raft::{
+        Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
+        StateMachine, WitnessStateMachine,
+    };
+
+    // Raft consensus types (requires consensus feature)
+    #[cfg(feature = "consensus")]
+    pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
 
     #[cfg(feature = "grpc")]
     pub use crate::transport::{
-        ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftHandler, RaftServer,
+        ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftServer, RaftServerState,
         ServerConfig, TransportError as GrpcError,
     };
 }

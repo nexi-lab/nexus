@@ -52,14 +52,14 @@ class SubscriptionManager:
 
     def create(
         self,
-        tenant_id: str,
+        zone_id: str,
         data: SubscriptionCreate,
         created_by: str | None = None,
     ) -> Subscription:
         """Create a new subscription.
 
         Args:
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
             data: Subscription creation data
             created_by: User/agent who created the subscription
 
@@ -71,7 +71,7 @@ class SubscriptionManager:
         with self._session_factory() as session:
             model = SubscriptionModel(
                 subscription_id=str(uuid.uuid4()),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 url=data.url,
                 secret=data.secret,
                 event_types=json.dumps(data.event_types),
@@ -89,17 +89,17 @@ class SubscriptionManager:
 
             logger.info(
                 f"Created subscription {model.subscription_id} for {data.url} "
-                f"(tenant={tenant_id}, events={data.event_types})"
+                f"(tenant={zone_id}, events={data.event_types})"
             )
 
             return self._to_subscription(model)
 
-    def get(self, subscription_id: str, tenant_id: str) -> Subscription | None:
+    def get(self, subscription_id: str, zone_id: str) -> Subscription | None:
         """Get a subscription by ID.
 
         Args:
             subscription_id: Subscription ID
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
 
         Returns:
             Subscription if found, None otherwise
@@ -111,7 +111,7 @@ class SubscriptionManager:
                 session.query(SubscriptionModel)
                 .filter(
                     SubscriptionModel.subscription_id == subscription_id,
-                    SubscriptionModel.tenant_id == tenant_id,
+                    SubscriptionModel.zone_id == zone_id,
                 )
                 .first()
             )
@@ -121,7 +121,7 @@ class SubscriptionManager:
 
     def list_subscriptions(
         self,
-        tenant_id: str,
+        zone_id: str,
         enabled_only: bool = False,
         limit: int = 100,
         offset: int = 0,
@@ -129,7 +129,7 @@ class SubscriptionManager:
         """List subscriptions for a tenant.
 
         Args:
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
             enabled_only: Only return enabled subscriptions
             limit: Maximum number of results
             offset: Offset for pagination
@@ -140,9 +140,7 @@ class SubscriptionManager:
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
-            query = session.query(SubscriptionModel).filter(
-                SubscriptionModel.tenant_id == tenant_id
-            )
+            query = session.query(SubscriptionModel).filter(SubscriptionModel.zone_id == zone_id)
             if enabled_only:
                 query = query.filter(SubscriptionModel.enabled == 1)
             query = query.order_by(SubscriptionModel.created_at.desc())
@@ -153,14 +151,14 @@ class SubscriptionManager:
     def update(
         self,
         subscription_id: str,
-        tenant_id: str,
+        zone_id: str,
         data: SubscriptionUpdate,
     ) -> Subscription | None:
         """Update a subscription.
 
         Args:
             subscription_id: Subscription ID
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
             data: Update data
 
         Returns:
@@ -173,7 +171,7 @@ class SubscriptionManager:
                 session.query(SubscriptionModel)
                 .filter(
                     SubscriptionModel.subscription_id == subscription_id,
-                    SubscriptionModel.tenant_id == tenant_id,
+                    SubscriptionModel.zone_id == zone_id,
                 )
                 .first()
             )
@@ -208,12 +206,12 @@ class SubscriptionManager:
             logger.info(f"Updated subscription {subscription_id}")
             return self._to_subscription(model)
 
-    def delete(self, subscription_id: str, tenant_id: str) -> bool:
+    def delete(self, subscription_id: str, zone_id: str) -> bool:
         """Delete a subscription.
 
         Args:
             subscription_id: Subscription ID
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
 
         Returns:
             True if deleted, False if not found
@@ -225,7 +223,7 @@ class SubscriptionManager:
                 session.query(SubscriptionModel)
                 .filter(
                     SubscriptionModel.subscription_id == subscription_id,
-                    SubscriptionModel.tenant_id == tenant_id,
+                    SubscriptionModel.zone_id == zone_id,
                 )
                 .delete()
             )
@@ -244,31 +242,31 @@ class SubscriptionManager:
         self,
         event_type: str,
         data: dict[str, Any],
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Broadcast an event to matching subscriptions.
 
         Args:
             event_type: Event type (file_write, file_delete, etc.)
             data: Event data
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
 
         Returns:
             Number of webhooks triggered
         """
         logger.debug(
-            f"broadcast() called: event={event_type}, tenant={tenant_id}, path={data.get('file_path', 'N/A')}"
+            f"broadcast() called: event={event_type}, tenant={zone_id}, path={data.get('file_path', 'N/A')}"
         )
 
         # Get matching subscriptions (async to avoid blocking event loop)
         try:
-            subscriptions = await self._get_matching_subscriptions(event_type, data, tenant_id)
+            subscriptions = await self._get_matching_subscriptions(event_type, data, zone_id)
         except Exception as e:
             logger.error(f"Error in _get_matching_subscriptions: {e}")
             return 0
 
         if not subscriptions:
-            logger.debug(f"No matching subscriptions for {event_type} tenant={tenant_id}")
+            logger.debug(f"No matching subscriptions for {event_type} tenant={zone_id}")
             return 0
 
         # Deliver webhooks concurrently (fire and forget for performance)
@@ -285,7 +283,7 @@ class SubscriptionManager:
 
         logger.info(
             f"Broadcast {event_type} to {len(subscriptions)} subscriptions "
-            f"(tenant={tenant_id}, path={data.get('file_path', 'N/A')})"
+            f"(tenant={zone_id}, path={data.get('file_path', 'N/A')})"
         )
         return len(subscriptions)
 
@@ -293,27 +291,27 @@ class SubscriptionManager:
         self,
         event_type: str,
         data: dict[str, Any],
-        tenant_id: str,
+        zone_id: str,
     ) -> list[Subscription]:
         """Get subscriptions matching the event (async, non-blocking).
 
         Args:
             event_type: Event type
             data: Event data
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of matching subscriptions
         """
         return await asyncio.to_thread(
-            self._get_matching_subscriptions_sync, event_type, data, tenant_id
+            self._get_matching_subscriptions_sync, event_type, data, zone_id
         )
 
     def _get_matching_subscriptions_sync(
         self,
         event_type: str,
         data: dict[str, Any],
-        tenant_id: str,
+        zone_id: str,
     ) -> list[Subscription]:
         """Sync implementation of _get_matching_subscriptions."""
         from nexus.storage.models import SubscriptionModel
@@ -323,7 +321,7 @@ class SubscriptionManager:
             models = (
                 session.query(SubscriptionModel)
                 .filter(
-                    SubscriptionModel.tenant_id == tenant_id,
+                    SubscriptionModel.zone_id == zone_id,
                     SubscriptionModel.enabled == 1,
                 )
                 .all()
@@ -573,17 +571,17 @@ class SubscriptionManager:
     # Test Endpoint
     # =========================================================================
 
-    async def test(self, subscription_id: str, tenant_id: str) -> dict[str, Any]:
+    async def test(self, subscription_id: str, zone_id: str) -> dict[str, Any]:
         """Send a test event to a subscription.
 
         Args:
             subscription_id: Subscription ID
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
 
         Returns:
             Test result with status and response
         """
-        subscription = self.get(subscription_id, tenant_id)
+        subscription = self.get(subscription_id, zone_id)
         if subscription is None:
             return {"success": False, "error": "Subscription not found"}
 
@@ -593,7 +591,7 @@ class SubscriptionManager:
             "etag": "test-etag",
             "version": 1,
             "created": True,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "timestamp": datetime.now(UTC).isoformat(),
             "_test": True,
         }
@@ -615,7 +613,7 @@ class SubscriptionManager:
         """Convert database model to Pydantic model."""
         return Subscription(
             id=model.subscription_id,
-            tenant_id=model.tenant_id,
+            zone_id=model.zone_id,
             url=model.url,
             event_types=model.get_event_types(),
             patterns=model.get_patterns() or None,

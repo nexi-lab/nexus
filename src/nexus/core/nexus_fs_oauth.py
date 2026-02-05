@@ -25,7 +25,7 @@ import logging
 import secrets
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_database_url, get_tenant_id
+from nexus.core.context_utils import get_database_url, get_zone_id
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -318,7 +318,7 @@ class NexusFSOAuthMixin:
 
         # Store credential
         token_manager = self._get_token_manager()
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract user_id from context (Nexus user identity)
         # This may differ from user_email (OAuth provider email)
@@ -343,7 +343,7 @@ class NexusFSOAuthMixin:
                 provider=provider_name,
                 user_email=user_email,
                 credential=credential,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 created_by=created_by,
                 user_id=current_user_id,  # Pass Nexus user_id for permission checks
             )
@@ -529,7 +529,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         # Use user_id (preferred) or user (legacy) from context
@@ -541,7 +541,7 @@ class NexusFSOAuthMixin:
         # List credentials for tenant (and optionally user)
         # Filter by user_id if available (more reliable than email matching)
         credentials = await token_manager.list_credentials(
-            tenant_id=tenant_id, user_id=current_user_id if not is_admin else None
+            zone_id=zone_id, user_id=current_user_id if not is_admin else None
         )
 
         # Filter by provider and revoked status if needed
@@ -565,7 +565,7 @@ class NexusFSOAuthMixin:
 
         logger.info(
             f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"tenant={tenant_id}, provider={provider}"
+            f"tenant={zone_id}, provider={provider}"
         )
         return result
 
@@ -596,7 +596,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -609,7 +609,7 @@ class NexusFSOAuthMixin:
         if not is_admin and current_user_id:
             # Fetch credential to check ownership
             cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, tenant_id=tenant_id
+                provider=provider, user_email=user_email, zone_id=zone_id
             )
             if cred:
                 # Check if user_id matches (preferred) or user_email matches (fallback)
@@ -635,7 +635,7 @@ class NexusFSOAuthMixin:
             success = await token_manager.revoke_credential(
                 provider=provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if success:
@@ -677,7 +677,7 @@ class NexusFSOAuthMixin:
         """
         token_manager = self._get_token_manager()
         # Default to 'default' tenant if not specified to match mount configurations
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -690,7 +690,7 @@ class NexusFSOAuthMixin:
         if not is_admin and current_user_id:
             # Fetch credential to check ownership
             cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, tenant_id=tenant_id
+                provider=provider, user_email=user_email, zone_id=zone_id
             )
             if cred:
                 # Check if user_id matches (preferred) or user_email matches (fallback)
@@ -717,13 +717,13 @@ class NexusFSOAuthMixin:
             token = await token_manager.get_valid_token(
                 provider=provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if token:
                 # Get credential details (returns list of dicts)
                 credentials = await token_manager.list_credentials(
-                    tenant_id=tenant_id, user_email=user_email
+                    zone_id=zone_id, user_email=user_email
                 )
                 cred_dict = next(
                     (c for c in credentials if c.get("user_email") == user_email),

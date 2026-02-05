@@ -41,7 +41,7 @@ class VisibilityEntry:
 class DirectoryVisibilityCache:
     """Cache which directories are visible to each user.
 
-    Key: (tenant_id, subject_type, subject_id, dir_path)
+    Key: (zone_id, subject_type, subject_id, dir_path)
     Value: (visible: bool, computed_at: float)
 
     The cache uses Tiger Cache bitmaps to compute visibility without
@@ -65,7 +65,7 @@ class DirectoryVisibilityCache:
         self._ttl = ttl
         self._max_entries = max_entries
 
-        # Cache: (tenant_id, subject_type, subject_id, dir_path) -> VisibilityEntry
+        # Cache: (zone_id, subject_type, subject_id, dir_path) -> VisibilityEntry
         self._cache: dict[tuple[str, str, str, str], VisibilityEntry] = {}
         self._lock = threading.RLock()
 
@@ -76,7 +76,7 @@ class DirectoryVisibilityCache:
 
     def is_visible(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         dir_path: str,
@@ -84,7 +84,7 @@ class DirectoryVisibilityCache:
         """O(1) cache lookup for directory visibility.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Subject type (e.g., "user", "agent")
             subject_id: Subject ID
             dir_path: Directory path to check
@@ -92,7 +92,7 @@ class DirectoryVisibilityCache:
         Returns:
             True if visible, False if not visible, None on cache miss
         """
-        key = (tenant_id, subject_type, subject_id, dir_path)
+        key = (zone_id, subject_type, subject_id, dir_path)
 
         with self._lock:
             entry = self._cache.get(key)
@@ -114,7 +114,7 @@ class DirectoryVisibilityCache:
 
     def set_visible(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         dir_path: str,
@@ -124,14 +124,14 @@ class DirectoryVisibilityCache:
         """Set visibility for a directory.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Subject type
             subject_id: Subject ID
             dir_path: Directory path
             visible: Whether the directory is visible
             reason: Optional reason for visibility (debugging)
         """
-        key = (tenant_id, subject_type, subject_id, dir_path)
+        key = (zone_id, subject_type, subject_id, dir_path)
 
         with self._lock:
             # Evict if at capacity
@@ -149,7 +149,7 @@ class DirectoryVisibilityCache:
 
     def compute_from_tiger_bitmap(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         dir_path: str,
@@ -165,7 +165,7 @@ class DirectoryVisibilityCache:
         Complexity: O(bitmap_size) vs O(n_descendants * permission_check)
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Subject type (e.g., "user", "agent")
             subject_id: Subject ID
             dir_path: Directory path to check
@@ -187,13 +187,13 @@ class DirectoryVisibilityCache:
             subject_id=subject_id,
             permission=permission,
             resource_type="file",
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         if not accessible_ids:
             # No accessible resources at all
             self.set_visible(
-                tenant_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
+                zone_id, subject_type, subject_id, dir_path, False, "no_accessible_resources"
             )
             return False
 
@@ -214,7 +214,7 @@ class DirectoryVisibilityCache:
                 # Check if resource is under the directory
                 if res_path == dir_path or res_path.startswith(prefix):
                     self.set_visible(
-                        tenant_id,
+                        zone_id,
                         subject_type,
                         subject_id,
                         dir_path,
@@ -226,14 +226,14 @@ class DirectoryVisibilityCache:
 
         # No descendants found
         self.set_visible(
-            tenant_id, subject_type, subject_id, dir_path, False, "no_descendants_in_bitmap"
+            zone_id, subject_type, subject_id, dir_path, False, "no_descendants_in_bitmap"
         )
         logger.debug(f"[DirVisCache] BITMAP_COMPUTE: {dir_path} not visible")
         return False
 
     def invalidate(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         subject_type: str | None = None,
         subject_id: str | None = None,
         dir_path: str | None = None,
@@ -244,7 +244,7 @@ class DirectoryVisibilityCache:
         for that field.
 
         Args:
-            tenant_id: Optional tenant ID to match
+            zone_id: Optional zone ID to match
             subject_type: Optional subject type to match
             subject_id: Optional subject ID to match
             dir_path: Optional directory path (invalidates this path AND ancestors)
@@ -261,7 +261,7 @@ class DirectoryVisibilityCache:
                 k_tenant, k_subject_type, k_subject_id, k_path = key
 
                 # Match criteria
-                if tenant_id is not None and k_tenant != tenant_id:
+                if zone_id is not None and k_tenant != zone_id:
                     continue
                 if subject_type is not None and k_subject_type != subject_type:
                     continue
@@ -296,7 +296,7 @@ class DirectoryVisibilityCache:
             if invalidated > 0:
                 logger.debug(
                     f"[DirVisCache] INVALIDATE: {invalidated} entries "
-                    f"(tenant={tenant_id}, subject={subject_type}:{subject_id}, path={dir_path})"
+                    f"(tenant={zone_id}, subject={subject_type}:{subject_id}, path={dir_path})"
                 )
 
         return invalidated
@@ -304,7 +304,7 @@ class DirectoryVisibilityCache:
     def invalidate_for_resource(
         self,
         resource_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate cache entries affected by a resource change.
 
@@ -313,7 +313,7 @@ class DirectoryVisibilityCache:
 
         Args:
             resource_path: Path of the changed resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of entries invalidated
@@ -323,7 +323,7 @@ class DirectoryVisibilityCache:
 
         total_invalidated = 0
         for ancestor in ancestors:
-            total_invalidated += self.invalidate(tenant_id=tenant_id, dir_path=ancestor)
+            total_invalidated += self.invalidate(zone_id=zone_id, dir_path=ancestor)
 
         return total_invalidated
 

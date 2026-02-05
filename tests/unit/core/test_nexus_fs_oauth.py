@@ -24,14 +24,14 @@ class MockOAuthCredential:
         credential_id="test_cred_id",
         provider="google",
         user_email="test@example.com",
-        tenant_id=None,
+        zone_id=None,
         expires_at=None,
         revoked=False,
     ):
         self.credential_id = credential_id
         self.provider = provider
         self.user_email = user_email
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.expires_at = expires_at or datetime.now() + timedelta(hours=1)
         self.revoked = revoked
         self.created_at = datetime.now()
@@ -345,7 +345,7 @@ class TestNexusFSOAuthMixin:
         mock_token_manager.revoke_credential.assert_called_once_with(
             provider="google",
             user_email="test@example.com",
-            tenant_id="default",
+            zone_id="default",
         )
 
     @pytest.mark.asyncio
@@ -956,10 +956,10 @@ class TestNexusFSOAuthMixin:
             assert manager == mock_tm
 
     @pytest.mark.asyncio
-    async def test_oauth_exchange_code_uses_context_utils_tenant_id(
+    async def test_oauth_exchange_code_uses_context_utils_zone_id(
         self, mock_oauth_mixin, mock_token_manager
     ):
-        """Test that oauth_exchange_code uses context_utils.get_tenant_id."""
+        """Test that oauth_exchange_code uses context_utils.get_zone_id."""
         from nexus.core.permissions import OperationContext
 
         mock_oauth_mixin._token_manager = mock_token_manager
@@ -967,13 +967,13 @@ class TestNexusFSOAuthMixin:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="acme_corp",
+            zone_id="acme_corp",
             subject_type="user",
             subject_id="alice",
         )
 
         with (
-            patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant,
+            patch("nexus.core.nexus_fs_oauth.get_zone_id") as mock_get_zone,
             patch.dict(
                 "os.environ",
                 {
@@ -983,7 +983,7 @@ class TestNexusFSOAuthMixin:
             ),
             patch("nexus.server.auth.google_oauth.GoogleOAuthProvider") as MockProvider,
         ):
-            mock_get_tenant.return_value = "acme_corp"
+            mock_get_zone.return_value = "acme_corp"
             mock_provider = Mock()
 
             # Create a simple object that can have attributes set
@@ -1004,14 +1004,14 @@ class TestNexusFSOAuthMixin:
                 context=context,
             )
 
-            # Verify get_tenant_id was called with context
-            mock_get_tenant.assert_called_with(context)
+            # Verify get_zone_id was called with context
+            mock_get_zone.assert_called_with(context)
 
     @pytest.mark.asyncio
-    async def test_oauth_list_credentials_uses_context_utils_tenant_id(
+    async def test_oauth_list_credentials_uses_context_utils_zone_id(
         self, mock_oauth_mixin, mock_token_manager
     ):
-        """Test that oauth_list_credentials uses context_utils.get_tenant_id."""
+        """Test that oauth_list_credentials uses context_utils.get_zone_id."""
         from nexus.core.permissions import OperationContext
 
         mock_oauth_mixin._token_manager = mock_token_manager
@@ -1020,18 +1020,18 @@ class TestNexusFSOAuthMixin:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="acme_corp",
+            zone_id="acme_corp",
             subject_type="user",
             subject_id="alice",
         )
 
-        with patch("nexus.core.nexus_fs_oauth.get_tenant_id") as mock_get_tenant:
-            mock_get_tenant.return_value = "acme_corp"
+        with patch("nexus.core.nexus_fs_oauth.get_zone_id") as mock_get_zone:
+            mock_get_zone.return_value = "acme_corp"
 
             await mock_oauth_mixin.oauth_list_credentials(context=context)
 
-            # Verify get_tenant_id was called with context
-            mock_get_tenant.assert_called_with(context)
+            # Verify get_zone_id was called with context
+            mock_get_zone.assert_called_with(context)
 
     def test_get_token_manager_priority_order(self):
         """Test that get_database_url priority order is respected."""

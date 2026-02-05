@@ -86,12 +86,12 @@ class FilePathModel(Base):
         server_default=_get_uuid_server_default(),
     )
 
-    # P0 SECURITY: Defense-in-depth tenant isolation
-    # tenant_id restored for database-level filtering (defense-in-depth)
+    # P0 SECURITY: Defense-in-depth zone isolation
+    # zone_id restored for database-level filtering (defense-in-depth)
     # Previous architecture relied solely on ReBAC, creating single point of failure
-    # Note: Covered by composite index idx_file_paths_tenant_path in __table_args__
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Note: Covered by composite index idx_file_paths_zone_path in __table_args__
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -143,7 +143,7 @@ class FilePathModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        # P0 SECURITY: Restore tenant-scoped unique constraint for defense-in-depth
+        # P0 SECURITY: Restore zone-scoped unique constraint for defense-in-depth
         # IMPORTANT: Partial unique index that excludes soft-deleted rows
         # This prevents unique constraint violations when renaming files to paths of deleted files
         Index(
@@ -152,22 +152,22 @@ class FilePathModel(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("idx_file_paths_tenant_path", "tenant_id", "virtual_path"),  # Tenant-scoped queries
+        Index("idx_file_paths_zone_path", "zone_id", "virtual_path"),  # Zone-scoped queries
         Index("idx_file_paths_backend_id", "backend_id"),
         Index("idx_file_paths_content_hash", "content_hash"),
         Index("idx_file_paths_virtual_path", "virtual_path"),
         Index("idx_file_paths_accessed_at", "accessed_at"),
         Index("idx_file_paths_locked_by", "locked_by"),
         # Performance: Composite indexes for common query patterns (#384)
-        Index("idx_content_hash_tenant", "content_hash", "tenant_id"),  # CAS dedup lookups
+        Index("idx_content_hash_zone", "content_hash", "zone_id"),  # CAS dedup lookups
         # Issue #920: Index for owner-based queries (e.g., "list my files")
         Index("idx_file_paths_posix_uid", "posix_uid"),
         # ========== Postgres Best Practices: Covering Index ==========
         # Include commonly needed columns to enable index-only scans (2-5x faster)
         # Reference: https://www.postgresql.org/docs/current/indexes-index-only-scans.html
         Index(
-            "idx_file_paths_tenant_path_covering",
-            "tenant_id",
+            "idx_file_paths_zone_path_covering",
+            "zone_id",
             "virtual_path",
             postgresql_include=["path_id", "content_hash", "size_bytes", "updated_at", "file_type"],
             postgresql_where=text("deleted_at IS NULL"),
@@ -208,7 +208,7 @@ class FilePathModel(Base):
         if self.size_bytes < 0:
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
-        # Issue #773: tenant_id has a default of "default" in the model
+        # Issue #773: zone_id has a default of "default" in the model
         # SQLAlchemy will apply the default when flushing, so we don't validate here
 
 
@@ -230,9 +230,9 @@ class DirectoryEntryModel(Base):
 
     __tablename__ = "directory_entries"
 
-    # Composite primary key: (tenant_id, parent_path, entry_name)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(
+    # Composite primary key: (zone_id, parent_path, entry_name)
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(
         String(255), primary_key=True, nullable=False, default="default"
     )
     parent_path: Mapped[str] = mapped_column(String(4096), primary_key=True, nullable=False)
@@ -254,8 +254,8 @@ class DirectoryEntryModel(Base):
 
     # Indexes for fast lookups
     __table_args__ = (
-        # Primary lookup pattern: list all entries in a directory for a tenant
-        Index("idx_directory_entries_lookup", "tenant_id", "parent_path"),
+        # Primary lookup pattern: list all entries in a directory for a zone
+        Index("idx_directory_entries_lookup", "zone_id", "parent_path"),
         # PostgreSQL text_pattern_ops for LIKE prefix queries on parent_path
         Index(
             "idx_directory_entries_parent_prefix",
@@ -265,7 +265,7 @@ class DirectoryEntryModel(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<DirectoryEntryModel(tenant={self.tenant_id}, parent={self.parent_path}, name={self.entry_name}, type={self.entry_type})>"
+        return f"<DirectoryEntryModel(zone={self.zone_id}, parent={self.parent_path}, name={self.entry_name}, type={self.entry_type})>"
 
     def validate(self) -> None:
         """Validate directory entry model before database operations.
@@ -457,7 +457,7 @@ class WorkspaceSnapshotModel(Base):
 
     Note: Workspaces must be registered via WorkspaceRegistry before creating snapshots.
     Workspace identification uses explicit path (e.g., "/my-workspace") instead of
-    the old tenant_id+agent_id pattern.
+    the old zone_id+agent_id pattern.
     """
 
     __tablename__ = "workspace_snapshots"
@@ -470,7 +470,7 @@ class WorkspaceSnapshotModel(Base):
         server_default=_get_uuid_server_default(),
     )
 
-    # Workspace identification (changed from tenant_id+agent_id to workspace_path)
+    # Workspace identification (changed from zone_id+agent_id to workspace_path)
     # Note: Index defined in __table_args__ (idx_workspace_snapshots_workspace_path)
     workspace_path: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -650,8 +650,8 @@ class OperationLogModel(Base):
     )  # write, delete, rename, mkdir, rmdir, chmod, chown, etc.
 
     # Context
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Affected paths
@@ -682,7 +682,7 @@ class OperationLogModel(Base):
     __table_args__ = (
         Index("idx_operation_log_type", "operation_type"),
         Index("idx_operation_log_agent", "agent_id"),
-        Index("idx_operation_log_tenant", "tenant_id"),
+        Index("idx_operation_log_zone", "zone_id"),
         Index("idx_operation_log_path", "path"),
         Index("idx_operation_log_created_at", "created_at"),
         Index("idx_operation_log_status", "status"),
@@ -695,10 +695,10 @@ class OperationLogModel(Base):
             "created_at",
             postgresql_using="brin",
         ),
-        # Composite BRIN for tenant-scoped time queries
+        # Composite BRIN for zone-scoped time queries
         Index(
-            "idx_operation_log_tenant_created_brin",
-            "tenant_id",
+            "idx_operation_log_zone_created_brin",
+            "zone_id",
             "created_at",
             postgresql_using="brin",
         ),
@@ -759,7 +759,7 @@ class WorkflowModel(Base):
     )
 
     # Multi-tenancy
-    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
     # Workflow info
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -791,9 +791,9 @@ class WorkflowModel(Base):
     )
 
     # Indexes and constraints
-    # Note: tenant_id is covered by uq_tenant_workflow_name prefix
+    # Note: zone_id is covered by uq_zone_workflow_name prefix
     __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_tenant_workflow_name"),
+        UniqueConstraint("zone_id", "name", name="uq_zone_workflow_name"),
         Index("idx_workflows_enabled", "enabled"),
     )
 
@@ -996,7 +996,7 @@ class EntityRegistryModel(Base):
     # Composite primary key
     entity_type: Mapped[str] = mapped_column(
         String(50), primary_key=True, nullable=False
-    )  # 'tenant', 'user', 'agent'
+    )  # 'zone', 'user', 'agent'
     entity_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
 
     # Hierarchical relationships (optional)
@@ -1027,7 +1027,7 @@ class EntityRegistryModel(Base):
         from nexus.core.exceptions import ValidationError
 
         # Validate entity_type
-        valid_types = ["tenant", "user", "agent"]
+        valid_types = ["zone", "user", "agent"]
         if self.entity_type not in valid_types:
             raise ValidationError(
                 f"entity_type must be one of {valid_types}, got {self.entity_type}"
@@ -1068,16 +1068,16 @@ class MemoryModel(Base):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Identity relationships
-    # Note: Indexes defined in __table_args__ (idx_memory_tenant, idx_memory_user, idx_memory_agent)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Note: Indexes defined in __table_args__ (idx_memory_zone, idx_memory_user, idx_memory_agent)
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Real user ownership
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Created by agent
 
     # Scope and visibility
     scope: Mapped[str] = mapped_column(
         String(50), nullable=False, default="agent"
-    )  # 'agent', 'user', 'tenant', 'global', 'session'
+    )  # 'agent', 'user', 'zone', 'global', 'session'
     visibility: Mapped[str] = mapped_column(
         String(50), nullable=False, default="private"
     )  # 'private', 'shared', 'public'
@@ -1208,7 +1208,7 @@ class MemoryModel(Base):
 
     # Indexes
     __table_args__ = (
-        Index("idx_memory_tenant", "tenant_id"),
+        Index("idx_memory_zone", "zone_id"),
         Index("idx_memory_user", "user_id"),
         Index("idx_memory_agent", "agent_id"),
         Index("idx_memory_scope", "scope"),
@@ -1249,10 +1249,10 @@ class MemoryModel(Base):
             "created_at",
             postgresql_using="brin",
         ),
-        # Tenant-scoped BRIN for time-range queries within a tenant
+        # Zone-scoped BRIN for time-range queries within a zone
         Index(
-            "idx_memory_tenant_created_brin",
-            "tenant_id",
+            "idx_memory_zone_created_brin",
+            "zone_id",
             "created_at",
             postgresql_using="brin",
         ),
@@ -1280,7 +1280,7 @@ class MemoryModel(Base):
             raise ValidationError("content_hash is required")
 
         # Validate scope
-        valid_scopes = ["agent", "user", "tenant", "global"]
+        valid_scopes = ["agent", "user", "zone", "global"]
         if self.scope not in valid_scopes:
             raise ValidationError(f"scope must be one of {valid_scopes}, got {self.scope}")
 
@@ -1312,7 +1312,7 @@ class ReBACTupleModel(Base):
     Stores (subject, relation, object) tuples representing relationships
     between entities in the authorization graph.
 
-    Added tenant_id for tenant isolation (P0-2 fix)
+    Added zone_id for zone isolation (P0-2 fix)
 
     Examples:
         - (agent:alice, member-of, group:developers)
@@ -1323,12 +1323,12 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # Tenant isolation - P0-2 Critical Security Fix
-    # Note: Covered by composite indexes in __table_args__ (idx_rebac_tenant_subject, idx_rebac_tenant_object, etc.)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    subject_tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    object_tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Zone isolation - P0-2 Critical Security Fix
+    # Note: Covered by composite indexes in __table_args__ (idx_rebac_zone_subject, idx_rebac_zone_object, etc.)
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Subject (who/what has the relationship)
     # Note: Covered by composite indexes (idx_rebac_permission_check, idx_rebac_subject_relation)
@@ -1358,9 +1358,9 @@ class ReBACTupleModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
-        # Tenant-scoped indexes
-        Index("idx_rebac_tenant_subject", "tenant_id", "subject_type", "subject_id"),
-        Index("idx_rebac_tenant_object", "tenant_id", "object_type", "object_id"),
+        # Zone-scoped indexes
+        Index("idx_rebac_zone_subject", "zone_id", "subject_type", "subject_id"),
+        Index("idx_rebac_zone_object", "zone_id", "object_type", "object_id"),
         Index("idx_rebac_relation", "relation"),
         Index("idx_rebac_expires", "expires_at"),
         # Subject relation index for userset-as-subject
@@ -1376,7 +1376,7 @@ class ReBACTupleModel(Base):
             "relation",
             "object_type",
             "object_id",
-            "tenant_id",
+            "zone_id",
         ),
         # 2. Userset/group membership lookups
         # Used in: _find_subject_sets
@@ -1387,17 +1387,17 @@ class ReBACTupleModel(Base):
             "object_type",
             "object_id",
             "subject_relation",
-            "tenant_id",
+            "zone_id",
         ),
         # 3. Object permission expansion (find all subjects with access to an object)
         # Used in: rebac_expand, _get_direct_subjects
-        # Query: WHERE relation=? AND object_type=? AND object_id=? AND tenant_id=?
+        # Query: WHERE relation=? AND object_type=? AND object_id=? AND zone_id=?
         Index(
             "idx_rebac_object_expand",
             "object_type",
             "object_id",
             "relation",
-            "tenant_id",
+            "zone_id",
         ),
         # ========== Issue #687: Partial indexes for non-expired tuples (SpiceDB optimization) ==========
         # These partial indexes only include tuples where expires_at IS NULL (most common case).
@@ -1414,11 +1414,11 @@ class ReBACTupleModel(Base):
             "relation",
             "object_type",
             "object_id",
-            "tenant_id",
+            "zone_id",
             postgresql_where=text("expires_at IS NULL"),
         ),
         # 2. Partial subject lookup index (for reverse lookups)
-        # Covers: WHERE subject_type=? AND subject_id=? AND tenant_id=?
+        # Covers: WHERE subject_type=? AND subject_id=? AND zone_id=?
         Index(
             "idx_rebac_alive_by_subject",
             "subject_type",
@@ -1428,11 +1428,11 @@ class ReBACTupleModel(Base):
             "object_id",
             postgresql_where=text("expires_at IS NULL"),
         ),
-        # 3. Partial tenant-scoped object index
-        # Covers: WHERE tenant_id=? AND object_type=? AND object_id=? AND relation=?
+        # 3. Partial zone-scoped object index
+        # Covers: WHERE zone_id=? AND object_type=? AND object_id=? AND relation=?
         Index(
-            "idx_rebac_alive_tenant_object",
-            "tenant_id",
+            "idx_rebac_alive_zone_object",
+            "zone_id",
             "object_type",
             "object_id",
             "relation",
@@ -1446,16 +1446,16 @@ class ReBACTupleModel(Base):
             "object_type",
             "object_id",
             "subject_relation",
-            "tenant_id",
+            "zone_id",
             postgresql_where=text("expires_at IS NULL AND subject_relation IS NOT NULL"),
         ),
-        # ========== Issue #904: Cross-tenant share index ==========
-        # Optimizes queries for finding files shared with a user from other tenants.
+        # ========== Issue #904: Cross-zone share index ==========
+        # Optimizes queries for finding files shared with a user from other zones.
         # Query pattern: WHERE subject_type=? AND subject_id=?
         #                  AND relation IN ('shared-viewer', 'shared-editor', 'shared-owner')
-        # This is a partial index covering only cross-tenant share relations.
+        # This is a partial index covering only cross-zone share relations.
         Index(
-            "idx_rebac_cross_tenant_shares",
+            "idx_rebac_cross_zone_shares",
             "subject_type",
             "subject_id",
             "relation",
@@ -1476,7 +1476,7 @@ class ReBACTupleModel(Base):
             "relation",
             "object_type",
             "object_id",
-            "tenant_id",
+            "zone_id",
             postgresql_include=["tuple_id", "expires_at", "created_at"],
             postgresql_where=text("expires_at IS NULL"),
         ),
@@ -1547,7 +1547,7 @@ class ReBACGroupClosureModel(Base):
     member_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     group_type: Mapped[str] = mapped_column(String(50), primary_key=True)
     group_id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
 
     # Metadata
     depth: Mapped[int] = mapped_column(Integer, nullable=False)  # Distance in hierarchy
@@ -1591,11 +1591,9 @@ class ReBACChangelogModel(Base):
     object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Tenant scoping for multi-tenancy
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="default", index=True
-    )
+    # Zone scoping for multi-zone isolation
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
 
     # Timestamp
     created_at: Mapped[datetime] = mapped_column(
@@ -1604,21 +1602,21 @@ class ReBACChangelogModel(Base):
 
 
 class ReBACVersionSequenceModel(Base):
-    """Per-tenant version sequence for ReBAC consistency tokens.
+    """Per-zone version sequence for ReBAC consistency tokens.
 
     Stores monotonic version counters used to track ReBAC tuple changes
-    for each tenant. Used for bounded staleness caching (P0-1).
+    for each zone. Used for bounded staleness caching (P0-1).
     """
 
     __tablename__ = "rebac_version_sequences"
 
-    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    zone_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     current_version: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    # Note: No explicit index needed - tenant_id is the primary key
+    # Note: No explicit index needed - zone_id is the primary key
     __table_args__: tuple = ()
 
 
@@ -1650,20 +1648,20 @@ class ReBACCheckCacheModel(Base):
     Caches the results of expensive graph traversal operations
     to improve performance of repeated permission checks.
 
-    Added tenant_id for tenant-scoped caching
+    Added zone_id for zone-scoped caching
     """
 
     __tablename__ = "rebac_check_cache"
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # Tenant isolation
-    # Note: Covered by composite index idx_rebac_cache_tenant_check in __table_args__
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Zone isolation
+    # Note: Covered by composite index idx_rebac_cache_zone_check in __table_args__
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Cached check parameters
-    # Note: All covered by composite indexes idx_rebac_cache_tenant_check and idx_rebac_cache_check
+    # Note: All covered by composite indexes idx_rebac_cache_zone_check and idx_rebac_cache_check
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
     permission: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -1679,10 +1677,10 @@ class ReBACCheckCacheModel(Base):
 
     # Composite index for efficient lookups
     __table_args__ = (
-        # Tenant-aware cache lookup
+        # Zone-aware cache lookup
         Index(
-            "idx_rebac_cache_tenant_check",
-            "tenant_id",
+            "idx_rebac_cache_zone_check",
+            "zone_id",
             "subject_type",
             "subject_id",
             "permission",
@@ -1711,7 +1709,7 @@ class APIKeyModel(Base):
     - Optional expiry dates
     - Revocation support
     - Subject-based identity (user, agent, service)
-    - Tenant isolation
+    - Zone isolation
     """
 
     __tablename__ = "api_keys"
@@ -1731,10 +1729,8 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="default", index=True
-    )
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
     is_admin: Mapped[int] = mapped_column(Integer, default=0)  # SQLite: bool as Integer
 
     # Permission inheritance (v0.5.1)
@@ -1843,10 +1839,10 @@ class MountConfigModel(Base):
     owner_user_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # User who created mount
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(
         String(255), nullable=False, default="default"
-    )  # Tenant this mount belongs to
+    )  # Zone this mount belongs to
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Timestamps
@@ -1864,7 +1860,7 @@ class MountConfigModel(Base):
     # Note: mount_point already has unique=True which creates an index
     __table_args__ = (
         Index("idx_mount_configs_owner", "owner_user_id"),
-        Index("idx_mount_configs_tenant", "tenant_id"),
+        Index("idx_mount_configs_zone", "zone_id"),
         Index("idx_mount_configs_backend_type", "backend_type"),
     )
 
@@ -2228,13 +2224,13 @@ class TrajectoryModel(Base):
     )
 
     # Identity relationships
-    # Note: Indexes defined in __table_args__ (idx_traj_user, idx_traj_agent, idx_traj_tenant)
+    # Note: Indexes defined in __table_args__ (idx_traj_user, idx_traj_agent, idx_traj_zone)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # Agent that created it
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Task information
     task_description: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2300,7 +2296,7 @@ class TrajectoryModel(Base):
     __table_args__ = (
         Index("idx_traj_user", "user_id"),
         Index("idx_traj_agent", "agent_id"),
-        Index("idx_traj_tenant", "tenant_id"),
+        Index("idx_traj_zone", "zone_id"),
         Index("idx_traj_status", "status"),
         Index("idx_traj_task_type", "task_type"),
         Index("idx_traj_completed", "completed_at"),
@@ -2363,13 +2359,13 @@ class PlaybookModel(Base):
     )
 
     # Identity relationships
-    # Note: Indexes defined in __table_args__ (idx_playbook_user, idx_playbook_agent, idx_playbook_tenant)
+    # Note: Indexes defined in __table_args__ (idx_playbook_user, idx_playbook_agent, idx_playbook_zone)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Owner
     agent_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True
     )  # Agent that created it
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Playbook information
     # Note: Index defined in __table_args__ (idx_playbook_name)
@@ -2391,7 +2387,7 @@ class PlaybookModel(Base):
     # Note: Index defined in __table_args__ (idx_playbook_scope)
     scope: Mapped[str] = mapped_column(
         String(50), nullable=False, default="agent"
-    )  # 'agent', 'user', 'tenant', 'global'
+    )  # 'agent', 'user', 'zone', 'global'
     visibility: Mapped[str] = mapped_column(
         String(50), nullable=False, default="private"
     )  # 'private', 'shared', 'public'
@@ -2422,7 +2418,7 @@ class PlaybookModel(Base):
         UniqueConstraint("agent_id", "name", "version", name="uq_playbook_agent_name_version"),
         Index("idx_playbook_user", "user_id"),
         Index("idx_playbook_agent", "agent_id"),
-        Index("idx_playbook_tenant", "tenant_id"),
+        Index("idx_playbook_zone", "zone_id"),
         Index("idx_playbook_name", "name"),
         Index("idx_playbook_scope", "scope"),
         Index("idx_playbook_path", "path"),
@@ -2458,7 +2454,7 @@ class PlaybookModel(Base):
             raise ValidationError("content_hash is required")
 
         # Validate scope
-        valid_scopes = ["agent", "user", "tenant", "global"]
+        valid_scopes = ["agent", "user", "zone", "global"]
         if self.scope not in valid_scopes:
             raise ValidationError(f"scope must be one of {valid_scopes}, got {self.scope}")
 
@@ -2497,11 +2493,11 @@ class UserSessionModel(Base):
     )
 
     # Identity
-    # Note: Indexes defined in __table_args__ (idx_session_user, idx_session_agent, idx_session_tenant)
+    # Note: Indexes defined in __table_args__ (idx_session_user, idx_session_agent, idx_session_zone)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Lifecycle
     # Note: Indexes defined in __table_args__ (idx_session_created, idx_session_expires)
@@ -2523,7 +2519,7 @@ class UserSessionModel(Base):
     __table_args__ = (
         Index("idx_session_user", "user_id"),
         Index("idx_session_agent", "agent_id"),
-        Index("idx_session_tenant", "tenant_id"),
+        Index("idx_session_zone", "zone_id"),
         Index("idx_session_expires", "expires_at"),
         Index("idx_session_created", "created_at"),
     )
@@ -2630,10 +2626,10 @@ class SandboxMetadataModel(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Identity relationships
-    # Note: Indexes defined in __table_args__ (idx_sandbox_user, idx_sandbox_agent, idx_sandbox_tenant)
+    # Note: Indexes defined in __table_args__ (idx_sandbox_user, idx_sandbox_agent, idx_sandbox_zone)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Provider information
     provider: Mapped[str] = mapped_column(
@@ -2680,7 +2676,7 @@ class SandboxMetadataModel(Base):
         Index("idx_sandbox_name", "name"),
         Index("idx_sandbox_user", "user_id"),
         Index("idx_sandbox_agent", "agent_id"),
-        Index("idx_sandbox_tenant", "tenant_id"),
+        Index("idx_sandbox_zone", "zone_id"),
         Index("idx_sandbox_status", "status"),
         Index("idx_sandbox_expires", "expires_at"),
         Index("idx_sandbox_created", "created_at"),
@@ -2709,9 +2705,9 @@ class SandboxMetadataModel(Base):
         if not self.user_id:
             raise ValidationError("user_id is required")
 
-        # Validate tenant_id
-        if not self.tenant_id:
-            raise ValidationError("tenant_id is required")
+        # Validate zone_id
+        if not self.zone_id:
+            raise ValidationError("zone_id is required")
 
         # Validate provider
         valid_providers = ["e2b", "docker", "modal"]
@@ -2735,12 +2731,12 @@ class OAuthCredentialModel(Base):
     """OAuth 2.0 credential storage for backend integrations.
 
     Stores encrypted OAuth tokens for services like Google Drive, Microsoft Graph, etc.
-    Supports automatic token refresh and multi-tenant isolation.
+    Supports automatic token refresh and multi-zone isolation.
 
     Security features:
     - Encrypted token storage (access_token, refresh_token)
     - HMAC integrity protection
-    - Tenant isolation
+    - Zone isolation
     - Audit logging of token operations
     - Automatic expiry enforcement
 
@@ -2749,7 +2745,7 @@ class OAuthCredentialModel(Base):
         cred = OAuthCredentialModel(
             provider="google",
             user_email="alice@example.com",
-            tenant_id="org_acme",
+            zone_id="org_acme",
             scopes=["https://www.googleapis.com/auth/drive"],
             encrypted_access_token="...",
             encrypted_refresh_token="...",
@@ -2774,11 +2770,11 @@ class OAuthCredentialModel(Base):
     # User identity
     # user_email: Email from OAuth provider (required for token association)
     # user_id: Nexus user identity (for permission checks, may differ from email)
-    # Note: Indexes defined in __table_args__ (idx_oauth_user_email, idx_oauth_user_id, idx_oauth_tenant)
+    # Note: Indexes defined in __table_args__ (idx_oauth_user_email, idx_oauth_user_id, idx_oauth_zone)
     user_email: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Encrypted tokens (encrypted at rest)
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2817,13 +2813,13 @@ class OAuthCredentialModel(Base):
 
     # Indexes
     __table_args__ = (
-        # Unique constraint: one credential per (provider, user_email, tenant)
+        # Unique constraint: one credential per (provider, user_email, zone)
         # Note: user_email is from OAuth provider, user_id is Nexus identity
-        UniqueConstraint("provider", "user_email", "tenant_id", name="uq_oauth_credential"),
+        UniqueConstraint("provider", "user_email", "zone_id", name="uq_oauth_credential"),
         Index("idx_oauth_provider", "provider"),
         Index("idx_oauth_user_email", "user_email"),
         Index("idx_oauth_user_id", "user_id"),
-        Index("idx_oauth_tenant", "tenant_id"),
+        Index("idx_oauth_zone", "zone_id"),
         Index("idx_oauth_expires", "expires_at"),
         Index("idx_oauth_revoked", "revoked"),
     )
@@ -2890,7 +2886,7 @@ class UserModel(Base):
 
     Key features:
     - Multiple auth methods (password, OAuth, external, API key)
-    - Multi-tenant support via ReBAC groups
+    - Multi-zone support via ReBAC groups
     - Soft delete support (is_active, deleted_at)
     - Email/username uniqueness via partial indexes
     """
@@ -2947,22 +2943,22 @@ class UserModel(Base):
     api_key: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )  # Plaintext API key (for user convenience - NOT for authentication)
-    tenant_id: Mapped[str | None] = mapped_column(
+    zone_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
-    )  # Self-serve tenant ID (typically user's email)
+    )  # Self-serve zone ID (typically user's email)
 
-    # Multi-tenant
-    # NOTE: Tenant membership is managed via ReBAC groups ONLY
-    # ReBAC Tuple: (user:user_id, member-of, group:tenant-{tenant_id})
-    # No primary_tenant_id field - all tenant relationships via ReBAC
+    # Multi-zone
+    # NOTE: Zone membership is managed via ReBAC groups ONLY
+    # ReBAC Tuple: (user:user_id, member-of, group:zone-{zone_id})
+    # No primary_zone_id field - all zone relationships via ReBAC
 
     # Admin status
-    # Note: Per-tenant admin status managed via ReBAC relations:
-    # - (user:user_id, admin-of, group:tenant-{tenant_id}) for tenant admin
-    # - (user:user_id, member-of, group:tenant-{tenant_id}) for tenant member
+    # Note: Per-zone admin status managed via ReBAC relations:
+    # - (user:user_id, admin-of, group:zone-{zone_id}) for zone admin
+    # - (user:user_id, member-of, group:zone-{zone_id}) for zone member
     is_global_admin: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
-    )  # Global admin across all tenants (rare, for super-admins only)
+    )  # Global admin across all zones (rare, for super-admins only)
 
     # Status
     # SOFT DELETE: Users are marked inactive instead of hard deleted
@@ -3000,8 +2996,8 @@ class UserModel(Base):
     oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
         "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
     )
-    # Note: Tenant membership is managed via ReBAC groups, not a separate table
-    # ReBAC Tuple: (user:user_id, member-of, group:tenant-{tenant_id})
+    # Note: Zone membership is managed via ReBAC groups, not a separate table
+    # ReBAC Tuple: (user:user_id, member-of, group:zone-{zone_id})
     # This leverages existing ReBAC infrastructure (Google Zanzibar pattern)
     #
     # Note: APIKeyModel.user_id is NOT a foreign key (by design for backward compatibility)
@@ -3110,31 +3106,31 @@ class UserOAuthAccountModel(Base):
         return f"<UserOAuthAccountModel(oauth_account_id={self.oauth_account_id}, provider={self.provider}, user_id={self.user_id})>"
 
 
-class TenantModel(Base):
-    """Tenant metadata model.
+class ZoneModel(Base):
+    """Zone metadata model.
 
-    Stores organizational/tenant information for multi-tenancy.
-    Tenant membership is still managed via ReBAC groups (group:tenant-{tenant_id}),
-    but this table provides a place to store tenant metadata (name, settings, etc.).
+    Stores organizational/zone information for multi-zone isolation.
+    Zone membership is still managed via ReBAC groups (group:zone-{zone_id}),
+    but this table provides a place to store zone metadata (name, settings, etc.).
 
     Key features:
-    - Stores tenant display name and metadata
+    - Stores zone display name and metadata
     - Soft delete support (is_active, deleted_at)
     - Timestamps for audit trail
     """
 
-    __tablename__ = "tenants"
+    __tablename__ = "zones"
 
     # Primary key
-    tenant_id: Mapped[str] = mapped_column(
+    zone_id: Mapped[str] = mapped_column(
         String(255), primary_key=True
-    )  # Tenant identifier (matches tenant_id used throughout the system)
+    )  # Zone identifier (matches zone_id used throughout the system)
 
     # Metadata
-    # Note: Index defined in __table_args__ (idx_tenants_name)
+    # Note: Index defined in __table_args__ (idx_zones_name)
     name: Mapped[str] = mapped_column(
         String(255), nullable=False
-    )  # Display name for the tenant/organization
+    )  # Display name for the zone/organization
 
     # Note: unique=True creates an index, no need for additional index=True
     domain: Mapped[str | None] = mapped_column(
@@ -3146,17 +3142,17 @@ class TenantModel(Base):
     # Settings (extensible JSON field)
     settings: Mapped[str | None] = mapped_column(
         Text, nullable=True
-    )  # JSON as string for additional tenant settings/config
+    )  # JSON as string for additional zone settings/config
 
     # Status
-    # Note: Index defined in __table_args__ (idx_tenants_active)
+    # Note: Index defined in __table_args__ (idx_zones_active)
     is_active: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False
     )  # SQLite: bool as Integer (0 = soft deleted)
 
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, index=True
-    )  # Timestamp when tenant was soft deleted (None = active)
+    )  # Timestamp when zone was soft deleted (None = active)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -3172,12 +3168,12 @@ class TenantModel(Base):
 
     # Indexes
     __table_args__ = (
-        Index("idx_tenants_name", "name"),
-        Index("idx_tenants_active", "is_active"),
+        Index("idx_zones_name", "name"),
+        Index("idx_zones_active", "is_active"),
     )
 
     def __repr__(self) -> str:
-        return f"<TenantModel(tenant_id={self.tenant_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
+        return f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
 
 
 class ExternalUserServiceModel(Base):
@@ -3277,10 +3273,10 @@ class ContentCacheModel(Base):
         unique=True,
     )
 
-    # Tenant isolation (same pattern as other tables)
-    # Note: Index defined in __table_args__ (idx_content_cache_tenant)
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    # Zone isolation (same pattern as other tables)
+    # Note: Index defined in __table_args__ (idx_content_cache_zone)
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
     # Content storage
     content_text: Mapped[str | None] = mapped_column(
@@ -3334,7 +3330,7 @@ class ContentCacheModel(Base):
 
     # Indexes
     __table_args__ = (
-        Index("idx_content_cache_tenant", "tenant_id"),
+        Index("idx_content_cache_zone", "zone_id"),
         Index("idx_content_cache_stale", "stale", postgresql_where=text("stale = true")),
         Index("idx_content_cache_synced", "synced_at"),
         Index(
@@ -3425,7 +3421,7 @@ class SubscriptionModel(Base):
     )
 
     # Multi-tenancy
-    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False)
 
     # Webhook configuration
     url: Mapped[str] = mapped_column(Text, nullable=False)  # Webhook URL
@@ -3466,7 +3462,7 @@ class SubscriptionModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        Index("idx_subscriptions_tenant", "tenant_id"),
+        Index("idx_subscriptions_zone", "zone_id"),
         Index("idx_subscriptions_enabled", "enabled"),
         Index("idx_subscriptions_url", "url"),
     )
@@ -3544,12 +3540,12 @@ class TigerResourceMapModel(Base):
     Roaring Bitmaps require integer IDs, but our resources use UUIDs.
     This table provides a stable mapping.
 
-    Note: tenant_id is intentionally excluded from this table.
+    Note: zone_id is intentionally excluded from this table.
     Resource paths are globally unique (e.g., /skills/system/docs is the same
-    file regardless of who queries it). Tenant isolation is enforced at the
+    file regardless of who queries it). Zone isolation is enforced at the
     bitmap/permission level, not the resource ID mapping.
 
-    Related: Issue #682, Issue #979 (cross-tenant fix)
+    Related: Issue #682, Issue #979 (cross-zone fix)
     """
 
     __tablename__ = "tiger_resource_map"
@@ -3558,7 +3554,7 @@ class TigerResourceMapModel(Base):
     # Integer for SQLite auto-increment compatibility (SQLite only auto-increments INTEGER PRIMARY KEY)
     resource_int_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    # Resource identification (no tenant - paths are globally unique)
+    # Resource identification (no zone - paths are globally unique)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
@@ -3568,7 +3564,7 @@ class TigerResourceMapModel(Base):
     )
 
     __table_args__ = (
-        # Unique constraint on (resource_type, resource_id) - no tenant
+        # Unique constraint on (resource_type, resource_id) - no zone
         UniqueConstraint("resource_type", "resource_id", name="uq_tiger_resource"),
         Index("idx_tiger_resource_lookup", "resource_type", "resource_id"),
     )
@@ -3605,8 +3601,8 @@ class TigerCacheModel(Base):
     # Resource type (file, directory, etc.)
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
 
-    # Tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Serialized Roaring Bitmap (binary)
     bitmap_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -3632,13 +3628,13 @@ class TigerCacheModel(Base):
             "subject_id",
             "permission",
             "resource_type",
-            "tenant_id",
+            "zone_id",
             name="uq_tiger_cache",
         ),
         # Index for fast cache lookup
         Index(
             "idx_tiger_cache_lookup",
-            "tenant_id",
+            "zone_id",
             "subject_type",
             "subject_id",
             "permission",
@@ -3680,8 +3676,8 @@ class TigerCacheQueueModel(Base):
     # Resource type
     resource_type: Mapped[str] = mapped_column(String(50), nullable=False)
 
-    # Tenant
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Zone
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Priority (lower = higher priority)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
@@ -3733,8 +3729,8 @@ class TigerDirectoryGrantsModel(Base):
     # Directory path that was granted (e.g., /workspace/project/)
     directory_path: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Zone isolation
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Revision at time of grant (for consistency)
     grant_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -3765,9 +3761,9 @@ class TigerDirectoryGrantsModel(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        # Unique constraint: one grant per (subject, permission, directory, tenant)
+        # Unique constraint: one grant per (subject, permission, directory, zone)
         UniqueConstraint(
-            "tenant_id",
+            "zone_id",
             "directory_path",
             "permission",
             "subject_type",
@@ -3775,13 +3771,13 @@ class TigerDirectoryGrantsModel(Base):
             name="uq_tiger_directory_grants",
         ),
         # Index for finding grants by path prefix (for new file integration)
-        Index("idx_tiger_dir_grants_path_prefix", "tenant_id", "directory_path"),
+        Index("idx_tiger_dir_grants_path_prefix", "zone_id", "directory_path"),
         # Index for finding grants by subject (for cache invalidation)
-        Index("idx_tiger_dir_grants_subject", "tenant_id", "subject_type", "subject_id"),
+        Index("idx_tiger_dir_grants_subject", "zone_id", "subject_type", "subject_id"),
         # Index for pending expansions (for background worker)
         Index("idx_tiger_dir_grants_pending", "expansion_status", "created_at"),
         # Index for permission lookups
-        Index("idx_tiger_dir_grants_lookup", "tenant_id", "directory_path", "permission"),
+        Index("idx_tiger_dir_grants_lookup", "zone_id", "directory_path", "permission"),
     )
 
     def __repr__(self) -> str:
@@ -3980,10 +3976,8 @@ class ShareLinkModel(Base):
     # Maps to ReBAC relations: viewer (read), editor (read+write), owner (full)
     permission_level: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
 
-    # Multi-tenancy: link belongs to this tenant
-    tenant_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="default", index=True
-    )
+    # Multi-zone: link belongs to this zone
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
 
     # Creator tracking
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
@@ -4020,7 +4014,7 @@ class ShareLinkModel(Base):
             postgresql_where=text("revoked_at IS NULL"),
         ),
         # Lookup by creator
-        Index("idx_share_links_created_by", "tenant_id", "created_by"),
+        Index("idx_share_links_created_by", "zone_id", "created_by"),
     )
 
     def __repr__(self) -> str:
@@ -4086,7 +4080,7 @@ class ShareLinkAccessLogModel(Base):
 
     # Optional: authenticated user who accessed (if logged in)
     accessed_by_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    accessed_by_tenant_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    accessed_by_zone_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (
         # Time-based queries for analytics
@@ -4190,9 +4184,9 @@ class EntityModel(Base):
         server_default=_get_uuid_server_default(),
     )
 
-    # P0 SECURITY: Defense-in-depth tenant isolation
-    # Issue #773: Made non-nullable for strict multi-tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    # P0 SECURITY: Defense-in-depth zone isolation
+    # Issue #773: Made non-nullable for strict multi-zone isolation
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
 
     # Entity identification
     canonical_name: Mapped[str] = mapped_column(
@@ -4259,14 +4253,14 @@ class EntityModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        # Unique constraint on (tenant_id, canonical_name) for entity deduplication
-        UniqueConstraint("tenant_id", "canonical_name", name="uq_entity_tenant_name"),
-        # Tenant-scoped queries
-        Index("idx_entities_tenant", "tenant_id"),
+        # Unique constraint on (zone_id, canonical_name) for entity deduplication
+        UniqueConstraint("zone_id", "canonical_name", name="uq_entity_zone_name"),
+        # Zone-scoped queries
+        Index("idx_entities_zone", "zone_id"),
         # Entity type filtering
         Index("idx_entities_type", "entity_type"),
-        # Combined tenant + type for filtered queries
-        Index("idx_entities_tenant_type", "tenant_id", "entity_type"),
+        # Combined zone + type for filtered queries
+        Index("idx_entities_zone_type", "zone_id", "entity_type"),
         # Name lookup (for exact matching before embedding similarity)
         Index("idx_entities_canonical_name", "canonical_name"),
     )
@@ -4343,8 +4337,8 @@ class RelationshipModel(Base):
         server_default=_get_uuid_server_default(),
     )
 
-    # P0 SECURITY: Defense-in-depth tenant isolation
-    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    # P0 SECURITY: Defense-in-depth zone isolation
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
 
     # Source and target entities (foreign keys)
     source_entity_id: Mapped[str] = mapped_column(
@@ -4393,9 +4387,9 @@ class RelationshipModel(Base):
 
     # Indexes and constraints
     __table_args__ = (
-        # Unique constraint: one relationship type per source-target pair per tenant
+        # Unique constraint: one relationship type per source-target pair per zone
         UniqueConstraint(
-            "tenant_id",
+            "zone_id",
             "source_entity_id",
             "target_entity_id",
             "relationship_type",
@@ -4409,8 +4403,8 @@ class RelationshipModel(Base):
         Index("idx_relationships_source_type", "source_entity_id", "relationship_type"),
         # Composite index for incoming edge traversal
         Index("idx_relationships_target_type", "target_entity_id", "relationship_type"),
-        # Tenant-scoped queries
-        Index("idx_relationships_tenant", "tenant_id"),
+        # Zone-scoped queries
+        Index("idx_relationships_zone", "zone_id"),
         # Confidence filtering (for filtering low-quality extractions)
         Index("idx_relationships_confidence", "confidence"),
     )

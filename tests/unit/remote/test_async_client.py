@@ -125,7 +125,7 @@ class TestAsyncRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "tenant_id": "default",
+            "zone_id": "default",
             "subject_type": "user",
             "subject_id": "admin",
         }
@@ -133,7 +133,7 @@ class TestAsyncRemoteNexusFSAuth:
 
         await async_client._fetch_auth_info()
 
-        assert async_client._tenant_id == "default"
+        assert async_client._zone_id == "default"
         assert async_client._agent_id is None
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestAsyncRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "tenant_id": "default",
+            "zone_id": "default",
             "subject_type": "agent",
             "subject_id": "agent-123",
         }
@@ -151,7 +151,7 @@ class TestAsyncRemoteNexusFSAuth:
 
         await async_client._fetch_auth_info()
 
-        assert async_client._tenant_id == "default"
+        assert async_client._zone_id == "default"
         assert async_client._agent_id == "agent-123"
 
     @pytest.mark.asyncio
@@ -164,7 +164,7 @@ class TestAsyncRemoteNexusFSAuth:
 
         await async_client._fetch_auth_info()
 
-        assert async_client._tenant_id is None
+        assert async_client._zone_id is None
         assert async_client._agent_id is None
 
     @pytest.mark.asyncio
@@ -177,7 +177,7 @@ class TestAsyncRemoteNexusFSAuth:
         await async_client._fetch_auth_info()
 
         # Should not raise, just log warning
-        assert async_client._tenant_id is None
+        assert async_client._zone_id is None
 
     @pytest.mark.asyncio
     async def test_fetch_auth_info_exception(self, async_client):
@@ -224,13 +224,13 @@ class TestAsyncRemoteNexusFSAuth:
         # Should not call _fetch_auth_info again
         async_client._fetch_auth_info.assert_not_called()
 
-    def test_tenant_id_property(self, async_client):
-        """Test tenant_id property."""
-        async_client._tenant_id = "test-tenant"
-        assert async_client.tenant_id == "test-tenant"
+    def test_zone_id_property(self, async_client):
+        """Test zone_id property."""
+        async_client._zone_id = "test-zone"
+        assert async_client.zone_id == "test-zone"
 
-        async_client.tenant_id = "new-tenant"
-        assert async_client._tenant_id == "new-tenant"
+        async_client.zone_id = "new-zone"
+        assert async_client._zone_id == "new-zone"
 
     def test_agent_id_property(self, async_client):
         """Test agent_id property."""
@@ -248,7 +248,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
     async def test_call_rpc_success(self, async_client):
         """Test successful RPC call."""
         async_client._ensure_initialized = AsyncMock()
-        async_client._tenant_id = "default"
+        async_client._zone_id = "default"
         async_client._agent_id = None
 
         mock_response = Mock()
@@ -275,7 +275,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
     async def test_call_rpc_with_agent_id(self, async_client):
         """Test RPC call with agent ID header."""
         async_client._ensure_initialized = AsyncMock()
-        async_client._tenant_id = "default"
+        async_client._zone_id = "default"
         async_client._agent_id = "agent-123"
 
         mock_response = Mock()
@@ -291,7 +291,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
             # Verify X-Agent-ID header was set
             call_kwargs = async_client._client.post.call_args[1]
             assert call_kwargs["headers"]["X-Agent-ID"] == "agent-123"
-            assert call_kwargs["headers"]["X-Tenant-ID"] == "default"
+            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "default"
 
     @pytest.mark.asyncio
     async def test_call_rpc_custom_timeout(self, async_client):

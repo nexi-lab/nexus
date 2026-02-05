@@ -102,7 +102,7 @@ class TestTokenManager:
             provider="google",
             user_email="alice@example.com",
             credential=valid_credential,
-            tenant_id="org_acme",
+            zone_id="org_acme",
             created_by="admin",
         )
 
@@ -255,7 +255,7 @@ class TestTokenManager:
             provider="google",
             user_email="alice@example.com",
             credential=valid_credential,
-            tenant_id="org_acme",
+            zone_id="org_acme",
         )
 
         cred2 = OAuthCredential(
@@ -270,7 +270,7 @@ class TestTokenManager:
             provider="microsoft",
             user_email="bob@example.com",
             credential=cred2,
-            tenant_id="org_acme",
+            zone_id="org_acme",
         )
 
         # List all credentials
@@ -287,14 +287,14 @@ class TestTokenManager:
         )
 
     @pytest.mark.asyncio
-    async def test_list_credentials_filtered_by_tenant(self, manager, valid_credential):
-        """Test listing credentials filtered by tenant."""
-        # Store credentials for different tenants
+    async def test_list_credentials_filtered_by_zone(self, manager, valid_credential):
+        """Test listing credentials filtered by zone."""
+        # Store credentials for different zones
         await manager.store_credential(
             provider="google",
             user_email="alice@example.com",
             credential=valid_credential,
-            tenant_id="org_acme",
+            zone_id="org_acme",
         )
 
         cred2 = OAuthCredential(
@@ -309,16 +309,16 @@ class TestTokenManager:
             provider="microsoft",
             user_email="bob@example.com",
             credential=cred2,
-            tenant_id="org_other",
+            zone_id="org_other",
         )
 
         # List credentials for org_acme only
-        credentials = await manager.list_credentials(tenant_id="org_acme")
+        credentials = await manager.list_credentials(zone_id="org_acme")
 
         assert len(credentials) == 1
         assert credentials[0]["provider"] == "google"
         assert credentials[0]["user_email"] == "alice@example.com"
-        assert credentials[0]["tenant_id"] == "org_acme"
+        assert credentials[0]["zone_id"] == "org_acme"
 
     @pytest.mark.asyncio
     async def test_list_credentials_empty(self, manager):
@@ -391,14 +391,14 @@ class TestTokenManager:
             )
 
     @pytest.mark.asyncio
-    async def test_tenant_isolation(self, manager, valid_credential):
-        """Test that credentials are isolated by tenant."""
-        # Store same user email in different tenants
+    async def test_zone_isolation(self, manager, valid_credential):
+        """Test that credentials are isolated by zone."""
+        # Store same user email in different zones
         await manager.store_credential(
             provider="google",
             user_email="alice@example.com",
             credential=valid_credential,
-            tenant_id="org_acme",
+            zone_id="org_acme",
         )
 
         cred2 = OAuthCredential(
@@ -413,7 +413,7 @@ class TestTokenManager:
             provider="google",
             user_email="alice@example.com",
             credential=cred2,
-            tenant_id="org_other",
+            zone_id="org_other",
         )
 
         # Retrieve from org_acme

@@ -113,7 +113,7 @@ class TestReadContent:
         context = MagicMock()
         context.backend_path = "test.txt"
         context.virtual_path = "/mnt/local/test.txt"
-        context.tenant_id = None
+        context.zone_id = None
 
         result = connector.read_content("", context)
         assert result.success is True
@@ -148,7 +148,7 @@ class TestReadContent:
         context = MagicMock()
         context.backend_path = "cached.txt"
         context.virtual_path = "/mnt/local/cached.txt"
-        context.tenant_id = None
+        context.zone_id = None
 
         # Mock L1 cache hit
         with patch.object(connector, "_read_from_cache") as mock_cache:
@@ -174,7 +174,7 @@ class TestWriteContent:
         context = MagicMock()
         context.backend_path = "new.txt"
         context.virtual_path = "/mnt/local/new.txt"
-        context.tenant_id = None
+        context.zone_id = None
 
         result = connector.write_content(b"new content", context=context)
 
@@ -188,7 +188,7 @@ class TestWriteContent:
         context = MagicMock()
         context.backend_path = "subdir/nested/file.txt"
         context.virtual_path = "/mnt/local/subdir/nested/file.txt"
-        context.tenant_id = None
+        context.zone_id = None
 
         result = connector.write_content(b"nested content", context=context)
 

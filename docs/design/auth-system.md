@@ -25,7 +25,7 @@ Nexus provides a flexible authentication and authorization system that supports:
 
 - **Multiple authentication methods**: Static API keys, database API keys, local username/password (JWT), and OIDC/OAuth
 - **Relationship-based access control (ReBAC)**: Zanzibar-style permission system
-- **Multi-tenant isolation**: Secure tenant-scoped operations
+- **Multi-zone isolation**: Secure tenant-scoped operations
 - **Subject-based identity**: Support for users, agents, services, and sessions
 
 ### ⚠️ Important: Authentication is Server-Only
@@ -98,7 +98,7 @@ Two modes of operation:
 │  └──────────────┴──────────┴──────────┴──────────┘ │
 │                      ↓                              │
 │           Returns: AuthResult                       │
-│        (subject_type, subject_id, tenant_id,        │
+│        (subject_type, subject_id, zone_id,        │
 │         is_admin, metadata)                         │
 └─────────────────┬──────────────────────────────────┘
                   │
@@ -173,7 +173,7 @@ api_keys:
   sk-alice-xxx:
     subject_type: "user"
     subject_id: "alice"
-    tenant_id: "org_acme"
+    zone_id: "org_acme"
     is_admin: true
     metadata:
       email: "alice@example.com"
@@ -182,7 +182,7 @@ api_keys:
   sk-agent-xxx:
     subject_type: "agent"
     subject_id: "agent_claude_001"
-    tenant_id: "org_acme"
+    zone_id: "org_acme"
     is_admin: false
 ```
 
@@ -400,7 +400,7 @@ auth.create_user(
     password="secure-password-123",
     subject_type="user",
     subject_id="alice",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     is_admin=True
 )
 
@@ -409,7 +409,7 @@ auth.create_user(
     password="another-password-456",
     subject_type="user",
     subject_id="bob",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     is_admin=False
 )
 
@@ -444,7 +444,7 @@ auth:
       password_hash: "$2b$12$..."  # Bcrypt hash
       subject_type: "user"
       subject_id: "alice"
-      tenant_id: "org_acme"
+      zone_id: "org_acme"
       is_admin: true
 ```
 
@@ -467,7 +467,7 @@ auth:
 - No OAuth flow implementation (handled by frontend/web UI)
 - Subject ID prefixing for uniqueness
 - Admin email lists
-- Tenant ID extraction from claims
+- Zone ID extraction from claims
 
 **Python SDK Usage:**
 
@@ -547,7 +547,7 @@ auth:
     auth0:
       issuer: "https://your-tenant.auth0.com"
       audience: "your-auth0-client-id"
-      tenant_id_claim: "org_id"  # Extract tenant from this claim
+      zone_id_claim: "org_id"  # Extract tenant from this claim
       admin_emails:
         - "admin@example.com"
 ```
@@ -652,7 +652,7 @@ Permission: string
        subject=("user", "alice"),
        permission="read",
        object=("file", "/workspace/file.txt"),
-       tenant_id="org_acme"
+       zone_id="org_acme"
    )
    # → Returns True (owner can read)
    ```
@@ -683,7 +683,7 @@ rebac.rebac_write(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/file.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # Check permission
@@ -691,14 +691,14 @@ can_read = rebac.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/workspace/file.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # List all subjects with permission
 subjects = rebac.rebac_expand(
     permission="read",
     object=("file", "/workspace/file.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 # → [("user", "alice"), ("user", "bob"), ...]
 ```
@@ -732,17 +732,17 @@ nexus rebac expand \
 ReBAC enforces tenant isolation at multiple levels:
 
 1. **Write-time validation**: Prevents cross-tenant relationships
-2. **Query-time filtering**: All queries scoped to tenant_id
+2. **Query-time filtering**: All queries scoped to zone_id
 3. **Cache isolation**: Tenant-scoped caching prevents poisoning
 4. **Graph traversal**: Relationships can only traverse within same tenant
 
 ```python
-# All ReBAC operations require tenant_id
+# All ReBAC operations require zone_id
 rebac.rebac_write(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/file.txt"),
-    tenant_id="org_acme"  # REQUIRED
+    zone_id="org_acme"  # REQUIRED
 )
 
 # Attempts to create cross-tenant relationships will fail
@@ -750,7 +750,7 @@ rebac.rebac_write(
     subject=("user", "alice"),  # From tenant org_acme
     relation="viewer",
     object=("file", "/workspace/file.txt"),  # From tenant org_xyz
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 # → Raises ValidationError: Cross-tenant relationship not allowed
 ```
@@ -773,7 +773,7 @@ See the following files for complete working examples:
 
 #### Multi-Tenant:
 - `examples/py_demo/multi_tenant_rebac_demo.py` - ReBAC with tenant isolation
-- `examples/script_demo/multi_tenant_cli_demo.sh` - Multi-tenant via CLI
+- `examples/script_demo/multi_tenant_cli_demo.sh` - Multi-zone via CLI
 
 ---
 
@@ -821,10 +821,10 @@ rebac:
   enforce_permissions: false  # Enable in production
   admin_bypass: true  # Admins skip permission checks
 
-# Multi-tenant
+# Multi-zone
 tenant:
   isolation_enabled: true
-  default_tenant_id: "default"
+  default_zone_id: "default"
 ```
 
 ### Environment Variables
@@ -857,7 +857,7 @@ CREATE TABLE api_keys (
     user_id VARCHAR(255) NOT NULL,
     subject_type VARCHAR(50) DEFAULT 'user',
     subject_id VARCHAR(255),
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
     name VARCHAR(255),
     is_admin BOOLEAN DEFAULT FALSE,
     expires_at TIMESTAMP,
@@ -867,7 +867,7 @@ CREATE TABLE api_keys (
     created_at TIMESTAMP DEFAULT NOW(),
     INDEX idx_key_hash (key_hash),
     INDEX idx_user_id (user_id),
-    INDEX idx_tenant_id (tenant_id)
+    INDEX idx_zone_id (zone_id)
 );
 ```
 
@@ -880,7 +880,7 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,  -- Bcrypt hash
     subject_type VARCHAR(50) DEFAULT 'user',
     subject_id VARCHAR(255),
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
     name VARCHAR(255),
     is_admin BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -916,14 +916,14 @@ CREATE TABLE rebac_tuples (
     relation VARCHAR(100) NOT NULL,
     object_type VARCHAR(50) NOT NULL,
     object_id VARCHAR(255) NOT NULL,
-    tenant_id VARCHAR(255),
-    subject_tenant_id VARCHAR(255),
-    object_tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
+    subject_zone_id VARCHAR(255),
+    object_zone_id VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE (subject_type, subject_id, relation, object_type, object_id, tenant_id),
-    INDEX idx_subject (subject_type, subject_id, tenant_id),
-    INDEX idx_object (object_type, object_id, tenant_id),
-    INDEX idx_relation (relation, tenant_id)
+    UNIQUE (subject_type, subject_id, relation, object_type, object_id, zone_id),
+    INDEX idx_subject (subject_type, subject_id, zone_id),
+    INDEX idx_object (object_type, object_id, zone_id),
+    INDEX idx_relation (relation, zone_id)
 );
 ```
 
@@ -937,11 +937,11 @@ CREATE TABLE rebac_check_cache (
     permission VARCHAR(100) NOT NULL,
     object_type VARCHAR(50) NOT NULL,
     object_id VARCHAR(255) NOT NULL,
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
     result BOOLEAN NOT NULL,
     expires_at TIMESTAMP NOT NULL,
-    UNIQUE (subject_type, subject_id, permission, object_type, object_id, tenant_id),
-    INDEX idx_cache_lookup (subject_type, subject_id, permission, object_type, object_id, tenant_id),
+    UNIQUE (subject_type, subject_id, permission, object_type, object_id, zone_id),
+    INDEX idx_cache_lookup (subject_type, subject_id, permission, object_type, object_id, zone_id),
     INDEX idx_expires_at (expires_at)
 );
 ```
@@ -1214,7 +1214,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("user", owner),
        relation="direct_owner",
        object=("file", "/workspace/file.txt"),
-       tenant_id="default"
+       zone_id="default"
    )
 
    # If mode allowed group read (040)
@@ -1222,7 +1222,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("group", group),
        relation="viewer",
        object=("file", "/workspace/file.txt"),
-       tenant_id="default"
+       zone_id="default"
    )
    ```
 
@@ -1237,7 +1237,7 @@ If you were using UNIX-style permissions (owner/group/mode), these have been **r
        subject=("user", owner),
        permission="read",
        object=("file", "/workspace/file.txt"),
-       tenant_id="default"
+       zone_id="default"
    ):
        ...
    ```
@@ -1283,7 +1283,7 @@ result = await auth.authenticate(token)
   - `allow_default_tenant=False` → No fallback
 - ✅ **Documented claims mapping:**
   - `subject_id_claim` (default: "sub")
-  - `tenant_id_claim` (default: "org_id")
+  - `zone_id_claim` (default: "org_id")
 - ✅ **Explicit deny with clear errors**
 
 **Example:**
@@ -1291,7 +1291,7 @@ result = await auth.authenticate(token)
 auth = OIDCAuth(
     issuer="https://accounts.google.com",
     audience="your-client-id",
-    tenant_id_claim="org_id",
+    zone_id_claim="org_id",
     require_tenant=True,  # Deny if org_id missing
     allow_default_tenant=False  # No fallback
 )
@@ -1398,7 +1398,7 @@ with session_factory() as session:
         session,
         user_id="alice",
         name="Production API Key",
-        tenant_id="org_acme",
+        zone_id="org_acme",
         is_admin=True,
         expires_at=datetime.now(UTC) + timedelta(days=90)
     )
@@ -1463,7 +1463,7 @@ pytest tests/test_auth_authlib.py --cov=nexus.server.auth
 ## Further Reading
 
 - **ReBAC System**: See `docs/PERMISSION_SYSTEM.md` for detailed ReBAC documentation
-- **Multi-Tenant Architecture**: See `docs/multi-tenant-architecture.md`
+- **Multi-Tenant Architecture**: See `docs/multi-zone-architecture.md`
 - **Configuration Best Practices**: See `docs/config-best-practices.md`
 - **API Reference**: See `docs/api/` directory
 

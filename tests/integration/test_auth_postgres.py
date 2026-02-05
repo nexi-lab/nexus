@@ -39,7 +39,7 @@ class UserModel(Base):
     username = Column(String, unique=True, nullable=True)
     display_name = Column(String)
     api_key = Column(String)
-    tenant_id = Column(String)
+    zone_id = Column(String)
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
     password_hash = Column(String)
@@ -60,7 +60,7 @@ class APIKeyModel(Base):
     name = Column(String(255), nullable=False)
     subject_type = Column(String(50), nullable=True)
     subject_id = Column(String(255), nullable=True)
-    tenant_id = Column(String(255), nullable=True)
+    zone_id = Column(String(255), nullable=True)
     is_admin = Column(Integer, nullable=False, default=0)  # 0 = False, 1 = True
     inherit_permissions = Column(Integer, nullable=False, default=1)  # 0 = False, 1 = True
     created_at = Column(DateTime, nullable=False)
@@ -157,7 +157,7 @@ def test_oauth_race_condition_postgres(postgres_session):
         This replicates the exact double-check pattern from the OAuth callback handler.
         """
         try:
-            tenant_id = test_email
+            zone_id = test_email
 
             # Create API key with race condition protection
             with postgres_session() as session:
@@ -183,7 +183,7 @@ def test_oauth_race_condition_postgres(postgres_session):
                         name="Personal API Key",
                         subject_type="user",
                         subject_id=test_user_id,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=0,  # Integer: 0 = False, 1 = True
                         created_at=datetime.now(),
                         expires_at=None,
@@ -195,7 +195,7 @@ def test_oauth_race_condition_postgres(postgres_session):
                     # Store plaintext API key in users table
                     if user_model:
                         user_model.api_key = raw_key
-                        user_model.tenant_id = tenant_id
+                        user_model.zone_id = zone_id
 
                     session.commit()
                     api_key = raw_key
@@ -244,7 +244,7 @@ def test_oauth_race_condition_postgres(postgres_session):
 
         # Verify user has the API key
         assert user.api_key is not None, "User should have an API key"
-        assert user.tenant_id is not None, "User should have a tenant_id"
+        assert user.zone_id is not None, "User should have a zone_id"
         assert user.api_key == api_keys_created[0], "User's API key should match the created key"
 
     # Cleanup test data

@@ -44,7 +44,7 @@ class SkillUsageRecord:
     usage_id: str
     skill_name: str
     agent_id: str | None
-    tenant_id: str | None
+    zone_id: str | None
     execution_time: float | None
     success: bool
     error_message: str | None
@@ -147,7 +147,7 @@ class SkillAnalyticsTracker:
         self,
         skill_name: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         execution_time: float | None = None,
         success: bool = True,
         error_message: str | None = None,
@@ -157,7 +157,7 @@ class SkillAnalyticsTracker:
         Args:
             skill_name: Name of the skill
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             execution_time: Execution time in seconds
             success: Whether the skill execution succeeded
             error_message: Optional error message if failed
@@ -180,7 +180,7 @@ class SkillAnalyticsTracker:
             usage_id=usage_id,
             skill_name=skill_name,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             execution_time=execution_time,
             success=success,
             error_message=error_message,
@@ -193,10 +193,10 @@ class SkillAnalyticsTracker:
             # Insert into database
             query = """
             INSERT INTO skill_usage (
-                usage_id, skill_name, agent_id, tenant_id,
+                usage_id, skill_name, agent_id, zone_id,
                 execution_time, success, error_message, timestamp
             ) VALUES (
-                :usage_id, :skill_name, :agent_id, :tenant_id,
+                :usage_id, :skill_name, :agent_id, :zone_id,
                 :execution_time, :success, :error_message, :timestamp
             )
             """
@@ -207,7 +207,7 @@ class SkillAnalyticsTracker:
                     "usage_id": usage_id,
                     "skill_name": skill_name,
                     "agent_id": agent_id,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "execution_time": execution_time,
                     "success": success,
                     "error_message": error_message,
@@ -223,13 +223,13 @@ class SkillAnalyticsTracker:
         return usage_id
 
     async def get_skill_analytics(
-        self, skill_name: str, tenant_id: str | None = None
+        self, skill_name: str, zone_id: str | None = None
     ) -> SkillAnalytics:
         """Get analytics for a skill.
 
         Args:
             skill_name: Name of the skill
-            tenant_id: Optional tenant ID to filter by
+            zone_id: Optional zone ID to filter by
 
         Returns:
             SkillAnalytics object with aggregated metrics
@@ -257,9 +257,9 @@ class SkillAnalyticsTracker:
             """
             params = {"skill_name": skill_name}
 
-            if tenant_id:
-                query += " AND tenant_id = :tenant_id"
-                params["tenant_id"] = tenant_id
+            if zone_id:
+                query += " AND zone_id = :zone_id"
+                params["zone_id"] = zone_id
 
             result = await asyncio.to_thread(self._db.fetchone, query, params)
 
@@ -284,8 +284,8 @@ class SkillAnalyticsTracker:
             # Calculate from in-memory records
             records = [r for r in self._in_memory_records if r.skill_name == skill_name]
 
-            if tenant_id:
-                records = [r for r in records if r.tenant_id == tenant_id]
+            if zone_id:
+                records = [r for r in records if r.zone_id == zone_id]
 
             if not records:
                 return SkillAnalytics(skill_name=skill_name)
@@ -318,11 +318,11 @@ class SkillAnalyticsTracker:
             analytics.calculate_success_rate()
             return analytics
 
-    async def get_dashboard_metrics(self, tenant_id: str | None = None) -> DashboardMetrics:
+    async def get_dashboard_metrics(self, zone_id: str | None = None) -> DashboardMetrics:
         """Get organization-wide dashboard metrics.
 
         Args:
-            tenant_id: Optional tenant ID to filter by
+            zone_id: Optional zone ID to filter by
 
         Returns:
             DashboardMetrics with aggregated org-wide metrics
@@ -342,9 +342,9 @@ class SkillAnalyticsTracker:
             """
             params: dict[str, Any] = {}
 
-            if tenant_id:
-                query += " WHERE tenant_id = :tenant_id"
-                params["tenant_id"] = tenant_id
+            if zone_id:
+                query += " WHERE zone_id = :zone_id"
+                params["zone_id"] = zone_id
 
             query += " GROUP BY skill_name ORDER BY usage_count DESC LIMIT 10"
             most_used = await asyncio.to_thread(self._db.fetchall, query, params)
@@ -357,12 +357,12 @@ class SkillAnalyticsTracker:
             WHERE agent_id IS NOT NULL
             """
 
-            if tenant_id:
-                query += " AND tenant_id = :tenant_id"
+            if zone_id:
+                query += " AND zone_id = :zone_id"
 
             query += " GROUP BY agent_id ORDER BY contribution_count DESC LIMIT 10"
             top_contrib = await asyncio.to_thread(
-                self._db.fetchall, query, params if tenant_id else None
+                self._db.fetchall, query, params if zone_id else None
             )
             top_contributors = [(row["agent_id"], row["contribution_count"]) for row in top_contrib]
 
@@ -375,10 +375,10 @@ class SkillAnalyticsTracker:
             FROM skill_usage
             """
 
-            if tenant_id:
-                query += " WHERE tenant_id = :tenant_id"
+            if zone_id:
+                query += " WHERE zone_id = :zone_id"
 
-            stats = await asyncio.to_thread(self._db.fetchone, query, params if tenant_id else None)
+            stats = await asyncio.to_thread(self._db.fetchone, query, params if zone_id else None)
 
             # Success rates per skill
             query = """
@@ -388,12 +388,12 @@ class SkillAnalyticsTracker:
             FROM skill_usage
             """
 
-            if tenant_id:
-                query += " WHERE tenant_id = :tenant_id"
+            if zone_id:
+                query += " WHERE zone_id = :zone_id"
 
             query += " GROUP BY skill_name"
             success_rates_rows = await asyncio.to_thread(
-                self._db.fetchall, query, params if tenant_id else None
+                self._db.fetchall, query, params if zone_id else None
             )
             success_rates = {row["skill_name"]: row["success_rate"] for row in success_rates_rows}
 
@@ -406,12 +406,12 @@ class SkillAnalyticsTracker:
             WHERE execution_time IS NOT NULL
             """
 
-            if tenant_id:
-                query += " AND tenant_id = :tenant_id"
+            if zone_id:
+                query += " AND zone_id = :zone_id"
 
             query += " GROUP BY skill_name"
             avg_times_rows = await asyncio.to_thread(
-                self._db.fetchall, query, params if tenant_id else None
+                self._db.fetchall, query, params if zone_id else None
             )
             avg_execution_times = {
                 row["skill_name"]: row["avg_time"]
@@ -433,8 +433,8 @@ class SkillAnalyticsTracker:
             # Calculate from in-memory records
             records = self._in_memory_records
 
-            if tenant_id:
-                records = [r for r in records if r.tenant_id == tenant_id]
+            if zone_id:
+                records = [r for r in records if r.zone_id == zone_id]
 
             # Count usage by skill
             usage_by_skill: dict[str, int] = {}

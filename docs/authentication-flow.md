@@ -66,7 +66,7 @@ user_id = "alice@example.com"  # From API key lookup
 oauth_token = token_manager.get_valid_token(
     provider="google",
     user_email=user_id,  # Same user_id!
-    tenant_id=context.tenant_id
+    zone_id=context.zone_id
 )
 
 # 3. Auto-refresh happens transparently
@@ -197,7 +197,7 @@ nx = RemoteNexusFS(
 access_token = await self.token_manager.get_valid_token(
     provider="google",
     user_email=context.user_id,  # "alice@example.com"
-    tenant_id=context.tenant_id,
+    zone_id=context.zone_id,
 )
 
 # Inside TokenManager.get_valid_token():
@@ -367,7 +367,7 @@ The Google Drive connector is **user-scoped**, meaning:
 # Each request provides user context
 context = OperationContext(
     user_id="alice@example.com",  # From API key auth
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/workspace/file.txt",
 )
 
@@ -375,7 +375,7 @@ context = OperationContext(
 token = token_manager.get_valid_token(
     provider="google",
     user_email=context.user_id,  # Different per user!
-    tenant_id=context.tenant_id,
+    zone_id=context.zone_id,
 )
 ```
 
@@ -402,7 +402,7 @@ OAuth Tokens (Backend Auth):
 -- Alice (Tenant A) can't access Bob's (Tenant B) tokens
 SELECT * FROM oauth_credentials
 WHERE user_email = 'alice@example.com'
-  AND tenant_id = 'tenant_a';
+  AND zone_id = 'tenant_a';
 
 -- Returns only Alice's tokens for Tenant A
 -- Bob's tokens (Tenant B) are invisible

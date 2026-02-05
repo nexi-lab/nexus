@@ -38,8 +38,8 @@ We use **tenant/user-first** paths (not resource-first):
 
 ```
 # ✅ Tenant/User-First (chosen)
-/tenant:<tenant_id>/user:<user_id>/skill/<skill_name>/
-/tenant:<tenant_id>/user:<user_id>/agents/<agent_id>/
+/tenant:<zone_id>/user:<user_id>/skill/<skill_name>/
+/tenant:<zone_id>/user:<user_id>/agents/<agent_id>/
 
 # ❌ Resource-First (rejected)
 /skill/<tenant>/<user>/<skill_name>/
@@ -148,7 +148,7 @@ Skills are just files. The agent uses standard filesystem operations:
 
 ```python
 # Agent writes SKILL.md directly using filesystem
-write("/tenant:<tenant_id>/user:<user_id>/skill/<name>/SKILL.md", content)
+write("/tenant:<zone_id>/user:<user_id>/skill/<name>/SKILL.md", content)
 
 # Skill is private by default (only creator has access)
 # No special API needed - permissions auto-granted to creator
@@ -244,7 +244,7 @@ skills_unsubscribe("/tenant:acme/user:alice/skill/code-review", context)
 Agent-level skill assignment is handled by the agent's own config, not via skill APIs.
 
 ```yaml
-# Agent config: /tenant:<tenant_id>/user:<user_id>/agents/<agent_id>/config.yaml
+# Agent config: /tenant:<zone_id>/user:<user_id>/agents/<agent_id>/config.yaml
 active_skills:
   - "/tenant:acme/user:alice/skill/code-review"    # Must be in user's subscriptions
   - "/tenant:acme/user:bob/skill/testing"

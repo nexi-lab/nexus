@@ -49,18 +49,18 @@ def memory_router(session, entity_registry):
 @pytest.fixture
 def setup_entities(entity_registry):
     """Set up test entities."""
-    # Create tenant
-    entity_registry.register_entity("tenant", "acme")
+    # Create zone
+    entity_registry.register_entity("zone", "acme")
 
-    # Create user under tenant
-    entity_registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
+    # Create user under zone
+    entity_registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
 
     # Create agents under user
     entity_registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     entity_registry.register_entity("agent", "agent2", parent_type="user", parent_id="alice")
 
     # Create another user with agent
-    entity_registry.register_entity("user", "bob", parent_type="tenant", parent_id="acme")
+    entity_registry.register_entity("user", "bob", parent_type="zone", parent_id="acme")
     entity_registry.register_entity("agent", "agent3", parent_type="user", parent_id="bob")
 
 
@@ -69,22 +69,22 @@ class TestPhase1EntityRegistry:
 
     def test_register_entity(self, entity_registry):
         """Test registering entities."""
-        entity = entity_registry.register_entity("tenant", "test-tenant")
-        assert entity.entity_type == "tenant"
-        assert entity.entity_id == "test-tenant"
+        entity = entity_registry.register_entity("zone", "test-zone")
+        assert entity.entity_type == "zone"
+        assert entity.entity_id == "test-zone"
         assert entity.parent_type is None
         assert entity.parent_id is None
 
     def test_register_entity_with_parent(self, entity_registry):
         """Test registering entity with parent."""
-        entity_registry.register_entity("tenant", "acme")
+        entity_registry.register_entity("zone", "acme")
         entity = entity_registry.register_entity(
-            "user", "alice", parent_type="tenant", parent_id="acme"
+            "user", "alice", parent_type="zone", parent_id="acme"
         )
 
         assert entity.entity_type == "user"
         assert entity.entity_id == "alice"
-        assert entity.parent_type == "tenant"
+        assert entity.parent_type == "zone"
         assert entity.parent_id == "acme"
 
     def test_get_entity(self, entity_registry):
@@ -114,7 +114,7 @@ class TestPhase1EntityRegistry:
     def test_auto_register_from_config(self, entity_registry):
         """Test auto-registering from config."""
         config = {
-            "tenant_id": "acme",
+            "zone_id": "acme",
             "user_id": "alice",
             "agent_id": "agent1",
         }
@@ -122,11 +122,11 @@ class TestPhase1EntityRegistry:
         entity_registry.auto_register_from_config(config)
 
         # Check all entities were registered
-        tenant = entity_registry.get_entity("tenant", "acme")
+        zone_entity = entity_registry.get_entity("zone", "acme")
         user = entity_registry.get_entity("user", "alice")
         agent = entity_registry.get_entity("agent", "agent1")
 
-        assert tenant is not None
+        assert zone_entity is not None
         assert user is not None
         assert user.parent_id == "acme"
         assert agent is not None
@@ -159,7 +159,7 @@ class TestPhase2MemoryRouter:
         """Test creating a memory."""
         memory = memory_router.create_memory(
             content_hash="abc123",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             scope="user",
@@ -234,7 +234,7 @@ class TestPhase2MemoryRouter:
         """Test generating virtual paths for a memory."""
         memory = memory_router.create_memory(
             content_hash="abc123",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
         )
@@ -335,18 +335,18 @@ class TestPhase3MemoryPermissions:
         # agent2 is not the creator and mode is 0o600 (owner only)
         assert can_read is False  # agent2 is not the creator
 
-    def test_tenant_scoped_sharing(self, memory_router, permission_enforcer, setup_entities):
-        """Test tenant-scoped memory sharing."""
-        # alice's agent1 creates tenant-scoped memory
+    def test_zone_scoped_sharing(self, memory_router, permission_enforcer, setup_entities):
+        """Test zone-scoped memory sharing."""
+        # alice's agent1 creates zone-scoped memory
         memory = memory_router.create_memory(
             content_hash="abc123",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
-            scope="tenant",
+            scope="zone",
         )
 
-        # bob's agent3 (same tenant) should have access
+        # bob's agent3 (same zone) should have access
         ctx = OperationContext(user="agent3", groups=[])
         can_read = permission_enforcer.check_memory(memory, Permission.READ, ctx)
 
@@ -423,7 +423,7 @@ class TestIntegration:
         """Set up complete test environment."""
         # Register entities
         config = {
-            "tenant_id": "acme",
+            "zone_id": "acme",
             "user_id": "alice",
             "agent_id": "agent1",
         }
@@ -453,7 +453,7 @@ class TestIntegration:
         # agent1 creates user-scoped memory
         memory = router.create_memory(
             content_hash="python_preferences",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             scope="user",
@@ -487,7 +487,7 @@ class TestIntegration:
         # Create memory
         memory = router.create_memory(
             content_hash="test_content",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
         )

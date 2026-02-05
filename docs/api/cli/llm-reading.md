@@ -395,7 +395,7 @@ nexus llm read "/data/**/*.csv" "Analyze trends and create executive summary" \
   --stream --max-tokens 2000 --model claude-sonnet-4
 ```
 
-### 5. Multi-tenant analysis (with remote server)
+### 5. Multi-zone analysis (with remote server)
 
 ```bash
 # Setup

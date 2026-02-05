@@ -159,7 +159,7 @@ Virtual mapping of a backend storage system to a path in the Nexus filesystem. E
 ### Multi-Tenancy
 Architecture supporting multiple isolated customer environments (tenants) within a single Nexus deployment.
 
-**Related:** [Multi-Tenancy](concepts/multi-tenancy.md), [Multi-Tenant SaaS](learning-paths/multi-tenant-saas.md)
+**Related:** [Multi-Tenancy](concepts/multi-tenancy.md), [Multi-Tenant SaaS](learning-paths/multi-zone-saas.md)
 
 ---
 
@@ -274,7 +274,7 @@ Global skills stored in `/system/skills/` that are available to all users and ag
 ## T
 
 ### Tenant
-Isolated customer environment in a multi-tenant deployment. Has its own namespace, users, and data.
+Isolated customer environment in a multi-zone deployment. Has its own namespace, users, and data.
 
 **Related:** [Multi-Tenancy](concepts/multi-tenancy.md)
 

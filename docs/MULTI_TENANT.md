@@ -65,14 +65,14 @@ Flat directory structure with permission-based access control.
 
 ### 1. Nexus Config File (`nexus.yaml`)
 
-Define your multi-tenant structure in config:
+Define your multi-zone structure in config:
 
 ```yaml
 # nexus.yaml
 data_dir: /var/lib/nexus
 backend: local
 
-# Multi-tenant configuration
+# Multi-zone configuration
 organizations:
   - id: acme
     name: Acme Corporation
@@ -515,7 +515,7 @@ import yaml
 from nexus import NexusClient
 
 def init_multi_tenant(config_path="nexus.yaml"):
-    """Initialize multi-tenant structure from config"""
+    """Initialize multi-zone structure from config"""
 
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -695,7 +695,7 @@ Hierarchical structure with workspace-based isolation.
 
 Nexus provides multi-layer tenant isolation:
 
-1. **Database Level** - `tenant_id` filtering in all queries
+1. **Database Level** - `zone_id` filtering in all queries
 2. **Permission Level** - ReBAC tuples scoped to tenant
 3. **Storage Level** - Physical separation in backend storage
 
@@ -709,7 +709,7 @@ nx.rebac_create(
     subject=("user", "alice"),
     relation="editor",
     object=("file", "/doc.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # ❌ Cross-tenant - REJECTED

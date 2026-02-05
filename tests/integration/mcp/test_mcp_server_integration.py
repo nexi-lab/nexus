@@ -49,11 +49,16 @@ def extract_items(result: str | list | dict) -> list:
     The MCP API can return either:
     - A plain list: [item1, item2, ...]
     - A paginated dict: {"count": N, "items": [...], "has_more": false, ...}
+    - An error string: "Error in glob search: ..." (not valid JSON)
 
     This helper extracts the items list in either case.
+    Raises ValueError if the result is an error string from an MCP tool.
     """
     if isinstance(result, str):
-        result = json.loads(result)
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            raise ValueError(f"MCP tool returned an error: {result}")
 
     if isinstance(result, list):
         return result

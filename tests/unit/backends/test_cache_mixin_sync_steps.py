@@ -87,7 +87,7 @@ def test_context():
     return OperationContext(
         user="test_user",
         groups=["test_group"],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_system=True,
     )
 
@@ -244,14 +244,14 @@ class TestStep2LoadCache:
             virtual_path="/test/file1.txt",
             backend_id="backend1",
             physical_path="file1.txt",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
         path2 = FilePathModel(
             path_id="path2",
             virtual_path="/test/file2.txt",
             backend_id="backend1",
             physical_path="file2.txt",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
         session.add_all([path1, path2])
 
@@ -259,7 +259,7 @@ class TestStep2LoadCache:
         cache1 = ContentCacheModel(
             cache_id="cache1",
             path_id="path1",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             content_text="content1",
             content_hash="hash1",
             content_type="full",
@@ -566,7 +566,7 @@ class TestStep6WriteCache:
             virtual_path="/test/file1.txt",
             backend_id="backend1",
             physical_path="file1.txt",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
         session.add(path1)
         session.commit()
@@ -581,7 +581,7 @@ class TestStep6WriteCache:
                 "backend_version": "v1",
                 "parsed_from": None,
                 "parse_metadata": None,
-                "tenant_id": "test_tenant",
+                "zone_id": "test_zone",
             }
         ]
 
@@ -608,7 +608,7 @@ class TestStep6WriteCache:
                 "backend_version": "v1",
                 "parsed_from": None,
                 "parse_metadata": None,
-                "tenant_id": "test_tenant",
+                "zone_id": "test_zone",
             }
         ]
 
@@ -664,14 +664,14 @@ class TestSyncIntegration:
             virtual_path="/test/file1.txt",
             backend_id="backend1",
             physical_path="file1.txt",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
         path2 = FilePathModel(
             path_id="path2",
             virtual_path="/test/file2.txt",
             backend_id="backend1",
             physical_path="file2.txt",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
         session.add_all([path1, path2])
         session.commit()
@@ -717,7 +717,7 @@ class TestSyncIntegration:
                 virtual_path=f"/test/file{i + 1}.{ext}",
                 backend_id="backend1",
                 physical_path=f"file{i + 1}.{ext}",
-                tenant_id="test_tenant",
+                zone_id="test_zone",
             )
             session.add(path)
         session.commit()

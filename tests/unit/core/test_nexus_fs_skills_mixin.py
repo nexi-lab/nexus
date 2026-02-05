@@ -164,7 +164,7 @@ class TestSkillsCreate:
 
     def test_skills_create_different_tiers(self, nx: NexusFS) -> None:
         """Test creating skills in different tiers."""
-        for tier in ["agent", "tenant", "system"]:
+        for tier in ["agent", "zone", "system"]:
             with patch.object(nx, "_get_skill_manager") as mock_get_manager:
                 mock_manager = MagicMock()
                 mock_manager.create_skill = AsyncMock(return_value=f"/skills/{tier}/test.md")
@@ -294,8 +294,8 @@ class TestSkillsList:
                     description="Skill 2",
                     version="1.0.0",
                     author="bob",
-                    tier="tenant",
-                    file_path="/skills/tenant/skill2.md",
+                    tier="zone",
+                    file_path="/skills/zone/skill2.md",
                     requires=[],
                     created_at=None,
                     modified_at=None,
@@ -404,19 +404,19 @@ class TestSkillsPublish:
         """Test publishing a skill."""
         with patch.object(nx, "_get_skill_manager") as mock_get_manager:
             mock_manager = MagicMock()
-            mock_manager.publish_skill = AsyncMock(return_value="/skills/tenant/published-skill.md")
+            mock_manager.publish_skill = AsyncMock(return_value="/skills/zone/published-skill.md")
             mock_get_manager.return_value = mock_manager
 
             result = nx.skills_publish(
                 skill_name="my-skill",
                 source_tier="agent",
-                target_tier="tenant",
+                target_tier="zone",
             )
 
-            assert result["published_path"] == "/skills/tenant/published-skill.md"
+            assert result["published_path"] == "/skills/zone/published-skill.md"
             assert result["skill_name"] == "my-skill"
             assert result["source_tier"] == "agent"
-            assert result["target_tier"] == "tenant"
+            assert result["target_tier"] == "zone"
 
 
 class TestSkillsSearch:

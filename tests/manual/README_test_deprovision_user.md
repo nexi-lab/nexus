@@ -74,7 +74,7 @@ Step 2: Provisioning test user...
 ### Test Fails with "⚠️ workspace: still has N items"
 
 This indicates ghost entries remain in the database. Check:
-1. Physical directory is actually deleted: `ls -la ./nexus-data-local/dirs/tenant:test_tenant/user:test_deprovision_user/`
+1. Physical directory is actually deleted: `ls -la ./nexus-data-local/dirs/zone/test_zone/user:test_deprovision_user/`
 2. Metadata entries in database: Query `file_paths` table for the path
 3. ReBAC tuples: Query `rebac_tuples` table for the resource
 

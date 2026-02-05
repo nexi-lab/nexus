@@ -122,7 +122,7 @@ class NexusFSReBACMixin:
             op_context = OperationContext(
                 user=context.get("user", "unknown"),
                 groups=context.get("groups", []),
-                tenant_id=context.get("tenant_id"),
+                zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),
                 is_system=context.get("is_system", False),
             )
@@ -166,29 +166,33 @@ class NexusFSReBACMixin:
         if hasattr(self, "_permission_enforcer"):
             has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
 
-            # If user is not owner, check if they are tenant admin
+            # If user is not owner, check if they are zone admin
             if not has_permission:
-                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
-                tenant_id = None
-                if resource_path.startswith("/tenant:"):
-                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                # Extract zone from resource path (format: /zone/{zone_id}/...)
+                zone_id = None
+                if resource_path.startswith("/zone/"):
+                    parts = resource_path[6:].split("/", 1)  # Remove "/zone/" prefix
                     if parts:
-                        tenant_id = parts[0]
+                        zone_id = parts[0]
 
-                # Check if user is tenant admin for this resource's tenant
-                if tenant_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_tenant_admin
+                # Fallback to zone_id from operation context
+                if not zone_id and hasattr(op_context, "zone_id"):
+                    zone_id = op_context.zone_id
 
-                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
-                        # Tenant admin can share resources in their tenant
+                # Check if user is zone admin for this resource's zone
+                if zone_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_zone_admin
+
+                    if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
+                        # Zone admin can share resources in their zone
                         return
 
-                # Neither owner nor tenant admin - deny
+                # Neither owner nor zone admin - deny
                 perm_name = required_permission.upper()
                 raise PermissionError(
                     f"Access denied: User '{op_context.user}' does not have {perm_name} "
                     f"permission to manage permissions on '{resource_path}'. "
-                    f"Only owners or tenant admins can share resources."
+                    f"Only owners or zone admins can share resources."
                 )
 
     @rpc_expose(description="Create ReBAC relationship tuple")
@@ -198,7 +202,7 @@ class NexusFSReBACMixin:
         relation: str,
         object: tuple[str, str],
         expires_at: datetime | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> dict[str, Any]:
@@ -209,8 +213,8 @@ class NexusFSReBACMixin:
             relation: Relation type (e.g., 'member-of', 'owner-of', 'viewer-of', 'dynamic_viewer')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from operation context.
+            zone_id: Optional zone ID for multi-zone isolation. If None, uses
+                       zone_id from operation context.
             context: Operation context (automatically provided by RPC server)
             column_config: Optional column-level permissions config for dynamic_viewer relation.
                           Only applies to CSV files.
@@ -291,14 +295,14 @@ class NexusFSReBACMixin:
         ):
             object = (object[0], object[1].rstrip("/"))
 
-        # Use tenant_id from context if not explicitly provided
-        effective_tenant_id = tenant_id
-        if effective_tenant_id is None and context:
+        # Use zone_id from context if not explicitly provided
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
             # Handle both dict and OperationContext/EnhancedOperationContext
             if isinstance(context, dict):
-                effective_tenant_id = context.get("tenant")
-            elif hasattr(context, "tenant_id"):
-                effective_tenant_id = context.tenant_id
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
 
         # SECURITY: Check execute permission before allowing permission management
         # Only owners (those with execute permission) can grant/manage permissions on resources
@@ -448,7 +452,7 @@ class NexusFSReBACMixin:
             relation=relation,
             object=object,
             expires_at=expires_at,
-            tenant_id=effective_tenant_id,
+            zone_id=effective_zone_id,
             conditions=conditions,
         )
 
@@ -468,7 +472,7 @@ class NexusFSReBACMixin:
         self,
         path: str,
         subject: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if user has READ access to any descendant of path.
 
@@ -481,7 +485,7 @@ class NexusFSReBACMixin:
         Args:
             path: Directory path to check descendants of
             subject: (subject_type, subject_id) tuple
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             True if user has READ on any descendant, False otherwise
@@ -499,15 +503,15 @@ class NexusFSReBACMixin:
         # that the user has READ access to. This avoids the blocking
         # metadata.list() call.
         try:
-            # Get all tuples for this subject in this tenant
-            effective_tenant = tenant_id or "default"
+            # Get all tuples for this subject in this zone
+            effective_zone = zone_id or "default"
 
-            # Use the _fetch_tenant_tuples_from_db method to get cached tuples
+            # Use the _fetch_zone_tuples_from_db method to get cached tuples
             # or fall back to checking the in-memory graph
-            if hasattr(self._rebac_manager, "_get_cached_tenant_tuples"):
-                tuples = self._rebac_manager._get_cached_tenant_tuples(effective_tenant)
+            if hasattr(self._rebac_manager, "_get_cached_zone_tuples"):
+                tuples = self._rebac_manager._get_cached_zone_tuples(effective_zone)
                 if tuples is None:
-                    tuples = self._rebac_manager._fetch_tenant_tuples_from_db(effective_tenant)
+                    tuples = self._rebac_manager._fetch_zone_tuples_from_db(effective_zone)
             else:
                 tuples = []
 
@@ -548,7 +552,7 @@ class NexusFSReBACMixin:
         permission: str,
         object: tuple[str, str],
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
 
@@ -562,7 +566,7 @@ class NexusFSReBACMixin:
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
-            tenant_id: Optional tenant ID for multi-tenant isolation (defaults to "default")
+            zone_id: Optional zone ID for multi-zone isolation (defaults to "default")
 
         Returns:
             True if permission is granted, False otherwise
@@ -577,7 +581,7 @@ class NexusFSReBACMixin:
             ...     subject=("agent", "alice"),
             ...     permission="read",
             ...     object=("file", "/workspace/doc.txt"),
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
             True
 
@@ -587,7 +591,7 @@ class NexusFSReBACMixin:
             ...     permission="read",
             ...     object=("file", "/sensitive.txt"),
             ...     context={"time": "14:30", "ip": "10.0.1.5"},
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
             True  # Allowed during business hours
 
@@ -597,7 +601,7 @@ class NexusFSReBACMixin:
             ...     permission="read",
             ...     object=("file", "/sensitive.txt"),
             ...     context={"time": "20:00", "ip": "10.0.1.5"},
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
             False  # Denied outside time window
         """
@@ -612,17 +616,17 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-        # P0-4: Pass tenant_id for multi-tenant isolation
-        # Use tenant_id from operation context if not explicitly provided
-        effective_tenant_id = tenant_id
-        if effective_tenant_id is None and context:
+        # P0-4: Pass zone_id for multi-zone isolation
+        # Use zone_id from operation context if not explicitly provided
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
             # Handle both dict and OperationContext/EnhancedOperationContext
             if isinstance(context, dict):
-                effective_tenant_id = context.get("tenant")
-            elif hasattr(context, "tenant_id"):
-                effective_tenant_id = context.tenant_id
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
         # BUGFIX: Don't default to "default" - let ReBAC manager handle None
-        # This allows proper tenant isolation testing
+        # This allows proper zone isolation testing
 
         # Check permission with optional context
         result = self._rebac_manager.rebac_check(
@@ -630,7 +634,7 @@ class NexusFSReBACMixin:
             permission=permission,
             object=object,
             context=context,
-            tenant_id=effective_tenant_id,
+            zone_id=effective_zone_id,
         )
 
         # Unix-like TRAVERSE behavior: if user has READ on any descendant,
@@ -641,7 +645,7 @@ class NexusFSReBACMixin:
             result = self._has_descendant_access_for_traverse(
                 path=object[1],
                 subject=subject,
-                tenant_id=effective_tenant_id,
+                zone_id=effective_zone_id,
             )
 
         return result
@@ -700,7 +704,7 @@ class NexusFSReBACMixin:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
@@ -712,8 +716,8 @@ class NexusFSReBACMixin:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from operation context.
+            zone_id: Optional zone ID for multi-zone isolation. If None, uses
+                       zone_id from operation context.
             context: Operation context (automatically provided by RPC server)
 
         Returns:
@@ -734,7 +738,7 @@ class NexusFSReBACMixin:
             ...     subject=("agent", "alice"),
             ...     permission="read",
             ...     object=("file", "/workspace/doc.txt"),
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
             >>> print(explanation["reason"])
             'alice has 'read' on file:/workspace/doc.txt via parent inheritance'
@@ -759,18 +763,18 @@ class NexusFSReBACMixin:
         if not isinstance(object, tuple) or len(object) != 2:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-        # Use tenant_id from context if not explicitly provided
-        effective_tenant_id = tenant_id
-        if effective_tenant_id is None and context:
+        # Use zone_id from context if not explicitly provided
+        effective_zone_id = zone_id
+        if effective_zone_id is None and context:
             # Handle both dict and OperationContext/EnhancedOperationContext
             if isinstance(context, dict):
-                effective_tenant_id = context.get("tenant")
-            elif hasattr(context, "tenant_id"):
-                effective_tenant_id = context.tenant_id
+                effective_zone_id = context.get("zone")
+            elif hasattr(context, "zone_id"):
+                effective_zone_id = context.zone_id
 
         # Get explanation
         return self._rebac_manager.rebac_explain(
-            subject=subject, permission=permission, object=object, tenant_id=effective_tenant_id
+            subject=subject, permission=permission, object=object, zone_id=effective_zone_id
         )
 
     @rpc_expose(description="Batch ReBAC permission checks")
@@ -948,9 +952,9 @@ class NexusFSReBACMixin:
                 # Both SQLite and PostgreSQL now return dict-like rows
                 # Note: sqlite3.Row doesn't have .get() method, so use try/except for optional fields
                 try:
-                    tenant_id = row["tenant_id"]
+                    zone_id = row["zone_id"]
                 except (KeyError, IndexError):
-                    tenant_id = None
+                    zone_id = None
 
                 results.append(
                     {
@@ -962,7 +966,7 @@ class NexusFSReBACMixin:
                         "object_id": row["object_id"],
                         "created_at": row["created_at"],
                         "expires_at": row["expires_at"],
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     }
                 )
 
@@ -1370,7 +1374,7 @@ class NexusFSReBACMixin:
         from_subject: tuple[str, str],
         to_subject: tuple[str, str],
         expires_at: datetime | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Grant consent for one subject to discover another.
 
@@ -1378,7 +1382,7 @@ class NexusFSReBACMixin:
             from_subject: Who is granting consent (e.g., profile, resource)
             to_subject: Who can now discover
             expires_at: Optional expiration
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Tuple ID
@@ -1413,7 +1417,7 @@ class NexusFSReBACMixin:
             relation="consent_granted",
             object=from_subject,
             expires_at=expires_at,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     @rpc_expose(description="Revoke consent")
@@ -1453,14 +1457,12 @@ class NexusFSReBACMixin:
         return False
 
     @rpc_expose(description="Make resource publicly discoverable")
-    def make_public(
-        self, resource: tuple[str, str], tenant_id: str | None = None
-    ) -> dict[str, Any]:
+    def make_public(self, resource: tuple[str, str], zone_id: str | None = None) -> dict[str, Any]:
         """Make a resource publicly discoverable.
 
         Args:
             resource: Resource to make public
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Tuple ID
@@ -1486,7 +1488,7 @@ class NexusFSReBACMixin:
             subject=("*", "*"),  # Wildcard = public
             relation="public_discoverable",
             object=resource,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     @rpc_expose(description="Make resource private")
@@ -1522,31 +1524,31 @@ class NexusFSReBACMixin:
         return False
 
     # =========================================================================
-    # Cross-Tenant Sharing APIs
+    # Cross-Zone Sharing APIs
     # =========================================================================
 
-    @rpc_expose(description="Share a resource with a specific user (same or different tenant)")
+    @rpc_expose(description="Share a resource with a specific user (same or different zone)")
     def share_with_user(
         self,
         resource: tuple[str, str],
         user_id: str,
         relation: str = "viewer",
-        tenant_id: str | None = None,
-        user_tenant_id: str | None = None,
+        zone_id: str | None = None,
+        user_zone_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> dict[str, Any]:
-        """Share a resource with a specific user, regardless of tenant.
+        """Share a resource with a specific user, regardless of zone.
 
-        This enables cross-tenant sharing - users from different organizations
+        This enables cross-zone sharing - users from different organizations
         can be granted access to specific resources.
 
         Args:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             user_id: User to share with (e.g., "bob@partner-company.com")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            tenant_id: Resource owner's tenant ID (defaults to current tenant)
-            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current zone)
+            user_zone_id: Recipient user's zone ID (for cross-zone shares)
             expires_at: Optional expiration datetime for the share
             context: Operation context (automatically provided by RPC server)
 
@@ -1559,18 +1561,18 @@ class NexusFSReBACMixin:
             PermissionError: If caller does not have execute permission (owner) on the resource
 
         Examples:
-            >>> # Share file with user in same tenant
+            >>> # Share file with user in same zone
             >>> share_id = nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="alice@mycompany.com",
             ...     relation="editor"
             ... )
 
-            >>> # Share file with user in different tenant
+            >>> # Share file with user in different zone
             >>> share_id = nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="bob@partner.com",
-            ...     user_tenant_id="partner-tenant",
+            ...     user_zone_id="partner-zone",
             ...     relation="viewer",
             ...     expires_at=datetime(2024, 12, 31)
             ... )
@@ -1608,14 +1610,14 @@ class NexusFSReBACMixin:
             else:
                 expires_dt = expires_at
 
-        # Use shared-* relations which are allowed to cross tenant boundaries
-        # Call underlying manager directly to support cross-tenant parameters
+        # Use shared-* relations which are allowed to cross zone boundaries
+        # Call underlying manager directly to support cross-zone parameters
         result = self._rebac_manager.rebac_write(
             subject=("user", user_id),
             relation=tuple_relation,
             object=resource,
-            tenant_id=tenant_id,
-            subject_tenant_id=user_tenant_id,
+            zone_id=zone_id,
+            subject_zone_id=user_zone_id,
             expires_at=expires_dt,
         )
         return {
@@ -1630,8 +1632,8 @@ class NexusFSReBACMixin:
         resource: tuple[str, str],
         group_id: str,
         relation: str = "viewer",
-        tenant_id: str | None = None,
-        group_tenant_id: str | None = None,
+        zone_id: str | None = None,
+        group_zone_id: str | None = None,
         expires_at: datetime | None = None,
         context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
     ) -> dict[str, Any]:
@@ -1640,15 +1642,15 @@ class NexusFSReBACMixin:
         Uses userset-as-subject pattern: ("group", group_id, "member")
         All members of the group will have the specified permission level.
 
-        This enables cross-tenant sharing - groups from different organizations
+        This enables cross-zone sharing - groups from different organizations
         can be granted access to specific resources.
 
         Args:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             group_id: Group to share with (e.g., "developers")
             relation: Permission level - "viewer" (read), "editor" (read/write), or "owner"
-            tenant_id: Resource owner's tenant ID (defaults to current tenant)
-            group_tenant_id: Recipient group's tenant ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current zone)
+            group_zone_id: Recipient group's zone ID (for cross-zone shares)
             expires_at: Optional expiration datetime for the share
             context: Operation context (automatically provided by RPC server)
 
@@ -1661,18 +1663,18 @@ class NexusFSReBACMixin:
             PermissionError: If caller does not have execute permission (owner) on the resource
 
         Examples:
-            >>> # Share file with group in same tenant
+            >>> # Share file with group in same zone
             >>> share_id = nx.share_with_group(
             ...     resource=("file", "/project/doc.txt"),
             ...     group_id="developers",
             ...     relation="editor"
             ... )
 
-            >>> # Share file with group in different tenant
+            >>> # Share file with group in different zone
             >>> share_id = nx.share_with_group(
             ...     resource=("file", "/project/doc.txt"),
             ...     group_id="partner-team",
-            ...     group_tenant_id="partner-tenant",
+            ...     group_zone_id="partner-zone",
             ...     relation="viewer",
             ...     expires_at=datetime(2024, 12, 31)
             ... )
@@ -1712,14 +1714,14 @@ class NexusFSReBACMixin:
 
         # Use userset-as-subject pattern: ("group", group_id, "member")
         # This allows all members of the group to have the specified permission
-        # Use shared-* relations which are allowed to cross tenant boundaries
-        # Call underlying manager directly to support cross-tenant parameters
+        # Use shared-* relations which are allowed to cross zone boundaries
+        # Call underlying manager directly to support cross-zone parameters
         result = self._rebac_manager.rebac_write(
             subject=("group", group_id, "member"),  # Userset-as-subject pattern
             relation=tuple_relation,
             object=resource,
-            tenant_id=tenant_id,
-            subject_tenant_id=group_tenant_id,
+            zone_id=zone_id,
+            subject_zone_id=group_zone_id,
             expires_at=expires_dt,
         )
         return {
@@ -1797,18 +1799,18 @@ class NexusFSReBACMixin:
     def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
-        tenant_id: str | None = None,  # noqa: ARG002 - Reserved for future tenant filtering
+        zone_id: str | None = None,  # noqa: ARG002 - Reserved for future zone filtering
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        """List shares created by the current tenant (resources shared with others).
+        """List shares created by the current zone (resources shared with others).
 
         Uses iterator caching for efficient pagination (Issue #735).
 
         Args:
             resource: Filter by specific resource (optional)
-            tenant_id: Tenant ID to list shares for (defaults to current tenant)
+            zone_id: Zone ID to list shares for (defaults to current zone)
             limit: Maximum number of results
             offset: Number of results to skip
             cursor: Pagination cursor from previous request
@@ -1877,8 +1879,8 @@ class NexusFSReBACMixin:
             )
             return _transform_tuples(all_tuples)
 
-        # Get current tenant ID for cache isolation
-        current_tenant = getattr(self, "_current_tenant_id", "default")
+        # Get current zone ID for cache isolation
+        current_zone = getattr(self, "_current_zone_id", "default")
 
         # Try to use cursor-based pagination
         if cursor:
@@ -1900,12 +1902,12 @@ class NexusFSReBACMixin:
 
         # Compute query hash for cache key
         resource_str = f"{resource[0]}:{resource[1]}" if resource else "all"
-        query_hash = f"outgoing:{current_tenant}:{resource_str}"
+        query_hash = f"outgoing:{current_zone}:{resource_str}"
 
         # Get or create cached results
         cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
             query_hash=query_hash,
-            tenant_id=current_tenant,
+            zone_id=current_zone,
             compute_fn=_compute_shares,
         )
 
@@ -1931,7 +1933,7 @@ class NexusFSReBACMixin:
     ) -> dict[str, Any]:
         """List shares received by a user (resources shared with me).
 
-        This includes cross-tenant shares from other organizations.
+        This includes cross-zone shares from other organizations.
         Uses iterator caching for efficient pagination (Issue #735).
 
         Args:
@@ -1951,7 +1953,7 @@ class NexusFSReBACMixin:
             - share_id: Unique share identifier
             - resource_type: Type of shared resource
             - resource_id: ID of shared resource
-            - owner_tenant_id: Tenant that owns the resource
+            - owner_zone_id: Zone that owns the resource
             - permission_level: "viewer", "editor", or "owner"
             - created_at: When the share was created
             - expires_at: When the share expires (if set)
@@ -1960,7 +1962,7 @@ class NexusFSReBACMixin:
             >>> # List all resources shared with me
             >>> result = nx.list_incoming_shares(user_id="alice@mycompany.com")
             >>> for share in result["items"]:
-            ...     print(f"{share['resource_id']} from {share['owner_tenant_id']}")
+            ...     print(f"{share['resource_id']} from {share['owner_zone_id']}")
 
             >>> # Paginated iteration with cursor
             >>> result = nx.list_incoming_shares(user_id="alice@mycompany.com", limit=50)
@@ -1990,7 +1992,7 @@ class NexusFSReBACMixin:
                     "share_id": t.get("tuple_id"),
                     "resource_type": t.get("object_type"),
                     "resource_id": t.get("object_id"),
-                    "owner_tenant_id": t.get("tenant_id"),
+                    "owner_zone_id": t.get("zone_id"),
                     "permission_level": relation_to_level.get(t.get("relation") or "", "viewer"),
                     "created_at": t.get("created_at"),
                     "expires_at": t.get("expires_at"),
@@ -2006,8 +2008,8 @@ class NexusFSReBACMixin:
             )
             return _transform_tuples(all_tuples)
 
-        # Get current tenant ID for cache isolation
-        current_tenant = getattr(self, "_current_tenant_id", "default")
+        # Get current zone ID for cache isolation
+        current_zone = getattr(self, "_current_zone_id", "default")
 
         # Try to use cursor-based pagination
         if cursor:
@@ -2028,12 +2030,12 @@ class NexusFSReBACMixin:
                 pass
 
         # Compute query hash for cache key
-        query_hash = f"incoming:{current_tenant}:{user_id}"
+        query_hash = f"incoming:{current_zone}:{user_id}"
 
         # Get or create cached results
         cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
             query_hash=query_hash,
-            tenant_id=current_tenant,
+            zone_id=current_zone,
             compute_fn=_compute_shares,
         )
 
@@ -2334,10 +2336,10 @@ class NexusFSReBACMixin:
             and hasattr(self, "_get_routing_params")
         ):
             # NexusFS instance - read directly from backend to bypass filtering
-            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 file_path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
@@ -2387,17 +2389,17 @@ class NexusFSReBACMixin:
 
     def grant_traverse_on_implicit_dirs(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         subject: tuple[str, str] | None = None,
     ) -> list[WriteResult]:
         """Grant TRAVERSE permission on root-level implicit directories.
 
         This is an optimization for FUSE path resolution. By granting TRAVERSE
-        on directories like /tenants, /sessions, /skills, we enable O(1) stat()
+        on directories like /zones, /sessions, /skills, we enable O(1) stat()
         checks instead of expensive O(n) descendant access checks.
 
         Args:
-            tenant_id: Tenant ID for the permissions (default: "default")
+            zone_id: Zone ID for the permissions (default: "default")
             subject: Subject to grant TRAVERSE to (default: ("group", "authenticated"))
                      Use ("group", "authenticated") for all authenticated users.
 
@@ -2417,7 +2419,7 @@ class NexusFSReBACMixin:
             >>> # Grant traverse to a specific user
             >>> nx.grant_traverse_on_implicit_dirs(
             ...     subject=("user", "alice"),
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
         """
         if not hasattr(self, "_rebac_manager"):
@@ -2429,12 +2431,12 @@ class NexusFSReBACMixin:
         if subject is None:
             subject = ("group", "authenticated")
 
-        effective_tenant_id = tenant_id or "default"
+        effective_zone_id = zone_id or "default"
 
         # Root-level implicit directories that need TRAVERSE permission
         implicit_dirs = [
             "/",
-            "/tenants",
+            "/zones",
             "/sessions",
             "/skills",
             "/workspace",
@@ -2461,7 +2463,7 @@ class NexusFSReBACMixin:
                     subject=subject,
                     relation="traverser-of",
                     object=("file", dir_path),
-                    tenant_id=effective_tenant_id,
+                    zone_id=effective_zone_id,
                 )
                 tuple_ids.append(tuple_id)
             except Exception as e:
@@ -2509,7 +2511,7 @@ class NexusFSReBACMixin:
     def warm_tiger_cache(
         self,
         subjects: list[tuple[str, str]] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Warm the Tiger Cache by pre-computing permissions for subjects.
 
@@ -2518,7 +2520,7 @@ class NexusFSReBACMixin:
 
         Args:
             subjects: List of subjects to warm cache for (default: all subjects with tuples)
-            tenant_id: Tenant ID to scope warming (default: "default")
+            zone_id: Zone ID to scope warming (default: "default")
 
         Returns:
             Number of cache entries created
@@ -2539,7 +2541,7 @@ class NexusFSReBACMixin:
         if not hasattr(self, "_rebac_manager"):
             return 0
 
-        effective_tenant_id = tenant_id or "default"
+        effective_zone_id = zone_id or "default"
         entries_created = 0
 
         # If no subjects provided, get all unique subjects from tuples
@@ -2565,7 +2567,7 @@ class NexusFSReBACMixin:
                         subject=subject,
                         permission=permission,
                         resource_type="file",
-                        tenant_id=effective_tenant_id,
+                        zone_id=effective_zone_id,
                     )
                     entries_created += 1
 

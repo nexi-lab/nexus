@@ -468,84 +468,84 @@ class TestEdgeCases:
             assert cache.get(hash_val) == content
 
 
-class TestMultiTenantIsolation:
-    """Test multi-tenant cache isolation."""
+class TestMultiZoneIsolation:
+    """Test multi-zone cache isolation."""
 
-    def test_tenant_isolation(self, cache_dir):
-        """Test that tenants cannot access each other's cached content."""
+    def test_zone_isolation(self, cache_dir):
+        """Test that zones cannot access each other's cached content."""
         cache = LocalDiskCache(cache_dir=cache_dir, max_size_gb=0.01)
 
-        # Same content, different tenants
+        # Same content, different zones
         content = b"Shared content"
         hash_val = content_hash(content)
 
-        # Tenant A caches content
-        cache.put(hash_val, content, tenant_id="tenant_a")
+        # Zone A caches content
+        cache.put(hash_val, content, zone_id="zone_a")
 
-        # Tenant A can access
-        result_a = cache.get(hash_val, tenant_id="tenant_a")
+        # Zone A can access
+        result_a = cache.get(hash_val, zone_id="zone_a")
         assert result_a == content
 
-        # Tenant B cannot access (different tenant)
-        result_b = cache.get(hash_val, tenant_id="tenant_b")
+        # Zone B cannot access (different zone)
+        result_b = cache.get(hash_val, zone_id="zone_b")
         assert result_b is None
 
-        # No tenant cannot access tenant A's content
-        result_none = cache.get(hash_val, tenant_id=None)
+        # No zone cannot access zone A's content
+        result_none = cache.get(hash_val, zone_id=None)
         assert result_none is None
 
         cache.close()
 
-    def test_tenant_isolation_exists(self, cache_dir):
-        """Test exists() respects tenant isolation."""
+    def test_zone_isolation_exists(self, cache_dir):
+        """Test exists() respects zone isolation."""
         cache = LocalDiskCache(cache_dir=cache_dir, max_size_gb=0.01)
 
-        content = b"Tenant content"
+        content = b"Zone content"
         hash_val = content_hash(content)
 
-        cache.put(hash_val, content, tenant_id="tenant_x")
+        cache.put(hash_val, content, zone_id="zone_x")
 
-        assert cache.exists(hash_val, tenant_id="tenant_x") is True
-        assert cache.exists(hash_val, tenant_id="tenant_y") is False
-        assert cache.exists(hash_val, tenant_id=None) is False
+        assert cache.exists(hash_val, zone_id="zone_x") is True
+        assert cache.exists(hash_val, zone_id="zone_y") is False
+        assert cache.exists(hash_val, zone_id=None) is False
 
         cache.close()
 
-    def test_tenant_isolation_remove(self, cache_dir):
-        """Test remove() respects tenant isolation."""
+    def test_zone_isolation_remove(self, cache_dir):
+        """Test remove() respects zone isolation."""
         cache = LocalDiskCache(cache_dir=cache_dir, max_size_gb=0.01)
 
         content = b"Removable content"
         hash_val = content_hash(content)
 
-        cache.put(hash_val, content, tenant_id="tenant_1")
-        cache.put(hash_val, content, tenant_id="tenant_2")
+        cache.put(hash_val, content, zone_id="zone_1")
+        cache.put(hash_val, content, zone_id="zone_2")
 
-        # Remove tenant_1's content
-        assert cache.remove(hash_val, tenant_id="tenant_1") is True
+        # Remove zone_1's content
+        assert cache.remove(hash_val, zone_id="zone_1") is True
 
-        # tenant_1 content is gone
-        assert cache.get(hash_val, tenant_id="tenant_1") is None
+        # zone_1 content is gone
+        assert cache.get(hash_val, zone_id="zone_1") is None
 
-        # tenant_2 content still exists
-        assert cache.get(hash_val, tenant_id="tenant_2") == content
+        # zone_2 content still exists
+        assert cache.get(hash_val, zone_id="zone_2") == content
 
         cache.close()
 
-    def test_same_content_different_tenants(self, cache_dir):
-        """Test that same content can be cached separately for different tenants."""
+    def test_same_content_different_zones(self, cache_dir):
+        """Test that same content can be cached separately for different zones."""
         cache = LocalDiskCache(cache_dir=cache_dir, max_size_gb=0.01)
 
         content = b"Identical content"
         hash_val = content_hash(content)
 
-        # Both tenants cache the same content
-        cache.put(hash_val, content, tenant_id="alpha")
-        cache.put(hash_val, content, tenant_id="beta")
+        # Both zones cache the same content
+        cache.put(hash_val, content, zone_id="alpha")
+        cache.put(hash_val, content, zone_id="beta")
 
         # Both can access their own copy
-        assert cache.get(hash_val, tenant_id="alpha") == content
-        assert cache.get(hash_val, tenant_id="beta") == content
+        assert cache.get(hash_val, zone_id="alpha") == content
+        assert cache.get(hash_val, zone_id="beta") == content
 
         # Stats should show 2 entries
         stats = cache.get_stats()

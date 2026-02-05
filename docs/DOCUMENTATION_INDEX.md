@@ -58,7 +58,7 @@ Complete guide to Nexus documentation organized by topic.
 |----------|-------------|
 | [System Architecture](architecture/ARCHITECTURE.md) | Overall design |
 | [ReBAC Architecture](architecture/rebac.md) | Permission system internals |
-| [Tenant Isolation](architecture/tenant-isolation.md) | Multi-tenant isolation |
+| [Tenant Isolation](architecture/tenant-isolation.md) | Multi-zone isolation |
 | [Default Context](architecture/default-context.md) | Context design |
 
 ---

@@ -19,7 +19,7 @@ class MockReBACManager:
     def __init__(self):
         self.checks = []
 
-    def rebac_check(self, subject, permission, object, tenant_id):
+    def rebac_check(self, subject, permission, object, zone_id):
         self.checks.append({"subject": subject, "permission": permission, "object": object})
         return False  # Always deny (system should bypass)
 

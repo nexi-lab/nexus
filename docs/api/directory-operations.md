@@ -60,7 +60,7 @@ def rmdir(
     recursive: bool = False,
     subject: tuple[str, str] | None = None,
     context: OperationContext | EnhancedOperationContext | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
     agent_id: str | None = None,
     is_admin: bool | None = None
 ) -> None
@@ -71,7 +71,7 @@ def rmdir(
 - `recursive` (bool): Remove non-empty directory (like `rm -rf`)
 - `subject` (tuple, optional): Subject performing the operation as (type, id) tuple
 - `context` (OperationContext | EnhancedOperationContext, optional): Operation context for permission checks (DEPRECATED, use subject instead)
-- `tenant_id` (str, optional): Legacy tenant ID (DEPRECATED)
+- `zone_id` (str, optional): Legacy zone ID (DEPRECATED)
 - `agent_id` (str, optional): Legacy agent ID (DEPRECATED)
 - `is_admin` (bool, optional): Admin override flag
 

@@ -10,7 +10,7 @@ Looking at the actual code, tenant isolation is **STILL using the OLD v0.4.x ins
 ```python
 route = self.router.route(
     path,
-    tenant_id=self.tenant_id,  # ← Instance variable (v0.4.x style)
+    zone_id=self.zone_id,  # ← Instance variable (v0.4.x style)
     agent_id=self.agent_id,    # ← Instance variable (v0.4.x style)
     is_admin=self.is_admin,    # ← Instance variable (v0.4.x style)
     check_write=False,
@@ -22,9 +22,9 @@ route = self.router.route(
 From `src/nexus/core/nexus_fs.py:133-137`:
 
 ```python
-# v0.5.0: No longer accept tenant_id/agent_id/user_id in __init__
+# v0.5.0: No longer accept zone_id/agent_id/user_id in __init__
 # These are set to None - operations must pass subject parameter instead
-self.tenant_id: str | None = None
+self.zone_id: str | None = None
 self.agent_id: str | None = None
 self.user_id: str | None = None
 ```
@@ -47,7 +47,7 @@ nx.read("/file.txt", context=OperationContext(user="alice", ...))
 
 ```python
 # Instance variables are still used!
-nx.tenant_id  # → None (never set!)
+nx.zone_id  # → None (never set!)
 nx.agent_id   # → None (never set!)
 nx.is_admin   # → False (from init param)
 
@@ -55,7 +55,7 @@ nx.is_admin   # → False (from init param)
 def read(self, path, context=None):
     route = self.router.route(
         path,
-        tenant_id=self.tenant_id,  # ← ALWAYS None!
+        zone_id=self.zone_id,  # ← ALWAYS None!
         agent_id=self.agent_id,    # ← ALWAYS None!
         is_admin=self.is_admin     # ← From init, not context!
     )
@@ -63,7 +63,7 @@ def read(self, path, context=None):
 
 ### What this means:
 
-1. ❌ **`tenant_id` is ALWAYS None** - no tenant isolation!
+1. ❌ **`zone_id` is ALWAYS None** - no tenant isolation!
 2. ❌ **`agent_id` is ALWAYS None** - no agent isolation!
 3. ❌ **`is_admin` comes from init, not context** - can't change per-operation!
 4. ❌ **`OperationContext` is NOT used for routing** - only for ReBAC permissions!
@@ -75,7 +75,7 @@ def read(self, path, context=None):
 ### Two Parallel Permission Systems:
 
 #### 1. **Path Router** (tenant isolation)
-- Uses: `self.tenant_id`, `self.agent_id`, `self.is_admin`
+- Uses: `self.zone_id`, `self.agent_id`, `self.is_admin`
 - Problem: Always None in v0.5.0
 - Result: **NO tenant isolation enforcement**
 
@@ -88,17 +88,17 @@ def read(self, path, context=None):
 
 ```python
 # v0.4.x (WORKED):
-nx = NexusFS(backend, tenant_id="org_acme", user_id="alice")
+nx = NexusFS(backend, zone_id="org_acme", user_id="alice")
 nx.write("/workspace/org_acme/alice/file.txt", data)
-# ✅ self.tenant_id = "org_acme"
-# ✅ Router checks: path tenant matches self.tenant_id
+# ✅ self.zone_id = "org_acme"
+# ✅ Router checks: path tenant matches self.zone_id
 # ✅ Tenant isolation enforced
 
 # v0.5.0 (BROKEN):
-nx = NexusFS(backend)  # tenant_id=None
+nx = NexusFS(backend)  # zone_id=None
 ctx = OperationContext(user="alice", ...)
 nx.write("/workspace/org_acme/alice/file.txt", data, context=ctx)
-# ❌ self.tenant_id = None
+# ❌ self.zone_id = None
 # ❌ Router can't enforce tenant isolation!
 # ❌ OperationContext not used for routing!
 ```
@@ -107,15 +107,15 @@ nx.write("/workspace/org_acme/alice/file.txt", data, context=ctx)
 
 ## How Tenant Isolation SHOULD Work in v0.5.0
 
-### Option A: Extract tenant_id from OperationContext
+### Option A: Extract zone_id from OperationContext
 
 ```python
-# Add tenant_id to OperationContext
+# Add zone_id to OperationContext
 @dataclass
 class OperationContext:
     user: str
     groups: list[str]
-    tenant_id: str | None = None  # ← ADD THIS
+    zone_id: str | None = None  # ← ADD THIS
     is_admin: bool = False
     is_system: bool = False
 
@@ -125,31 +125,31 @@ def write(self, path, content, context=None):
 
     route = self.router.route(
         path,
-        tenant_id=ctx.tenant_id,  # ← From context!
+        zone_id=ctx.zone_id,  # ← From context!
         agent_id=None,  # Or extract from user string
         is_admin=ctx.is_admin,
         check_write=True
     )
 ```
 
-### Option B: Extract tenant_id from JWT/AuthResult
+### Option B: Extract zone_id from JWT/AuthResult
 
 ```python
-# AuthResult already has tenant_id!
+# AuthResult already has zone_id!
 @dataclass
 class AuthResult:
     authenticated: bool
     subject_id: str
-    tenant_id: str | None  # ← Already exists!
+    zone_id: str | None  # ← Already exists!
     is_admin: bool = False
 
-# RPC server should create context WITH tenant_id
+# RPC server should create context WITH zone_id
 def handle_request(jwt_token):
     auth_result = auth.authenticate(jwt_token)
 
     ctx = OperationContext(
         user=auth_result.subject_id,
-        tenant_id=auth_result.tenant_id,  # ← Pass it through!
+        zone_id=auth_result.zone_id,  # ← Pass it through!
         groups=[],
         is_admin=auth_result.is_admin
     )
@@ -161,7 +161,7 @@ def handle_request(jwt_token):
 
 ```python
 # This is what it TRIES to do now but fails because:
-# 1. self.tenant_id is always None
+# 1. self.zone_id is always None
 # 2. Can't check if path tenant matches user tenant
 # 3. No enforcement
 ```
@@ -172,7 +172,7 @@ def handle_request(jwt_token):
 
 | Component | Claims to Support | Actually Works | Why |
 |-----------|-------------------|----------------|-----|
-| **Path routing** | Tenant isolation | ❌ NO | `self.tenant_id` always None |
+| **Path routing** | Tenant isolation | ❌ NO | `self.zone_id` always None |
 | **OperationContext** | Per-operation identity | ⚠️ Partial | Only for ReBAC, not routing |
 | **_default_context** | Backward compat | ❌ NO | is_system=True bypasses everything |
 | **Multi-user RPC** | Yes | ❌ NO | No context passed to operations |
@@ -184,8 +184,8 @@ def handle_request(jwt_token):
 
 ### Immediate Fix:
 
-1. **Add `tenant_id` to `OperationContext`**
-2. **Use `ctx.tenant_id` in router.route() calls**
+1. **Add `zone_id` to `OperationContext`**
+2. **Use `ctx.zone_id` in router.route() calls**
 3. **Set `_default_context.is_system = False`**
 4. **RPC server: create proper context from JWT**
 
@@ -197,7 +197,7 @@ def handle_request(jwt_token):
 class OperationContext:
     user: str
     groups: list[str]
-    tenant_id: str | None = None  # ← ADD
+    zone_id: str | None = None  # ← ADD
     is_admin: bool = False
     is_system: bool = False
 
@@ -207,7 +207,7 @@ def write(self, path, content, context=None):
 
     route = self.router.route(
         path,
-        tenant_id=ctx.tenant_id,  # ← Use context
+        zone_id=ctx.zone_id,  # ← Use context
         agent_id=None,            # ← Or ctx.agent_id if added
         is_admin=ctx.is_admin,    # ← Use context
         check_write=True
@@ -217,7 +217,7 @@ def write(self, path, content, context=None):
 auth_result = await auth.authenticate(token)
 ctx = OperationContext(
     user=auth_result.subject_id,
-    tenant_id=auth_result.tenant_id,  # ← From JWT!
+    zone_id=auth_result.zone_id,  # ← From JWT!
     groups=[],
     is_admin=auth_result.is_admin
 )
@@ -231,9 +231,9 @@ ctx = OperationContext(
 
 **A: WE DON'T! That's the bug!**
 
-`OperationContext` doesn't have `tenant_id`, so:
+`OperationContext` doesn't have `zone_id`, so:
 1. ❌ No way to pass tenant from auth to router
-2. ❌ Router uses `self.tenant_id` which is always None
+2. ❌ Router uses `self.zone_id` which is always None
 3. ❌ No tenant isolation enforcement
 4. ❌ Multi-user deployments are completely broken
 

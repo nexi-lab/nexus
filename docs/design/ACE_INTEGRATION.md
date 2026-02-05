@@ -21,7 +21,7 @@ nx.memory.search(query="Python best practices")
 
 **Existing Infrastructure:**
 - ✅ Content-addressable storage (SHA-256 deduplication)
-- ✅ Identity-based access (tenant_id, user_id, agent_id)
+- ✅ Identity-based access (zone_id, user_id, agent_id)
 - ✅ ReBAC permission enforcement
 - ✅ Importance scoring (0.0-1.0)
 - ✅ Memory types: fact, preference, experience
@@ -104,7 +104,7 @@ CREATE TABLE trajectories (
     trajectory_id VARCHAR(36) PRIMARY KEY,
     agent_id VARCHAR(255) NOT NULL,
     user_id VARCHAR(255),
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
 
     -- Task info
     task_description TEXT NOT NULL,
@@ -144,7 +144,7 @@ CREATE TABLE playbooks (
     playbook_id VARCHAR(36) PRIMARY KEY,
     agent_id VARCHAR(255) NOT NULL,
     user_id VARCHAR(255),
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
 
     -- Playbook info
     name VARCHAR(255) NOT NULL,

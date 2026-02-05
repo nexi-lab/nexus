@@ -20,7 +20,7 @@ This document describes version compatibility, migration guides, and additional 
 - ✅ Workspace snapshots
 - ✅ Document parsing (PDF, Excel, PowerPoint, etc.)
 - ✅ ReBAC permissions
-- ✅ Multi-tenant isolation
+- ✅ Multi-zone isolation
 - ✅ Operation contexts
 - ✅ In-memory metadata caching
 - ✅ Batch operations

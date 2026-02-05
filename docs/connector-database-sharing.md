@@ -122,7 +122,7 @@ CREATE TABLE oauth_tokens (
     id SERIAL PRIMARY KEY,
     provider VARCHAR(50) NOT NULL,      -- 'gmail', 'slack', 'gdrive', etc.
     user_email VARCHAR(255) NOT NULL,
-    tenant_id VARCHAR(255) DEFAULT 'default',
+    zone_id VARCHAR(255) DEFAULT 'default',
     access_token TEXT NOT NULL,         -- Encrypted
     refresh_token TEXT,                 -- Encrypted
     expires_at TIMESTAMP,
@@ -130,7 +130,7 @@ CREATE TABLE oauth_tokens (
     metadata JSONB,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(provider, user_email, tenant_id)
+    UNIQUE(provider, user_email, zone_id)
 );
 
 -- Encryption keys
@@ -149,7 +149,7 @@ CREATE TABLE encryption_keys (
 - Key rotation supported
 
 ### Access Control
-- Tokens scoped by (provider, user_email, tenant_id)
+- Tokens scoped by (provider, user_email, zone_id)
 - No cross-user token access
 - Tenant isolation for multi-tenancy
 

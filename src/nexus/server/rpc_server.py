@@ -183,7 +183,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "authenticated": True,
                             "subject_type": context.subject_type,
                             "subject_id": context.subject_id,
-                            "tenant_id": context.tenant_id,
+                            "zone_id": context.zone_id,
                             "is_admin": context.is_admin,
                             "user": context.user,  # For backward compatibility
                         },
@@ -195,7 +195,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "authenticated": False,
                             "subject_type": None,
                             "subject_id": None,
-                            "tenant_id": None,
+                            "zone_id": None,
                             "is_admin": False,
                         },
                     )
@@ -395,7 +395,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
                         # Grant tenant-scoped admin capabilities for full tenant access
                         # ReBAC enforces tenant isolation, so these capabilities are automatically
-                        # scoped to the admin's tenant (tenant_id from context)
+                        # scoped to the admin's tenant (zone_id from context)
                         #
                         # Tenant admins can:
                         # - Read/write/delete any file in their tenant (READ_ALL, WRITE_ALL, DELETE_ANY)
@@ -418,7 +418,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         agent_id=agent_id,  # v0.5.0: Agent identity (if present)
                         subject_type=subject_type,  # Subject for permission checks
                         subject_id=subject_id,  # Subject ID for permission checks
-                        tenant_id=result.tenant_id,
+                        zone_id=result.zone_id,
                         is_admin=result.is_admin,
                         groups=[],  # TODO: Extract groups from auth result if available
                         admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
@@ -454,8 +454,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         # Convert OperationContext to dict format needed by _get_memory_api
         context_dict = {}
         if context:
-            if hasattr(context, "tenant_id") and context.tenant_id:
-                context_dict["tenant_id"] = context.tenant_id
+            if hasattr(context, "zone_id") and context.zone_id:
+                context_dict["zone_id"] = context.zone_id
             if hasattr(context, "user_id") and context.user_id:
                 context_dict["user_id"] = context.user_id
             if hasattr(context, "agent_id") and context.agent_id:
@@ -510,8 +510,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             entity_registry.register_entity(
                 entity_type="user",
                 entity_id=user_id,
-                parent_type="tenant",
-                parent_id=params.tenant_id,
+                parent_type="zone",
+                parent_id=params.zone_id,
             )
 
         # Calculate expiry if specified
@@ -529,7 +529,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 name=params.name,
                 subject_type=params.subject_type,
                 subject_id=params.subject_id,
-                tenant_id=params.tenant_id,
+                zone_id=params.zone_id,
                 is_admin=params.is_admin,
                 expires_at=expires_at,
             )
@@ -543,7 +543,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "name": params.name,
                 "subject_type": params.subject_type,
                 "subject_id": params.subject_id or user_id,
-                "tenant_id": params.tenant_id,
+                "zone_id": params.zone_id,
                 "is_admin": params.is_admin,
                 "expires_at": expires_at.isoformat() if expires_at else None,
             }
@@ -573,8 +573,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             if params.user_id:
                 stmt = stmt.where(APIKeyModel.user_id == params.user_id)
 
-            if params.tenant_id:
-                stmt = stmt.where(APIKeyModel.tenant_id == params.tenant_id)
+            if params.zone_id:
+                stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
 
             if params.is_admin is not None:
                 stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
@@ -613,7 +613,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         "subject_type": key.subject_type,
                         "subject_id": key.subject_id,
                         "name": key.name,
-                        "tenant_id": key.tenant_id,
+                        "zone_id": key.zone_id,
                         "is_admin": bool(key.is_admin),
                         "created_at": key.created_at.isoformat() if key.created_at else None,
                         "expires_at": key.expires_at.isoformat() if key.expires_at else None,
@@ -655,7 +655,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "subject_type": api_key.subject_type,
                 "subject_id": api_key.subject_id,
                 "name": api_key.name,
-                "tenant_id": api_key.tenant_id,
+                "zone_id": api_key.zone_id,
                 "is_admin": bool(api_key.is_admin),
                 "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
                 "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
@@ -744,7 +744,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 "subject_type": api_key.subject_type,
                 "subject_id": api_key.subject_id,
                 "name": api_key.name,
-                "tenant_id": api_key.tenant_id,
+                "zone_id": api_key.zone_id,
                 "is_admin": bool(api_key.is_admin),
                 "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
                 "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
@@ -1279,7 +1279,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     "created_at": metadata.created_at,
                     "modified_at": metadata.modified_at,
                     "version": metadata.version,
-                    "tenant_id": metadata.tenant_id,
+                    "zone_id": metadata.zone_id,
                     "is_directory": is_dir,
                 }
             }

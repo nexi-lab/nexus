@@ -41,7 +41,7 @@ nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
-__version__ = "0.7.0"
+__version__ = "0.7.1.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
@@ -241,7 +241,7 @@ def connect(
         raise NotImplementedError(
             f"{cfg.mode} mode is not yet implemented. "
             f"Currently only 'embedded' mode is supported. "
-            f"For multi-tenant deployments, use server mode instead."
+            f"For multi-zone deployments, use server mode instead."
         )
 
     # PRIORITY 1: Check for server URL (remote mode)
@@ -293,7 +293,7 @@ def connect(
                     name=ns["name"],
                     readonly=ns.get("readonly", False),
                     admin_only=ns.get("admin_only", False),
-                    requires_tenant=ns.get("requires_tenant", True),
+                    requires_zone=ns.get("requires_zone", True),
                 )
                 for ns in cfg.namespaces
             ]
@@ -343,15 +343,15 @@ def connect(
             # Dict config without explicit enforce_permissions - use embedded default
             enforce_permissions = False
 
-        # Handle tenant isolation configuration
+        # Handle zone isolation configuration
         # Default: enabled for security unless explicitly disabled
-        enforce_tenant_isolation = cfg.enforce_tenant_isolation
+        enforce_zone_isolation = cfg.enforce_zone_isolation
         if config is None:
             # No explicit config - use secure default (enabled)
-            enforce_tenant_isolation = True
-        elif isinstance(config, dict) and "enforce_tenant_isolation" not in config:
+            enforce_zone_isolation = True
+        elif isinstance(config, dict) and "enforce_zone_isolation" not in config:
             # Dict config without explicit setting - use secure default
-            enforce_tenant_isolation = True
+            enforce_zone_isolation = True
 
         # Handle Tiger Cache configuration
         # Default: enabled for PostgreSQL backends (provides materialized permissions)
@@ -376,15 +376,15 @@ def connect(
             parse_providers=cfg.parse_providers,
             enforce_permissions=enforce_permissions,
             allow_admin_bypass=cfg.allow_admin_bypass,  # P0-4: Admin bypass setting
-            enforce_tenant_isolation=enforce_tenant_isolation,  # P0-2: Tenant isolation setting
+            enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone isolation setting
             enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
             enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
         )
 
         # Set memory config for Memory API
-        if cfg.tenant_id or cfg.user_id or cfg.agent_id:
+        if cfg.zone_id or cfg.user_id or cfg.agent_id:
             nx_fs._memory_config = {
-                "tenant_id": cfg.tenant_id,
+                "zone_id": cfg.zone_id,
                 "user_id": cfg.user_id,
                 "agent_id": cfg.agent_id,
             }

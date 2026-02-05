@@ -44,7 +44,7 @@ def cache_group() -> None:
 @click.option(
     "--hours", type=int, default=24, help="Look back N hours for history-based warmup (default: 24)"
 )
-@click.option("-t", "--tenant-id", type=str, default="default", help="Tenant ID")
+@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
 @add_backend_options
 def warmup(
     path: str,
@@ -54,7 +54,7 @@ def warmup(
     metadata_only: bool,
     user: str | None,
     hours: int,
-    tenant_id: str,
+    zone_id: str,
     backend_config: BackendConfig,
 ) -> None:
     """Pre-populate cache for faster access.
@@ -114,7 +114,7 @@ def warmup(
                     user=user,
                     hours=hours,
                     max_files=max_files,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             else:
                 # Directory-based warmup
@@ -124,7 +124,7 @@ def warmup(
                     depth=depth,
                     include_content=include_content and not metadata_only,
                     max_files=max_files,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             return stats.to_dict()
 
@@ -355,11 +355,11 @@ def clear(
 
 @cache_group.command(name="hot")
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")
-@click.option("-t", "--tenant-id", type=str, default="default", help="Tenant ID")
+@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
 @click.option("-u", "--user", type=str, help="Filter by user")
 def hot(
     limit: int,
-    tenant_id: str,
+    zone_id: str,
     user: str | None,
 ) -> None:
     """Show hot (frequently accessed) files.
@@ -377,7 +377,7 @@ def hot(
 
         tracker = get_file_access_tracker()
         hot_files = tracker.get_hot_files(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             user_id=user,
             limit=limit,
         )

@@ -136,7 +136,7 @@ Nexus supports multiple deployment modes with the same codebase:
 | Mode | Description | Use Case | Database |
 |------|-------------|----------|----------|
 | **Embedded** | Library mode, no server | Development, testing, CLI tools | SQLite |
-| **Server** | Single HTTP server | Teams, multi-tenant production | PostgreSQL |
+| **Server** | Single HTTP server | Teams, multi-zone production | PostgreSQL |
 | **Distributed** | Kubernetes-ready (planned) | Enterprise scale | PostgreSQL cluster |
 
 ### Mode Selection Logic
@@ -418,7 +418,7 @@ The Skills System provides a three-tier hierarchy for managing reusable AI agent
 │                              ▼                                               │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  Tier 2: Tenant Skills (Medium Priority)                            │   │
-│  │  Path: /skills/tenants/{tenant_id}/                                 │   │
+│  │  Path: /skills/tenants/{zone_id}/                                 │   │
 │  │  - Organization-specific skills                                     │   │
 │  │  - Shared across tenant's agents                                    │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
@@ -638,7 +638,7 @@ Nexus provides a Model Context Protocol server for AI agent integration.
 │  │  ┌──────────────────────────────────────────────────────────────┐   │   │
 │  │  │                   Operation Context                           │   │   │
 │  │  │  - user_id: "alice"                                           │   │   │
-│  │  │  - tenant_id: "acme"                                          │   │   │
+│  │  │  - zone_id: "acme"                                          │   │   │
 │  │  │  - is_admin: false                                            │   │   │
 │  │  │  - request_id: "uuid-123"                                     │   │   │
 │  │  └──────────────────────────────────────────────────────────────┘   │   │
@@ -838,7 +838,7 @@ CREATE TABLE files (
     version INTEGER DEFAULT 1,
     created_at TIMESTAMP,
     updated_at TIMESTAMP,
-    tenant_id VARCHAR,
+    zone_id VARCHAR,
     metadata JSONB
 );
 
@@ -860,9 +860,9 @@ CREATE TABLE rebac_tuples (
     relation VARCHAR NOT NULL,
     object_type VARCHAR NOT NULL,
     object_id VARCHAR NOT NULL,
-    tenant_id VARCHAR,
+    zone_id VARCHAR,
     created_at TIMESTAMP,
-    UNIQUE(subject_type, subject_id, relation, object_type, object_id, tenant_id)
+    UNIQUE(subject_type, subject_id, relation, object_type, object_id, zone_id)
 );
 
 -- API keys
@@ -872,7 +872,7 @@ CREATE TABLE api_keys (
     key_prefix VARCHAR NOT NULL,
     name VARCHAR NOT NULL,
     user_id VARCHAR NOT NULL,
-    tenant_id VARCHAR,
+    zone_id VARCHAR,
     permissions JSONB,
     expires_at TIMESTAMP,
     created_at TIMESTAMP
@@ -920,7 +920,7 @@ CREATE INDEX ON embeddings USING ivfflat (embedding vector_cosine_ops);
 │  │                                                                       │   │
 │  │  3. Success → Set user context                                       │   │
 │  │     - user_id                                                         │   │
-│  │     - tenant_id                                                       │   │
+│  │     - zone_id                                                       │   │
 │  │     - permissions                                                     │   │
 │  │                                                                       │   │
 │  │  4. Failure → 401 Unauthorized                                       │   │

@@ -10,7 +10,7 @@ Tests cover:
 - rebac_check: Permission checking with graph traversal
 - rebac_check_batch: Batch permission checks
 - rebac_expand: Find subjects with permission
-- Cross-tenant isolation
+- Cross-zone isolation
 - TTL/expiry handling
 - Permission hierarchy
 
@@ -64,19 +64,19 @@ class TestRebacCreate:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert result is not None
         assert isinstance(result, dict)
         assert isinstance(result["tuple_id"], str)
 
-    def test_create_with_different_tenant(self, nx: NexusFS) -> None:
-        """Test creating tuple with specific tenant_id."""
+    def test_create_with_different_zone(self, nx: NexusFS) -> None:
+        """Test creating tuple with specific zone_id."""
         tuple_id = nx.rebac_create(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="acme",
+            zone_id="acme",
         )
         assert tuple_id is not None
 
@@ -87,7 +87,7 @@ class TestRebacCreate:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
             expires_at=future_time,
         )
         assert tuple_id is not None
@@ -99,14 +99,14 @@ class TestRebacCreate:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "engineering"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Then grant permission to group members
         tuple_id = nx.rebac_create(
             subject=("group", "engineering", "member"),
             relation="direct_owner",
             object=("file", "/docs/readme.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert tuple_id is not None
 
@@ -117,7 +117,7 @@ class TestRebacCreate:
                 subject="invalid",  # type: ignore
                 relation="direct_owner",
                 object=("file", "/doc.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
 
     def test_create_invalid_object_raises(self, nx: NexusFS) -> None:
@@ -127,7 +127,7 @@ class TestRebacCreate:
                 subject=("user", "alice"),
                 relation="direct_owner",
                 object="invalid",  # type: ignore
-                tenant_id="default",
+                zone_id="default",
             )
 
     def test_create_prevents_cycles(self, nx: NexusFS) -> None:
@@ -136,20 +136,20 @@ class TestRebacCreate:
             subject=("file", "/a"),
             relation="parent",
             object=("file", "/b"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("file", "/b"),
             relation="parent",
             object=("file", "/c"),
-            tenant_id="default",
+            zone_id="default",
         )
         with pytest.raises(ValueError, match="[Cc]ycle"):
             nx.rebac_create(
                 subject=("file", "/c"),
                 relation="parent",
                 object=("file", "/a"),
-                tenant_id="default",
+                zone_id="default",
             )
 
 
@@ -162,7 +162,7 @@ class TestRebacDelete:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         result = nx.rebac_delete(write_result["tuple_id"])
         assert result is True
@@ -179,14 +179,14 @@ class TestRebacDelete:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Verify permission exists
         assert nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Delete and verify permission revoked
         nx.rebac_delete(write_result["tuple_id"])
@@ -194,7 +194,7 @@ class TestRebacDelete:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
 
@@ -207,13 +207,13 @@ class TestRebacCheck:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
     def test_check_no_permission(self, nx: NexusFS) -> None:
@@ -222,7 +222,7 @@ class TestRebacCheck:
             subject=("user", "unknown"),
             permission="read",
             object=("file", "/doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
     def test_check_invalid_subject_raises(self, nx: NexusFS) -> None:
@@ -232,7 +232,7 @@ class TestRebacCheck:
                 subject="invalid",  # type: ignore
                 permission="read",
                 object=("file", "/doc.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
 
     def test_check_invalid_object_raises(self, nx: NexusFS) -> None:
@@ -242,7 +242,7 @@ class TestRebacCheck:
                 subject=("user", "alice"),
                 permission="read",
                 object="invalid",  # type: ignore
-                tenant_id="default",
+                zone_id="default",
             )
 
     def test_check_through_group_membership(self, nx: NexusFS) -> None:
@@ -252,28 +252,28 @@ class TestRebacCheck:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "engineering"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Grant permission to group members
         nx.rebac_create(
             subject=("group", "engineering", "member"),
             relation="direct_owner",
             object=("file", "/team-docs/readme.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Alice should have access through group
         assert nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/team-docs/readme.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Non-member should not have access
         assert not nx.rebac_check(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/team-docs/readme.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
 
@@ -286,13 +286,13 @@ class TestRebacCheckBatch:
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_doc1.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_doc2.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # rebac_check_batch takes tuples: (subject, permission, object)
         checks = [
@@ -310,53 +310,53 @@ class TestRebacCheckBatch:
         assert results == []
 
 
-class TestCrossTenant:
-    """Tests for cross-tenant isolation."""
+class TestCrossZone:
+    """Tests for cross-zone isolation."""
 
-    def test_tenant_isolation(self, nx: NexusFS) -> None:
-        """Test strict tenant isolation."""
+    def test_zone_isolation(self, nx: NexusFS) -> None:
+        """Test strict zone isolation."""
         nx.rebac_create(
-            subject=("user", "tenant_iso_alice"),
+            subject=("user", "zone_iso_alice"),
             relation="direct_owner",
-            object=("file", "/tenant_iso_doc.txt"),
-            tenant_id="iso_tenant_a",
+            object=("file", "/zone_iso_doc.txt"),
+            zone_id="iso_zone_a",
         )
-        # Access in same tenant
+        # Access in same zone
         assert nx.rebac_check(
-            subject=("user", "tenant_iso_alice"),
+            subject=("user", "zone_iso_alice"),
             permission="read",
-            object=("file", "/tenant_iso_doc.txt"),
-            tenant_id="iso_tenant_a",
+            object=("file", "/zone_iso_doc.txt"),
+            zone_id="iso_zone_a",
         )
-        # No access in different tenant
+        # No access in different zone
         assert not nx.rebac_check(
-            subject=("user", "tenant_iso_alice"),
+            subject=("user", "zone_iso_alice"),
             permission="read",
-            object=("file", "/tenant_iso_doc.txt"),
-            tenant_id="iso_tenant_b",
+            object=("file", "/zone_iso_doc.txt"),
+            zone_id="iso_zone_b",
         )
 
-    def test_different_tenants_no_cross_access(self, nx: NexusFS) -> None:
-        """Test that permissions in one tenant don't grant access in another."""
+    def test_different_zones_no_cross_access(self, nx: NexusFS) -> None:
+        """Test that permissions in one zone don't grant access in another."""
         nx.rebac_create(
             subject=("user", "cross_alice"),
             relation="direct_owner",
             object=("file", "/cross_doc.txt"),
-            tenant_id="cross_tenant_a",
+            zone_id="cross_zone_a",
         )
-        # Has permission in cross_tenant_a
+        # Has permission in cross_zone_a
         assert nx.rebac_check(
             subject=("user", "cross_alice"),
             permission="read",
             object=("file", "/cross_doc.txt"),
-            tenant_id="cross_tenant_a",
+            zone_id="cross_zone_a",
         )
-        # No permission in cross_tenant_b
+        # No permission in cross_zone_b
         assert not nx.rebac_check(
             subject=("user", "cross_alice"),
             permission="read",
             object=("file", "/cross_doc.txt"),
-            tenant_id="cross_tenant_b",
+            zone_id="cross_zone_b",
         )
 
 
@@ -369,13 +369,13 @@ class TestRebacExpand:
             subject=("user", "expand_user1"),
             relation="direct_owner",
             object=("file", "/expand_test_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "expand_user2"),
             relation="direct_owner",
             object=("file", "/expand_test_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         subjects = nx.rebac_expand(
             permission="read",
@@ -403,13 +403,13 @@ class TestRebacExplain:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/explain_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         explanation = nx.rebac_explain(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/explain_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert explanation is not None
 
@@ -419,7 +419,7 @@ class TestRebacExplain:
             subject=("user", "unknown"),
             permission="read",
             object=("file", "/explain_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert explanation is not None
 
@@ -439,7 +439,7 @@ class TestConcurrency:
                 subject=("user", f"seq_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/seq_doc_{i}.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
             results.append(result)
         assert len(results) == 5
@@ -455,7 +455,7 @@ class TestConcurrency:
                 subject=("user", f"seqcheck_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/seqcheck_doc_{i}.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
             time.sleep(0.05)  # Small delay to let background cache operations complete
 
@@ -466,7 +466,7 @@ class TestConcurrency:
                 subject=("user", f"seqcheck_user_{i}"),
                 permission="read",
                 object=("file", f"/seqcheck_doc_{i}.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
             results.append(result)
             time.sleep(0.05)  # Small delay for cache sync
@@ -484,21 +484,21 @@ class TestCacheBehavior:
             subject=("user", "cache_alice"),
             permission="read",
             object=("file", "/cache_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Write tuple
         nx.rebac_create(
             subject=("user", "cache_alice"),
             relation="direct_owner",
             object=("file", "/cache_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Now should have access (cache invalidated)
         assert nx.rebac_check(
             subject=("user", "cache_alice"),
             permission="read",
             object=("file", "/cache_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
     def test_cache_hit_on_repeated_check(self, nx: NexusFS) -> None:
@@ -507,7 +507,7 @@ class TestCacheBehavior:
             subject=("user", "repeat_alice"),
             relation="direct_owner",
             object=("file", "/repeat_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         # Multiple checks should all succeed (using cache)
         for _ in range(5):
@@ -515,7 +515,7 @@ class TestCacheBehavior:
                 subject=("user", "repeat_alice"),
                 permission="read",
                 object=("file", "/repeat_doc.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
 
 
@@ -528,13 +528,13 @@ class TestRebacListTuples:
             subject=("user", "list_alice"),
             relation="direct_owner",
             object=("file", "/list_doc1.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "list_alice"),
             relation="direct_owner",
             object=("file", "/list_doc2.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         tuples = nx.rebac_list_tuples(
             subject=("user", "list_alice"),
@@ -547,13 +547,13 @@ class TestRebacListTuples:
             subject=("user", "obj_alice"),
             relation="direct_owner",
             object=("file", "/obj_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "obj_bob"),
             relation="direct_owner",
             object=("file", "/obj_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         tuples = nx.rebac_list_tuples(
             object=("file", "/obj_doc.txt"),
@@ -566,7 +566,7 @@ class TestRebacListTuples:
             subject=("user", "rel_alice"),
             relation="direct_owner",
             object=("file", "/rel_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         tuples = nx.rebac_list_tuples(
             relation="direct_owner",

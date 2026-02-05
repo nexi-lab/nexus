@@ -184,7 +184,7 @@ class NexusFUSEOperations(Operations):
                     read_func=self._read_range_from_backend,
                     local_disk_cache=self._local_disk_cache,
                     content_hash_func=self._get_content_hash,
-                    tenant_id=self._get_tenant_id(),
+                    zone_id=self._get_zone_id(),
                 )
                 logger.info(
                     f"[FUSE] Readahead enabled: buffer={readahead_config.buffer_pool_mb}MB, "
@@ -246,7 +246,7 @@ class NexusFUSEOperations(Operations):
             event = FileEvent(
                 type=event_type,
                 path=path,
-                tenant_id=self._get_tenant_id(),
+                zone_id=self._get_zone_id(),
                 old_path=old_path,
                 size=size,
             )
@@ -298,7 +298,7 @@ class NexusFUSEOperations(Operations):
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        tenant_id=event.tenant_id or "default",
+                        zone_id=event.zone_id or "default",
                     )
             except ImportError:
                 pass  # Subscription manager not available
@@ -1377,14 +1377,14 @@ class NexusFUSEOperations(Operations):
         except Exception:
             return None
 
-    def _get_tenant_id(self) -> str | None:
-        """Get tenant ID from the nexus_fs context.
+    def _get_zone_id(self) -> str | None:
+        """Get zone ID from the nexus_fs context.
 
         Returns:
-            Tenant ID for multi-tenant cache isolation
+            Zone ID for multi-zone cache isolation
         """
         try:
-            return getattr(self.nexus_fs, "tenant_id", None)
+            return getattr(self.nexus_fs, "zone_id", None)
         except Exception:
             return None
 
@@ -1416,8 +1416,8 @@ class NexusFUSEOperations(Operations):
     def _get_from_local_disk_cache(self, path: str) -> bytes | None:
         """Get content from L2 local disk cache.
 
-        Uses content_hash + tenant_id as cache key for CAS deduplication
-        with multi-tenant isolation.
+        Uses content_hash + zone_id as cache key for CAS deduplication
+        with multi-zone isolation.
 
         Args:
             path: File path
@@ -1434,13 +1434,13 @@ class NexusFUSEOperations(Operations):
             if content_hash is None:
                 return None
 
-            # Get tenant_id for multi-tenant isolation
-            tenant_id = self._get_tenant_id()
+            # Get zone_id for multi-zone isolation
+            zone_id = self._get_zone_id()
 
             # Check L2 disk cache (tenant-isolated)
-            content = self._local_disk_cache.get(content_hash, tenant_id=tenant_id)
+            content = self._local_disk_cache.get(content_hash, zone_id=zone_id)
             if content is not None:
-                logger.debug(f"[FUSE-L2] HIT: {path} (tenant={tenant_id})")
+                logger.debug(f"[FUSE-L2] HIT: {path} (tenant={zone_id})")
             return content
         except Exception as e:
             logger.debug(f"[FUSE-L2] Error reading {path}: {e}")
@@ -1465,16 +1465,16 @@ class NexusFUSEOperations(Operations):
 
                 content_hash = hash_content(content)
 
-            # Get tenant_id for multi-tenant isolation
-            tenant_id = self._get_tenant_id()
+            # Get zone_id for multi-zone isolation
+            zone_id = self._get_zone_id()
 
             # Store in L2 disk cache (uses CLOCK eviction if full)
             # Store blocks for files > 4MB for efficient partial reads
             store_blocks = len(content) > self._local_disk_cache.block_size
             self._local_disk_cache.put(
-                content_hash, content, tenant_id=tenant_id, store_blocks=store_blocks
+                content_hash, content, zone_id=zone_id, store_blocks=store_blocks
             )
-            logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, tenant={tenant_id})")
+            logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, tenant={zone_id})")
         except Exception as e:
             logger.debug(f"[FUSE-L2] Error caching {path}: {e}")
 

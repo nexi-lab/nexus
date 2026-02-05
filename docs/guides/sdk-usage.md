@@ -78,7 +78,7 @@ nx = connect(config={
     "backend": "local",
     "data_dir": "./my-nexus-data",
     "enable_permissions": True,
-    "tenant_id": "my-team",
+    "zone_id": "my-team",
     "agent_id": "my-agent",
 })
 ```

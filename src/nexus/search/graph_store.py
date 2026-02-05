@@ -9,7 +9,7 @@ Design principles:
 - Uses adjacency list model (entities + relationships tables)
 - No external graph database required (PostgreSQL only)
 - Entity resolution via pgvector HNSW similarity search
-- Multi-tenant isolation at every layer
+- Multi-zone isolation at every layer
 
 Issue #1039: Graph storage layer for entities and relationships
 """
@@ -58,7 +58,7 @@ class Entity:
     """Represents a canonical entity in the knowledge graph."""
 
     entity_id: str
-    tenant_id: str
+    zone_id: str
     canonical_name: str
     entity_type: str | None = None
     embedding: list[float] | None = None
@@ -88,7 +88,7 @@ class Entity:
 
         return cls(
             entity_id=model.entity_id,
-            tenant_id=model.tenant_id,
+            zone_id=model.zone_id,
             canonical_name=model.canonical_name,
             entity_type=model.entity_type,
             embedding=embedding,
@@ -116,7 +116,7 @@ class Relationship:
     """Represents a directed edge in the knowledge graph."""
 
     relationship_id: str
-    tenant_id: str
+    zone_id: str
     source_entity_id: str
     target_entity_id: str
     relationship_type: str
@@ -143,7 +143,7 @@ class Relationship:
 
         return cls(
             relationship_id=model.relationship_id,
-            tenant_id=model.tenant_id,
+            zone_id=model.zone_id,
             source_entity_id=model.source_entity_id,
             target_entity_id=model.target_entity_id,
             relationship_type=model.relationship_type,
@@ -261,7 +261,7 @@ class GraphStore:
     def __init__(
         self,
         session: AsyncSession,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         embedding_provider: EmbeddingProvider | None = None,
         merge_threshold: float = 0.85,
         confidence_threshold: float = 0.75,
@@ -270,13 +270,13 @@ class GraphStore:
 
         Args:
             session: SQLAlchemy async session
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             embedding_provider: Provider for generating entity embeddings
             merge_threshold: Similarity threshold for entity merging (0.0-1.0)
             confidence_threshold: Minimum confidence for relationships
         """
         self.session = session
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.embedding_provider = embedding_provider
         self.merge_threshold = merge_threshold
         self.confidence_threshold = confidence_threshold
@@ -371,7 +371,7 @@ class GraphStore:
 
         model = EntityModel(
             entity_id=entity_id,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             canonical_name=canonical_name,
             entity_type=entity_type,
             embedding=json.dumps(embedding) if embedding else None,
@@ -399,7 +399,7 @@ class GraphStore:
         stmt = select(EntityModel).where(
             and_(
                 EntityModel.entity_id == entity_id,
-                EntityModel.tenant_id == self.tenant_id,
+                EntityModel.zone_id == self.zone_id,
             )
         )
         result = await self.session.execute(stmt)
@@ -422,7 +422,7 @@ class GraphStore:
 
         stmt = select(EntityModel).where(
             and_(
-                EntityModel.tenant_id == self.tenant_id,
+                EntityModel.zone_id == self.zone_id,
                 EntityModel.entity_id.in_(entity_ids),
             )
         )
@@ -451,7 +451,7 @@ class GraphStore:
         if fuzzy:
             stmt = select(EntityModel).where(
                 and_(
-                    EntityModel.tenant_id == self.tenant_id,
+                    EntityModel.zone_id == self.zone_id,
                     EntityModel.aliases.contains(f'"{name}"'),
                 )
             )
@@ -527,7 +527,7 @@ class GraphStore:
             .where(
                 and_(
                     EntityModel.entity_id == entity_id,
-                    EntityModel.tenant_id == self.tenant_id,
+                    EntityModel.zone_id == self.zone_id,
                 )
             )
             .values(**updates)
@@ -548,7 +548,7 @@ class GraphStore:
         stmt = delete(EntityModel).where(
             and_(
                 EntityModel.entity_id == entity_id,
-                EntityModel.tenant_id == self.tenant_id,
+                EntityModel.zone_id == self.zone_id,
             )
         )
         result = await self.session.execute(stmt)
@@ -561,7 +561,7 @@ class GraphStore:
         offset: int = 0,
     ) -> list[Entity]:
         """List entities with optional type filtering."""
-        stmt = select(EntityModel).where(EntityModel.tenant_id == self.tenant_id)
+        stmt = select(EntityModel).where(EntityModel.zone_id == self.zone_id)
 
         if entity_type:
             stmt = stmt.where(EntityModel.entity_type == entity_type)
@@ -615,7 +615,7 @@ class GraphStore:
         relationship_id = str(uuid.uuid4())
         model = RelationshipModel(
             relationship_id=relationship_id,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             source_entity_id=source_entity_id,
             target_entity_id=target_entity_id,
             relationship_type=relationship_type,
@@ -642,7 +642,7 @@ class GraphStore:
         stmt = select(RelationshipModel).where(
             and_(
                 RelationshipModel.relationship_id == relationship_id,
-                RelationshipModel.tenant_id == self.tenant_id,
+                RelationshipModel.zone_id == self.zone_id,
             )
         )
         result = await self.session.execute(stmt)
@@ -667,7 +667,7 @@ class GraphStore:
         Returns:
             List of relationships
         """
-        conditions = [RelationshipModel.tenant_id == self.tenant_id]
+        conditions = [RelationshipModel.zone_id == self.zone_id]
 
         if direction == "outgoing":
             conditions.append(RelationshipModel.source_entity_id == entity_id)
@@ -696,7 +696,7 @@ class GraphStore:
         stmt = delete(RelationshipModel).where(
             and_(
                 RelationshipModel.relationship_id == relationship_id,
-                RelationshipModel.tenant_id == self.tenant_id,
+                RelationshipModel.zone_id == self.zone_id,
             )
         )
         result = await self.session.execute(stmt)
@@ -858,7 +858,7 @@ class GraphStore:
         if all_entity_ids:
             stmt = select(EntityModel).where(
                 and_(
-                    EntityModel.tenant_id == self.tenant_id,
+                    EntityModel.zone_id == self.zone_id,
                     EntityModel.entity_id.in_(list(all_entity_ids)),
                 )
             )
@@ -870,7 +870,7 @@ class GraphStore:
             entity_list = list(all_entity_ids)
             rel_stmt = select(RelationshipModel).where(
                 and_(
-                    RelationshipModel.tenant_id == self.tenant_id,
+                    RelationshipModel.zone_id == self.zone_id,
                     RelationshipModel.source_entity_id.in_(entity_list),
                     RelationshipModel.target_entity_id.in_(entity_list),
                 )
@@ -961,7 +961,7 @@ class GraphStore:
 
             model = EntityModel(
                 entity_id=entity_id,
-                tenant_id=self.tenant_id,
+                zone_id=self.zone_id,
                 canonical_name=name,
                 entity_type=entity_data.get("entity_type"),
                 embedding=json.dumps(embedding) if embedding else None,
@@ -1018,7 +1018,7 @@ class GraphStore:
 
             model = RelationshipModel(
                 relationship_id=rel_id,
-                tenant_id=self.tenant_id,
+                zone_id=self.zone_id,
                 source_entity_id=rel_data["source_entity_id"],
                 target_entity_id=rel_data["target_entity_id"],
                 relationship_type=rel_data["relationship_type"],
@@ -1046,7 +1046,7 @@ class GraphStore:
         """Find entity by exact canonical name match."""
         stmt = select(EntityModel).where(
             and_(
-                EntityModel.tenant_id == self.tenant_id,
+                EntityModel.zone_id == self.zone_id,
                 EntityModel.canonical_name == name,
             )
         )
@@ -1066,7 +1066,7 @@ class GraphStore:
         """Find existing relationship by source, target, and type."""
         stmt = select(RelationshipModel).where(
             and_(
-                RelationshipModel.tenant_id == self.tenant_id,
+                RelationshipModel.zone_id == self.zone_id,
                 RelationshipModel.source_entity_id == source_entity_id,
                 RelationshipModel.target_entity_id == target_entity_id,
                 RelationshipModel.relationship_type == relationship_type,
@@ -1142,13 +1142,13 @@ class GraphStore:
 
         query = text("""
             SELECT
-                entity_id, tenant_id, canonical_name, entity_type,
+                entity_id, zone_id, canonical_name, entity_type,
                 embedding, embedding_model, embedding_dim,
                 aliases, merge_count, metadata_json,
                 created_at, updated_at,
                 1 - (embedding::vector <=> :embedding::vector) as similarity
             FROM entities
-            WHERE tenant_id = :tenant_id
+            WHERE zone_id = :zone_id
               AND embedding IS NOT NULL
               AND (:entity_type IS NULL OR entity_type = :entity_type)
               AND 1 - (embedding::vector <=> :embedding::vector) >= :threshold
@@ -1160,7 +1160,7 @@ class GraphStore:
             query,
             {
                 "embedding": embedding_json,
-                "tenant_id": self.tenant_id,
+                "zone_id": self.zone_id,
                 "entity_type": entity_type,
                 "threshold": threshold,
                 "limit": limit,
@@ -1171,7 +1171,7 @@ class GraphStore:
         for row in result.fetchall():
             entity = Entity(
                 entity_id=row.entity_id,
-                tenant_id=row.tenant_id,
+                zone_id=row.zone_id,
                 canonical_name=row.canonical_name,
                 entity_type=row.entity_type,
                 embedding=json.loads(row.embedding) if row.embedding else None,
@@ -1208,7 +1208,7 @@ class GraphStore:
         # Get all entities with embeddings
         stmt = select(EntityModel).where(
             and_(
-                EntityModel.tenant_id == self.tenant_id,
+                EntityModel.zone_id == self.zone_id,
                 EntityModel.embedding.isnot(None),
             )
         )
@@ -1276,7 +1276,7 @@ class GraphStore:
                     ARRAY[e.entity_id]::VARCHAR[] as path
                 FROM entities e
                 WHERE e.entity_id = :entity_id
-                  AND e.tenant_id = :tenant_id
+                  AND e.zone_id = :zone_id
 
                 UNION ALL
 
@@ -1289,7 +1289,7 @@ class GraphStore:
                 JOIN graph_traversal gt ON {join_condition}
                 WHERE gt.depth < :max_hops
                   AND NOT (({next_entity})::VARCHAR = ANY(gt.path))
-                  AND r.tenant_id = :tenant_id
+                  AND r.zone_id = :zone_id
                   {rel_type_filter}
                   {confidence_filter}
             )
@@ -1297,7 +1297,7 @@ class GraphStore:
                 gt.entity_id,
                 gt.depth,
                 gt.path,
-                e.tenant_id,
+                e.zone_id,
                 e.canonical_name,
                 e.entity_type,
                 e.embedding,
@@ -1316,7 +1316,7 @@ class GraphStore:
             query,
             {
                 "entity_id": entity_id,
-                "tenant_id": self.tenant_id,
+                "zone_id": self.zone_id,
                 "max_hops": hops,
             },
         )
@@ -1325,7 +1325,7 @@ class GraphStore:
         for row in result.fetchall():
             entity = Entity(
                 entity_id=row.entity_id,
-                tenant_id=row.tenant_id,
+                zone_id=row.zone_id,
                 canonical_name=row.canonical_name,
                 entity_type=row.entity_type,
                 embedding=json.loads(row.embedding) if row.embedding else None,
@@ -1391,7 +1391,7 @@ class GraphStore:
                     e.entity_id as path
                 FROM entities e
                 WHERE e.entity_id = :entity_id
-                  AND e.tenant_id = :tenant_id
+                  AND e.zone_id = :zone_id
 
                 UNION ALL
 
@@ -1404,7 +1404,7 @@ class GraphStore:
                 JOIN graph_traversal gt ON {join_condition}
                 WHERE gt.depth < :max_hops
                   AND gt.path NOT LIKE '%' || {next_entity} || '%'
-                  AND r.tenant_id = :tenant_id
+                  AND r.zone_id = :zone_id
                   {rel_type_filter}
                   {confidence_filter}
             )
@@ -1412,7 +1412,7 @@ class GraphStore:
                 gt.entity_id,
                 MIN(gt.depth) as depth,
                 gt.path,
-                e.tenant_id,
+                e.zone_id,
                 e.canonical_name,
                 e.entity_type,
                 e.embedding,
@@ -1432,7 +1432,7 @@ class GraphStore:
             query,
             {
                 "entity_id": entity_id,
-                "tenant_id": self.tenant_id,
+                "zone_id": self.zone_id,
                 "max_hops": hops,
             },
         )
@@ -1441,7 +1441,7 @@ class GraphStore:
         for row in result.fetchall():
             entity = Entity(
                 entity_id=row.entity_id,
-                tenant_id=row.tenant_id,
+                zone_id=row.zone_id,
                 canonical_name=row.canonical_name,
                 entity_type=row.entity_type,
                 embedding=json.loads(row.embedding) if row.embedding else None,

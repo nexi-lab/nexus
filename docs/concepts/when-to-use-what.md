@@ -34,7 +34,7 @@ graph TD
     Q7 -->|No| Q8{Find relevant<br/>documents?}
 
     Q8 -->|Yes| Search[Use Semantic Search]
-    Q8 -->|No| Q9{Multi-tenant<br/>SaaS?}
+    Q8 -->|No| Q9{Multi-zone<br/>SaaS?}
 
     Q9 -->|Yes| Tenancy[Use Multi-Tenancy<br/>Patterns]
     Q9 -->|No| Basic[Use Basic VFS]
@@ -55,7 +55,7 @@ graph TD
 | **Find documents by meaning** | Semantic Search | Grep/glob | When keyword search fails |
 | **Trigger actions on file changes** | Workflows | Polling/cron | When you need real-time |
 | **Agents improve from feedback** | Learning Loops + Skills | Manual updates | When agents repeat tasks |
-| **Multi-tenant SaaS** | Multi-Tenancy Patterns | Separate deployments | When you have >1 customer |
+| **Multi-zone SaaS** | Multi-Tenancy Patterns | Separate deployments | When you have >1 customer |
 | **Version control for files** | CAS (built-in) | Git | Already built-in |
 | **Deduplication** | CAS (built-in) | Manual hashing | Already built-in |
 
@@ -507,9 +507,9 @@ nx.mount("/workspace/frontend", S3Backend(bucket="frontend-team"))
 
 ```python
 # Per tenant
-nx.mount(f"/workspace/{tenant_id}", PostgreSQLBackend(db=f"tenant_{tenant_id}"))
-nx.rebac.create_namespace(f"tenant:{tenant_id}")
-nx.memory.store("agent1", "state", {...}, namespace=f"tenant:{tenant_id}")
+nx.mount(f"/workspace/{zone_id}", PostgreSQLBackend(db=f"tenant_{zone_id}"))
+nx.rebac.create_namespace(f"tenant:{zone_id}")
+nx.memory.store("agent1", "state", {...}, namespace=f"tenant:{zone_id}")
 ```
 
 **Don't use**: Single namespace (security risk)
@@ -547,7 +547,7 @@ nx.skills.update("code-reviewer", "1.1", improvements=feedback)
 
 ### Stack 3: Enterprise Platform
 - **Features**: ReBAC, Multi-Tenancy, Mounts, Memory API, Workflows
-- **Use case**: Multi-tenant SaaS
+- **Use case**: Multi-zone SaaS
 - **Complexity**: High
 
 ### Stack 4: Data Pipeline
@@ -661,7 +661,7 @@ nx.workflows.create(
 - **[Memory System](memory-system.md)** - Deep dive on Memory API
 - **[Agent Permissions](agent-permissions.md)** - Set up multi-agent teams
 - **[Mounts & Backends](mounts-and-backends.md)** - Configure hybrid storage
-- **[Multi-Tenancy](multi-tenancy.md)** - Build multi-tenant SaaS
+- **[Multi-Tenancy](multi-tenancy.md)** - Build multi-zone SaaS
 
 For hands-on examples:
 - **[Quick Start Guide](../getting-started/quickstart.md)** - 5-minute tutorial

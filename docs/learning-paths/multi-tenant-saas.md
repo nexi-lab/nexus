@@ -1,12 +1,12 @@
 # Multi-Tenant SaaS
 
-**Build scalable multi-tenant SaaS applications with complete tenant isolation**
+**Build scalable multi-zone SaaS applications with complete tenant isolation**
 
 ⏱️ **Time:** 30 minutes | 💡 **Difficulty:** Advanced
 
 ## What You'll Learn
 
-- Design multi-tenant architecture with Nexus
+- Design multi-zone architecture with Nexus
 - Implement complete tenant isolation
 - Manage per-tenant workspaces and permissions
 - Handle cross-tenant data sharing securely
@@ -27,7 +27,7 @@
 
 ## Overview
 
-Multi-tenant SaaS applications serve multiple customers (tenants) from a single infrastructure while ensuring **complete data isolation** and **independent tenant management**. Nexus provides built-in multi-tenancy support with ReBAC for fine-grained access control.
+Multi-zone SaaS applications serve multiple customers (tenants) from a single infrastructure while ensuring **complete data isolation** and **independent tenant management**. Nexus provides built-in multi-tenancy support with ReBAC for fine-grained access control.
 
 **Use Cases:**
 - 🏢 B2B SaaS platforms
@@ -77,7 +77,7 @@ Multi-tenant SaaS applications serve multiple customers (tenants) from a single 
 Start a Nexus server configured for multi-tenancy:
 
 ```bash
-# Start server with multi-tenant configuration
+# Start server with multi-zone configuration
 nexus serve \
   --host 0.0.0.0 \
   --port 2026 \
@@ -94,10 +94,10 @@ curl http://localhost:2026/health
 
 **Expected output:**
 ```json
-{"status":"ok","version":"0.5.0","mode":"multi-tenant"}
+{"status":"ok","version":"0.5.0","mode":"multi-zone"}
 ```
 
-**💡 Pro Tip:** Use PostgreSQL for production multi-tenant deployments to handle thousands of tenants efficiently.
+**💡 Pro Tip:** Use PostgreSQL for production multi-zone deployments to handle thousands of tenants efficiently.
 
 ---
 
@@ -115,7 +115,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 class TenantManager:
-    """Manage multi-tenant SaaS tenants"""
+    """Manage multi-zone SaaS tenants"""
 
     def __init__(self, admin_api_key: str, server_url: str = "http://localhost:2026"):
         self.server_url = server_url
@@ -126,7 +126,7 @@ class TenantManager:
 
     def create_tenant(
         self,
-        tenant_id: str,
+        zone_id: str,
         name: str,
         plan: str = "free",
         max_users: int = 5,
@@ -135,12 +135,12 @@ class TenantManager:
         """Create a new tenant with isolated workspace"""
 
         # Create tenant workspace
-        tenant_path = f"/tenants/{tenant_id}"
+        tenant_path = f"/tenants/{zone_id}"
         self.admin.mkdir(tenant_path)
 
         # Create tenant metadata
         metadata = {
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "name": name,
             "plan": plan,
             "created_at": datetime.now().isoformat(),
@@ -167,12 +167,12 @@ class TenantManager:
         for subdir in ["users", "shared", "uploads", "exports"]:
             self.admin.mkdir(f"{tenant_path}/{subdir}")
 
-        print(f"✅ Created tenant: {name} ({tenant_id})")
+        print(f"✅ Created tenant: {name} ({zone_id})")
         print(f"   Plan: {plan}, Max Users: {max_users}, Storage: {max_storage_gb}GB")
 
         return metadata
 
-    def create_tenant_admin(self, tenant_id: str, username: str, email: str) -> Dict:
+    def create_tenant_admin(self, zone_id: str, username: str, email: str) -> Dict:
         """Create admin user for a tenant"""
 
         # Create user account and API key
@@ -181,35 +181,35 @@ class TenantManager:
             "user_id": username,
             "name": f"{username} (Tenant Admin)",
             "subject_type": "user",
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": False,  # Tenant admin, not system admin
         })
 
         api_key = result["api_key"]
 
         # Grant tenant admin full access to tenant workspace
-        tenant_path = f"/tenants/{tenant_id}"
+        tenant_path = f"/tenants/{zone_id}"
         self.admin.rebac_create(
             subject=("user", username),
             relation="owner",
             object=("file", tenant_path),
-            tenant_id=tenant_id
+            zone_id=zone_id
         )
 
         print(f"✅ Created tenant admin: {username}")
-        print(f"   Tenant: {tenant_id}, Email: {email}")
+        print(f"   Tenant: {zone_id}, Email: {email}")
 
         return {
             "username": username,
             "email": email,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "api_key": api_key,
             "role": "tenant_admin"
         }
 
     def add_tenant_user(
         self,
-        tenant_id: str,
+        zone_id: str,
         username: str,
         email: str,
         role: str = "user"
@@ -221,14 +221,14 @@ class TenantManager:
             "user_id": username,
             "name": username,
             "subject_type": "user",
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": False,
         })
 
         api_key = result["api_key"]
 
         # Grant appropriate permissions based on role
-        tenant_path = f"/tenants/{tenant_id}"
+        tenant_path = f"/tenants/{zone_id}"
 
         if role == "admin":
             relation = "owner"
@@ -241,7 +241,7 @@ class TenantManager:
             subject=("user", username),
             relation=relation,
             object=("file", f"{tenant_path}/shared"),
-            tenant_id=tenant_id
+            zone_id=zone_id
         )
 
         # Grant user access to their personal folder
@@ -251,26 +251,26 @@ class TenantManager:
             subject=("user", username),
             relation="owner",
             object=("file", user_folder),
-            tenant_id=tenant_id
+            zone_id=zone_id
         )
 
         print(f"✅ Added user: {username} (role: {role})")
 
         # Update tenant user count
-        self._update_tenant_usage(tenant_id, users_delta=1)
+        self._update_tenant_usage(zone_id, users_delta=1)
 
         return {
             "username": username,
             "email": email,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "role": role,
             "api_key": api_key
         }
 
-    def get_tenant_info(self, tenant_id: str) -> Dict:
+    def get_tenant_info(self, zone_id: str) -> Dict:
         """Get tenant information and usage"""
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
         return metadata
 
@@ -280,18 +280,18 @@ class TenantManager:
 
         tenants = []
         for tenant_dir in tenant_dirs:
-            tenant_id = tenant_dir['path'].split('/')[-1]
+            zone_id = tenant_dir['path'].split('/')[-1]
             try:
-                info = self.get_tenant_info(tenant_id)
+                info = self.get_tenant_info(zone_id)
                 tenants.append(info)
             except:
                 pass
 
         return tenants
 
-    def _update_tenant_usage(self, tenant_id: str, **kwargs):
+    def _update_tenant_usage(self, zone_id: str, **kwargs):
         """Update tenant usage metrics"""
-        metadata = self.get_tenant_info(tenant_id)
+        metadata = self.get_tenant_info(zone_id)
 
         for key, value in kwargs.items():
             if key.endswith('_delta'):
@@ -300,13 +300,13 @@ class TenantManager:
                     metadata['usage'][metric] += value
 
         self.admin.write(
-            f"/tenants/{tenant_id}/.tenant.json",
+            f"/tenants/{zone_id}/.tenant.json",
             json.dumps(metadata, indent=2).encode()
         )
 
-    def check_quota(self, tenant_id: str, resource: str, amount: int = 1) -> bool:
+    def check_quota(self, zone_id: str, resource: str, amount: int = 1) -> bool:
         """Check if tenant is within quota limits"""
-        metadata = self.get_tenant_info(tenant_id)
+        metadata = self.get_tenant_info(zone_id)
 
         limits = metadata['limits']
         usage = metadata['usage']
@@ -333,7 +333,7 @@ if __name__ == "__main__":
 
     # Create tenants
     acme_tenant = tm.create_tenant(
-        tenant_id="acme",
+        zone_id="acme",
         name="Acme Corporation",
         plan="enterprise",
         max_users=100,
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     )
 
     beta_tenant = tm.create_tenant(
-        tenant_id="beta",
+        zone_id="beta",
         name="Beta Inc",
         plan="pro",
         max_users=50,
@@ -349,7 +349,7 @@ if __name__ == "__main__":
     )
 
     startup_tenant = tm.create_tenant(
-        tenant_id="startup",
+        zone_id="startup",
         name="Startup Co",
         plan="free",
         max_users=5,
@@ -358,27 +358,27 @@ if __name__ == "__main__":
 
     # Create tenant admins
     acme_admin = tm.create_tenant_admin(
-        tenant_id="acme",
+        zone_id="acme",
         username="alice",
         email="alice@acme.com"
     )
 
     beta_admin = tm.create_tenant_admin(
-        tenant_id="beta",
+        zone_id="beta",
         username="bob",
         email="bob@beta.com"
     )
 
     # Add users to tenants
     tm.add_tenant_user(
-        tenant_id="acme",
+        zone_id="acme",
         username="charlie",
         email="charlie@acme.com",
         role="editor"
     )
 
     tm.add_tenant_user(
-        tenant_id="acme",
+        zone_id="acme",
         username="diana",
         email="diana@acme.com",
         role="user"
@@ -387,7 +387,7 @@ if __name__ == "__main__":
     # List all tenants
     print("\n📋 All Tenants:")
     for tenant in tm.list_tenants():
-        print(f"  - {tenant['name']} ({tenant['tenant_id']})")
+        print(f"  - {tenant['name']} ({tenant['zone_id']})")
         print(f"    Plan: {tenant['plan']}, Users: {tenant['usage']['users']}/{tenant['limits']['max_users']}")
 ```
 
@@ -513,9 +513,9 @@ class CrossTenantSharing:
 
     def create_shared_link(
         self,
-        tenant_id: str,
+        zone_id: str,
         file_path: str,
-        target_tenant_id: str,
+        target_zone_id: str,
         permission: str = "can_read",
         expires_in_days: int = 7
     ) -> Dict:
@@ -527,8 +527,8 @@ class CrossTenantSharing:
 
         share_metadata = {
             "share_id": share_id,
-            "source_tenant": tenant_id,
-            "target_tenant": target_tenant_id,
+            "source_tenant": zone_id,
+            "target_tenant": target_zone_id,
             "file_path": file_path,
             "permission": permission,
             "created_at": datetime.now().isoformat(),
@@ -538,7 +538,7 @@ class CrossTenantSharing:
 
         # Grant temporary cross-tenant permission
         # Create a symlink or reference in target tenant's shared folder
-        target_path = f"/tenants/{target_tenant_id}/shared/from-{tenant_id}"
+        target_path = f"/tenants/{target_zone_id}/shared/from-{zone_id}"
         self.admin.mkdir(target_path)
 
         # Copy file to shared location (or create reference)
@@ -548,10 +548,10 @@ class CrossTenantSharing:
         # Note: Grant to all users in target tenant by using a group or specific users
         # For simplicity, we'll create a share that specific users can access
         self.admin.rebac_create(
-            subject=("tenant", target_tenant_id),
+            subject=("tenant", target_zone_id),
             relation=permission,
             object=("file", shared_file_path),
-            tenant_id=tenant_id
+            zone_id=zone_id
         )
 
         # Store share metadata
@@ -561,7 +561,7 @@ class CrossTenantSharing:
         )
 
         print(f"✅ Created cross-tenant share: {share_id}")
-        print(f"   {tenant_id} → {target_tenant_id}")
+        print(f"   {zone_id} → {target_zone_id}")
         print(f"   File: {file_path}")
         print(f"   Permission: {permission}")
         print(f"   Expires: {expires_at.date()}")
@@ -575,7 +575,7 @@ class CrossTenantSharing:
         # Clean up shared file
         print(f"✅ Revoked share: {share_id}")
 
-    def list_active_shares(self, tenant_id: str) -> List[Dict]:
+    def list_active_shares(self, zone_id: str) -> List[Dict]:
         """List all active shares for a tenant"""
         # Implementation would scan for share metadata
         pass
@@ -585,9 +585,9 @@ sharing = CrossTenantSharing("admin_key_here")
 
 # Acme shares a file with Beta (partnership)
 share = sharing.create_shared_link(
-    tenant_id="acme",
+    zone_id="acme",
     file_path="/tenants/acme/shared/partnership-proposal.pdf",
-    target_tenant_id="beta",
+    target_zone_id="beta",
     permission="can_read",
     expires_in_days=30
 )
@@ -616,7 +616,7 @@ class TenantQuotaManager:
 
     def check_and_enforce_quota(
         self,
-        tenant_id: str,
+        zone_id: str,
         operation: str,
         amount: int = 1
     ) -> bool:
@@ -624,7 +624,7 @@ class TenantQuotaManager:
 
         # Get tenant metadata
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
         limits = metadata['limits']
@@ -634,47 +634,47 @@ class TenantQuotaManager:
         if operation == "create_user":
             if usage['users'] >= limits['max_users']:
                 raise QuotaExceededError(
-                    f"Tenant {tenant_id} has reached user limit: {limits['max_users']}"
+                    f"Tenant {zone_id} has reached user limit: {limits['max_users']}"
                 )
 
         elif operation == "upload_file":
             if limits.get('max_files') and usage['files'] >= limits['max_files']:
                 raise QuotaExceededError(
-                    f"Tenant {tenant_id} has reached file limit: {limits['max_files']}"
+                    f"Tenant {zone_id} has reached file limit: {limits['max_files']}"
                 )
 
         elif operation == "storage":
             if usage['storage_gb'] + (amount / 1024**3) > limits['max_storage_gb']:
                 raise QuotaExceededError(
-                    f"Tenant {tenant_id} would exceed storage limit: {limits['max_storage_gb']}GB"
+                    f"Tenant {zone_id} would exceed storage limit: {limits['max_storage_gb']}GB"
                 )
 
         return True
 
-    def update_usage(self, tenant_id: str, metric: str, delta: float):
+    def update_usage(self, zone_id: str, metric: str, delta: float):
         """Update tenant usage metrics"""
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
         metadata['usage'][metric] += delta
 
         self.admin.write(
-            f"/tenants/{tenant_id}/.tenant.json",
+            f"/tenants/{zone_id}/.tenant.json",
             json.dumps(metadata, indent=2).encode()
         )
 
-    def get_usage_report(self, tenant_id: str) -> Dict:
+    def get_usage_report(self, zone_id: str) -> Dict:
         """Generate usage report for billing"""
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
         usage = metadata['usage']
         limits = metadata['limits']
 
         return {
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "plan": metadata['plan'],
             "usage": usage,
             "limits": limits,
@@ -684,9 +684,9 @@ class TenantQuotaManager:
             }
         }
 
-    def calculate_overage_charges(self, tenant_id: str) -> Dict:
+    def calculate_overage_charges(self, zone_id: str) -> Dict:
         """Calculate overage charges for billing"""
-        report = self.get_usage_report(tenant_id)
+        report = self.get_usage_report(zone_id)
 
         charges = {
             "base_charge": 0,
@@ -770,12 +770,12 @@ class TenantLifecycle:
             "api_key": admin_api_key
         })
 
-    def suspend_tenant(self, tenant_id: str, reason: str):
+    def suspend_tenant(self, zone_id: str, reason: str):
         """Suspend a tenant (maintain data, block access)"""
 
         # Update tenant status
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
         metadata['status'] = 'suspended'
@@ -783,58 +783,58 @@ class TenantLifecycle:
         metadata['suspension_reason'] = reason
 
         self.admin.write(
-            f"/tenants/{tenant_id}/.tenant.json",
+            f"/tenants/{zone_id}/.tenant.json",
             json.dumps(metadata, indent=2).encode()
         )
 
         # Revoke all user access (but keep data)
-        users = self._get_tenant_users(tenant_id)
+        users = self._get_tenant_users(zone_id)
         for user in users:
-            self._revoke_user_access(user, tenant_id)
+            self._revoke_user_access(user, zone_id)
 
-        print(f"⏸️  Suspended tenant: {tenant_id}")
+        print(f"⏸️  Suspended tenant: {zone_id}")
         print(f"   Reason: {reason}")
 
-    def reactivate_tenant(self, tenant_id: str):
+    def reactivate_tenant(self, zone_id: str):
         """Reactivate a suspended tenant"""
 
         metadata = json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
         metadata['status'] = 'active'
         metadata['reactivated_at'] = datetime.now().isoformat()
 
         self.admin.write(
-            f"/tenants/{tenant_id}/.tenant.json",
+            f"/tenants/{zone_id}/.tenant.json",
             json.dumps(metadata, indent=2).encode()
         )
 
         # Restore user access
-        users = self._get_tenant_users(tenant_id)
+        users = self._get_tenant_users(zone_id)
         for user in users:
-            self._restore_user_access(user, tenant_id)
+            self._restore_user_access(user, zone_id)
 
-        print(f"▶️  Reactivated tenant: {tenant_id}")
+        print(f"▶️  Reactivated tenant: {zone_id}")
 
-    def export_tenant_data(self, tenant_id: str) -> str:
+    def export_tenant_data(self, zone_id: str) -> str:
         """Export all tenant data for backup or migration"""
 
-        tenant_path = f"/tenants/{tenant_id}"
-        export_path = f"/exports/{tenant_id}-{datetime.now().strftime('%Y%m%d')}.tar.gz"
+        tenant_path = f"/tenants/{zone_id}"
+        export_path = f"/exports/{zone_id}-{datetime.now().strftime('%Y%m%d')}.tar.gz"
 
         # In production, this would create a compressed archive
         # For demo, we'll list what would be exported
 
         files = self.admin.list(tenant_path, recursive=True)
 
-        print(f"📦 Exporting tenant data: {tenant_id}")
+        print(f"📦 Exporting tenant data: {zone_id}")
         print(f"   Total files: {len(files)}")
         print(f"   Export path: {export_path}")
 
         return export_path
 
-    def delete_tenant(self, tenant_id: str, confirm: bool = False):
+    def delete_tenant(self, zone_id: str, confirm: bool = False):
         """Permanently delete a tenant and all data"""
 
         if not confirm:
@@ -843,7 +843,7 @@ class TenantLifecycle:
             return
 
         # Delete all tenant data
-        tenant_path = f"/tenants/{tenant_id}"
+        tenant_path = f"/tenants/{zone_id}"
 
         # Remove all permissions
         # Delete all user accounts
@@ -851,19 +851,19 @@ class TenantLifecycle:
 
         self.admin.rmdir(tenant_path, recursive=True)
 
-        print(f"🗑️  Deleted tenant: {tenant_id}")
+        print(f"🗑️  Deleted tenant: {zone_id}")
         print("   All data permanently removed")
 
-    def _get_tenant_users(self, tenant_id: str) -> list:
+    def _get_tenant_users(self, zone_id: str) -> list:
         """Get all users in a tenant"""
         # Implementation would query user database
         return []
 
-    def _revoke_user_access(self, user: str, tenant_id: str):
+    def _revoke_user_access(self, user: str, zone_id: str):
         """Revoke user access to tenant"""
         pass
 
-    def _restore_user_access(self, user: str, tenant_id: str):
+    def _restore_user_access(self, user: str, zone_id: str):
         """Restore user access to tenant"""
         pass
 
@@ -894,7 +894,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 class ScalableSaaS:
-    """Production-ready multi-tenant SaaS implementation"""
+    """Production-ready multi-zone SaaS implementation"""
 
     def __init__(self, admin_api_key: str, max_workers: int = 10):
         self.admin = nexus.connect(config={
@@ -925,7 +925,7 @@ class ScalableSaaS:
 
         return {"successful": successful, "failed": failed}
 
-    def _create_tenant(self, tenant_id: str, **kwargs) -> Dict:
+    def _create_tenant(self, zone_id: str, **kwargs) -> Dict:
         """Create a single tenant"""
         # Implementation from TenantManager
         pass
@@ -987,7 +987,7 @@ saas = ScalableSaaS("admin_key_here", max_workers=20)
 
 # Bulk create 100 tenants
 tenant_configs = [
-    {"tenant_id": f"tenant{i:03d}", "name": f"Tenant {i}", "plan": "free"}
+    {"zone_id": f"tenant{i:03d}", "name": f"Tenant {i}", "plan": "free"}
     for i in range(100)
 ]
 
@@ -1006,7 +1006,7 @@ print(f"  Avg Users/Tenant: {metrics['avg_users_per_tenant']:.1f}")
 
 ## Complete Production Example
 
-Here's a full multi-tenant SaaS implementation:
+Here's a full multi-zone SaaS implementation:
 
 ```python
 #!/usr/bin/env python3
@@ -1032,7 +1032,7 @@ class TenantStatus(Enum):
     CANCELLED = "cancelled"
 
 class MultiTenantSaaS:
-    """Complete multi-tenant SaaS platform"""
+    """Complete multi-zone SaaS platform"""
 
     def __init__(self, server_url: str, admin_api_key: str):
         self.server_url = server_url
@@ -1065,7 +1065,7 @@ class MultiTenantSaaS:
 
     def onboard_tenant(
         self,
-        tenant_id: str,
+        zone_id: str,
         name: str,
         admin_email: str,
         plan: TenantPlan = TenantPlan.FREE
@@ -1075,7 +1075,7 @@ class MultiTenantSaaS:
         print(f"\n🚀 Starting tenant onboarding: {name}")
 
         # Step 1: Create tenant workspace
-        tenant_path = f"/tenants/{tenant_id}"
+        tenant_path = f"/tenants/{zone_id}"
         self.admin.mkdir(tenant_path)
         print(f"  ✅ Created tenant workspace")
 
@@ -1087,7 +1087,7 @@ class MultiTenantSaaS:
         # Step 3: Create tenant metadata
         limits = self.plan_limits[plan]
         metadata = {
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "name": name,
             "plan": plan.value,
             "status": TenantStatus.TRIAL.value,
@@ -1114,12 +1114,12 @@ class MultiTenantSaaS:
         print(f"  ✅ Saved tenant metadata")
 
         # Step 4: Create admin user
-        admin_username = f"{tenant_id}_admin"
+        admin_username = f"{zone_id}_admin"
         result = self.admin._call_rpc("admin_create_key", {
             "user_id": admin_username,
             "name": f"{name} Admin",
             "subject_type": "user",
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": False,
         })
 
@@ -1130,12 +1130,12 @@ class MultiTenantSaaS:
             subject=("user", admin_username),
             relation="owner",
             object=("file", tenant_path),
-            tenant_id=tenant_id
+            zone_id=zone_id
         )
         print(f"  ✅ Created admin user: {admin_email}")
 
         # Step 5: Copy templates
-        self._copy_welcome_templates(tenant_id)
+        self._copy_welcome_templates(zone_id)
         print(f"  ✅ Copied welcome templates")
 
         # Step 6: Send welcome email (simulated)
@@ -1143,18 +1143,18 @@ class MultiTenantSaaS:
         print(f"  ✅ Sent welcome email")
 
         print(f"\n✅ Tenant onboarding complete!")
-        print(f"   Tenant ID: {tenant_id}")
+        print(f"   Zone ID: {zone_id}")
         print(f"   Plan: {plan.value}")
         print(f"   Trial ends: {metadata['trial_ends_at']}")
 
         return {
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "admin_username": admin_username,
             "api_key": api_key,
             "metadata": metadata
         }
 
-    def _copy_welcome_templates(self, tenant_id: str):
+    def _copy_welcome_templates(self, zone_id: str):
         """Copy welcome templates to new tenant"""
         welcome_doc = b"""# Welcome to Your Workspace!
 
@@ -1174,7 +1174,7 @@ class MultiTenantSaaS:
 Need help? Contact support@example.com
 """
         self.admin.write(
-            f"/tenants/{tenant_id}/shared/Welcome.md",
+            f"/tenants/{zone_id}/shared/Welcome.md",
             welcome_doc
         )
 
@@ -1185,10 +1185,10 @@ Need help? Contact support@example.com
         print(f"   Subject: Welcome to {tenant_name}!")
         print(f"   API Key: {api_key[:20]}...")
 
-    def upgrade_tenant(self, tenant_id: str, new_plan: TenantPlan) -> Dict:
+    def upgrade_tenant(self, zone_id: str, new_plan: TenantPlan) -> Dict:
         """Upgrade tenant to a new plan"""
 
-        metadata = self._get_tenant_metadata(tenant_id)
+        metadata = self._get_tenant_metadata(zone_id)
 
         old_plan = TenantPlan(metadata['plan'])
         metadata['plan'] = new_plan.value
@@ -1196,16 +1196,16 @@ Need help? Contact support@example.com
         metadata['upgraded_at'] = datetime.now().isoformat()
         metadata['status'] = TenantStatus.ACTIVE.value
 
-        self._save_tenant_metadata(tenant_id, metadata)
+        self._save_tenant_metadata(zone_id, metadata)
 
-        print(f"⬆️  Upgraded {tenant_id}: {old_plan.value} → {new_plan.value}")
+        print(f"⬆️  Upgraded {zone_id}: {old_plan.value} → {new_plan.value}")
 
         return metadata
 
-    def monitor_usage(self, tenant_id: str) -> Dict:
+    def monitor_usage(self, zone_id: str) -> Dict:
         """Monitor and report tenant usage"""
 
-        metadata = self._get_tenant_metadata(tenant_id)
+        metadata = self._get_tenant_metadata(zone_id)
 
         usage = metadata['usage']
         limits = metadata['limits']
@@ -1229,28 +1229,28 @@ Need help? Contact support@example.com
             warnings.append(f"Storage at {utilization['storage_gb']:.0f}% of limit")
 
         return {
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "usage": usage,
             "limits": limits,
             "utilization": utilization,
             "warnings": warnings
         }
 
-    def _get_tenant_metadata(self, tenant_id: str) -> Dict:
+    def _get_tenant_metadata(self, zone_id: str) -> Dict:
         """Get tenant metadata"""
         return json.loads(
-            self.admin.read(f"/tenants/{tenant_id}/.tenant.json").decode()
+            self.admin.read(f"/tenants/{zone_id}/.tenant.json").decode()
         )
 
-    def _save_tenant_metadata(self, tenant_id: str, metadata: Dict):
+    def _save_tenant_metadata(self, zone_id: str, metadata: Dict):
         """Save tenant metadata"""
         self.admin.write(
-            f"/tenants/{tenant_id}/.tenant.json",
+            f"/tenants/{zone_id}/.tenant.json",
             json.dumps(metadata, indent=2).encode()
         )
 
 def main():
-    """Demo the multi-tenant SaaS platform"""
+    """Demo the multi-zone SaaS platform"""
 
     SERVER_URL = "http://localhost:2026"
     ADMIN_KEY = "admin_key_here"  # Replace with actual admin key
@@ -1259,21 +1259,21 @@ def main():
 
     # Onboard new tenants
     acme = saas.onboard_tenant(
-        tenant_id="acme",
+        zone_id="acme",
         name="Acme Corporation",
         admin_email="admin@acme.com",
         plan=TenantPlan.ENTERPRISE
     )
 
     beta = saas.onboard_tenant(
-        tenant_id="beta",
+        zone_id="beta",
         name="Beta Inc",
         admin_email="admin@beta.com",
         plan=TenantPlan.PRO
     )
 
     startup = saas.onboard_tenant(
-        tenant_id="startup",
+        zone_id="startup",
         name="Startup Co",
         admin_email="admin@startup.com",
         plan=TenantPlan.FREE
@@ -1309,9 +1309,9 @@ permissions = nx.rebac_list_tuples(
     subject=("user", "alice")
 )
 
-# Ensure all permissions start with /tenants/{tenant_id}
+# Ensure all permissions start with /tenants/{zone_id}
 for perm in permissions:
-    if not perm['object_id'].startswith(f"/tenants/{alice_tenant_id}"):
+    if not perm['object_id'].startswith(f"/tenants/{alice_zone_id}"):
         print(f"⚠️  Cross-tenant permission detected: {perm}")
 ```
 
@@ -1324,20 +1324,20 @@ for perm in permissions:
 **Solution:**
 ```python
 # Implement quota check middleware
-def enforce_quota_middleware(tenant_id, operation, amount):
-    metadata = get_tenant_metadata(tenant_id)
+def enforce_quota_middleware(zone_id, operation, amount):
+    metadata = get_tenant_metadata(zone_id)
 
     # Check before allowing operation
     if not check_quota(metadata, operation, amount):
         raise QuotaExceededError(
-            f"Tenant {tenant_id} quota exceeded for {operation}"
+            f"Tenant {zone_id} quota exceeded for {operation}"
         )
 
     # Allow operation
     # ...
 
     # Update usage after operation
-    update_usage(tenant_id, operation, amount)
+    update_usage(zone_id, operation, amount)
 ```
 
 ---
@@ -1347,8 +1347,8 @@ def enforce_quota_middleware(tenant_id, operation, amount):
 ### 1. Always Use Tenant Prefixes
 
 ```python
-# ✅ Good: All tenant data under /tenants/{tenant_id}
-tenant_path = f"/tenants/{tenant_id}/data"
+# ✅ Good: All tenant data under /tenants/{zone_id}
+tenant_path = f"/tenants/{zone_id}/data"
 
 # ❌ Bad: Mixed tenant data
 user_path = f"/users/{user_id}/data"  # Crosses tenant boundaries
@@ -1357,17 +1357,17 @@ user_path = f"/users/{user_id}/data"  # Crosses tenant boundaries
 ### 2. Implement Audit Logging
 
 ```python
-def audit_log(tenant_id, user, action, resource):
+def audit_log(zone_id, user, action, resource):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "user": user,
         "action": action,
         "resource": resource
     }
 
     nx.append(
-        f"/tenants/{tenant_id}/.audit/log.jsonl",
+        f"/tenants/{zone_id}/.audit/log.jsonl",
         (json.dumps(log_entry) + '\n').encode()
     )
 ```
@@ -1386,7 +1386,7 @@ def audit_log(tenant_id, user, action, resource):
 
 ## What's Next?
 
-**Congratulations!** You've built a production-ready multi-tenant SaaS platform with Nexus.
+**Congratulations!** You've built a production-ready multi-zone SaaS platform with Nexus.
 
 ### 🔍 Recommended Next Steps
 
@@ -1418,7 +1418,7 @@ def audit_log(tenant_id, user, action, resource):
 🎉 **You've completed the Multi-Tenant SaaS tutorial!**
 
 **What you learned:**
-- ✅ Design and implement multi-tenant architecture
+- ✅ Design and implement multi-zone architecture
 - ✅ Ensure complete tenant isolation
 - ✅ Manage tenant lifecycle (create, suspend, delete)
 - ✅ Implement quotas and billing
@@ -1428,7 +1428,7 @@ def audit_log(tenant_id, user, action, resource):
 
 **Key Takeaways:**
 - Tenant isolation is critical for security
-- Use /tenants/{tenant_id} prefix for all tenant data
+- Use /tenants/{zone_id} prefix for all tenant data
 - Implement quotas from day one
 - Monitor usage for billing and capacity planning
 - Use PostgreSQL for production deployments

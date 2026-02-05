@@ -135,7 +135,7 @@ class TestOperationContextP04Fields:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            tenant_id="org_acme",
+            zone_id="org_acme",
             agent_id="agent_001",
             is_admin=True,
             is_system=False,
@@ -148,20 +148,20 @@ class TestOperationContextP04Fields:
         assert ctx.is_admin is True
         assert len(ctx.admin_capabilities) == 2
         assert ctx.request_id == "req-123"
-        assert ctx.tenant_id == "org_acme"
+        assert ctx.zone_id == "org_acme"
 
-    def test_admin_capabilities_with_tenant_context(self):
-        """Admin capabilities work with multi-tenant context."""
+    def test_admin_capabilities_with_zone_context(self):
+        """Admin capabilities work with multi-zone context."""
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            tenant_id="tenant_alpha",
+            zone_id="zone_alpha",
             is_admin=True,
-            admin_capabilities={"admin:read:tenant_alpha", "admin:write:tenant_alpha"},
+            admin_capabilities={"admin:read:zone_alpha", "admin:write:zone_alpha"},
         )
 
-        assert ctx.tenant_id == "tenant_alpha"
-        assert "admin:read:tenant_alpha" in ctx.admin_capabilities
+        assert ctx.zone_id == "zone_alpha"
+        assert "admin:read:zone_alpha" in ctx.admin_capabilities
 
     def test_system_context_with_request_id(self):
         """System operations also have request IDs for audit."""
@@ -178,7 +178,7 @@ class TestOperationContextBackwardCompatibility:
     def test_existing_context_creation_still_works(self):
         """Existing code that creates contexts should still work."""
         # Old-style context creation (no P0-4 fields)
-        ctx = OperationContext(user="alice", groups=["developers"], tenant_id="org1")
+        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org1")
 
         # Should work with defaults
         assert ctx.user == "alice"

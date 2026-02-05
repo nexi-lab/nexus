@@ -33,7 +33,7 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
   "jsonrpc": "2.0",
   "result": {
     "user_id": "alice",
-    "tenant_id": "alice",
+    "zone_id": "alice",
     "api_key": "sk-...",
     "workspace_path": "/tenant:alice/user:alice/workspace/ws_personal_...",
     "agent_paths": [
@@ -76,7 +76,7 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
 
 **Expected Behavior:**
 - Should return success (not an error)
-- Same `user_id` and `tenant_id`
+- Same `user_id` and `zone_id`
 - Same `workspace_path`
 - No duplicate resources created
 - Log messages should indicate resources already exist
@@ -120,9 +120,9 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
 - `skill_paths` should be empty `[]`
 - All other resources should be created
 
-## Test 5: Custom Tenant ID
+## Test 5: Custom Zone ID
 
-Test creating a user with a custom tenant_id:
+Test creating a user with a custom zone_id:
 
 ```bash
 curl -X POST http://localhost:2026/api/nfs/provision_user \
@@ -131,13 +131,13 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
   -d '{
     "user_id": "dave",
     "email": "dave@company.com",
-    "tenant_id": "mycompany",
+    "zone_id": "mycompany",
     "display_name": "Dave Wilson"
   }' | jq .
 ```
 
 **Expected:**
-- `tenant_id` should be "mycompany" (not "dave")
+- `zone_id` should be "mycompany" (not "dave")
 - User created under `/tenant:mycompany/user:dave/`
 
 ## Verification Steps
@@ -149,10 +149,10 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
 psql $NEXUS_DATABASE_URL
 
 # Check tenant
-SELECT tenant_id, name, is_active FROM tenants WHERE tenant_id = 'alice';
+SELECT zone_id, name, is_active FROM tenants WHERE zone_id = 'alice';
 
 # Check user
-SELECT user_id, email, display_name, tenant_id, is_active
+SELECT user_id, email, display_name, zone_id, is_active
 FROM users WHERE user_id = 'alice';
 
 # Check API key
@@ -222,7 +222,7 @@ To test OAuth integration, perform an OAuth login:
 
 Check server logs for:
 ```
-INFO: Provisioned OAuth user resources: {'user_id': '...', 'tenant_id': '...', ...}
+INFO: Provisioned OAuth user resources: {'user_id': '...', 'zone_id': '...', ...}
 ```
 
 ## Troubleshooting

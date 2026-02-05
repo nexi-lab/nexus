@@ -52,7 +52,7 @@ class ConsolidationEngine:
         llm_provider: LLMProvider,
         user_id: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ):
         """Initialize consolidation engine.
 
@@ -62,14 +62,14 @@ class ConsolidationEngine:
             llm_provider: LLM provider for consolidation
             user_id: User ID for ownership
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
         """
         self.session = session
         self.backend = backend
         self.llm_provider = llm_provider
         self.user_id = user_id
         self.agent_id = agent_id
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
 
     async def consolidate_async(
         self,
@@ -314,7 +314,7 @@ Provide only the consolidated summary, no additional commentary.
         memory = MemoryModel(
             memory_id=memory_id,
             content_hash=content_hash,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             user_id=self.user_id,
             agent_id=self.agent_id,
             scope="agent",

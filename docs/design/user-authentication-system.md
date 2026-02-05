@@ -13,7 +13,7 @@
 3. [Current State Analysis](#current-state-analysis)
 4. [Design Goals](#design-goals)
 5. [Core Data Models](#core-data-models)
-6. [Multi-Tenant Architecture](#multi-tenant-architecture)
+6. [Multi-Tenant Architecture](#multi-zone-architecture)
 7. [Authentication Flows](#authentication-flows)
 8. [API Design](#api-design)
 9. [Implementation Guide](#implementation-guide)
@@ -26,7 +26,7 @@
 
 ## Executive Summary
 
-This document describes a comprehensive user authentication and multi-tenant management system for Nexus, supporting:
+This document describes a comprehensive user authentication and multi-zone management system for Nexus, supporting:
 
 ### Supported Authentication Methods
 
@@ -39,7 +39,7 @@ This document describes a comprehensive user authentication and multi-tenant man
 - **Persistent user storage** with profile data (email, name, avatar)
 - **OAuth account linking** for Google authentication
 - **External user service integration** for custom auth systems
-- **Multi-tenant support** via ReBAC groups (Google Zanzibar pattern)
+- **Multi-zone support** via ReBAC groups (Google Zanzibar pattern)
 - **Backward compatible** with existing API key authentication
 - **Soft delete support** for audit trail and data recovery
 
@@ -143,9 +143,9 @@ graph TD
    - **No dedicated `UserModel` table exists**
 
 3. **Authentication Flow**:
-   - Server authentication validates tokens → returns `AuthResult` with `subject_id`, `tenant_id`, `is_admin`
+   - Server authentication validates tokens → returns `AuthResult` with `subject_id`, `zone_id`, `is_admin`
    - Authorization uses ReBAC (Relationship-Based Access Control)
-   - Multi-tenant isolation via `tenant_id`
+   - Multi-zone isolation via `zone_id`
 
 4. **OAuth Infrastructure** (for backend integrations):
    - `OAuthProvider` base class with `GoogleOAuthProvider`, `MicrosoftOAuthProvider`
@@ -171,7 +171,7 @@ graph TD
 3. **OAuth integration**: Link OAuth providers to user accounts
 4. **External user support**: Allow users to bring their own user management
 5. **Backward compatibility**: Existing API key auth continues to work
-6. **Multi-tenant**: Support tenant isolation at user level via ReBAC groups
+6. **Multi-zone**: Support tenant isolation at user level via ReBAC groups
 7. **Security**: Email verification, password reset, account takeover prevention
 
 ---
@@ -191,7 +191,7 @@ class UserModel(Base):
 
     Key features:
     - Multiple auth methods (password, OAuth, external, API key)
-    - Multi-tenant support via ReBAC groups
+    - Multi-zone support via ReBAC groups
     - Soft delete support (is_active, deleted_at)
     - Email/username uniqueness via partial indexes
     """
@@ -236,8 +236,8 @@ class UserModel(Base):
         String(255), nullable=True, index=True
     )
 
-    # Tenant membership (via ReBAC groups only - no tenant_id field)
-    # Managed via: (user:user_id, member-of, group:tenant-{tenant_id})
+    # Tenant membership (via ReBAC groups only - no zone_id field)
+    # Managed via: (user:user_id, member-of, group:tenant-{zone_id})
 
     # Admin status
     is_global_admin: Mapped[int] = mapped_column(
@@ -444,9 +444,9 @@ Instead of creating a separate membership table, we use **ReBAC groups** to mode
 ### Group Naming Convention
 
 ```
-Tenant groups: group:tenant-{tenant_id}
-Admin groups:  group:tenant-{tenant_id}-admins
-Member groups: group:tenant-{tenant_id}-members
+Tenant groups: group:tenant-{zone_id}
+Admin groups:  group:tenant-{zone_id}-admins
+Member groups: group:tenant-{zone_id}-members
 ```
 
 Examples:
@@ -461,16 +461,16 @@ Examples:
 rebac_create(
     subject=("user", user_id),
     relation="member",
-    object=("group", f"tenant-{tenant_id}"),
-    tenant_id=tenant_id
+    object=("group", f"tenant-{zone_id}"),
+    zone_id=zone_id
 )
 
 # Add user as admin
 rebac_create(
     subject=("user", user_id),
     relation="member",
-    object=("group", f"tenant-{tenant_id}-admins"),
-    tenant_id=tenant_id
+    object=("group", f"tenant-{zone_id}-admins"),
+    zone_id=zone_id
 )
 ```
 
@@ -513,18 +513,18 @@ rebac_create(
 ### Helper Functions
 
 ```python
-def tenant_group_id(tenant_id: str) -> str:
-    """Generate tenant group ID from tenant_id."""
-    return f"tenant-{tenant_id}"
+def tenant_group_id(zone_id: str) -> str:
+    """Generate tenant group ID from zone_id."""
+    return f"tenant-{zone_id}"
 
 def add_user_to_tenant(
     rebac_manager,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     role: str = "member"
 ) -> str:
     """Add user to tenant via ReBAC group."""
-    group_id = tenant_group_id(tenant_id)
+    group_id = tenant_group_id(zone_id)
     if role == "admin":
         group_id = f"{group_id}-admins"
 
@@ -532,7 +532,7 @@ def add_user_to_tenant(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
-        tenant_id=tenant_id
+        zone_id=zone_id
     )
 
 def get_user_tenants(rebac_manager, user_id: str) -> list[dict]:
@@ -548,9 +548,9 @@ def get_user_tenants(rebac_manager, user_id: str) -> list[dict]:
         group_id = tuple.object.entity_id
         if group_id.startswith("tenant-"):
             parts = group_id.replace("tenant-", "").split("-")
-            tenant_id = parts[0]
+            zone_id = parts[0]
             role = "admin" if "admins" in group_id else "member"
-            tenants.append({"tenant_id": tenant_id, "role": role})
+            tenants.append({"zone_id": zone_id, "role": role})
 
     return tenants
 ```
@@ -714,7 +714,7 @@ POST /auth/oauth/check
 
 POST /auth/oauth/confirm
   Body: {pending_token, tenant_name?}
-  Returns: {token, user_info, api_key, tenant_id}
+  Returns: {token, user_info, api_key, zone_id}
 
 GET /auth/oauth/accounts
   Headers: {Authorization: Bearer <token>}
@@ -747,12 +747,12 @@ POST /auth/change-password
 # Tenant Management
 GET /auth/me/tenants
   Headers: {Authorization: Bearer <token>}
-  Returns: [{tenant_id, role, is_admin}]
+  Returns: [{zone_id, role, is_admin}]
 
 POST /auth/switch-tenant
   Headers: {Authorization: Bearer <token>}
-  Body: {tenant_id}
-  Returns: {success: true, tenant_id}
+  Body: {zone_id}
+  Returns: {success: true, zone_id}
 ```
 
 ---
@@ -931,10 +931,10 @@ def generate_user_id() -> str:
 - **Caching**: Cache validation results with TTL (5-15 minutes)
 - **Admin-only**: Access control for managing external services
 
-### 5. Multi-tenant Isolation
+### 5. Multi-zone Isolation
 
 - Tenant membership via ReBAC groups only (single source of truth)
-- Enforce `tenant_id` in all ReBAC queries (defense-in-depth)
+- Enforce `zone_id` in all ReBAC queries (defense-in-depth)
 - Prevent cross-tenant user access
 - Validate tenant membership before granting access
 
@@ -1045,7 +1045,7 @@ def generate_user_id() -> str:
 5. **Soft Delete**: Default behavior (preserves audit trail)
 6. **SSRF Prevention**: Whitelist external service endpoints
 7. **Race Conditions**: SELECT FOR UPDATE + unique constraints
-8. **Multi-tenant**: Always filter by tenant_id in queries
+8. **Multi-zone**: Always filter by zone_id in queries
 
 ---
 
@@ -1109,7 +1109,7 @@ def generate_user_id() -> str:
 **Frontend Integration**:
 - Update OAuth flow in frontend
 - Confirmation page for new users
-- Tenant selection for multi-tenant users
+- Tenant selection for multi-zone users
 
 ### Phase 4: External User Service Support (Week 4)
 
@@ -1155,7 +1155,7 @@ def generate_user_id() -> str:
 - [x] Google OAuth authentication
 - [x] External user management support
 - [x] Backward compatibility
-- [x] Multi-tenant support via ReBAC groups
+- [x] Multi-zone support via ReBAC groups
 - [x] Soft delete support
 - [x] Email verification (Phase 2)
 - [x] Password reset (Phase 2)
@@ -1178,7 +1178,7 @@ def generate_user_id() -> str:
 - [x] Email verification for OAuth linking
 - [x] Race condition protection (unique constraints)
 - [x] SSRF prevention (endpoint whitelist)
-- [x] Multi-tenant isolation (ReBAC groups)
+- [x] Multi-zone isolation (ReBAC groups)
 - [x] User enumeration prevention (UUID)
 - [x] Soft delete by default
 
@@ -1206,7 +1206,7 @@ def generate_user_id() -> str:
 
 5. **Multi-Tenant via ReBAC Groups** ✅
    - Rationale: Leverages existing infrastructure, follows Zanzibar pattern
-   - No primary_tenant_id field - all membership via ReBAC
+   - No primary_zone_id field - all membership via ReBAC
 
 6. **Email Verification Required** ✅
    - Rationale: Security (prevent account takeover via OAuth)
@@ -1216,7 +1216,7 @@ def generate_user_id() -> str:
 
 1. ✅ Removed `unique=True` from email/username (use partial indexes)
 2. ✅ Removed OAuth access/refresh token fields (ID tokens only)
-3. ✅ Removed `primary_tenant_id` (ReBAC groups only)
+3. ✅ Removed `primary_zone_id` (ReBAC groups only)
 4. ✅ Moved password reset to Phase 2 (not future enhancement)
 5. ✅ Moved email verification to Phase 2 (required for security)
 6. ✅ Added composite indexes for performance
@@ -1238,7 +1238,7 @@ def generate_user_id() -> str:
 ## Summary of Critical Fixes Applied
 
 1. ✅ **UUID standardization** - All new users get UUID4
-2. ✅ **Removed primary_tenant_id** - ReBAC groups only
+2. ✅ **Removed primary_zone_id** - ReBAC groups only
 3. ✅ **Email verification requirement** - For OAuth auto-linking
 4. ✅ **Unique constraint** - On (provider, provider_user_id)
 5. ✅ **SSRF prevention** - External service endpoints
@@ -1321,11 +1321,11 @@ def generate_user_id() -> str:
 
 ## Conclusion
 
-This design provides a **production-ready** user authentication and multi-tenant system for Nexus with:
+This design provides a **production-ready** user authentication and multi-zone system for Nexus with:
 
 - **Flexible authentication** (password, OAuth, external)
 - **Strong security** (email verification, password reset, SSRF prevention)
-- **Multi-tenant support** (via ReBAC groups following Zanzibar pattern)
+- **Multi-zone support** (via ReBAC groups following Zanzibar pattern)
 - **Backward compatibility** (existing auth continues to work)
 - **Scalability** (UUID-based IDs, soft delete, proper indexes)
 

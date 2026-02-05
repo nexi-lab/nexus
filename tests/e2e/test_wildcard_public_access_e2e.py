@@ -4,7 +4,7 @@ These are TRUE e2e tests that:
 1. Start an actual FastAPI server on a real port
 2. Create real users with authentication
 3. Make real HTTP requests
-4. Test wildcard public access across tenants
+4. Test wildcard public access across zones
 
 Usage:
     uv run pytest tests/e2e/test_wildcard_public_access_e2e.py -v --override-ini="addopts="
@@ -24,7 +24,7 @@ from sqlalchemy import create_engine, text
 JWT_SECRET = "test-secret-key-for-e2e-12345"
 
 
-def create_test_user(db_path: Path, tenant_id: str = "default") -> dict:
+def create_test_user(db_path: Path, zone_id: str = "default") -> dict:
     """Create a test user and return auth info."""
     import jwt
 
@@ -36,7 +36,7 @@ def create_test_user(db_path: Path, tenant_id: str = "default") -> dict:
         "sub": user_id,
         "subject_id": user_id,
         "subject_type": "user",
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "email": email,
         "name": f"Test User {user_id[:8]}",
     }
@@ -45,7 +45,7 @@ def create_test_user(db_path: Path, tenant_id: str = "default") -> dict:
     return {
         "user_id": user_id,
         "email": email,
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "token": token,
         "headers": {"Authorization": f"Bearer {token}"},
     }
@@ -58,24 +58,24 @@ def write_rebac_tuple(
     relation: str,
     object_type: str,
     object_id: str,
-    tenant_id: str = "default",
-    subject_tenant_id: str | None = None,
-    object_tenant_id: str | None = None,
+    zone_id: str = "default",
+    subject_zone_id: str | None = None,
+    object_zone_id: str | None = None,
 ) -> str:
     """Write a ReBAC tuple directly to the database."""
     engine = create_engine(f"sqlite:///{db_path}")
     tuple_id = str(uuid.uuid4())
-    effective_subject_tenant = subject_tenant_id or tenant_id
-    effective_object_tenant = object_tenant_id or tenant_id
+    effective_subject_zone = subject_zone_id or zone_id
+    effective_object_zone = object_zone_id or zone_id
 
     with engine.connect() as conn:
         conn.execute(
             text("""
                 INSERT INTO rebac_tuples
                 (tuple_id, subject_type, subject_id, relation, object_type, object_id,
-                 tenant_id, subject_tenant_id, object_tenant_id)
+                 zone_id, subject_zone_id, object_zone_id)
                 VALUES (:tuple_id, :subject_type, :subject_id, :relation, :object_type, :object_id,
-                        :tenant_id, :subject_tenant_id, :object_tenant_id)
+                        :zone_id, :subject_zone_id, :object_zone_id)
             """),
             {
                 "tuple_id": tuple_id,
@@ -84,9 +84,9 @@ def write_rebac_tuple(
                 "relation": relation,
                 "object_type": object_type,
                 "object_id": object_id,
-                "tenant_id": tenant_id,
-                "subject_tenant_id": effective_subject_tenant,
-                "object_tenant_id": effective_object_tenant,
+                "zone_id": zone_id,
+                "subject_zone_id": effective_subject_zone,
+                "object_zone_id": effective_object_zone,
             },
         )
         conn.commit()
@@ -101,8 +101,8 @@ class TestWildcardPublicAccessE2E:
         """Test that wildcard (*:*) tuple grants read access to any user via API.
 
         Uses RPC write/read to verify access: write a file as system, create
-        a wildcard tuple via rebac_create RPC, then check that both same-tenant
-        and cross-tenant users can read it.
+        a wildcard tuple via rebac_create RPC, then check that both same-zone
+        and cross-zone users can read it.
         """
         import base64
 
@@ -117,13 +117,13 @@ class TestWildcardPublicAccessE2E:
                     "method": method,
                     "params": params,
                 },
-                headers=headers or {"X-Tenant-ID": "system"},
+                headers=headers or {"X-Nexus-Zone-ID": "system"},
             )
             return resp.json()
 
-        # Create two users in different tenants
-        user_a = create_test_user(db_path, tenant_id="tenant-a")
-        user_b = create_test_user(db_path, tenant_id="tenant-b")
+        # Create two users in different zones
+        user_a = create_test_user(db_path, zone_id="zone-a")
+        user_b = create_test_user(db_path, zone_id="zone-b")
 
         # Write a file as system
         test_file = "/public/shared-doc.txt"
@@ -144,16 +144,16 @@ class TestWildcardPublicAccessE2E:
                 "subject": ["*", "*"],
                 "relation": "reader",
                 "object": ["file", test_file],
-                "tenant_id": "tenant-a",
+                "zone_id": "zone-a",
             },
         )
         assert "error" not in rebac_result, f"rebac_create failed: {rebac_result}"
 
-        # User A (same tenant) should have access — read via RPC
+        # User A (same zone) should have access — read via RPC
         result_a = rpc("read", {"path": test_file}, headers=user_a["headers"])
         assert "error" not in result_a, f"User A should have read access: {result_a}"
 
-        # User B (different tenant) should also have access via wildcard
+        # User B (different zone) should also have access via wildcard
         result_b = rpc("read", {"path": test_file}, headers=user_b["headers"])
         assert "error" not in result_b, f"User B should have access via wildcard: {result_b}"
 
@@ -178,7 +178,7 @@ class TestWildcardDirectDB:
                     relation TEXT NOT NULL,
                     object_type TEXT NOT NULL,
                     object_id TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'default',
                     conditions TEXT,
                     expires_at TEXT,
                     created_at TIMESTAMP,
@@ -223,10 +223,10 @@ class TestWildcardDirectDB:
                     member_id TEXT NOT NULL,
                     group_type TEXT NOT NULL,
                     group_id TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'default',
                     depth INTEGER NOT NULL DEFAULT 1,
                     updated_at TIMESTAMP,
-                    PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
+                    PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
                 )
             """)
             )
@@ -247,39 +247,39 @@ class TestWildcardDirectDB:
         yield manager
 
     @pytest.mark.asyncio
-    async def test_wildcard_grants_access_cross_tenant(self, async_manager, db_engine):
-        """Test wildcard grants access to users from any tenant."""
+    async def test_wildcard_grants_access_cross_zone(self, async_manager, db_engine):
+        """Test wildcard grants access to users from any zone."""
         # Write wildcard tuple directly to DB
         with db_engine.connect() as conn:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id)
-                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/doc.txt', 'owner-tenant')
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
+                    VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/doc.txt', 'owner-zone')
                 """),
                 {"tuple_id": str(uuid.uuid4())},
             )
             conn.commit()
 
-        # User from different tenant should have access
+        # User from different zone should have access
         result = await async_manager.rebac_check(
             subject=("user", "random-user-id"),
             permission="read",
             object=("file", "/public/doc.txt"),
-            tenant_id="different-tenant",  # Different from owner-tenant
+            zone_id="different-zone",  # Different from owner-zone
         )
-        assert result is True, "Wildcard should grant access to any user from any tenant"
+        assert result is True, "Wildcard should grant access to any user from any zone"
 
     @pytest.mark.asyncio
-    async def test_no_wildcard_no_cross_tenant_access(self, async_manager, db_engine):
-        """Test that without wildcard, cross-tenant access is denied."""
+    async def test_no_wildcard_no_cross_zone_access(self, async_manager, db_engine):
+        """Test that without wildcard, cross-zone access is denied."""
         # Write specific user tuple (not wildcard)
         with db_engine.connect() as conn:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id)
-                    VALUES (:tuple_id, 'user', 'specific-user', 'reader', 'file', '/private/doc.txt', 'owner-tenant')
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
+                    VALUES (:tuple_id, 'user', 'specific-user', 'reader', 'file', '/private/doc.txt', 'owner-zone')
                 """),
                 {"tuple_id": str(uuid.uuid4())},
             )
@@ -290,7 +290,7 @@ class TestWildcardDirectDB:
             subject=("user", "specific-user"),
             permission="read",
             object=("file", "/private/doc.txt"),
-            tenant_id="owner-tenant",
+            zone_id="owner-zone",
         )
         assert result is True
 
@@ -299,7 +299,7 @@ class TestWildcardDirectDB:
             subject=("user", "random-user"),
             permission="read",
             object=("file", "/private/doc.txt"),
-            tenant_id="different-tenant",
+            zone_id="different-zone",
         )
         assert result is False, "Without wildcard, random users should not have access"
 
@@ -311,7 +311,7 @@ class TestWildcardDirectDB:
             conn.execute(
                 text("""
                     INSERT INTO rebac_tuples
-                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id)
+                    (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
                     VALUES (:tuple_id, '*', '*', 'reader', 'file', '/public/readonly.txt', 'default')
                 """),
                 {"tuple_id": str(uuid.uuid4())},
@@ -323,7 +323,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="read",
             object=("file", "/public/readonly.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert result is True
 
@@ -332,7 +332,7 @@ class TestWildcardDirectDB:
             subject=("user", "anyone"),
             permission="write",
             object=("file", "/public/readonly.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert result is False, "Wildcard reader should not grant write permission"
 
@@ -356,7 +356,7 @@ class TestWildcardPerformance:
                     relation TEXT NOT NULL,
                     object_type TEXT NOT NULL,
                     object_id TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'default',
                     conditions TEXT,
                     expires_at TEXT
                 )
@@ -390,9 +390,9 @@ class TestWildcardPerformance:
                     member_id TEXT NOT NULL,
                     group_type TEXT NOT NULL,
                     group_id TEXT NOT NULL,
-                    tenant_id TEXT NOT NULL DEFAULT 'default',
+                    zone_id TEXT NOT NULL DEFAULT 'default',
                     depth INTEGER NOT NULL DEFAULT 1,
-                    PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
+                    PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
                 )
             """)
             )
@@ -427,7 +427,7 @@ class TestWildcardPerformance:
                 conn.execute(
                     text("""
                         INSERT INTO rebac_tuples
-                        (tuple_id, subject_type, subject_id, relation, object_type, object_id, tenant_id)
+                        (tuple_id, subject_type, subject_id, relation, object_type, object_id, zone_id)
                         VALUES (:tuple_id, 'user', :user_id, 'reader', 'file', :file_path, 'default')
                     """),
                     {
@@ -447,7 +447,7 @@ class TestWildcardPerformance:
                 subject=("user", f"nonexistent-user-{i}"),
                 permission="read",
                 object=("file", f"/files/doc-{i % 1000}.txt"),
-                tenant_id="default",
+                zone_id="default",
             )
             # Should be False (no wildcard, no direct grant)
             assert result is False

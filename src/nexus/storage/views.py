@@ -87,7 +87,7 @@ def get_ready_work_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} ready_work_items AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.physical_path,
@@ -145,7 +145,7 @@ def get_pending_work_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} pending_work_items AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.physical_path,
@@ -188,7 +188,7 @@ def get_blocked_work_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} blocked_work_items AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.physical_path,
@@ -249,7 +249,7 @@ def get_work_by_priority_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} work_by_priority AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.file_type,
@@ -295,7 +295,7 @@ def get_in_progress_work_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} in_progress_work AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.file_type,
@@ -338,7 +338,7 @@ def get_ready_for_indexing_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} ready_for_indexing AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.physical_path,
@@ -393,7 +393,7 @@ def get_hot_tier_eviction_view(db_type: str = "sqlite") -> TextClause:
 {create_stmt} hot_tier_eviction_candidates AS
 SELECT
     fp.path_id,
-    fp.tenant_id,
+    fp.zone_id,
     fp.virtual_path,
     fp.backend_id,
     fp.physical_path,

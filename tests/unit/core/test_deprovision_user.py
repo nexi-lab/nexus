@@ -61,7 +61,7 @@ class TestDeprovisionUser:
         return OperationContext(
             user="admin",
             groups=[],
-            tenant_id="example",
+            zone_id="example",
             is_admin=True,
         )
 
@@ -72,7 +72,7 @@ class TestDeprovisionUser:
             user_id="alice",
             email="alice@example.com",
             display_name="Alice Smith",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=True,
             create_agents=True,
             import_skills=False,  # Skip skills for faster test
@@ -80,20 +80,20 @@ class TestDeprovisionUser:
         )
 
         # Verify user exists
-        user_path = "/tenant:example/user:alice/workspace"
+        user_path = "/zone/example/user:alice/workspace"
         assert nx.exists(user_path, context=admin_context)
 
         # Deprovision the user
         result = nx.deprovision_user(
             user_id="alice",
-            tenant_id="example",
+            zone_id="example",
             delete_user_record=False,
             context=admin_context,
         )
 
         # Verify result structure
         assert result["user_id"] == "alice"
-        assert result["tenant_id"] == "example"
+        assert result["zone_id"] == "example"
         assert len(result["deleted_directories"]) == 6  # All 6 resource types
         assert result["deleted_api_keys"] >= 1
         assert result["user_record_deleted"] is False
@@ -106,7 +106,7 @@ class TestDeprovisionUser:
         nx.provision_user(
             user_id="bob",
             email="bob@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=False,
             create_agents=False,
             import_skills=False,
@@ -116,14 +116,14 @@ class TestDeprovisionUser:
         # Verify directories exist
         existing_dirs = []
         for resource_type in ["workspace", "memory", "skill", "agent", "connector", "resource"]:
-            dir_path = f"/tenant:example/user:bob/{resource_type}"
+            dir_path = f"/zone/example/user:bob/{resource_type}"
             if nx.exists(dir_path, context=admin_context):
                 existing_dirs.append(dir_path)
 
         # Deprovision
         result = nx.deprovision_user(
             user_id="bob",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -154,7 +154,7 @@ class TestDeprovisionUser:
         result = nx.provision_user(
             user_id="charlie",
             email="charlie@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=True,
             create_agents=False,
             import_skills=False,
@@ -167,7 +167,7 @@ class TestDeprovisionUser:
         # Deprovision
         deprovision_result = nx.deprovision_user(
             user_id="charlie",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -196,7 +196,7 @@ class TestDeprovisionUser:
         nx.provision_user(
             user_id="david",
             email="david@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=False,
             create_agents=False,
             import_skills=False,
@@ -206,7 +206,7 @@ class TestDeprovisionUser:
         # Deprovision with user record deletion
         result = nx.deprovision_user(
             user_id="david",
-            tenant_id="example",
+            zone_id="example",
             delete_user_record=True,
             context=admin_context,
         )
@@ -242,7 +242,7 @@ class TestDeprovisionUser:
                 email="admin@example.com",
                 username="admin_user",
                 display_name="Admin User",
-                tenant_id="example",
+                zone_id="example",
                 primary_auth_method="api_key",
                 is_active=1,
                 is_global_admin=1,  # Admin user
@@ -259,7 +259,7 @@ class TestDeprovisionUser:
         with pytest.raises(ValueError, match="Cannot deprovision global admin user"):
             nx.deprovision_user(
                 user_id="admin_user",
-                tenant_id="example",
+                zone_id="example",
                 context=admin_context,
             )
 
@@ -279,7 +279,7 @@ class TestDeprovisionUser:
                 email="admin2@example.com",
                 username="admin_user2",
                 display_name="Admin User 2",
-                tenant_id="example",
+                zone_id="example",
                 primary_auth_method="api_key",
                 is_active=1,
                 is_global_admin=1,  # Admin user
@@ -295,7 +295,7 @@ class TestDeprovisionUser:
         # Deprovision with force flag (should succeed)
         result = nx.deprovision_user(
             user_id="admin_user2",
-            tenant_id="example",
+            zone_id="example",
             force=True,
             context=admin_context,
         )
@@ -308,7 +308,7 @@ class TestDeprovisionUser:
         nx.provision_user(
             user_id="eve",
             email="eve@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=True,
             create_agents=False,
             import_skills=False,
@@ -318,7 +318,7 @@ class TestDeprovisionUser:
         # Deprovision first time
         result1 = nx.deprovision_user(
             user_id="eve",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -331,7 +331,7 @@ class TestDeprovisionUser:
         # Deprovision second time (should not error, but find nothing to delete)
         result2 = nx.deprovision_user(
             user_id="eve",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -347,7 +347,7 @@ class TestDeprovisionUser:
         # Deprovision non-existent user (should not error)
         result = nx.deprovision_user(
             user_id="nonexistent",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -356,27 +356,27 @@ class TestDeprovisionUser:
         assert result["deleted_api_keys"] == 0
         assert result["user_record_deleted"] is False
 
-    def test_deprovision_tenant_lookup(self, nx: NexusFS, admin_context: OperationContext) -> None:
-        """Test that tenant_id is looked up from user if not provided."""
+    def test_deprovision_zone_lookup(self, nx: NexusFS, admin_context: OperationContext) -> None:
+        """Test that zone_id is looked up from user if not provided."""
         # Provision user
         nx.provision_user(
             user_id="frank",
             email="frank@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=False,
             create_agents=False,
             import_skills=False,
             context=admin_context,
         )
 
-        # Deprovision without providing tenant_id (should look up from user)
+        # Deprovision without providing zone_id (should look up from user)
         result = nx.deprovision_user(
             user_id="frank",
-            # tenant_id not provided
+            # zone_id not provided
             context=admin_context,
         )
 
-        assert result["tenant_id"] == "example"
+        assert result["zone_id"] == "example"
         assert len(result["deleted_directories"]) == 6
 
     def test_deprovision_with_agents(self, nx: NexusFS, admin_context: OperationContext) -> None:
@@ -385,7 +385,7 @@ class TestDeprovisionUser:
         nx.provision_user(
             user_id="grace",
             email="grace@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=False,
             create_agents=True,  # Will try but may fail
             import_skills=False,
@@ -395,7 +395,7 @@ class TestDeprovisionUser:
         # Deprovision
         result = nx.deprovision_user(
             user_id="grace",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -408,11 +408,11 @@ class TestDeprovisionUser:
         self, nx: NexusFS, admin_context: OperationContext
     ) -> None:
         """Test that deprovisioning deletes ReBAC permissions."""
-        # Provision user (creates tenant owner permission)
+        # Provision user (creates zone owner permission)
         nx.provision_user(
             user_id="henry",
             email="henry@example.com",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=False,
             create_agents=False,
             import_skills=False,
@@ -422,7 +422,7 @@ class TestDeprovisionUser:
         # Deprovision
         result = nx.deprovision_user(
             user_id="henry",
-            tenant_id="example",
+            zone_id="example",
             context=admin_context,
         )
 
@@ -438,7 +438,7 @@ class TestDeprovisionUser:
             user_id=user_id,
             email=f"{user_id}@example.com",
             display_name="Test User",
-            tenant_id="example",
+            zone_id="example",
             create_api_key=True,
             create_agents=True,  # May fail in test environment
             import_skills=False,
@@ -447,12 +447,12 @@ class TestDeprovisionUser:
 
         # Verify resources created (agents may not be created in test environment)
         assert provision_result["api_key"] is not None
-        assert nx.exists(f"/tenant:example/user:{user_id}/workspace", context=admin_context)
+        assert nx.exists(f"/zone/example/user:{user_id}/workspace", context=admin_context)
 
         # 2. Deprovision user
         deprovision_result = nx.deprovision_user(
             user_id=user_id,
-            tenant_id="example",
+            zone_id="example",
             delete_user_record=True,
             context=admin_context,
         )
@@ -463,7 +463,7 @@ class TestDeprovisionUser:
         assert deprovision_result["user_record_deleted"] is True
 
         # 3. Verify user directories are empty (all data gone)
-        workspace_path = f"/tenant:example/user:{user_id}/workspace"
+        workspace_path = f"/zone/example/user:{user_id}/workspace"
         try:
             files = nx.list(workspace_path, recursive=True, context=admin_context)
             if isinstance(files, list):

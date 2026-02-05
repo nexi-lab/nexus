@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 class VersionService:
@@ -87,7 +87,7 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: SQLAlchemyMetadataStore,
+        metadata_store: RaftMetadataStore,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,
@@ -179,13 +179,13 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         # Route to backend
-        tenant_id = context.tenant_id if context else None
+        zone_id = context.zone_id if context else None
         agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
@@ -297,13 +297,13 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         logger.info(f"[ROLLBACK] Routing to backend for path={path}")
-        tenant_id = context.tenant_id if context else None
+        zone_id = context.zone_id if context else None
         agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,

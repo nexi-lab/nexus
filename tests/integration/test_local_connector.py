@@ -57,7 +57,7 @@ def context() -> OperationContext:
         user="test_user",
         groups=[],
         user_id="test_user",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
 
@@ -363,7 +363,7 @@ class TestPathSecurity:
             pytest.skip("Symlinks not supported")
 
         connector = LocalConnectorBackend(local_folder)
-        context = OperationContext(user="test", groups=[], user_id="test", tenant_id="test")
+        context = OperationContext(user="test", groups=[], user_id="test", zone_id="test")
         context.backend_path = "escape/secret.txt"
         context.virtual_path = "/mnt/local/escape/secret.txt"
 
@@ -653,7 +653,7 @@ class TestConcurrentAccess:
                 user=f"user_{i}",
                 groups=[],
                 user_id=f"user_{i}",
-                tenant_id="test",
+                zone_id="test",
             )
             ctx.backend_path = "concurrent.txt"
             ctx.virtual_path = "/mnt/local/concurrent.txt"
@@ -678,7 +678,7 @@ class TestConcurrentAccess:
                 user=f"user_{i}",
                 groups=[],
                 user_id=f"user_{i}",
-                tenant_id="test",
+                zone_id="test",
             )
             ctx.backend_path = f"concurrent_{i}.txt"
             ctx.virtual_path = f"/mnt/local/concurrent_{i}.txt"

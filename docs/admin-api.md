@@ -107,7 +107,7 @@ Content-Type: application/json
 - `name` (string, required): Human-readable key name (e.g., "Alice's Laptop")
 - `is_admin` (boolean, optional): Grant admin privileges (default: false)
 - `expires_days` (integer, optional): Expiry in days from now (default: no expiry)
-- `tenant_id` (string, optional): Tenant identifier (default: "default")
+- `zone_id` (string, optional): Zone identifier (default: "default")
 - `subject_type` (string, optional): "user" or "agent" (default: "user")
 - `subject_id` (string, optional): Custom subject ID (defaults to user_id)
 
@@ -140,7 +140,7 @@ curl -X POST http://localhost:2026/api/nfs/admin_create_key \
     "name": "Alice Laptop",
     "subject_type": "user",
     "subject_id": "alice",
-    "tenant_id": "default",
+    "zone_id": "default",
     "is_admin": false,
     "expires_at": "2026-01-27T18:39:29Z"
   }
@@ -161,7 +161,7 @@ curl -X POST http://localhost:2026/api/nfs/admin_create_key \
 
 **Parameters:**
 - `user_id` (string, optional): Filter by user
-- `tenant_id` (string, optional): Filter by tenant
+- `zone_id` (string, optional): Filter by zone
 - `is_admin` (boolean, optional): Filter by admin status
 - `include_revoked` (boolean, optional): Include revoked keys (default: false)
 - `include_expired` (boolean, optional): Include expired keys (default: false)
@@ -195,7 +195,7 @@ curl -X POST http://localhost:2026/api/nfs/admin_list_keys \
         "subject_type": "user",
         "subject_id": "alice",
         "name": "Alice Laptop",
-        "tenant_id": "default",
+        "zone_id": "default",
         "is_admin": false,
         "created_at": "2025-10-29T18:39:29Z",
         "expires_at": "2026-01-27T18:39:29Z",
@@ -247,7 +247,7 @@ curl -X POST http://localhost:2026/api/nfs/admin_get_key \
     "subject_type": "user",
     "subject_id": "alice",
     "name": "Alice Laptop",
-    "tenant_id": "default",
+    "zone_id": "default",
     "is_admin": false,
     "created_at": "2025-10-29T18:39:29Z",
     "expires_at": "2026-01-27T18:39:29Z",
@@ -387,7 +387,7 @@ nexus admin list-users --remote-url http://localhost:2026 --remote-api-key <key>
 - `--email <text>` - User email (for documentation)
 - `--is-admin` - Grant admin privileges
 - `--expires-days <int>` - Key expiry in days
-- `--tenant-id <text>` - Tenant ID (default: "default")
+- `--tenant-id <text>` - Zone ID (default: "default")
 - `--subject-type <text>` - Subject type: "user" or "agent"
 - `--json-output` - Output as JSON
 
@@ -430,7 +430,7 @@ Expires:     2026-01-28T18:39:29Z
 
 **Options:**
 - `--user-id <text>` - Filter by user ID
-- `--tenant-id <text>` - Filter by tenant ID
+- `--tenant-id <text>` - Filter by zone ID
 - `--is-admin` - Show only admin keys
 - `--include-revoked` - Include revoked keys
 - `--include-expired` - Include expired keys

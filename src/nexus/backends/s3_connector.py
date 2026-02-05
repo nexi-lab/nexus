@@ -1066,12 +1066,12 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
 
                 with contextlib.suppress(Exception):
                     # Use version ID from download instead of making extra API call
-                    tenant_id = getattr(context, "tenant_id", None)
+                    zone_id = getattr(context, "zone_id", None)
                     self._write_to_cache(
                         path=cache_path,
                         content=content,
                         backend_version=response_version_id,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
 
             return HandlerResponse.ok(
@@ -1139,12 +1139,12 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 import contextlib
 
                 with contextlib.suppress(Exception):
-                    tenant_id = getattr(context, "tenant_id", None)
+                    zone_id = getattr(context, "zone_id", None)
                     self._write_to_cache(
                         path=cache_path,
                         content=content,
                         backend_version=new_version,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
 
             return HandlerResponse.ok(

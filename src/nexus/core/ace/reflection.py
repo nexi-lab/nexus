@@ -30,7 +30,7 @@ class Reflector:
         trajectory_manager: TrajectoryManager,
         user_id: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ):
         """Initialize reflector.
 
@@ -41,7 +41,7 @@ class Reflector:
             trajectory_manager: Trajectory manager for reading trajectories
             user_id: User ID for ownership
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
         """
         self.session = session
         self.backend = backend
@@ -49,7 +49,7 @@ class Reflector:
         self.trajectory_manager = trajectory_manager
         self.user_id = user_id
         self.agent_id = agent_id
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
 
     async def reflect_async(
         self,
@@ -408,7 +408,7 @@ Provide your analysis as valid JSON only, no additional commentary.
         memory = MemoryModel(
             memory_id=memory_id,
             content_hash=content_hash,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             user_id=self.user_id,
             agent_id=self.agent_id,
             scope="agent",

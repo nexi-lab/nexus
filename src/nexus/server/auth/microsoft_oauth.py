@@ -7,7 +7,7 @@ Example:
     >>> provider = MicrosoftOAuthProvider(
     ...     client_id="12345678-1234-1234-1234-123456789012",
     ...     client_secret="secret",
-    ...     tenant_id="common",  # or specific tenant ID
+    ...     zone_id="common",  # or specific zone ID
     ...     redirect_uri="http://localhost:2026/oauth/callback",
     ...     scopes=["Files.ReadWrite.All", "offline_access"]
     ... )
@@ -39,7 +39,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
     - Token: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
     - Token info: https://graph.microsoft.com/v1.0/me
 
-    Note: Microsoft uses tenant-specific endpoints. Use "common" for multi-tenant apps.
+    Note: Microsoft uses tenant-specific endpoints. Use "common" for multi-zone apps.
     """
 
     def __init__(
@@ -70,8 +70,8 @@ class MicrosoftOAuthProvider(OAuthProvider):
         """
         super().__init__(client_id, client_secret, redirect_uri, scopes, provider_name)
 
-        # Microsoft OAuth endpoints (using "common" for multi-tenant support)
-        self.tenant_id = "common"
+        # Microsoft OAuth endpoints (using "common" for multi-zone support)
+        self.zone_id = "common"
         self.authorization_endpoint = (
             "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
         )

@@ -28,7 +28,7 @@ Nexus enables **secure multi-user collaboration** through its built-in authentic
 **Use Cases:**
 - 👥 Team document collaboration
 - 🤖 Multi-agent systems with separate contexts
-- 🏢 Multi-tenant SaaS applications
+- 🏢 Multi-zone SaaS applications
 - 📊 Shared data analysis projects
 - 🔒 Secure file sharing with permissions
 - 🎯 Session-based user isolation
@@ -1135,7 +1135,7 @@ Now that you've mastered team collaboration, explore more advanced topics:
 
 ### 🔍 Recommended Next Steps
 
-1. **[Multi-Tenant SaaS](multi-tenant-saas.md)** (30 min)
+1. **[Multi-Tenant SaaS](multi-zone-saas.md)** (30 min)
    Scale to multiple organizations with tenant isolation
 
 2. **[Workflow Automation](workflow-automation.md)** (15 min)
@@ -1179,6 +1179,6 @@ Now that you've mastered team collaboration, explore more advanced topics:
 
 ---
 
-**Next:** [Multi-Tenant SaaS →](multi-tenant-saas.md)
+**Next:** [Multi-Tenant SaaS →](multi-zone-saas.md)
 
 **Questions?** Check our [Permissions Guide](../concepts/rebac-explained.md) or [GitHub Discussions](https://github.com/nexi-lab/nexus/discussions)

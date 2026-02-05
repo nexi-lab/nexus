@@ -154,7 +154,7 @@ class TestSyncMountContext:
         op_context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="alice",
         )
@@ -324,7 +324,7 @@ class TestSyncMountIntegration:
             groups=[],
             subject_type="user",
             subject_id="alice",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             is_admin=True,
         )
 

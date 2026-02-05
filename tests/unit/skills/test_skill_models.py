@@ -103,7 +103,7 @@ def test_skill_metadata_validation_invalid_tier() -> None:
 
 def test_skill_metadata_validation_valid_tiers() -> None:
     """Test that validation passes with valid tiers."""
-    for tier in ["agent", "tenant", "system"]:
+    for tier in ["agent", "zone", "system"]:
         metadata = SkillMetadata(
             name="test-skill",
             description="Test",

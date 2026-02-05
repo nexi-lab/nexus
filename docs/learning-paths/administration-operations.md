@@ -196,7 +196,7 @@ async def main():
             username="charlie",
             display_name="Charlie Brown",
             subject_type="user",
-            tenant_id="default"
+            zone_id="default"
         )
         print(f"✓ Created user: charlie")
         print(f"  User ID: {user_id}")
@@ -252,7 +252,7 @@ async def rotate_user_key(admin_nx, username):
         username=f"{username}-new",
         display_name=username,
         subject_type="user",
-        tenant_id="default"
+        zone_id="default"
     )
 
     print(f"✓ New key created for {username}")

@@ -47,7 +47,7 @@ def create_impersonated_user_agent(
     Examples:
         >>> result = create_impersonated_user_agent(nx, "alice", alice_context)
         >>> print(result.get('config_path'))
-        /tenant:default/user:alice/agent/ImpersonatedUser/config.yaml
+        /zone/default/user:alice/agent/ImpersonatedUser/config.yaml
     """
     agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},ImpersonatedUser"
@@ -192,7 +192,7 @@ def create_standard_agents(
 def grant_agent_resource_access(
     nx: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     resource_types: list[str],
     agent_name: str = "UntrustedAgent",
 ) -> int:
@@ -201,7 +201,7 @@ def grant_agent_resource_access(
     Args:
         nx: NexusFS instance
         user_id: User ID who owns the resources
-        tenant_id: Tenant ID
+        zone_id: Zone ID
         resource_types: List of resource type names to grant access to
         agent_name: Agent name (default: "UntrustedAgent")
 
@@ -216,7 +216,7 @@ def grant_agent_resource_access(
         Granted 2 permissions
     """
     agent_id = f"{user_id},{agent_name}"
-    user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     for resource_type in resource_types:
@@ -226,7 +226,7 @@ def grant_agent_resource_access(
                 subject=("agent", agent_id),
                 relation="viewer",  # Read-only access
                 object=("file", folder_path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             logger.info(f"Granted viewer permission on {folder_path} to {agent_name}")
             granted_count += 1
@@ -239,7 +239,7 @@ def grant_agent_resource_access(
 def grant_skill_builder_permissions(
     nx: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
 ) -> int:
     """Grant SkillBuilder agent permissions to skill-creator skill, resource folder, and workspace.
 
@@ -251,7 +251,7 @@ def grant_skill_builder_permissions(
     Args:
         nx: NexusFS instance
         user_id: User ID who owns the agent
-        tenant_id: Tenant ID
+        zone_id: Zone ID
 
     Returns:
         Number of successful permission grants
@@ -262,7 +262,7 @@ def grant_skill_builder_permissions(
         Granted 3 permissions to SkillBuilder
     """
     agent_id = f"{user_id},SkillBuilder"
-    user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     # Grant access to skill-creator skill
@@ -272,7 +272,7 @@ def grant_skill_builder_permissions(
             subject=("agent", agent_id),
             relation="direct_viewer",  # Read-only access
             object=("file", skill_creator_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         logger.info(f"Granted viewer permission on {skill_creator_path} to SkillBuilder")
         granted_count += 1
@@ -286,7 +286,7 @@ def grant_skill_builder_permissions(
             subject=("agent", agent_id),
             relation="direct_viewer",  # Read-only access
             object=("file", resource_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         logger.info(f"Granted viewer permission on {resource_path} to SkillBuilder")
         granted_count += 1
@@ -300,7 +300,7 @@ def grant_skill_builder_permissions(
             subject=("agent", agent_id),
             relation="direct_editor",  # Editor access for creating/modifying skills
             object=("file", workspace_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         logger.info(f"Granted editor permission on {workspace_path} to SkillBuilder")
         granted_count += 1

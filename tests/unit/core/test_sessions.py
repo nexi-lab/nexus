@@ -82,17 +82,17 @@ class TestCreateSession:
         assert user_session.agent_id == "agent1"
         assert user_session.user_id == "alice"
 
-    def test_create_session_with_tenant(self, session):
-        """Test creating a session with tenant ID."""
+    def test_create_session_with_zone(self, session):
+        """Test creating a session with zone ID."""
         user_session = create_session(
             session,
             user_id="alice",
-            tenant_id="acme",
+            zone_id="acme",
             ttl=timedelta(hours=8),
         )
 
         assert user_session is not None
-        assert user_session.tenant_id == "acme"
+        assert user_session.zone_id == "acme"
 
     def test_session_auto_generates_id(self, session):
         """Test that session ID is auto-generated."""

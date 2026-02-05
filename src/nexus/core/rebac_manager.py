@@ -46,7 +46,7 @@ class ReBACManager:
     .. deprecated:: Phase 2
         Direct instantiation of ReBACManager is deprecated.
         Use :class:`EnhancedReBACManager` for production code, which includes:
-        - P0 fixes (consistency levels, tenant isolation, graph limits)
+        - P0 fixes (consistency levels, zone isolation, graph limits)
         - Leopard optimization (O(1) group lookups)
         - Tiger cache (advanced caching)
         - DoS protection (timeouts, fan-out limits)
@@ -61,7 +61,7 @@ class ReBACManager:
     - Cycle detection
 
     Note:
-        This class serves as the base for TenantAwareReBACManager and
+        This class serves as the base for ZoneAwareReBACManager and
         EnhancedReBACManager. Direct instantiation is supported for legacy
         code and testing, but new code should use EnhancedReBACManager.
 
@@ -142,9 +142,7 @@ class ReBACManager:
                 revision_quantization_window=l1_cache_revision_window,
             )
             # Wire up revision fetcher for revision-based cache keys
-            self._l1_cache.set_revision_fetcher(
-                lambda tenant_id: self._get_tenant_revision(tenant_id)
-            )
+            self._l1_cache.set_revision_fetcher(lambda zone_id: self._get_zone_revision(zone_id))
             logger.info(
                 f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
                 f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
@@ -235,20 +233,20 @@ class ReBACManager:
 
         return self._pg_version >= 18
 
-    def _get_tenant_revision(self, tenant_id: str | None, conn: Any | None = None) -> int:
-        """Get current revision for a tenant (read-only, no increment).
+    def _get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
+        """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
         This replaces the broken time-bucket quantization with logical revisions.
 
         Args:
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
             conn: Optional database connection to reuse
 
         Returns:
-            Current revision number (0 if tenant has no writes yet)
+            Current revision number (0 if zone has no writes yet)
         """
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
         should_close = conn is None
         if conn is None:
             conn = self._get_connection()
@@ -256,9 +254,9 @@ class ReBACManager:
             cursor = self._create_cursor(conn)
             cursor.execute(
                 self._fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE tenant_id = ?"
+                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
                 ),
-                (effective_tenant,),
+                (effective_zone,),
             )
             row = cursor.fetchone()
             return int(row["current_version"]) if row else 0
@@ -266,8 +264,8 @@ class ReBACManager:
             if should_close:
                 self._close_connection(conn)
 
-    def _increment_tenant_revision(self, tenant_id: str | None, conn: Any) -> int:
-        """Increment and return the new revision for a tenant.
+    def _increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
+        """Increment and return the new revision for a zone.
 
         Called after successful write operations (write, delete, batch).
         Uses atomic DB operations for distributed consistency (Issue #909).
@@ -278,27 +276,27 @@ class ReBACManager:
         - Based on SpiceDB/Google Zanzibar quantization approach
 
         Args:
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
             conn: Database connection (reuse existing transaction)
 
         Returns:
             New revision number after increment
         """
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
         cursor = self._create_cursor(conn)
 
         if self.engine.dialect.name == "postgresql":
             # Atomic upsert with RETURNING
             cursor.execute(
                 """
-                INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
                 VALUES (%s, 1, NOW())
-                ON CONFLICT (tenant_id)
+                ON CONFLICT (zone_id)
                 DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
                               updated_at = NOW()
                 RETURNING current_version
                 """,
-                (effective_tenant,),
+                (effective_zone,),
             )
             row = cursor.fetchone()
             return int(row["current_version"]) if row else 1
@@ -306,9 +304,9 @@ class ReBACManager:
             # SQLite: Two-step increment
             cursor.execute(
                 self._fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE tenant_id = ?"
+                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
                 ),
-                (effective_tenant,),
+                (effective_zone,),
             )
             row = cursor.fetchone()
 
@@ -319,22 +317,22 @@ class ReBACManager:
                         """
                         UPDATE rebac_version_sequences
                         SET current_version = ?, updated_at = ?
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                         """
                     ),
-                    (new_version, datetime.now(UTC).isoformat(), effective_tenant),
+                    (new_version, datetime.now(UTC).isoformat(), effective_zone),
                 )
             else:
-                # First version for this tenant
+                # First version for this zone
                 new_version = 1
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
-                        INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
                         VALUES (?, ?, ?)
                         """
                     ),
-                    (effective_tenant, new_version, datetime.now(UTC).isoformat()),
+                    (effective_zone, new_version, datetime.now(UTC).isoformat()),
                 )
 
             return int(new_version)
@@ -446,7 +444,7 @@ class ReBACManager:
         return sql
 
     def _would_create_cycle_with_conn(
-        self, conn: Any, subject: Entity, object_entity: Entity, tenant_id: str | None
+        self, conn: Any, subject: Entity, object_entity: Entity, zone_id: str | None
     ) -> bool:
         """Check if creating a parent relation would create a cycle.
 
@@ -459,7 +457,7 @@ class ReBACManager:
         Args:
             subject: The child node (e.g., file A)
             object_entity: The parent node (e.g., file B)
-            tenant_id: Optional tenant ID for isolation
+            zone_id: Optional zone ID for isolation
 
         Returns:
             True if adding this relation would create a cycle, False otherwise
@@ -494,7 +492,7 @@ class ReBACManager:
                     WHERE subject_type = %s
                       AND subject_id = %s
                       AND relation = 'parent'
-                      AND (tenant_id = %s OR (tenant_id IS NULL AND %s IS NULL))
+                      AND (zone_id = %s OR (zone_id IS NULL AND %s IS NULL))
 
                     UNION ALL
 
@@ -508,7 +506,7 @@ class ReBACManager:
                         ON t.subject_type = a.ancestor_type
                         AND t.subject_id = a.ancestor_id
                     WHERE t.relation = 'parent'
-                      AND (t.tenant_id = %s OR (t.tenant_id IS NULL AND %s IS NULL))
+                      AND (t.zone_id = %s OR (t.zone_id IS NULL AND %s IS NULL))
                       AND a.depth < %s
                 )
                 SELECT 1 FROM ancestors
@@ -518,10 +516,10 @@ class ReBACManager:
             params = (
                 object_entity.entity_type,
                 object_entity.entity_id,
-                tenant_id,
-                tenant_id,
-                tenant_id,
-                tenant_id,
+                zone_id,
+                zone_id,
+                zone_id,
+                zone_id,
                 max_depth,
                 subject.entity_type,
                 subject.entity_id,
@@ -539,7 +537,7 @@ class ReBACManager:
                     WHERE subject_type = ?
                       AND subject_id = ?
                       AND relation = 'parent'
-                      AND (tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL))
+                      AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
 
                     UNION ALL
 
@@ -553,7 +551,7 @@ class ReBACManager:
                         ON t.subject_type = a.ancestor_type
                         AND t.subject_id = a.ancestor_id
                     WHERE t.relation = 'parent'
-                      AND (t.tenant_id = ? OR (t.tenant_id IS NULL AND ? IS NULL))
+                      AND (t.zone_id = ? OR (t.zone_id IS NULL AND ? IS NULL))
                       AND a.depth < ?
                 )
                 SELECT 1 FROM ancestors
@@ -563,10 +561,10 @@ class ReBACManager:
             params = (
                 object_entity.entity_type,
                 object_entity.entity_id,
-                tenant_id,
-                tenant_id,
-                tenant_id,
-                tenant_id,
+                zone_id,
+                zone_id,
+                zone_id,
+                zone_id,
                 max_depth,
                 subject.entity_type,
                 subject.entity_id,
@@ -774,9 +772,9 @@ class ReBACManager:
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
-        subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
-        object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        subject_zone_id: str | None = None,  # Defaults to zone_id if not provided
+        object_zone_id: str | None = None,  # Defaults to zone_id if not provided
     ) -> str:
         """Create a relationship tuple.
 
@@ -787,15 +785,15 @@ class ReBACManager:
             object: (object_type, object_id) tuple
             expires_at: Optional expiration time
             conditions: Optional JSON conditions
-            tenant_id: Tenant ID for the tuple (P0-4: tenant isolation)
-            subject_tenant_id: Subject's tenant ID (for cross-tenant validation)
-            object_tenant_id: Object's tenant ID (for cross-tenant validation)
+            zone_id: Zone ID for the tuple (P0-4: zone isolation)
+            subject_zone_id: Subject's zone ID (for cross-zone validation)
+            object_zone_id: Object's zone ID (for cross-zone validation)
 
         Returns:
             Tuple ID of created relationship
 
         Raises:
-            ValueError: If cross-tenant relationship is attempted
+            ValueError: If cross-zone relationship is attempted
 
         Example:
             >>> # Concrete subject
@@ -803,14 +801,14 @@ class ReBACManager:
             ...     subject=("agent", "alice_id"),
             ...     relation="member-of",
             ...     object=("group", "eng_team_id"),
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
             >>> # Userset-as-subject
             >>> manager.rebac_write(
             ...     subject=("group", "eng_team_id", "member"),
             ...     relation="editor-of",
             ...     object=("file", "readme_txt"),
-            ...     tenant_id="org_acme"
+            ...     zone_id="org_acme"
             ... )
         """
         # Ensure default namespaces are initialized
@@ -830,24 +828,24 @@ class ReBACManager:
             raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
         object_entity = Entity(object[0], object[1])
 
-        # Issue #773: Default tenant_id to "default" if not provided
-        if tenant_id is None:
-            tenant_id = "default"
-        # Default subject/object tenant to main tenant_id if not provided
-        if subject_tenant_id is None:
-            subject_tenant_id = tenant_id
-        if object_tenant_id is None:
-            object_tenant_id = tenant_id
+        # Issue #773: Default zone_id to "default" if not provided
+        if zone_id is None:
+            zone_id = "default"
+        # Default subject/object zone to main zone_id if not provided
+        if subject_zone_id is None:
+            subject_zone_id = zone_id
+        if object_zone_id is None:
+            object_zone_id = zone_id
 
-        # P0-4: Cross-tenant validation at write-time (delegated to helper)
-        self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
+        # P0-4: Cross-zone validation at write-time (delegated to helper)
+        self._validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
         with self._connection() as conn:
             # CYCLE DETECTION: Prevent cycles in parent relations
             # Check if this is a parent relation and would create a cycle
             # IMPORTANT: Must check inside the connection context to see existing tuples
             if relation == "parent" and self._would_create_cycle_with_conn(
-                conn, subject_entity, object_entity, tenant_id
+                conn, subject_entity, object_entity, zone_id
             ):
                 raise ValueError(
                     f"Cycle detected: Creating parent relation from "
@@ -865,7 +863,7 @@ class ReBACManager:
                     AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
                     AND relation = ?
                     AND object_type = ? AND object_id = ?
-                    AND (tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL))
+                    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
                     """
                 ),
                 (
@@ -876,8 +874,8 @@ class ReBACManager:
                     relation,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    tenant_id,
-                    tenant_id,
+                    zone_id,
+                    zone_id,
                 ),
             )
             existing = cursor.fetchone()
@@ -887,7 +885,7 @@ class ReBACManager:
                     str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
                 )
 
-            # Insert tuple (P0-4: Include tenant_id fields for isolation)
+            # Insert tuple (P0-4: Include zone_id fields for isolation)
             # v0.7.0: Include subject_relation for userset-as-subject support
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -895,7 +893,7 @@ class ReBACManager:
                     INSERT INTO rebac_tuples (
                         tuple_id, subject_type, subject_id, subject_relation, relation,
                         object_type, object_id, created_at, expires_at, conditions,
-                        tenant_id, subject_tenant_id, object_tenant_id
+                        zone_id, subject_zone_id, object_zone_id
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
@@ -911,19 +909,19 @@ class ReBACManager:
                     datetime.now(UTC).isoformat(),
                     expires_at.isoformat() if expires_at else None,
                     json.dumps(conditions) if conditions else None,
-                    tenant_id,
-                    subject_tenant_id,
-                    object_tenant_id,
+                    zone_id,
+                    subject_zone_id,
+                    object_zone_id,
                 ),
             )
 
-            # Log to changelog (Issue #773: include tenant_id)
+            # Log to changelog (Issue #773: include zone_id)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO rebac_changelog (
                         change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, tenant_id, created_at
+                        relation, object_type, object_id, zone_id, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
@@ -936,13 +934,13 @@ class ReBACManager:
                     relation,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    tenant_id or "default",
+                    zone_id or "default",
                     datetime.now(UTC).isoformat(),
                 ),
             )
 
-            # Increment tenant revision before commit for atomicity (Issue #909)
-            self._increment_tenant_revision(tenant_id, conn)
+            # Increment zone revision before commit for atomicity (Issue #909)
+            self._increment_zone_revision(zone_id, conn)
 
             conn.commit()
             self._tuple_version += 1  # Invalidate Rust graph cache
@@ -954,21 +952,21 @@ class ReBACManager:
                 subject_entity,
                 relation,
                 object_entity,
-                tenant_id,
+                zone_id,
                 subject_relation,
                 expires_at,
                 conn=conn,
             )
 
-            # CROSS-TENANT FIX: If subject is from a different tenant, also invalidate
-            # cache for the subject's tenant. This is critical for cross-tenant shares
-            # where the permission is granted in resource tenant but checked from user tenant.
-            if subject_tenant_id is not None and subject_tenant_id != tenant_id:
+            # CROSS-ZONE FIX: If subject is from a different zone, also invalidate
+            # cache for the subject's zone. This is critical for cross-zone shares
+            # where the permission is granted in resource zone but checked from user zone.
+            if subject_zone_id is not None and subject_zone_id != zone_id:
                 self._invalidate_cache_for_tuple(
                     subject_entity,
                     relation,
                     object_entity,
-                    subject_tenant_id,
+                    subject_zone_id,
                     subject_relation,
                     expires_at,
                     conn=conn,  # FIX: Reuse connection
@@ -976,40 +974,36 @@ class ReBACManager:
 
         return tuple_id
 
-    def _validate_cross_tenant(
+    def _validate_cross_zone(
         self,
-        tenant_id: str | None,
-        subject_tenant_id: str | None,
-        object_tenant_id: str | None,
+        zone_id: str | None,
+        subject_zone_id: str | None,
+        object_zone_id: str | None,
     ) -> None:
-        """Validate cross-tenant relationships (P0-4).
+        """Validate cross-zone relationships (P0-4).
 
-        Prevents cross-tenant relationship tuples for security.
+        Prevents cross-zone relationship tuples for security.
 
         Args:
-            tenant_id: Tuple tenant ID
-            subject_tenant_id: Subject's tenant ID (optional)
-            object_tenant_id: Object's tenant ID (optional)
+            zone_id: Tuple zone ID
+            subject_zone_id: Subject's zone ID (optional)
+            object_zone_id: Object's zone ID (optional)
 
         Raises:
-            ValueError: If cross-tenant relationship is detected
+            ValueError: If cross-zone relationship is detected
         """
-        # If tuple has a tenant_id, validate subject's tenant matches (if provided)
-        if (
-            tenant_id is not None
-            and subject_tenant_id is not None
-            and subject_tenant_id != tenant_id
-        ):
+        # If tuple has a zone_id, validate subject's zone matches (if provided)
+        if zone_id is not None and subject_zone_id is not None and subject_zone_id != zone_id:
             raise ValueError(
-                f"Cross-tenant relationship not allowed: subject tenant '{subject_tenant_id}' "
-                f"!= tuple tenant '{tenant_id}'"
+                f"Cross-zone relationship not allowed: subject zone '{subject_zone_id}' "
+                f"!= tuple zone '{zone_id}'"
             )
 
-        # If tuple has a tenant_id, validate object's tenant matches (if provided)
-        if tenant_id is not None and object_tenant_id is not None and object_tenant_id != tenant_id:
+        # If tuple has a zone_id, validate object's zone matches (if provided)
+        if zone_id is not None and object_zone_id is not None and object_zone_id != zone_id:
             raise ValueError(
-                f"Cross-tenant relationship not allowed: object tenant '{object_tenant_id}' "
-                f"!= tuple tenant '{tenant_id}'"
+                f"Cross-zone relationship not allowed: object zone '{object_zone_id}' "
+                f"!= tuple zone '{zone_id}'"
             )
 
     def rebac_write_batch(
@@ -1026,11 +1020,11 @@ class ReBACManager:
                 - subject: (type, id) or (type, id, relation) tuple
                 - relation: str
                 - object: (type, id) tuple
-                - tenant_id: str | None (optional, defaults to "default")
+                - zone_id: str | None (optional, defaults to "default")
                 - expires_at: datetime | None (optional)
                 - conditions: dict | None (optional)
-                - subject_tenant_id: str | None (optional)
-                - object_tenant_id: str | None (optional)
+                - subject_zone_id: str | None (optional)
+                - object_zone_id: str | None (optional)
 
         Returns:
             Number of tuples created (excluding duplicates)
@@ -1041,13 +1035,13 @@ class ReBACManager:
             ...         "subject": ("file", "/a/b/c.txt"),
             ...         "relation": "parent",
             ...         "object": ("file", "/a/b"),
-            ...         "tenant_id": "org_123"
+            ...         "zone_id": "org_123"
             ...     },
             ...     {
             ...         "subject": ("file", "/a/b"),
             ...         "relation": "parent",
             ...         "object": ("file", "/a"),
-            ...         "tenant_id": "org_123"
+            ...         "zone_id": "org_123"
             ...     }
             ... ])
             2
@@ -1071,11 +1065,11 @@ class ReBACManager:
                     subject = t["subject"]
                     relation = t["relation"]
                     obj = t["object"]
-                    tenant_id = t.get("tenant_id")
+                    zone_id = t.get("zone_id")
                     expires_at = t.get("expires_at")
                     conditions = t.get("conditions")
-                    subject_tenant_id = t.get("subject_tenant_id")
-                    object_tenant_id = t.get("object_tenant_id")
+                    subject_zone_id = t.get("subject_zone_id")
+                    object_zone_id = t.get("object_zone_id")
 
                     # Parse subject (support userset-as-subject with 3-tuple)
                     if len(subject) == 3:
@@ -1092,20 +1086,20 @@ class ReBACManager:
 
                     object_entity = Entity(obj[0], obj[1])
 
-                    # Issue #773: Default tenant_id values if not provided
-                    if tenant_id is None:
-                        tenant_id = "default"
-                    if subject_tenant_id is None:
-                        subject_tenant_id = tenant_id
-                    if object_tenant_id is None:
-                        object_tenant_id = tenant_id
+                    # Issue #773: Default zone_id values if not provided
+                    if zone_id is None:
+                        zone_id = "default"
+                    if subject_zone_id is None:
+                        subject_zone_id = zone_id
+                    if object_zone_id is None:
+                        object_zone_id = zone_id
 
-                    # P0-4: Cross-tenant validation (delegated to helper)
-                    self._validate_cross_tenant(tenant_id, subject_tenant_id, object_tenant_id)
+                    # P0-4: Cross-zone validation (delegated to helper)
+                    self._validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
                     # CYCLE DETECTION: For parent relations, check for cycles
                     if relation == "parent" and self._would_create_cycle_with_conn(
-                        conn, subject_entity, object_entity, tenant_id
+                        conn, subject_entity, object_entity, zone_id
                     ):
                         logger.warning(
                             f"Skipping tuple creation - cycle detected: "
@@ -1125,11 +1119,11 @@ class ReBACManager:
                             "object_type": obj[0],
                             "object_id": obj[1],
                             "object_entity": object_entity,
-                            "tenant_id": tenant_id,
+                            "zone_id": zone_id,
                             "expires_at": expires_at,
                             "conditions": conditions,
-                            "subject_tenant_id": subject_tenant_id,
-                            "object_tenant_id": object_tenant_id,
+                            "subject_zone_id": subject_zone_id,
+                            "object_zone_id": object_zone_id,
                         }
                     )
 
@@ -1146,7 +1140,7 @@ class ReBACManager:
                         (pt["subject_type"], pt["subject_id"], pt["subject_relation"]),
                         pt["relation"],
                         (pt["object_type"], pt["object_id"]),
-                        pt["tenant_id"],
+                        pt["zone_id"],
                     )
                     if key not in existing_tuples:
                         tuples_to_create.append(pt)
@@ -1161,7 +1155,7 @@ class ReBACManager:
                     INSERT INTO rebac_tuples (
                         tuple_id, subject_type, subject_id, subject_relation, relation,
                         object_type, object_id, created_at, expires_at, conditions,
-                        tenant_id, subject_tenant_id, object_tenant_id
+                        zone_id, subject_zone_id, object_zone_id
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
@@ -1180,9 +1174,9 @@ class ReBACManager:
                         now,
                         pt["expires_at"].isoformat() if pt["expires_at"] else None,
                         json.dumps(pt["conditions"]) if pt["conditions"] else None,
-                        pt["tenant_id"],
-                        pt["subject_tenant_id"],
-                        pt["object_tenant_id"],
+                        pt["zone_id"],
+                        pt["subject_zone_id"],
+                        pt["object_zone_id"],
                     )
                     for pt in tuples_to_create
                 ]
@@ -1195,7 +1189,7 @@ class ReBACManager:
                     """
                     INSERT INTO rebac_changelog (
                         change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, tenant_id, created_at
+                        relation, object_type, object_id, zone_id, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
@@ -1210,7 +1204,7 @@ class ReBACManager:
                         pt["relation"],
                         pt["object_type"],
                         pt["object_id"],
-                        pt["tenant_id"] or "default",
+                        pt["zone_id"] or "default",
                         now,
                     )
                     for pt in tuples_to_create
@@ -1221,7 +1215,7 @@ class ReBACManager:
                 created_count = len(tuples_to_create)
 
                 # Step 6: PERF OPTIMIZATION - Batch cache invalidation
-                # Collect unique (subject, relation, object, tenant) combinations
+                # Collect unique (subject, relation, object, zone) combinations
                 # and invalidate once per combination instead of per tuple
                 invalidation_keys: set[tuple[str, str, str, str, str, str | None]] = set()
                 for pt in tuples_to_create:
@@ -1231,19 +1225,19 @@ class ReBACManager:
                         pt["relation"],
                         pt["object_entity"].entity_type,
                         pt["object_entity"].entity_id,
-                        pt["tenant_id"],
+                        pt["zone_id"],
                     )
                     invalidation_keys.add(inv_key)
 
-                    # Cross-tenant invalidation
-                    if pt["subject_tenant_id"] and pt["subject_tenant_id"] != pt["tenant_id"]:
+                    # Cross-zone invalidation
+                    if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
                         cross_inv_key: tuple[str, str, str, str, str, str | None] = (
                             pt["subject_entity"].entity_type,
                             pt["subject_entity"].entity_id,
                             pt["relation"],
                             pt["object_entity"].entity_type,
                             pt["object_entity"].entity_id,
-                            pt["subject_tenant_id"],
+                            pt["subject_zone_id"],
                         )
                         invalidation_keys.add(cross_inv_key)
 
@@ -1267,7 +1261,7 @@ class ReBACManager:
                     for inv_key in invalidation_keys:
                         subj_type, subj_id, _rel, obj_type, obj_id, tid = inv_key
                         delete_conditions.append(
-                            "(tenant_id = ? AND subject_type = ? AND subject_id = ? "
+                            "(zone_id = ? AND subject_type = ? AND subject_id = ? "
                             "AND object_type = ? AND object_id = ?)"
                         )
                         delete_params.extend(
@@ -1287,15 +1281,15 @@ class ReBACManager:
                             """
                             cursor.execute(self._fix_sql_placeholders(delete_sql), chunk_params)
 
-                # Increment revision for all affected tenants before commit (Issue #909)
+                # Increment revision for all affected zones before commit (Issue #909)
                 if created_count > 0:
-                    affected_tenants = set()
+                    affected_zones = set()
                     for pt in parsed_tuples:
-                        affected_tenants.add(pt["tenant_id"] or "default")
-                        if pt["subject_tenant_id"] and pt["subject_tenant_id"] != pt["tenant_id"]:
-                            affected_tenants.add(pt["subject_tenant_id"])
-                    for tenant in affected_tenants:
-                        self._increment_tenant_revision(tenant, conn)
+                        affected_zones.add(pt["zone_id"] or "default")
+                        if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
+                            affected_zones.add(pt["subject_zone_id"])
+                    for zone in affected_zones:
+                        self._increment_zone_revision(zone, conn)
 
                 # Commit transaction after all inserts succeed
                 conn.commit()
@@ -1325,7 +1319,7 @@ class ReBACManager:
             parsed_tuples: List of parsed tuple dicts
 
         Returns:
-            Set of (subject, relation, object, tenant_id) tuples that exist
+            Set of (subject, relation, object, zone_id) tuples that exist
             where subject is (type, id, relation) and object is (type, id)
         """
         if not parsed_tuples:
@@ -1349,7 +1343,7 @@ class ReBACManager:
                     "(subject_type = ? AND subject_id = ? AND "
                     "(subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL)) AND "
                     "relation = ? AND object_type = ? AND object_id = ? AND "
-                    "(tenant_id = ? OR (tenant_id IS NULL AND ? IS NULL)))"
+                    "(zone_id = ? OR (zone_id IS NULL AND ? IS NULL)))"
                 )
                 params.extend(
                     [
@@ -1360,14 +1354,14 @@ class ReBACManager:
                         pt["relation"],
                         pt["object_type"],
                         pt["object_id"],
-                        pt["tenant_id"],
-                        pt["tenant_id"],
+                        pt["zone_id"],
+                        pt["zone_id"],
                     ]
                 )
 
             query = f"""
                 SELECT subject_type, subject_id, subject_relation, relation,
-                       object_type, object_id, tenant_id
+                       object_type, object_id, zone_id
                 FROM rebac_tuples
                 WHERE {" OR ".join(conditions)}
             """
@@ -1382,16 +1376,16 @@ class ReBACManager:
                 except (KeyError, IndexError):
                     subject_relation = None
                 try:
-                    tenant_id = row["tenant_id"]
+                    zone_id = row["zone_id"]
                 except (KeyError, IndexError):
-                    tenant_id = None
+                    zone_id = None
 
                 existing.add(
                     (
                         (row["subject_type"], row["subject_id"], subject_relation),
                         row["relation"],
                         (row["object_type"], row["object_id"]),
-                        tenant_id,
+                        zone_id,
                     )
                 )
 
@@ -1427,7 +1421,7 @@ class ReBACManager:
                             relation,
                             object_type,
                             object_id,
-                            tenant_id
+                            zone_id
                         """
                     ),
                     (tuple_id, now),
@@ -1440,7 +1434,7 @@ class ReBACManager:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
-                        SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
+                        SELECT subject_type, subject_id, subject_relation, relation, object_type, object_id, zone_id
                         FROM rebac_tuples
                         WHERE tuple_id = ?
                           AND (expires_at IS NULL OR expires_at >= ?)
@@ -1465,15 +1459,15 @@ class ReBACManager:
             subject_relation = row["subject_relation"]
             relation = row["relation"]
             obj = Entity(row["object_type"], row["object_id"])
-            tenant_id = row["tenant_id"]
+            zone_id = row["zone_id"]
 
-            # Log to changelog (Issue #773: include tenant_id)
+            # Log to changelog (Issue #773: include zone_id)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO rebac_changelog (
                         change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, tenant_id, created_at
+                        relation, object_type, object_id, zone_id, created_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
@@ -1486,13 +1480,13 @@ class ReBACManager:
                     relation,
                     obj.entity_type,
                     obj.entity_id,
-                    tenant_id or "default",
+                    zone_id or "default",
                     now,
                 ),
             )
 
-            # Increment tenant revision before commit for atomicity (Issue #909)
-            self._increment_tenant_revision(tenant_id, conn)
+            # Increment zone revision before commit for atomicity (Issue #909)
+            self._increment_zone_revision(zone_id, conn)
 
             conn.commit()
             self._tuple_version += 1  # Invalidate Rust graph cache
@@ -1500,7 +1494,7 @@ class ReBACManager:
             # Invalidate cache entries affected by this change
             # FIX: Pass conn to avoid opening new connection (pool exhaustion)
             self._invalidate_cache_for_tuple(
-                subject, relation, obj, tenant_id, subject_relation, conn=conn
+                subject, relation, obj, zone_id, subject_relation, conn=conn
             )
 
         return True
@@ -1553,7 +1547,7 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, tenant_id
+                               relation, object_type, object_id, zone_id
                         FROM rebac_tuples
                         WHERE object_type = ?
                           AND (object_id = ? OR object_id LIKE ?)
@@ -1573,7 +1567,7 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, tenant_id
+                               relation, object_type, object_id, zone_id
                         FROM rebac_tuples
                         WHERE object_type = ?
                           AND object_id = ?
@@ -1635,7 +1629,7 @@ class ReBACManager:
 
                 logger.debug(f"update_object_path: Batch UPDATE affected {cursor.rowcount} rows")
 
-                # PERF: Batch INSERT changelog entries (Issue #773: include tenant_id)
+                # PERF: Batch INSERT changelog entries (Issue #773: include zone_id)
                 changelog_entries = []
                 for row in rows:
                     old_object_id = row["object_id"]
@@ -1653,7 +1647,7 @@ class ReBACManager:
                             row["relation"],
                             object_type,
                             new_object_id,
-                            row["tenant_id"] or "default",
+                            row["zone_id"] or "default",
                             now_iso,
                         )
                     )
@@ -1663,7 +1657,7 @@ class ReBACManager:
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, tenant_id, created_at
+                            relation, object_type, object_id, zone_id, created_at
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
@@ -1683,11 +1677,11 @@ class ReBACManager:
                     old_obj = Entity(object_type, old_object_id)
                     new_obj = Entity(object_type, new_object_id)
                     relation = row["relation"]
-                    tenant_id = row["tenant_id"]
+                    zone_id = row["zone_id"]
                     subject_relation = row["subject_relation"]
 
                     self._invalidate_cache_for_tuple(
-                        subject, relation, old_obj, tenant_id, subject_relation, conn=conn
+                        subject, relation, old_obj, zone_id, subject_relation, conn=conn
                     )
 
                     # BUG FIX (Issue #XXX): Also invalidate Tiger Cache for the subject
@@ -1698,13 +1692,13 @@ class ReBACManager:
                             self.tiger_invalidate_cache(
                                 subject=(subject.entity_type, subject.entity_id),
                                 resource_type=old_obj.entity_type,
-                                tenant_id=tenant_id or "default",
+                                zone_id=zone_id or "default",
                             )
                         except Exception as e:
                             logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
 
                     self._invalidate_cache_for_tuple(
-                        subject, relation, new_obj, tenant_id, subject_relation, conn=conn
+                        subject, relation, new_obj, zone_id, subject_relation, conn=conn
                     )
 
                 updated_count += len(rows)
@@ -1718,7 +1712,7 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, tenant_id
+                               relation, object_type, object_id, zone_id
                         FROM rebac_tuples
                         WHERE subject_type = ?
                           AND (subject_id = ? OR subject_id LIKE ?)
@@ -1738,7 +1732,7 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         SELECT tuple_id, subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id, tenant_id
+                               relation, object_type, object_id, zone_id
                         FROM rebac_tuples
                         WHERE subject_type = ?
                           AND subject_id = ?
@@ -1803,7 +1797,7 @@ class ReBACManager:
                     f"update_object_path: Batch UPDATE (subject_id) affected {cursor.rowcount} rows"
                 )
 
-                # PERF: Batch INSERT changelog entries (Issue #773: include tenant_id)
+                # PERF: Batch INSERT changelog entries (Issue #773: include zone_id)
                 changelog_entries = []
                 for row in subject_rows:
                     old_subject_id = row["subject_id"]
@@ -1821,7 +1815,7 @@ class ReBACManager:
                             row["relation"],
                             row["object_type"],
                             row["object_id"],
-                            row["tenant_id"] or "default",
+                            row["zone_id"] or "default",
                             now_iso,
                         )
                     )
@@ -1831,7 +1825,7 @@ class ReBACManager:
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, tenant_id, created_at
+                            relation, object_type, object_id, zone_id, created_at
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
@@ -1851,20 +1845,20 @@ class ReBACManager:
                     new_subj = Entity(object_type, new_subject_id)
                     obj = Entity(row["object_type"], row["object_id"])
                     relation = row["relation"]
-                    tenant_id = row["tenant_id"]
+                    zone_id = row["zone_id"]
                     subject_relation = row["subject_relation"]
 
                     self._invalidate_cache_for_tuple(
-                        old_subj, relation, obj, tenant_id, subject_relation, conn=conn
+                        old_subj, relation, obj, zone_id, subject_relation, conn=conn
                     )
                     self._invalidate_cache_for_tuple(
-                        new_subj, relation, obj, tenant_id, subject_relation, conn=conn
+                        new_subj, relation, obj, zone_id, subject_relation, conn=conn
                     )
 
                 updated_count += len(subject_rows)
 
             # BUG FIX: Also update Tiger Resource Map when files are renamed
-            # The resource map maps (resource_type, resource_id, tenant_id) -> integer ID
+            # The resource map maps (resource_type, resource_id, zone_id) -> integer ID
             # If the old path is still in the resource map, Tiger Cache checks may return
             # stale results because the bitmap might still reference the old resource_int_id
             if hasattr(self, "_tiger_cache") and self._tiger_cache:
@@ -1902,7 +1896,7 @@ class ReBACManager:
                     if hasattr(resource_map, "_uuid_to_int"):
                         keys_to_remove = []
                         for key in resource_map._uuid_to_int:
-                            res_type, res_id, tenant = key
+                            res_type, res_id, zone = key
                             if res_type == object_type:
                                 if is_directory:
                                     if res_id == old_path or res_id.startswith(old_path + "/"):
@@ -1930,7 +1924,7 @@ class ReBACManager:
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object.
 
@@ -1942,7 +1936,7 @@ class ReBACManager:
             permission: Permission to check (e.g., 'read', 'write')
             object: (object_type, object_id) tuple
             context: Optional context for ABAC evaluation (time, ip, device, etc.)
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             True if permission is granted, False otherwise
@@ -1968,15 +1962,15 @@ class ReBACManager:
         # Ensure default namespaces are initialized
         self._ensure_namespaces_initialized()
 
-        # Issue #773: Default tenant_id to "default" if not provided
-        if tenant_id is None:
-            tenant_id = "default"
+        # Issue #773: Default zone_id to "default" if not provided
+        if zone_id is None:
+            zone_id = "default"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
 
         logger.debug(
-            f"🔍 REBAC CHECK: subject={subject_entity}, permission={permission}, object={object_entity}, tenant_id={tenant_id}"
+            f"🔍 REBAC CHECK: subject={subject_entity}, permission={permission}, object={object_entity}, zone_id={zone_id}"
         )
 
         # Clean up expired tuples first (this will invalidate affected caches)
@@ -1993,21 +1987,19 @@ class ReBACManager:
                     permission,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    tenant_id,
+                    zone_id,
                 )
                 if cached is not None:
                     logger.debug(f"✅ CACHE HIT: result={cached}, needs_refresh={needs_refresh}")
                     if needs_refresh:
                         # Schedule background refresh without blocking
                         self._schedule_background_refresh(
-                            cache_key, subject, permission, object, tenant_id
+                            cache_key, subject, permission, object, zone_id
                         )
                     return cached
             else:
                 # Fallback to old method if no L1 cache
-                cached = self._get_cached_check(
-                    subject_entity, permission, object_entity, tenant_id
-                )
+                cached = self._get_cached_check(subject_entity, permission, object_entity, zone_id)
                 if cached is not None:
                     logger.debug(f"✅ CACHE HIT: result={cached}")
                     return cached
@@ -2021,7 +2013,7 @@ class ReBACManager:
                     permission,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    tenant_id,
+                    zone_id,
                 )
 
                 if not should_compute:
@@ -2047,7 +2039,7 @@ class ReBACManager:
                         visited=set(),
                         depth=0,
                         context=context,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                     delta = time_module.perf_counter() - start_time
                     logger.debug(f"{'✅' if result else '❌'} REBAC RESULT: {result}")
@@ -2061,12 +2053,12 @@ class ReBACManager:
                         permission,
                         object_entity.entity_type,
                         object_entity.entity_id,
-                        tenant_id,
+                        zone_id,
                         delta=delta,
                     )
                     # Also cache in L2
                     self._cache_check_result(
-                        subject_entity, permission, object_entity, result, tenant_id, delta=delta
+                        subject_entity, permission, object_entity, result, zone_id, delta=delta
                     )
                     return result
                 except Exception:
@@ -2086,7 +2078,7 @@ class ReBACManager:
             visited=set(),
             depth=0,
             context=context,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         delta = time_module.perf_counter() - start_time
 
@@ -2095,7 +2087,7 @@ class ReBACManager:
         # Cache result (only if no context) with delta for XFetch (Issue #718)
         if context is None:
             self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id, delta=delta
+                subject_entity, permission, object_entity, result, zone_id, delta=delta
             )
 
         return result
@@ -2154,7 +2146,7 @@ class ReBACManager:
             )
             delta = time_module.perf_counter() - start_time
             self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id=None, delta=delta
+                subject_entity, permission, object_entity, result, zone_id=None, delta=delta
             )
             results[i] = result
 
@@ -2245,7 +2237,7 @@ class ReBACManager:
                             permission,
                             object_entity,
                             result,
-                            tenant_id=None,
+                            zone_id=None,
                             delta=avg_delta,
                         )
                 except Exception as e:
@@ -2282,7 +2274,7 @@ class ReBACManager:
             )
             delta = time_module.perf_counter() - start_time
             self._cache_check_result(
-                subject_entity, permission, object_entity, result, tenant_id=None, delta=delta
+                subject_entity, permission, object_entity, result, zone_id=None, delta=delta
             )
             results[i] = result
 
@@ -2371,7 +2363,7 @@ class ReBACManager:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -2382,7 +2374,7 @@ class ReBACManager:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             Dictionary with:
@@ -2452,7 +2444,7 @@ class ReBACManager:
             visited=set(),
             depth=0,
             paths=paths,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         # Find successful path (if any)
@@ -2537,7 +2529,7 @@ class ReBACManager:
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         paths: list[dict[str, Any]],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Compute permission with detailed path tracking for explanation.
 
@@ -2550,7 +2542,7 @@ class ReBACManager:
             visited: Set of visited nodes to detect cycles
             depth: Current traversal depth
             paths: List to accumulate path information
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             True if permission is granted
@@ -2588,9 +2580,7 @@ class ReBACManager:
         namespace = self.get_namespace(obj.entity_type)
         if not namespace:
             # No namespace - check direct relation only
-            tuple_info = self._find_direct_relation_tuple(
-                subject, permission, obj, tenant_id=tenant_id
-            )
+            tuple_info = self._find_direct_relation_tuple(subject, permission, obj, zone_id=zone_id)
             direct = tuple_info is not None
             path_entry["direct_relation"] = direct
             if tuple_info:
@@ -2607,7 +2597,7 @@ class ReBACManager:
             for userset in usersets:
                 userset_sub_paths: list[dict[str, Any]] = []
                 if self._compute_permission_with_explanation(
-                    subject, userset, obj, visited.copy(), depth + 1, userset_sub_paths, tenant_id
+                    subject, userset, obj, visited.copy(), depth + 1, userset_sub_paths, zone_id
                 ):
                     path_entry["granted"] = True
                     path_entry["via_userset"] = userset
@@ -2622,9 +2612,7 @@ class ReBACManager:
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
             # Not defined in namespace - check direct relation
-            tuple_info = self._find_direct_relation_tuple(
-                subject, permission, obj, tenant_id=tenant_id
-            )
+            tuple_info = self._find_direct_relation_tuple(subject, permission, obj, zone_id=zone_id)
             direct = tuple_info is not None
             path_entry["direct_relation"] = direct
             if tuple_info:
@@ -2641,7 +2629,7 @@ class ReBACManager:
             for rel in union_relations:
                 union_sub_paths: list[dict[str, Any]] = []
                 if self._compute_permission_with_explanation(
-                    subject, rel, obj, visited.copy(), depth + 1, union_sub_paths, tenant_id
+                    subject, rel, obj, visited.copy(), depth + 1, union_sub_paths, zone_id
                 ):
                     path_entry["granted"] = True
                     path_entry["via_union_member"] = rel
@@ -2661,7 +2649,7 @@ class ReBACManager:
             for rel in intersection_relations:
                 intersection_sub_paths: list[dict[str, Any]] = []
                 if not self._compute_permission_with_explanation(
-                    subject, rel, obj, visited.copy(), depth + 1, intersection_sub_paths, tenant_id
+                    subject, rel, obj, visited.copy(), depth + 1, intersection_sub_paths, zone_id
                 ):
                     all_granted = False
                     break
@@ -2682,7 +2670,7 @@ class ReBACManager:
                     visited.copy(),
                     depth + 1,
                     exclusion_sub_paths,
-                    tenant_id,
+                    zone_id,
                 )
                 path_entry["exclusion"] = excluded_rel
                 path_entry["granted"] = not has_excluded
@@ -2721,7 +2709,7 @@ class ReBACManager:
                         visited.copy(),
                         depth + 1,
                         ttu_sub_paths,
-                        tenant_id,
+                        zone_id,
                     ):
                         path_entry["granted"] = True
                         path_entry["sub_paths"] = ttu_sub_paths
@@ -2739,7 +2727,7 @@ class ReBACManager:
                         visited.copy(),
                         depth + 1,
                         ttu_sub_paths,
-                        tenant_id,
+                        zone_id,
                     ):
                         path_entry["granted"] = True
                         path_entry["sub_paths"] = ttu_sub_paths
@@ -2751,7 +2739,7 @@ class ReBACManager:
             return False
 
         # Direct relation check
-        tuple_info = self._find_direct_relation_tuple(subject, permission, obj, tenant_id=tenant_id)
+        tuple_info = self._find_direct_relation_tuple(subject, permission, obj, zone_id=zone_id)
         direct = tuple_info is not None
         path_entry["direct_relation"] = direct
         if tuple_info:
@@ -2768,7 +2756,7 @@ class ReBACManager:
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Compute permission via graph traversal.
 
@@ -2779,7 +2767,7 @@ class ReBACManager:
             visited: Set of visited (subject_type, subject_id, permission, object_type, object_id) to detect cycles
             depth: Current traversal depth
             context: Optional ABAC context for condition evaluation
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             True if permission is granted
@@ -2843,7 +2831,7 @@ class ReBACManager:
                             visited.copy(),
                             depth + 1,
                             context,
-                            tenant_id,
+                            zone_id,
                         )
                 return False
 
@@ -2858,7 +2846,7 @@ class ReBACManager:
             logger.debug(
                 f"  [depth={depth}] ⚠️ No namespace for {obj.entity_type}, checking direct relation"
             )
-            return self._has_direct_relation(subject, permission, obj, context, tenant_id)
+            return self._has_direct_relation(subject, permission, obj, context, zone_id)
 
         logger.debug(f"  [depth={depth}] ✅ Found namespace for {obj.entity_type}")
         logger.debug(
@@ -2891,7 +2879,7 @@ class ReBACManager:
                     f"  [depth={depth}] 🔍 [{i + 1}/{len(usersets)}] Checking userset '{userset}'..."
                 )
                 result = self._compute_permission(
-                    subject, userset, obj, visited.copy(), depth + 1, context, tenant_id
+                    subject, userset, obj, visited.copy(), depth + 1, context, zone_id
                 )
                 if result:
                     logger.debug(
@@ -2918,7 +2906,7 @@ class ReBACManager:
             logger.debug(
                 f"  [depth={depth}] ⚠️ No relation config for '{permission}', checking direct relation"
             )
-            return self._has_direct_relation(subject, permission, obj, context, tenant_id)
+            return self._has_direct_relation(subject, permission, obj, context, zone_id)
 
         # Handle union (OR of multiple relations)
         if namespace.has_union(permission):
@@ -2934,7 +2922,7 @@ class ReBACManager:
                     f"  [depth={depth}] 🔍 [{i + 1}/{len(union_relations)}] Checking union relation '{rel}'..."
                 )
                 result = self._compute_permission(
-                    subject, rel, obj, visited.copy(), depth + 1, context, tenant_id
+                    subject, rel, obj, visited.copy(), depth + 1, context, zone_id
                 )
                 if result:
                     logger.debug(
@@ -2954,7 +2942,7 @@ class ReBACManager:
             # ALL relations must be true
             for rel in intersection_relations:
                 if not self._compute_permission(
-                    subject, rel, obj, visited.copy(), depth + 1, context, tenant_id
+                    subject, rel, obj, visited.copy(), depth + 1, context, zone_id
                 ):
                     return False  # If any relation is False, whole intersection is False
             return True  # All relations were True
@@ -2965,7 +2953,7 @@ class ReBACManager:
             if excluded_rel:
                 # Must NOT have the excluded relation
                 return not self._compute_permission(
-                    subject, excluded_rel, obj, visited.copy(), depth + 1, context, tenant_id
+                    subject, excluded_rel, obj, visited.copy(), depth + 1, context, zone_id
                 )
             return False
 
@@ -2996,7 +2984,7 @@ class ReBACManager:
                         visited.copy(),
                         depth + 1,
                         context,
-                        tenant_id,
+                        zone_id,
                     ):
                         logger.debug(
                             f"  [depth={depth}] ✅ GRANTED via tupleToUserset (parent pattern) through {related_obj}"
@@ -3024,7 +3012,7 @@ class ReBACManager:
                         visited.copy(),
                         depth + 1,
                         context,
-                        tenant_id,
+                        zone_id,
                     ):
                         logger.debug(
                             f"  [depth={depth}] ✅ GRANTED via tupleToUserset (group pattern) through {related_subj}"
@@ -3040,7 +3028,7 @@ class ReBACManager:
             return False
 
         # Direct relation check (with optional context evaluation)
-        return self._has_direct_relation(subject, permission, obj, context, tenant_id)
+        return self._has_direct_relation(subject, permission, obj, context, zone_id)
 
     def _has_direct_relation(
         self,
@@ -3048,7 +3036,7 @@ class ReBACManager:
         relation: str,
         obj: Entity,
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has direct relation to object.
 
@@ -3064,15 +3052,15 @@ class ReBACManager:
             relation: Relation type
             obj: Object entity
             context: Optional ABAC context for condition evaluation
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             True if direct relation exists and conditions are satisfied
         """
         logger.debug(
-            f"    💾 Checking DATABASE for direct tuple: subject={subject}, relation={relation}, object={obj}, tenant_id={tenant_id}"
+            f"    💾 Checking DATABASE for direct tuple: subject={subject}, relation={relation}, object={obj}, zone_id={zone_id}"
         )
-        result = self._find_direct_relation_tuple(subject, relation, obj, context, tenant_id)
+        result = self._find_direct_relation_tuple(subject, relation, obj, context, zone_id)
         if result is not None:
             logger.debug(f"    ✅ FOUND tuple: {result.get('tuple_id', 'unknown')}")
             return True
@@ -3086,7 +3074,7 @@ class ReBACManager:
         relation: str,
         obj: Entity,
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Find direct relation tuple with full details.
 
@@ -3097,13 +3085,13 @@ class ReBACManager:
             relation: Relation type
             obj: Object entity
             context: Optional ABAC context for condition evaluation
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             Tuple dict with id, subject, relation, object info, or None if not found
         """
         logger.debug(
-            f"    _find_direct_relation_tuple: subject={subject}, relation={relation}, obj={obj}, tenant_id={tenant_id}"
+            f"    _find_direct_relation_tuple: subject={subject}, relation={relation}, obj={obj}, zone_id={zone_id}"
         )
 
         with self._connection() as conn:
@@ -3112,8 +3100,8 @@ class ReBACManager:
             # BUGFIX: Use >= instead of > for exact expiration boundary
             # Check 1: Direct concrete subject (subject_relation IS NULL)
             # ABAC: Fetch conditions column to evaluate context
-            # P0-4: Filter by tenant_id for multi-tenant isolation
-            if tenant_id is None:
+            # P0-4: Filter by zone_id for multi-zone isolation
+            if zone_id is None:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -3125,7 +3113,7 @@ class ReBACManager:
                           AND relation = ?
                           AND object_type = ? AND object_id = ?
                           AND (expires_at IS NULL OR expires_at >= ?)
-                          AND tenant_id IS NULL
+                          AND zone_id IS NULL
                         LIMIT 1
                         """
                     ),
@@ -3150,7 +3138,7 @@ class ReBACManager:
                           AND relation = ?
                           AND object_type = ? AND object_id = ?
                           AND (expires_at IS NULL OR expires_at >= ?)
-                          AND tenant_id = ?
+                          AND zone_id = ?
                         LIMIT 1
                         """
                     ),
@@ -3161,7 +3149,7 @@ class ReBACManager:
                         obj.entity_type,
                         obj.entity_id,
                         datetime.now(UTC).isoformat(),
-                        tenant_id,
+                        zone_id,
                     ),
                 )
 
@@ -3196,10 +3184,10 @@ class ReBACManager:
             # Check 2: Wildcard/public access
             # Check if wildcard subject (*:*) has the relation (public access)
             # Avoid infinite recursion by only checking wildcard if subject is not already wildcard
-            # P0-4: Filter by tenant_id for multi-tenant isolation
+            # P0-4: Filter by zone_id for multi-zone isolation
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
                 wildcard_entity = Entity(WILDCARD_SUBJECT[0], WILDCARD_SUBJECT[1])
-                if tenant_id is None:
+                if zone_id is None:
                     cursor.execute(
                         self._fix_sql_placeholders(
                             """
@@ -3211,7 +3199,7 @@ class ReBACManager:
                               AND relation = ?
                               AND object_type = ? AND object_id = ?
                               AND (expires_at IS NULL OR expires_at >= ?)
-                              AND tenant_id IS NULL
+                              AND zone_id IS NULL
                             LIMIT 1
                             """
                         ),
@@ -3236,7 +3224,7 @@ class ReBACManager:
                               AND relation = ?
                               AND object_type = ? AND object_id = ?
                               AND (expires_at IS NULL OR expires_at >= ?)
-                              AND tenant_id = ?
+                              AND zone_id = ?
                             LIMIT 1
                             """
                         ),
@@ -3247,18 +3235,18 @@ class ReBACManager:
                             obj.entity_type,
                             obj.entity_id,
                             datetime.now(UTC).isoformat(),
-                            tenant_id,
+                            zone_id,
                         ),
                     )
                 row = cursor.fetchone()
                 if row:
                     return dict(row)
 
-                # Check 2b: Cross-tenant wildcard access (Issue #1064)
-                # Wildcards should grant access across ALL tenants, not just the owner's tenant.
+                # Check 2b: Cross-zone wildcard access (Issue #1064)
+                # Wildcards should grant access across ALL zones, not just the owner's zone.
                 # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
-                # Only check cross-tenant if tenant_id is provided (multi-tenant mode).
-                if tenant_id is not None:
+                # Only check cross-zone if zone_id is provided (multi-zone mode).
+                if zone_id is not None:
                     cursor.execute(
                         self._fix_sql_placeholders(
                             """
@@ -3284,19 +3272,17 @@ class ReBACManager:
                     )
                     row = cursor.fetchone()
                     if row:
-                        logger.debug(
-                            f"    ✅ Cross-tenant wildcard access: *:* -> {relation} -> {obj}"
-                        )
+                        logger.debug(f"    Cross-zone wildcard access: *:* -> {relation} -> {obj}")
                         return dict(row)
 
             # Check 3: Userset-as-subject grants
             # Find tuples like (group:eng#member, editor-of, file:readme)
             # where subject has 'member' relation to 'group:eng'
-            subject_sets = self._find_subject_sets(relation, obj, tenant_id)
+            subject_sets = self._find_subject_sets(relation, obj, zone_id)
             for set_type, set_id, set_relation in subject_sets:
                 # Recursively check if subject has set_relation on the set entity
                 if self._has_direct_relation(
-                    subject, set_relation, Entity(set_type, set_id), context, tenant_id
+                    subject, set_relation, Entity(set_type, set_id), context, zone_id
                 ):
                     # Return the userset tuple that granted access
                     cursor.execute(
@@ -3321,7 +3307,7 @@ class ReBACManager:
             return None
 
     def _find_subject_sets(
-        self, relation: str, obj: Entity, tenant_id: str | None = None
+        self, relation: str, obj: Entity, zone_id: str | None = None
     ) -> list[tuple[str, str, str]]:
         """Find all subject sets that have a relation to an object.
 
@@ -3330,13 +3316,13 @@ class ReBACManager:
 
         This means "all members of group:eng have editor-of relation to file:readme"
 
-        SECURITY FIX (P0): Enforces tenant_id filtering to prevent cross-tenant leaks.
-        When tenant_id is None, queries for NULL tenant_id (single-tenant mode).
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+        When zone_id is None, queries for NULL zone_id (single-zone mode).
 
         Args:
             relation: Relation type
             obj: Object entity
-            tenant_id: Optional tenant ID for multi-tenant isolation (None for single-tenant)
+            zone_id: Optional zone ID for multi-zone isolation (None for single-zone)
 
         Returns:
             List of (subject_type, subject_id, subject_relation) tuples
@@ -3344,15 +3330,15 @@ class ReBACManager:
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
-            # P0 SECURITY FIX: ALWAYS filter by tenant_id to prevent cross-tenant group membership leaks
-            # When tenant_id is None, match NULL tenant_id (single-tenant mode)
-            if tenant_id is None:
+            # P0 SECURITY FIX: ALWAYS filter by zone_id to prevent cross-zone group membership leaks
+            # When zone_id is None, match NULL zone_id (single-zone mode)
+            if zone_id is None:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
                         SELECT subject_type, subject_id, subject_relation
                         FROM rebac_tuples
-                        WHERE tenant_id IS NULL
+                        WHERE zone_id IS NULL
                           AND relation = ?
                           AND object_type = ? AND object_id = ?
                           AND subject_relation IS NOT NULL
@@ -3372,7 +3358,7 @@ class ReBACManager:
                         """
                         SELECT subject_type, subject_id, subject_relation
                         FROM rebac_tuples
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                           AND relation = ?
                           AND object_type = ? AND object_id = ?
                           AND subject_relation IS NOT NULL
@@ -3380,7 +3366,7 @@ class ReBACManager:
                         """
                     ),
                     (
-                        tenant_id,
+                        zone_id,
                         relation,
                         obj.entity_type,
                         obj.entity_id,
@@ -3818,7 +3804,7 @@ class ReBACManager:
             return results
 
     def _get_cached_check(
-        self, subject: Entity, permission: str, obj: Entity, tenant_id: str | None = None
+        self, subject: Entity, permission: str, obj: Entity, zone_id: str | None = None
     ) -> bool | None:
         """Get cached permission check result.
 
@@ -3828,7 +3814,7 @@ class ReBACManager:
             subject: Subject entity
             permission: Permission
             obj: Object entity
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Cached result or None if not cached or expired
@@ -3841,7 +3827,7 @@ class ReBACManager:
                 permission,
                 obj.entity_type,
                 obj.entity_id,
-                tenant_id,
+                zone_id,
             )
             if l1_result is not None:
                 logger.debug("✅ L1 CACHE HIT")
@@ -3886,7 +3872,7 @@ class ReBACManager:
                         obj.entity_type,
                         obj.entity_id,
                         result,
-                        tenant_id,
+                        zone_id,
                     )
 
                 return result
@@ -3902,7 +3888,7 @@ class ReBACManager:
         subject: tuple[str, str],
         permission: str,
         obj: tuple[str, str],
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> None:
         """Schedule a background refresh for a cache entry.
 
@@ -3915,7 +3901,7 @@ class ReBACManager:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check
             obj: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
         """
         if not self._l1_cache:
             return
@@ -3927,7 +3913,7 @@ class ReBACManager:
         # Start background refresh in a daemon thread
         thread = threading.Thread(
             target=self._background_refresh_worker,
-            args=(cache_key, subject, permission, obj, tenant_id),
+            args=(cache_key, subject, permission, obj, zone_id),
             daemon=True,
             name=f"rebac-refresh-{cache_key[:20]}",
         )
@@ -3940,7 +3926,7 @@ class ReBACManager:
         subject: tuple[str, str],
         permission: str,
         obj: tuple[str, str],
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> None:
         """Worker thread that refreshes a cache entry in the background.
 
@@ -3949,7 +3935,7 @@ class ReBACManager:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check
             obj: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
         """
         try:
             subject_entity = Entity(subject[0], subject[1])
@@ -3966,7 +3952,7 @@ class ReBACManager:
                 visited=set(),
                 depth=0,
                 context=None,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             delta = time_module.perf_counter() - start_time
 
@@ -3979,12 +3965,12 @@ class ReBACManager:
                     obj[0],
                     obj[1],
                     result,
-                    tenant_id,
+                    zone_id,
                     delta=delta,
                 )
 
             # Also update L2 cache
-            self._cache_check_result(subject_entity, permission, object_entity, result, tenant_id)
+            self._cache_check_result(subject_entity, permission, object_entity, result, zone_id)
 
             logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
         except Exception as e:
@@ -3999,7 +3985,7 @@ class ReBACManager:
         permission: str,
         obj: Entity,
         result: bool,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         conn: Any | None = None,
         delta: float = 0.0,
     ) -> None:
@@ -4010,7 +3996,7 @@ class ReBACManager:
             permission: Permission
             obj: Object entity
             result: Check result
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
             conn: Optional database connection
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
@@ -4023,7 +4009,7 @@ class ReBACManager:
                 obj.entity_type,
                 obj.entity_id,
                 result,
-                tenant_id,
+                zone_id,
                 delta=delta,
             )
 
@@ -4032,8 +4018,8 @@ class ReBACManager:
         computed_at = datetime.now(UTC)
         expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
 
-        # Use "default" tenant if not specified (for backward compatibility)
-        effective_tenant_id = tenant_id if tenant_id is not None else "default"
+        # Use "default" zone if not specified (for backward compatibility)
+        effective_zone_id = zone_id if zone_id is not None else "default"
 
         # Use provided connection or create new one (avoids SQLite lock contention)
         should_close = conn is None
@@ -4047,14 +4033,14 @@ class ReBACManager:
                 self._fix_sql_placeholders(
                     """
                     DELETE FROM rebac_check_cache
-                    WHERE tenant_id = ?
+                    WHERE zone_id = ?
                       AND subject_type = ? AND subject_id = ?
                       AND permission = ?
                       AND object_type = ? AND object_id = ?
                     """
                 ),
                 (
-                    effective_tenant_id,
+                    effective_zone_id,
                     subject.entity_type,
                     subject.entity_id,
                     permission,
@@ -4068,7 +4054,7 @@ class ReBACManager:
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO rebac_check_cache (
-                        cache_id, tenant_id, subject_type, subject_id, permission,
+                        cache_id, zone_id, subject_type, subject_id, permission,
                         object_type, object_id, result, computed_at, expires_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -4076,7 +4062,7 @@ class ReBACManager:
                 ),
                 (
                     cache_id,
-                    effective_tenant_id,
+                    effective_zone_id,
                     subject.entity_type,
                     subject.entity_id,
                     permission,
@@ -4098,7 +4084,7 @@ class ReBACManager:
         subject: Entity,
         relation: str,
         obj: Entity,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         subject_relation: str | None = None,
         expires_at: datetime | None = None,
         conn: Any | None = None,
@@ -4120,12 +4106,12 @@ class ReBACManager:
             subject: Subject entity
             relation: Relation type (used for precise invalidation)
             obj: Object entity
-            tenant_id: Optional tenant ID for tenant-scoped invalidation
+            zone_id: Optional zone ID for zone-scoped invalidation
             subject_relation: Optional subject relation for userset-as-subject
             expires_at: Optional expiration time (disables eager recomputation)
         """
-        # Use "default" tenant if not specified
-        effective_tenant_id = tenant_id if tenant_id is not None else "default"
+        # Use "default" zone if not specified
+        effective_zone_id = zone_id if zone_id is not None else "default"
 
         import logging
 
@@ -4167,7 +4153,7 @@ class ReBACManager:
                     subject.entity_id,
                     obj.entity_type,
                     obj.entity_id,
-                    tenant_id,
+                    zone_id,
                 )
 
             if should_eager_recompute:
@@ -4199,12 +4185,12 @@ class ReBACManager:
                                 obj,
                                 visited=set(),
                                 depth=0,
-                                tenant_id=tenant_id,
+                                zone_id=zone_id,
                             )
                             delta = time_module.perf_counter() - start_time
                             # Update cache immediately (not invalidate)
                             self._cache_check_result(
-                                subject, permission, obj, result, tenant_id, conn=conn, delta=delta
+                                subject, permission, obj, result, zone_id, conn=conn, delta=delta
                             )
                             logger.debug(
                                 f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
@@ -4224,13 +4210,13 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         DELETE FROM rebac_check_cache
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                           AND subject_type = ? AND subject_id = ?
                           AND object_type = ? AND object_id = ?
                         """
                     ),
                     (
-                        effective_tenant_id,
+                        effective_zone_id,
                         subject.entity_type,
                         subject.entity_id,
                         obj.entity_type,
@@ -4267,18 +4253,18 @@ class ReBACManager:
 
                 # L1 cache invalidation
                 if self._l1_cache:
-                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, tenant_id)
+                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
 
                 # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
                         DELETE FROM rebac_check_cache
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                           AND object_type = ? AND object_id = ?
                         """
                     ),
-                    (effective_tenant_id, obj.entity_type, obj.entity_id),
+                    (effective_zone_id, obj.entity_type, obj.entity_id),
                 )
 
             # 3. TRANSITIVE (Hierarchy): If this is a group membership change (e.g., adding alice to group:eng),
@@ -4291,7 +4277,7 @@ class ReBACManager:
                 # L1 cache invalidation
                 if self._l1_cache:
                     self._l1_cache.invalidate_subject(
-                        subject.entity_type, subject.entity_id, tenant_id
+                        subject.entity_type, subject.entity_id, zone_id
                     )
 
                 # L2 cache invalidation
@@ -4299,11 +4285,11 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         DELETE FROM rebac_check_cache
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                           AND subject_type = ? AND subject_id = ?
                         """
                     ),
-                    (effective_tenant_id, subject.entity_type, subject.entity_id),
+                    (effective_zone_id, subject.entity_type, subject.entity_id),
                 )
 
             # 4. PARENT PERMISSION CHANGE: If this tuple grants/changes permissions on a parent path,
@@ -4317,7 +4303,7 @@ class ReBACManager:
                 "owner",
                 "editor",
                 "viewer",
-                # Cross-tenant sharing relations (PR #647)
+                # Cross-zone sharing relations (PR #647)
                 "shared-viewer",
                 "shared-editor",
                 "shared-owner",
@@ -4327,21 +4313,19 @@ class ReBACManager:
 
                 # L1 cache invalidation - invalidate prefix
                 if self._l1_cache:
-                    self._l1_cache.invalidate_object_prefix(
-                        obj.entity_type, obj.entity_id, tenant_id
-                    )
+                    self._l1_cache.invalidate_object_prefix(obj.entity_type, obj.entity_id, zone_id)
 
                 # L2 cache invalidation
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
                         DELETE FROM rebac_check_cache
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                           AND object_type = ?
                           AND (object_id = ? OR object_id LIKE ?)
                         """
                     ),
-                    (effective_tenant_id, obj.entity_type, obj.entity_id, obj.entity_id + "/%"),
+                    (effective_zone_id, obj.entity_type, obj.entity_id, obj.entity_id + "/%"),
                 )
                 logger.debug(
                     f"Invalidated cache for {obj} and all children (parent permission change)"
@@ -4357,7 +4341,7 @@ class ReBACManager:
                     f"Userset-as-subject detected ({subject}#{subject_relation}), clearing ALL cache for safety"
                 )
 
-                # L1 cache invalidation - clear all for this tenant
+                # L1 cache invalidation - clear all for this zone
                 if self._l1_cache:
                     self._l1_cache.clear()  # Conservative: clear entire L1 cache
 
@@ -4366,10 +4350,10 @@ class ReBACManager:
                     self._fix_sql_placeholders(
                         """
                         DELETE FROM rebac_check_cache
-                        WHERE tenant_id = ?
+                        WHERE zone_id = ?
                         """
                     ),
-                    (effective_tenant_id,),
+                    (effective_zone_id,),
                 )
 
             conn.commit()
@@ -4462,7 +4446,7 @@ class ReBACManager:
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation, relation, object_type, object_id, tenant_id
+                    SELECT tuple_id, subject_type, subject_id, subject_relation, relation, object_type, object_id, zone_id
                     FROM rebac_tuples
                     WHERE expires_at IS NOT NULL AND expires_at <= ?
                     """
@@ -4493,15 +4477,15 @@ class ReBACManager:
                 relation = row["relation"]
                 object_type = row["object_type"]
                 object_id = row["object_id"]
-                tenant_id = row["tenant_id"]
+                zone_id = row["zone_id"]
 
-                # Issue #773: include tenant_id in changelog
+                # Issue #773: include zone_id in changelog
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
                         INSERT INTO rebac_changelog (
                             change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, tenant_id, created_at
+                            relation, object_type, object_id, zone_id, created_at
                         )
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """
@@ -4514,7 +4498,7 @@ class ReBACManager:
                         relation,
                         object_type,
                         object_id,
-                        tenant_id or "default",
+                        zone_id or "default",
                         datetime.now(UTC).isoformat(),
                     ),
                 )
@@ -4528,7 +4512,7 @@ class ReBACManager:
                     subject,
                     relation,
                     obj,
-                    tenant_id,
+                    zone_id,
                     subject_relation,
                     expires_at=datetime.now(UTC),
                     conn=conn,

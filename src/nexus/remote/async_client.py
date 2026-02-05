@@ -110,7 +110,7 @@ class AsyncRemoteNexusFS:
         self.connect_timeout = connect_timeout
 
         # Tenant/agent identity (populated from auth info)
-        self._tenant_id: str | None = None
+        self._zone_id: str | None = None
         self._agent_id: str | None = None
 
         # Configure connection limits
@@ -170,7 +170,7 @@ class AsyncRemoteNexusFS:
 
     def _negative_cache_key(self, path: str) -> str:
         """Generate cache key with tenant isolation."""
-        return f"{self._tenant_id or 'default'}:{path}"
+        return f"{self._zone_id or 'default'}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
         """Check if path is known to not exist (in negative cache).
@@ -228,14 +228,14 @@ class AsyncRemoteNexusFS:
             self._initialized = True
 
     @property
-    def tenant_id(self) -> str | None:
-        """Tenant ID for this filesystem instance."""
-        return self._tenant_id
+    def zone_id(self) -> str | None:
+        """Zone ID for this filesystem instance."""
+        return self._zone_id
 
-    @tenant_id.setter
-    def tenant_id(self, value: str | None) -> None:
-        """Set tenant ID."""
-        self._tenant_id = value
+    @zone_id.setter
+    def zone_id(self, value: str | None) -> None:
+        """Set zone ID."""
+        self._zone_id = value
 
     @property
     def agent_id(self) -> str | None:
@@ -258,7 +258,7 @@ class AsyncRemoteNexusFS:
             if response.status_code == 200:
                 auth_info = response.json()
                 if auth_info.get("authenticated"):
-                    self._tenant_id = auth_info.get("tenant_id")
+                    self._zone_id = auth_info.get("zone_id")
                     subject_type = auth_info.get("subject_type")
                     if subject_type == "agent":
                         self._agent_id = auth_info.get("subject_id")
@@ -266,7 +266,7 @@ class AsyncRemoteNexusFS:
                         self._agent_id = None
                     logger.info(
                         f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(tenant: {self._tenant_id})"
+                        f"(tenant: {self._zone_id})"
                     )
                 else:
                     logger.debug("Not authenticated (anonymous access)")
@@ -331,8 +331,8 @@ class AsyncRemoteNexusFS:
             if self._agent_id:
                 headers["X-Agent-ID"] = self._agent_id
 
-            if self._tenant_id:
-                headers["X-Tenant-ID"] = self._tenant_id
+            if self._zone_id:
+                headers["X-Nexus-Zone-ID"] = self._zone_id
 
             # Configure timeout for this request
             actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
@@ -1776,8 +1776,8 @@ class AsyncRemoteNexusFS:
         resource: tuple[str, str],
         user_id: str,
         relation: str = "viewer",
-        tenant_id: str | None = None,
-        user_tenant_id: str | None = None,
+        zone_id: str | None = None,
+        user_zone_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> str:
         """Share a resource with a specific user (same or different tenant) - async.
@@ -1789,8 +1789,8 @@ class AsyncRemoteNexusFS:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             user_id: User to share with (e.g., "bob@partner-company.com")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            tenant_id: Resource owner's tenant ID (defaults to current tenant)
-            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current tenant)
+            user_zone_id: Recipient user's zone ID (for cross-tenant shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
@@ -1800,7 +1800,7 @@ class AsyncRemoteNexusFS:
             >>> share_id = await nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="bob@partner.com",
-            ...     user_tenant_id="partner-tenant",
+            ...     user_zone_id="partner-tenant",
             ...     relation="viewer"
             ... )
         """
@@ -1810,8 +1810,8 @@ class AsyncRemoteNexusFS:
                 "resource": resource,
                 "user_id": user_id,
                 "relation": relation,
-                "tenant_id": tenant_id,
-                "user_tenant_id": user_tenant_id,
+                "zone_id": zone_id,
+                "user_zone_id": user_zone_id,
                 "expires_at": expires_at.isoformat() if expires_at else None,
             },
         )
@@ -1848,7 +1848,7 @@ class AsyncRemoteNexusFS:
     async def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[dict[str, Any]]:
@@ -1856,7 +1856,7 @@ class AsyncRemoteNexusFS:
 
         Args:
             resource: Filter by specific resource (optional)
-            tenant_id: Tenant ID to list shares for (defaults to current tenant)
+            zone_id: Zone ID to list shares for (defaults to current tenant)
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -1867,7 +1867,7 @@ class AsyncRemoteNexusFS:
             "list_outgoing_shares",
             {
                 "resource": resource,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
                 "limit": limit,
                 "offset": offset,
             },
@@ -2008,7 +2008,7 @@ class AsyncRemoteNexusFS:
         context: dict[str, Any] | None = None,
         verify_status: bool = False,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
     ) -> dict[str, Any]:
         """List user's sandboxes (async).
@@ -2017,7 +2017,7 @@ class AsyncRemoteNexusFS:
             context: Operation context
             verify_status: If True, verify status with provider
             user_id: Filter by user_id (admin only)
-            tenant_id: Filter by tenant_id (admin only)
+            zone_id: Filter by zone_id (admin only)
             agent_id: Filter by agent_id
 
         Returns:
@@ -2028,8 +2028,8 @@ class AsyncRemoteNexusFS:
             params["context"] = context
         if user_id is not None:
             params["user_id"] = user_id
-        if tenant_id is not None:
-            params["tenant_id"] = tenant_id
+        if zone_id is not None:
+            params["zone_id"] = zone_id
         if agent_id is not None:
             params["agent_id"] = agent_id
         result = await self._call_rpc("sandbox_list", params)
@@ -2873,7 +2873,7 @@ class AsyncAdminAPI:
         self,
         user_id: str,
         name: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         is_admin: bool = False,
         expires_days: int | None = None,
         subject_type: str | None = None,
@@ -2884,7 +2884,7 @@ class AsyncAdminAPI:
         Args:
             user_id: User ID for the key
             name: Human-readable name for the key
-            tenant_id: Tenant ID (default: "default")
+            zone_id: Zone ID (default: "default")
             is_admin: Whether this key has admin privileges
             expires_days: Days until expiry (None = never expires)
             subject_type: Subject type for the key (e.g., "user", "agent")
@@ -2896,7 +2896,7 @@ class AsyncAdminAPI:
         params: dict[str, Any] = {
             "user_id": user_id,
             "name": name,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": is_admin,
         }
         if expires_days is not None:
@@ -2912,7 +2912,7 @@ class AsyncAdminAPI:
     async def list_keys(
         self,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         is_admin: bool | None = None,
         include_expired: bool = False,
     ) -> builtins.list[dict[str, Any]]:
@@ -2920,7 +2920,7 @@ class AsyncAdminAPI:
 
         Args:
             user_id: Filter by user ID
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             is_admin: Filter by admin status
             include_expired: Include expired keys
 
@@ -2930,8 +2930,8 @@ class AsyncAdminAPI:
         params: dict[str, Any] = {"include_expired": include_expired}
         if user_id is not None:
             params["user_id"] = user_id
-        if tenant_id is not None:
-            params["tenant_id"] = tenant_id
+        if zone_id is not None:
+            params["zone_id"] = zone_id
         if is_admin is not None:
             params["is_admin"] = is_admin
 

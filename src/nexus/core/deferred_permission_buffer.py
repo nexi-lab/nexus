@@ -61,7 +61,7 @@ class DeferredPermissionBuffer:
         self._max_batch_size = max_batch_size
 
         # Pending operations (thread-safe with lock)
-        self._pending_hierarchy: deque[tuple[str, str]] = deque()  # (path, tenant_id)
+        self._pending_hierarchy: deque[tuple[str, str]] = deque()  # (path, zone_id)
         self._pending_grants: deque[dict[str, Any]] = deque()
         self._lock = threading.Lock()
 
@@ -119,15 +119,15 @@ class DeferredPermissionBuffer:
             f"flushes={self._flush_count}"
         )
 
-    def queue_hierarchy(self, path: str, tenant_id: str) -> None:
+    def queue_hierarchy(self, path: str, zone_id: str) -> None:
         """Queue hierarchy tuple creation (non-blocking).
 
         Args:
             path: File path that needs parent tuples
-            tenant_id: Tenant ID for the operation
+            zone_id: Zone ID for the operation
         """
         with self._lock:
-            self._pending_hierarchy.append((path, tenant_id))
+            self._pending_hierarchy.append((path, zone_id))
             queue_size = len(self._pending_hierarchy) + len(self._pending_grants)
 
         # Trigger immediate flush if at capacity
@@ -138,14 +138,14 @@ class DeferredPermissionBuffer:
         self,
         user: str,
         path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Queue owner permission grant (non-blocking).
 
         Args:
             user: User ID to grant ownership to
             path: File path to grant ownership of
-            tenant_id: Tenant ID for the operation
+            zone_id: Zone ID for the operation
         """
         with self._lock:
             self._pending_grants.append(
@@ -153,7 +153,7 @@ class DeferredPermissionBuffer:
                     "subject": ("user", user),
                     "relation": "direct_owner",
                     "object": ("file", path),
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                 }
             )
             queue_size = len(self._pending_hierarchy) + len(self._pending_grants)
@@ -226,15 +226,15 @@ class DeferredPermissionBuffer:
         # Batch hierarchy tuples (group by tenant)
         if hierarchy_batch and self._hierarchy_manager:
             try:
-                # Group by tenant_id
+                # Group by zone_id
                 by_tenant: dict[str, list[str]] = {}
-                for path, tenant_id in hierarchy_batch:
-                    by_tenant.setdefault(tenant_id, []).append(path)
+                for path, zone_id in hierarchy_batch:
+                    by_tenant.setdefault(zone_id, []).append(path)
 
-                for tenant_id, paths in by_tenant.items():
+                for zone_id, paths in by_tenant.items():
                     self._hierarchy_manager.ensure_parent_tuples_batch(
                         paths,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                     hierarchy_count += len(paths)
 

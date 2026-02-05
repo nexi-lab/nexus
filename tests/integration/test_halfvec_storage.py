@@ -117,7 +117,7 @@ class TestHalfvecStorage:
         path_id = str(uuid.uuid4())
         file_path = FilePathModel(
             path_id=path_id,
-            tenant_id="test",
+            zone_id="test",
             virtual_path="/test/halfvec_test.txt",
             backend_id="test-backend",
             physical_path="/tmp/halfvec_test.txt",
@@ -184,7 +184,7 @@ class TestHalfvecStorage:
         path_id = str(uuid.uuid4())
         file_path = FilePathModel(
             path_id=path_id,
-            tenant_id="test",
+            zone_id="test",
             virtual_path="/test/search_test.txt",
             backend_id="test-backend",
             physical_path="/tmp/search_test.txt",
@@ -248,7 +248,7 @@ class TestHalfvecStorageSize:
         path_id = str(uuid.uuid4())
         file_path = FilePathModel(
             path_id=path_id,
-            tenant_id="test",
+            zone_id="test",
             virtual_path="/test/size_test.txt",
             backend_id="test-backend",
             physical_path="/tmp/size_test.txt",

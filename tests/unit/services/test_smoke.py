@@ -46,7 +46,7 @@ def operation_context():
     return OperationContext(
         user="test_user",
         groups=["test_group"],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_system=False,
         is_admin=False,
     )

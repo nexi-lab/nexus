@@ -130,13 +130,11 @@ def cat(
                 return
 
             # Create time-travel reader with a session
-            with nx.metadata.SessionLocal() as session:
+            with nx.SessionLocal() as session:
                 time_travel = TimeTravelReader(session, nx.backend)
 
                 # Get file state at operation
-                state = time_travel.get_file_at_operation(
-                    path, at_operation, tenant_id=nx.tenant_id
-                )
+                state = time_travel.get_file_at_operation(path, at_operation, zone_id=nx.zone_id)
 
             nx.close()
 

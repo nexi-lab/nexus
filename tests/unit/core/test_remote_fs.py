@@ -85,18 +85,18 @@ class TestNexusFSInitialization:
         assert fs.backend.project_id == "my-project"
         fs.close()
 
-    def test_init_with_tenant_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
-        """Test initialization with tenant and agent context."""
+    def test_init_with_zone_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
+        """Test initialization with zone and agent context."""
         db_path = temp_dir / "metadata.db"
         fs = NexusFS(
             backend=mock_gcs_backend,
             db_path=db_path,
-            tenant_id="tenant-123",
+            zone_id="zone-123",
             agent_id="agent-456",
             is_admin=True,
         )
 
-        assert fs.tenant_id == "tenant-123"
+        assert fs.zone_id == "zone-123"
         assert fs.agent_id == "agent-456"
         assert fs.is_admin is True
         fs.close()

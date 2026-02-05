@@ -30,6 +30,9 @@ services:
       - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
       # Tiger Cache - disabled by default for simpler debugging
       - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
+      # TigerBeetle for Nexus Pay (optional - disabled by default)
+      - TIGERBEETLE_ENABLED=${TIGERBEETLE_ENABLED:-false}
+      - TIGERBEETLE_ADDRESS=${TIGERBEETLE_ADDRESS:-tigerbeetle:3000}
     volumes:
       # Persistent data directory - use bind mount to match docker-compose.demo.yml
       - ./nexus-data:/app/data
@@ -178,6 +181,57 @@ services:
         max-file: "3"
 
   # ============================================================================
+  # TigerBeetle - Financial Ledger (Issue #1205)
+  # High-performance ledger for:
+  # - Agent credit balances
+  # - Two-phase transfers (reservations)
+  # - API metering / rate limiting
+  # 40k+ TPS, <1ms latency
+  # ============================================================================
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:latest
+    container_name: nexus-tigerbeetle
+    restart: unless-stopped
+    profiles:
+      - pay   # Only starts with: docker compose --profile pay up
+      - test  # Also starts with test profile for integration tests
+    ports:
+      - "${TIGERBEETLE_PORT:-3000}:3000"
+    volumes:
+      - tigerbeetle-data:/data
+    # TigerBeetle requires special permissions for direct I/O
+    security_opt:
+      - seccomp=unconfined
+    # Required for memory locking on macOS
+    cap_add:
+      - IPC_LOCK
+    # Format data file on first run, then start server
+    # Using shell to handle first-run initialization
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f /data/0_0.tigerbeetle ]; then
+          echo "Formatting TigerBeetle data file..."
+          /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 /data/0_0.tigerbeetle
+        fi
+        echo "Starting TigerBeetle server..."
+        exec /tigerbeetle start --addresses=0.0.0.0:3000 --cache-grid=256MiB /data/0_0.tigerbeetle
+    healthcheck:
+      # TigerBeetle doesn't have HTTP health endpoint, check if port is listening
+      test: ["CMD-SHELL", "nc -z localhost 3000 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
   # PostgreSQL - Test Instance (for cross-platform integration tests)
   # ============================================================================
   postgres-test:
@@ -267,6 +321,8 @@ volumes:
   dragonfly-cache-data:
     driver: local
   dragonfly-coordination-data:
+    driver: local
+  tigerbeetle-data:
     driver: local
   nexus-test-data:
     driver: local

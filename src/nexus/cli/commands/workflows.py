@@ -28,7 +28,9 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     nx = nexus.connect(config={"data_dir": str(data_dir)})
 
     # Get session factory from NexusFS
-    session_factory = nx.SessionLocal  # type: ignore[attr-defined]
+    session_factory = getattr(nx, "SessionLocal", None)
+    if session_factory is None:
+        raise RuntimeError("Workflow storage requires a local NexusFS instance with SessionLocal")
 
     # Get zone_id from Nexus filesystem (or use default)
     zone_id = getattr(nx, "zone_id", None) or "default"
@@ -38,7 +40,7 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
 
     # Initialize engine with storage
     engine = init_engine(
-        metadata_store=nx.metadata,  # type: ignore[attr-defined]
+        metadata_store=getattr(nx, "metadata", None),
         plugin_registry=None,
         workflow_store=workflow_store,
     )

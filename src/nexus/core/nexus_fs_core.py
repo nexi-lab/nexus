@@ -1962,9 +1962,9 @@ class NexusFSCoreMixin:
                 thread.start()
 
         # Issue #1187: Increment revision BEFORE publishing event
-        effective_tenant = tenant_id or "default"
-        revision = self._increment_and_get_revision(effective_tenant)
-        zookie_token = Zookie.encode(effective_tenant, revision)
+        effective_zone = zone_id or "default"
+        revision = self._increment_and_get_revision(effective_zone)
+        zookie_token = Zookie.encode(effective_zone, revision)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -2746,11 +2746,11 @@ class NexusFSCoreMixin:
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
             # Issue #1187: Return zookie for memory paths too
-            tenant_id, _, _ = self._get_routing_params(context)
-            effective_tenant = tenant_id or "default"
-            revision = self._increment_and_get_revision(effective_tenant)
+            zone_id, _, _ = self._get_routing_params(context)
+            effective_zone = zone_id or "default"
+            revision = self._increment_and_get_revision(effective_zone)
             return {
-                "zookie": Zookie.encode(effective_tenant, revision),
+                "zookie": Zookie.encode(effective_zone, revision),
                 "revision": revision,
             }
 
@@ -2880,8 +2880,8 @@ class NexusFSCoreMixin:
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
         # Issue #1187: Increment revision BEFORE publishing event
-        effective_tenant = tenant_id or "default"
-        revision = self._increment_and_get_revision(effective_tenant)
+        effective_zone = zone_id or "default"
+        revision = self._increment_and_get_revision(effective_zone)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -2896,7 +2896,7 @@ class NexusFSCoreMixin:
 
         # Issue #1187: Return zookie for consistency tracking
         return {
-            "zookie": Zookie.encode(effective_tenant, revision),
+            "zookie": Zookie.encode(effective_zone, revision),
             "revision": revision,
         }
 
@@ -3184,8 +3184,8 @@ class NexusFSCoreMixin:
                 threading.Thread(target=run_rename_events, daemon=True).start()
 
         # Issue #1187: Increment revision BEFORE publishing event
-        effective_tenant = tenant_id or "default"
-        revision = self._increment_and_get_revision(effective_tenant)
+        effective_zone = zone_id or "default"
+        revision = self._increment_and_get_revision(effective_zone)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -3201,7 +3201,7 @@ class NexusFSCoreMixin:
 
         # Issue #1187: Return zookie for consistency tracking
         return {
-            "zookie": Zookie.encode(effective_tenant, revision),
+            "zookie": Zookie.encode(effective_zone, revision),
             "revision": revision,
         }
 

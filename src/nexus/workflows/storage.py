@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 class WorkflowStore:
     """Storage layer for workflow persistence."""
 
-    def __init__(self, session_factory, zone_id: str | None = None):  # type: ignore[no-untyped-def]
+    def __init__(self, session_factory: Callable[..., Any], zone_id: str | None = None) -> None:
         """Initialize workflow store.
 
         Args:

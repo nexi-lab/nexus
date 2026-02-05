@@ -3919,7 +3919,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                               WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
                           )
                     """
-                    cross_zone_params = [
+                    cross_zone_params: list[str | list[str] | None] = [
                         subject_types,
                         subject_ids,
                         cross_zone_relations,
@@ -3952,7 +3952,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     )
                     ct_value_params.extend(cross_zone_relations)
                     ct_value_params.append(now_iso)
-                    cross_zone_params = ct_value_params  # type: ignore[assignment]
+                    cross_zone_params = ct_value_params
 
                 cursor.execute(cross_zone_query, cross_zone_params)
                 cross_zone_count = 0

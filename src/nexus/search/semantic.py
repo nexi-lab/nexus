@@ -169,7 +169,7 @@ class SemanticSearch:
             NexusFileNotFoundError: If file doesn't exist
         """
         # Get path_id and check if re-indexing is needed (Issue #865)
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
@@ -212,7 +212,7 @@ class SemanticSearch:
                 content = str(content_raw)  # Handle dict or other types
 
         # Delete existing chunks for this file (bulk DELETE - skip object hydration)
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             session.execute(delete(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id))
             session.commit()
 
@@ -236,7 +236,7 @@ class SemanticSearch:
 
         if not chunks:
             # Update tracking even for empty files (Issue #865)
-            with self.nx.metadata.SessionLocal() as session:
+            with self.nx.SessionLocal() as session:
                 file_model = session.get(FilePathModel, path_id)
                 if file_model:
                     file_model.indexed_content_hash = current_content_hash
@@ -253,7 +253,7 @@ class SemanticSearch:
             embeddings = await self.embedding_provider.embed_texts(chunk_texts)
 
         # Store chunks in database with optional embeddings
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             chunk_ids = []
             for i, chunk in enumerate(chunks):
                 # Create chunk model
@@ -404,7 +404,7 @@ class SemanticSearch:
         # Build path filter
         path_filter = path if path != "/" else None
 
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             if search_mode == "keyword":
                 # Keyword-only search using FTS (no embeddings needed)
                 results = self.vector_db.keyword_search(
@@ -524,7 +524,7 @@ class SemanticSearch:
             path: Path to the document
         """
         # Get path_id from database
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
@@ -555,7 +555,7 @@ class SemanticSearch:
         """
         # Count total chunks (projection pushdown - COUNT() instead of loading 3KB embeddings)
         # For 100K chunks, this saves ~300-600MB of memory/transfer
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             total_chunks = (
                 session.execute(select(func.count()).select_from(DocumentChunkModel)).scalar() or 0
             )
@@ -659,7 +659,7 @@ class SemanticSearch:
 
     async def clear_index(self) -> None:
         """Clear the entire search index."""
-        with self.nx.metadata.SessionLocal() as session:
+        with self.nx.SessionLocal() as session:
             # Delete all chunks
             session.query(DocumentChunkModel).delete()
             session.commit()

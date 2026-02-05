@@ -30,12 +30,12 @@ class RouteResult:
 
 @dataclass
 class PathInfo:
-    """Parsed path information with namespace and tenant details."""
+    """Parsed path information with namespace and zone details."""
 
     namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
-    tenant_id: str | None  # Tenant identifier (if applicable)
+    zone_id: str | None  # Zone identifier (if applicable)
     agent_id: str | None  # DEPRECATED: No longer used for workspace (kept for backward compat)
-    relative_path: str  # Remaining path after namespace/tenant
+    relative_path: str  # Remaining path after namespace/zone
 
 
 @dataclass
@@ -45,7 +45,7 @@ class NamespaceConfig:
     name: str  # Namespace name (e.g., "workspace", "shared")
     readonly: bool = False  # Whether namespace is read-only
     admin_only: bool = False  # Whether namespace requires admin access
-    requires_tenant: bool = True  # Whether namespace requires tenant isolation
+    requires_zone: bool = True  # Whether namespace requires zone isolation
 
 
 class PathNotMountedError(Exception):
@@ -74,7 +74,7 @@ class PathRouter:
     1. **Longest Prefix Match**: Like IP routing - most specific mount wins
     2. **Mount Priority**: Explicit priority for overlapping mounts
     3. **Namespace Awareness**: Understands /workspace, /shared, /external, etc.
-    4. **Tenant Isolation**: Enforces access control based on tenant/agent identity
+    4. **Zone Isolation**: Enforces access control based on zone/agent identity
 
     Example Mounts:
         /workspace  → LocalFS (/var/nexus/workspace)
@@ -129,7 +129,7 @@ class PathRouter:
     def route(
         self,
         virtual_path: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         is_admin: bool = False,
         check_write: bool = False,
@@ -139,7 +139,7 @@ class PathRouter:
 
         Algorithm:
         1. Normalize path (remove trailing slashes, collapse //)
-        2. Check access control (namespace permissions, tenant isolation)
+        2. Check access control (namespace permissions, zone isolation)
         3. Find longest matching prefix
         4. Strip mount_point prefix to get backend-relative path
         5. Return RouteResult
@@ -152,7 +152,7 @@ class PathRouter:
 
         Args:
             virtual_path: Virtual path to route
-            tenant_id: Current tenant identifier (for access control)
+            zone_id: Current zone identifier (for access control)
             agent_id: DEPRECATED - No longer used (kept for backward compatibility)
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
@@ -168,12 +168,12 @@ class PathRouter:
         # Normalize and validate path
         virtual_path = self.validate_path(virtual_path)
 
-        # Parse path to extract namespace and tenant info
-        # Pass tenant_id context to handle single-tenant vs multi-tenant path formats
-        path_info = self.parse_path(virtual_path, _tenant_id=tenant_id)
+        # Parse path to extract namespace and zone info
+        # Pass zone_id context to handle single-zone vs multi-zone path formats
+        path_info = self.parse_path(virtual_path, _zone_id=zone_id)
 
         # Check access control
-        self._check_access(path_info, tenant_id, agent_id, is_admin, check_write)
+        self._check_access(path_info, zone_id, agent_id, is_admin, check_write)
 
         # Find longest matching prefix
         matched_mount = self._match_longest_prefix(virtual_path)
@@ -199,7 +199,7 @@ class PathRouter:
     def _check_access(
         self,
         path_info: PathInfo,
-        tenant_id: str | None,
+        zone_id: str | None,
         _agent_id: str | None,
         is_admin: bool,
         check_write: bool,
@@ -209,7 +209,7 @@ class PathRouter:
 
         Args:
             path_info: Parsed path information
-            tenant_id: Current tenant identifier
+            zone_id: Current zone identifier
             _agent_id: Agent identifier (unused)
             agent_id: Current agent identifier
             is_admin: Whether requester has admin privileges
@@ -233,19 +233,19 @@ class PathRouter:
         if ns_config.readonly and check_write:
             raise AccessDeniedError(f"Namespace '{path_info.namespace}' is read-only")
 
-        # Check tenant isolation (only if path contains tenant_id)
-        # NOTE: With API key authentication, tenant comes from the key, not the path.
-        # For simple paths like /workspace/file.txt, ReBAC handles permissions - don't double-check tenant.
+        # Check zone isolation (only if path contains zone_id)
+        # NOTE: With API key authentication, zone comes from the key, not the path.
+        # For simple paths like /workspace/file.txt, ReBAC handles permissions - don't double-check zone.
         if (
-            ns_config.requires_tenant
-            and path_info.tenant_id
+            ns_config.requires_zone
+            and path_info.zone_id
             and not is_admin
-            and tenant_id
-            and path_info.tenant_id != tenant_id
+            and zone_id
+            and path_info.zone_id != zone_id
         ):
             raise AccessDeniedError(
-                f"Access denied: tenant '{tenant_id}' cannot access "
-                f"tenant '{path_info.tenant_id}' resources"
+                f"Access denied: zone '{zone_id}' cannot access "
+                f"zone '{path_info.zone_id}' resources"
             )
 
         # Note: Workspace isolation is now handled by ReBAC, not path-based agent_id checks
@@ -311,33 +311,29 @@ class PathRouter:
         """Register default namespace configurations."""
         # Workspace - Registered workspace directories (ReBAC-based permissions)
         # Workspaces are explicitly registered via register_workspace() API
-        # Permissions are managed through ReBAC, not path-based tenant/agent parsing
+        # Permissions are managed through ReBAC, not path-based zone/agent parsing
         self.register_namespace(
-            NamespaceConfig(
-                name="workspace", readonly=False, admin_only=False, requires_tenant=False
-            )
+            NamespaceConfig(name="workspace", readonly=False, admin_only=False, requires_zone=False)
         )
 
-        # Shared - Shared tenant data (persistent, tenant-wide access)
+        # Shared - Shared zone data (persistent, zone-wide access)
         self.register_namespace(
-            NamespaceConfig(name="shared", readonly=False, admin_only=False, requires_tenant=True)
+            NamespaceConfig(name="shared", readonly=False, admin_only=False, requires_zone=True)
         )
 
         # External - Pass-through backends (no special restrictions)
         self.register_namespace(
-            NamespaceConfig(
-                name="external", readonly=False, admin_only=False, requires_tenant=False
-            )
+            NamespaceConfig(name="external", readonly=False, admin_only=False, requires_zone=False)
         )
 
         # System - System metadata (admin-only, immutable)
         self.register_namespace(
-            NamespaceConfig(name="system", readonly=True, admin_only=True, requires_tenant=False)
+            NamespaceConfig(name="system", readonly=True, admin_only=True, requires_zone=False)
         )
 
         # Archives - Cold storage (read-only)
         self.register_namespace(
-            NamespaceConfig(name="archives", readonly=True, admin_only=False, requires_tenant=True)
+            NamespaceConfig(name="archives", readonly=True, admin_only=False, requires_zone=True)
         )
 
     def register_namespace(self, config: NamespaceConfig) -> None:
@@ -410,20 +406,20 @@ class PathRouter:
 
         return normalized
 
-    def parse_path(self, path: str, _tenant_id: str | None = None) -> PathInfo:
+    def parse_path(self, path: str, _zone_id: str | None = None) -> PathInfo:
         """
-        Parse virtual path to extract namespace, tenant, and agent information.
+        Parse virtual path to extract namespace, zone, and agent information.
 
         Supported formats:
         - /workspace/{path}                   → workspace namespace (ReBAC-based permissions)
-        - /shared/{tenant}/{path}             → shared namespace
+        - /shared/{zone}/{path}               → shared namespace
         - /external/{backend}/{path}          → external namespace
         - /system/{path}                      → system namespace
-        - /archives/{tenant}/{path}           → archives namespace
+        - /archives/{zone}/{path}             → archives namespace
 
         Args:
             path: Virtual path to parse (must be normalized)
-            _tenant_id: Reserved for future use (single-tenant vs multi-tenant mode)
+            _zone_id: Reserved for future use (single-zone vs multi-zone mode)
 
         Returns:
             PathInfo with extracted components
@@ -448,7 +444,7 @@ class PathRouter:
             # This allows for dynamic namespaces
             return PathInfo(
                 namespace=namespace,
-                tenant_id=None,
+                zone_id=None,
                 agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
@@ -458,12 +454,12 @@ class PathRouter:
 
         # Parse based on namespace type
         if namespace in ("shared", "archives"):
-            # Format: /shared/{tenant}/{path} or /archives/{tenant}/{path}
+            # Format: /shared/{zone}/{path} or /archives/{zone}/{path}
             # Allow partial paths for directory creation
             if len(parts) >= 2:
                 return PathInfo(
                     namespace=namespace,
-                    tenant_id=parts[1],
+                    zone_id=parts[1],
                     agent_id=None,
                     relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                 )
@@ -471,30 +467,30 @@ class PathRouter:
                 # Just the namespace root
                 return PathInfo(
                     namespace=namespace,
-                    tenant_id=None,
+                    zone_id=None,
                     agent_id=None,
                     relative_path="",
                 )
 
         elif namespace in ("external", "system", "workspace"):
             # Format: /external/{path} or /system/{path} or /workspace/{path}
-            # No tenant/agent parsing - ReBAC handles permissions
+            # No zone/agent parsing - ReBAC handles permissions
             return PathInfo(
                 namespace=namespace,
-                tenant_id=None,
+                zone_id=None,
                 agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
 
         else:
-            # Custom namespace - check config for tenant requirement
-            if ns_config.requires_tenant:
-                # Format: /{namespace}/{tenant}/{path}
+            # Custom namespace - check config for zone requirement
+            if ns_config.requires_zone:
+                # Format: /{namespace}/{zone}/{path}
                 # Similar to shared/archives
                 if len(parts) >= 2:
                     return PathInfo(
                         namespace=namespace,
-                        tenant_id=parts[1],
+                        zone_id=parts[1],
                         agent_id=None,
                         relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                     )
@@ -502,15 +498,15 @@ class PathRouter:
                     # Just the namespace root
                     return PathInfo(
                         namespace=namespace,
-                        tenant_id=None,
+                        zone_id=None,
                         agent_id=None,
                         relative_path="",
                     )
             else:
-                # No tenant isolation required
+                # No zone isolation required
                 return PathInfo(
                     namespace=namespace,
-                    tenant_id=None,
+                    zone_id=None,
                     agent_id=None,
                     relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
                 )

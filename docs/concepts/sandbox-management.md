@@ -714,7 +714,7 @@ nexus sandbox status <sandbox_id> [--json]
 **A**: Default TTL is 10 minutes. TTL resets on each code execution. Manually stopped or expired sandboxes are destroyed.
 
 ### Q: Can multiple agents share one sandbox?
-**A**: Yes, but consider isolation. For multi-tenant systems, use separate sandboxes per tenant/user.
+**A**: Yes, but consider isolation. For multi-zone systems, use separate sandboxes per tenant/user.
 
 ### Q: What happens if I don't stop a sandbox?
 **A**: It will auto-expire after TTL. Background cleanup task destroys expired sandboxes every 5 minutes.

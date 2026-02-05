@@ -462,12 +462,12 @@ class CacheConnectorMixin:
             for path_id, cache_model in cache_models.items():
                 vpath = path_id_to_path.get(path_id)
                 if vpath:
-                    cache_tenant = cache_model.tenant_id or "default"
+                    cache_tenant = cache_model.zone_id or "default"
                     tenant_paths.setdefault(cache_tenant, []).append(vpath)
 
             # Bulk read from disk for each tenant
-            for tenant_id, vpaths in tenant_paths.items():
-                disk_contents.update(file_cache.read_bulk(tenant_id, vpaths))
+            for zone_id, vpaths in tenant_paths.items():
+                disk_contents.update(file_cache.read_bulk(zone_id, vpaths))
 
         l2_hits = 0
         for path_id, cache_model in cache_models.items():
@@ -515,7 +515,7 @@ class CacheConnectorMixin:
             if l1_cache is not None:
                 with contextlib.suppress(Exception):
                     file_cache = get_file_cache()
-                    cache_tenant = cache_model.tenant_id or "default"
+                    cache_tenant = cache_model.zone_id or "default"
                     disk_path = str(file_cache._get_cache_path(cache_tenant, vpath))
                     is_text = cache_model.content_type in ("full", "parsed", "summary")
                     l1_cache.put(
@@ -526,7 +526,7 @@ class CacheConnectorMixin:
                         original_size=cache_model.original_size_bytes,
                         ttl_seconds=0,  # Use default TTL
                         is_text=is_text,
-                        tenant_id=cache_tenant,
+                        zone_id=cache_tenant,
                     )
 
         logger.info(
@@ -692,7 +692,7 @@ class CacheConnectorMixin:
         if original:
             # Try disk cache first (new storage)
             file_cache = get_file_cache()
-            cache_tenant = cache_model.tenant_id or "default"
+            cache_tenant = cache_model.zone_id or "default"
             content_binary_raw = file_cache.read(cache_tenant, path)
             if content_binary_raw:
                 logger.debug(f"[CACHE] L2 content from DISK: {path}")
@@ -732,7 +732,7 @@ class CacheConnectorMixin:
         if l1_cache is not None:
             with contextlib.suppress(Exception):
                 file_cache = get_file_cache()
-                cache_tenant = cache_model.tenant_id or "default"
+                cache_tenant = cache_model.zone_id or "default"
                 disk_path = str(file_cache._get_cache_path(cache_tenant, path))
                 is_text = cache_model.content_type in ("full", "parsed", "summary")
                 # Use connector-specific TTL if defined
@@ -745,7 +745,7 @@ class CacheConnectorMixin:
                     original_size=cache_model.original_size_bytes,
                     ttl_seconds=ttl,
                     is_text=is_text,
-                    tenant_id=cache_tenant,
+                    zone_id=cache_tenant,
                 )
                 logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
 
@@ -760,7 +760,7 @@ class CacheConnectorMixin:
         backend_version: str | None = None,
         parsed_from: str | None = None,
         parse_metadata: dict | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> CacheEntry:
         """Write content to cache.
 
@@ -776,7 +776,7 @@ class CacheConnectorMixin:
             backend_version: Backend version for optimistic locking
             parsed_from: Parser that extracted text ('pdf', 'xlsx', etc.)
             parse_metadata: Additional metadata from parsing
-            tenant_id: Tenant ID for multi-tenant filtering
+            zone_id: Zone ID for multi-zone filtering
 
         Returns:
             CacheEntry for the cached content
@@ -785,7 +785,7 @@ class CacheConnectorMixin:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_tenant = tenant_id or "default"
+        cache_tenant = zone_id or "default"
 
         # Determine text content
         if content_text is None:
@@ -855,7 +855,7 @@ class CacheConnectorMixin:
                 cache_model = ContentCacheModel(
                     cache_id=cache_id,
                     path_id=path_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     content_text=content_text,
                     content_binary=None,
                     content_hash=content_hash,
@@ -925,7 +925,7 @@ class CacheConnectorMixin:
                     original_size=original_size,
                     ttl_seconds=ttl,
                     is_text=is_text,
-                    tenant_id=cache_tenant,
+                    zone_id=cache_tenant,
                 )
                 mode = "L1+L2" if has_l2 else "L1 (l1_only)"
                 logger.info(f"[CACHE] WRITE to {mode}: {path} (size={original_size})")
@@ -982,7 +982,7 @@ class CacheConnectorMixin:
 
         Args:
             content_hash: Content hash (may be ignored by some connectors)
-            context: Operation context with backend_path, tenant_id, etc.
+            context: Operation context with backend_path, zone_id, etc.
 
         Returns:
             CachedReadResult with content, content_hash (ETag), and cache metadata
@@ -995,7 +995,7 @@ class CacheConnectorMixin:
             raise ValueError("context with backend_path is required")
 
         path = self._get_cache_path(context) or context.backend_path
-        tenant_id = getattr(context, "tenant_id", None)
+        zone_id = getattr(context, "zone_id", None)
 
         # Step 1: Check cache (L1 then L2)
         if self._has_caching():
@@ -1023,7 +1023,7 @@ class CacheConnectorMixin:
                     path=path,
                     content=content,
                     backend_version=self._get_backend_version(context),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 result_hash = cache_entry.content_hash
             except Exception as e:
@@ -1122,7 +1122,7 @@ class CacheConnectorMixin:
                 - backend_version: Optional backend version
                 - parsed_from: Optional parser name
                 - parse_metadata: Optional parse metadata dict
-                - tenant_id: Optional tenant ID
+                - zone_id: Optional zone ID
 
         Returns:
             List of CacheEntry objects (one per successfully written entry)
@@ -1157,7 +1157,7 @@ class CacheConnectorMixin:
                 backend_version = entry_data.get("backend_version")
                 parsed_from = entry_data.get("parsed_from")
                 parse_metadata = entry_data.get("parse_metadata")
-                tenant_id = entry_data.get("tenant_id")
+                zone_id = entry_data.get("zone_id")
 
                 path_id = path_id_map.get(path)
                 if not path_id:
@@ -1184,7 +1184,7 @@ class CacheConnectorMixin:
                 cached_size = len(content_text) if content_text else 0
 
                 # Write binary content to disk via FileContentCache
-                cache_tenant = tenant_id or "default"
+                cache_tenant = zone_id or "default"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
                     try:
                         file_cache.write(cache_tenant, path, content, text_content=content_text)
@@ -1222,7 +1222,7 @@ class CacheConnectorMixin:
                     cache_model = ContentCacheModel(
                         cache_id=cache_id,
                         path_id=path_id,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         content_text=content_text,
                         content_binary=None,  # Binary stored on disk via FileContentCache
                         content_hash=content_hash,
@@ -1273,7 +1273,7 @@ class CacheConnectorMixin:
                             original_size=original_size,
                             ttl_seconds=ttl,
                             is_text=is_text,
-                            tenant_id=cache_tenant,
+                            zone_id=cache_tenant,
                         )
 
             except Exception as e:
@@ -1369,7 +1369,7 @@ class CacheConnectorMixin:
 
             if delete:
                 # Delete from disk cache
-                cache_tenant = entry.tenant_id or "default"
+                cache_tenant = entry.zone_id or "default"
                 file_cache.delete(cache_tenant, path)
                 session.delete(entry)
             else:
@@ -1393,7 +1393,7 @@ class CacheConnectorMixin:
             for cache_entry, vpath in rows:
                 if delete:
                     # Delete from disk cache
-                    cache_tenant = cache_entry.tenant_id or "default"
+                    cache_tenant = cache_entry.zone_id or "default"
                     file_cache.delete(cache_tenant, vpath)
                     session.delete(cache_entry)
                 else:
@@ -1481,7 +1481,7 @@ class CacheConnectorMixin:
             exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc", ".git/*"])
             max_file_size: Maximum file size to cache (default: MAX_CACHE_FILE_SIZE)
             generate_embeddings: Generate embeddings for semantic search (default: True)
-            context: Operation context with tenant_id, user, etc.
+            context: Operation context with zone_id, user, etc.
 
         Returns:
             SyncResult with statistics:
@@ -1899,7 +1899,7 @@ class CacheConnectorMixin:
             file_metadata: Dict of path -> metadata (virtual_path, cached, version)
             max_size: Maximum file size to cache
             generate_embeddings: Whether to track files for embedding
-            context: Operation context (for tenant_id)
+            context: Operation context (for zone_id)
             result: SyncResult to update with stats
 
         Returns:
@@ -1907,7 +1907,7 @@ class CacheConnectorMixin:
             - cache_entries_to_write: List of dicts ready for batch write
             - files_to_embed: List of virtual paths needing embeddings
         """
-        tenant_id = getattr(context, "tenant_id", None) if context else None
+        zone_id = getattr(context, "zone_id", None) if context else None
         cache_entries_to_write: list[dict] = []
         files_to_embed: list[str] = []
 
@@ -1947,7 +1947,7 @@ class CacheConnectorMixin:
                         "backend_version": version,
                         "parsed_from": parsed_from,
                         "parse_metadata": parse_metadata,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     }
                 )
 
@@ -2034,7 +2034,7 @@ class CacheConnectorMixin:
                 user=context.user,
                 groups=context.groups,
                 backend_path=backend_path,
-                tenant_id=getattr(context, "tenant_id", None),
+                zone_id=getattr(context, "zone_id", None),
                 is_system=True,  # Bypass permissions for sync
             )
         else:

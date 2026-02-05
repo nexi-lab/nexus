@@ -33,4 +33,4 @@
 
 mod sled_store;
 
-pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError};
+pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};

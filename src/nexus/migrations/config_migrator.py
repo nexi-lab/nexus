@@ -150,7 +150,7 @@ class ConfigMigrator:
         if "rebac" in config:
             return "0.6.0"
 
-        if "tenant_id" in config:
+        if "zone_id" in config:
             return "0.5.0"
 
         # Default to oldest known format

@@ -38,7 +38,7 @@ class MountManager:
         >>> from nexus.core.mount_manager import MountManager
         >>>
         >>> nx = NexusFS(...)
-        >>> manager = MountManager(nx.metadata.SessionLocal)
+        >>> manager = MountManager(nx.SessionLocal)
         >>>
         >>> # Save a mount to database
         >>> manager.save_mount(
@@ -72,7 +72,7 @@ class MountManager:
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
     ) -> str:
         """Save a mount configuration to the database.
@@ -84,7 +84,7 @@ class MountManager:
             priority: Mount priority (higher = preferred)
             readonly: Whether mount is read-only
             owner_user_id: User ID who owns this mount
-            tenant_id: Tenant ID this mount belongs to
+            zone_id: Zone ID this mount belongs to
             description: Optional description of the mount
 
         Returns:
@@ -104,7 +104,7 @@ class MountManager:
             ...     },
             ...     priority=10,
             ...     owner_user_id="google:alice123",
-            ...     tenant_id="acme",
+            ...     zone_id="acme",
             ...     description="Alice's personal Google Drive"
             ... )
         """
@@ -125,7 +125,7 @@ class MountManager:
                 readonly=int(bool(readonly)),  # Convert to int for SQLite/PostgreSQL compatibility
                 backend_config=json.dumps(backend_config),
                 owner_user_id=owner_user_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 description=description,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
@@ -224,20 +224,20 @@ class MountManager:
                 "priority": mount_model.priority,
                 "readonly": bool(mount_model.readonly),
                 "owner_user_id": mount_model.owner_user_id,
-                "tenant_id": mount_model.tenant_id,
+                "zone_id": mount_model.zone_id,
                 "description": mount_model.description,
                 "created_at": mount_model.created_at,
                 "updated_at": mount_model.updated_at,
             }
 
     def list_mounts(
-        self, owner_user_id: str | None = None, tenant_id: str | None = None
+        self, owner_user_id: str | None = None, zone_id: str | None = None
     ) -> list[dict]:
         """List all persisted mount configurations.
 
         Args:
             owner_user_id: Filter by owner user ID (optional)
-            tenant_id: Filter by tenant ID (optional)
+            zone_id: Filter by zone ID (optional)
 
         Returns:
             List of mount configuration dicts
@@ -250,7 +250,7 @@ class MountManager:
             >>> user_mounts = manager.list_mounts(owner_user_id="alice")
             >>>
             >>> # List mounts for specific tenant
-            >>> tenant_mounts = manager.list_mounts(tenant_id="acme")
+            >>> tenant_mounts = manager.list_mounts(zone_id="acme")
         """
         with self.SessionLocal() as session:
             stmt = select(MountConfigModel)
@@ -258,8 +258,8 @@ class MountManager:
             # Apply filters
             if owner_user_id:
                 stmt = stmt.where(MountConfigModel.owner_user_id == owner_user_id)
-            if tenant_id:
-                stmt = stmt.where(MountConfigModel.tenant_id == tenant_id)
+            if zone_id:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
 
             # Order by priority (desc) then mount_point
             stmt = stmt.order_by(MountConfigModel.priority.desc(), MountConfigModel.mount_point)
@@ -275,7 +275,7 @@ class MountManager:
                     "priority": m.priority,
                     "readonly": bool(m.readonly),
                     "owner_user_id": m.owner_user_id,
-                    "tenant_id": m.tenant_id,
+                    "zone_id": m.zone_id,
                     "description": m.description,
                     "created_at": m.created_at,
                     "updated_at": m.updated_at,

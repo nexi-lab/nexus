@@ -11,7 +11,7 @@ import pytest
 
 from nexus import NexusFS
 from nexus.backends import LocalBackend
-from nexus.core.metadata import PaginatedResult
+from nexus.core._metadata_generated import PaginatedResult
 
 
 @pytest.fixture

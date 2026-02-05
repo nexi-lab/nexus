@@ -35,7 +35,7 @@ class SkillRegistry:
     Features:
     - Progressive disclosure: Load metadata during discovery, full content on-demand
     - Lazy loading: Only load skills when actually needed
-    - Three-tier hierarchy: agent > tenant > system (priority order)
+    - Three-tier hierarchy: agent > zone > system (priority order)
     - Dependency resolution: Automatic DAG resolution with cycle detection
     - Caching: In-memory cache for loaded skills
 
@@ -49,11 +49,11 @@ class SkillRegistry:
     """
 
     # Tier priority (higher = checked first, wins on name conflict)
-    # personal > tenant > system
+    # personal > zone > system
     TIER_PRIORITY = {
         "personal": 3,
         "user": 3,  # Legacy alias for personal
-        "tenant": 2,
+        "zone": 2,
         "system": 1,
     }
 
@@ -61,7 +61,7 @@ class SkillRegistry:
     # Use get_tier_paths(context) for context-aware paths
     TIER_PATHS = {
         "user": "/skills/user/",  # Legacy path, prefer /skills/users/{user_id}/
-        "tenant": "/skills/tenant/",  # Legacy path, prefer /skills/tenants/{tenant_id}/
+        "zone": "/skills/zone/",  # Legacy path, prefer /skills/zones/{zone_id}/
         "system": "/skill/",
     }
 
@@ -71,15 +71,15 @@ class SkillRegistry:
 
         Structure (new namespace convention):
             /skill/                                            - System-wide skills (priority 1)
-            /tenant:<tenant_id>/skill/                         - Tenant shared skills (priority 2)
-            /tenant:<tenant_id>/user:<user_id>/skill/          - User personal skills (priority 3)
+            /zone/{zone_id}/skill/                           - Zone shared skills (priority 2)
+            /zone/{zone_id}/user:{user_id}/skill/            - User personal skills (priority 3)
 
         Legacy paths (for backward compatibility):
-            /skills/tenants/{tenant_id}/                        - Old tenant path
+            /skills/zones/{zone_id}/                          - Old zone path
             /skills/users/{user_id}/                            - Old user path
 
         Args:
-            context: Operation context with user_id, tenant_id, agent_id
+            context: Operation context with user_id, zone_id, agent_id
 
         Returns:
             Dict mapping tier name to path (only tiers available for this context)
@@ -87,16 +87,16 @@ class SkillRegistry:
         paths = {"system": "/skill/"}
 
         if context:
-            tenant_id = context.tenant_id or "default"
+            zone_id = context.zone_id or "default"
 
-            # Tenant-level skills: /tenant:<tid>/skill/
-            paths["tenant"] = f"/tenant:{tenant_id}/skill/"
+            # Zone-level skills: /zone/{tid}/skill/
+            paths["zone"] = f"/zone/{zone_id}/skill/"
 
             # Check user_id first (v0.5.0+), then fall back to user (legacy field)
             user_id = context.user_id or getattr(context, "user", None)
             if user_id:
-                # Personal skills: /tenant:<tid>/user:<uid>/skill/
-                paths["personal"] = f"/tenant:{tenant_id}/user:{user_id}/skill/"
+                # Personal skills: /zone/{tid}/user:{uid}/skill/
+                paths["personal"] = f"/zone/{zone_id}/user:{user_id}/skill/"
 
         return paths
 
@@ -132,7 +132,7 @@ class SkillRegistry:
         Progressive disclosure: Only loads metadata during discovery.
         Full content is loaded on-demand when get_skill() is called.
 
-        Uses context-aware paths based on user_id, tenant_id, agent_id.
+        Uses context-aware paths based on user_id, zone_id, agent_id.
 
         Args:
             context: Operation context for context-aware path resolution
@@ -143,9 +143,9 @@ class SkillRegistry:
 
         Example:
             >>> registry = SkillRegistry(nx)
-            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> ctx = OperationContext(user_id="alice", zone_id="acme")
             >>> count = await registry.discover(ctx)  # Discover from all tiers for alice
-            >>> count = await registry.discover(ctx, ["user", "tenant"])  # Specific tiers
+            >>> count = await registry.discover(ctx, ["user", "zone"])  # Specific tiers
         """
         tier_paths = self.get_tier_paths(context)
 
@@ -178,7 +178,7 @@ class SkillRegistry:
         """Discover skills from a single tier.
 
         Args:
-            tier: Tier name (agent, tenant, system)
+            tier: Tier name (agent, zone, system)
             tier_path: Path to tier directory
 
         Returns:
@@ -257,7 +257,7 @@ class SkillRegistry:
                 if metadata is None:
                     continue
 
-                # Index by name (tier priority: agent > tenant > system)
+                # Index by name (tier priority: agent > zone > system)
                 existing = self._metadata_index.get(metadata.name)
                 if existing:
                     # Check tier priority
@@ -347,7 +347,7 @@ class SkillRegistry:
             PermissionDeniedError: If subject lacks read permission
 
         Example:
-            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> ctx = OperationContext(user_id="alice", zone_id="acme")
             >>> skill = await registry.get_skill("analyze-code", ctx)
             >>> print(skill.content)  # Full markdown content
         """
@@ -370,7 +370,7 @@ class SkillRegistry:
                         subject=(subject_type, subject_id),
                         permission="read",
                         object=("skill", name),
-                        tenant_id=context.tenant_id,
+                        zone_id=context.zone_id,
                     )
                     if not has_permission:
                         raise PermissionDeniedError(
@@ -493,14 +493,14 @@ class SkillRegistry:
         context-aware skills.
 
         Args:
-            tier: Optional tier filter (agent, user, tenant, system)
+            tier: Optional tier filter (agent, user, zone, system)
             include_metadata: If True, return SkillMetadata instead of names
 
         Returns:
             List of skill names or SkillMetadata objects
 
         Example:
-            >>> ctx = OperationContext(user_id="alice", tenant_id="acme")
+            >>> ctx = OperationContext(user_id="alice", zone_id="acme")
             >>> await registry.discover(ctx)  # Discover skills for alice
             >>> names = registry.list_skills()  # All skills alice can see
             >>> names = registry.list_skills(tier="user")  # User-level skills only

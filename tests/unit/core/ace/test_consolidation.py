@@ -57,7 +57,7 @@ def consolidation_engine(session, mock_backend, mock_llm_provider):
         llm_provider=mock_llm_provider,
         user_id="alice",
         agent_id="agent1",
-        tenant_id="acme",
+        zone_id="acme",
     )
 
 
@@ -72,7 +72,7 @@ class TestConsolidationEngineInit:
             llm_provider=mock_llm_provider,
             user_id="alice",
             agent_id="agent1",
-            tenant_id="acme",
+            zone_id="acme",
         )
 
         assert engine.session == session
@@ -80,7 +80,7 @@ class TestConsolidationEngineInit:
         assert engine.llm_provider == mock_llm_provider
         assert engine.user_id == "alice"
         assert engine.agent_id == "agent1"
-        assert engine.tenant_id == "acme"
+        assert engine.zone_id == "acme"
 
     def test_init_without_optional_params(self, session, mock_backend, mock_llm_provider):
         """Test initialization without optional parameters."""
@@ -92,7 +92,7 @@ class TestConsolidationEngineInit:
         )
 
         assert engine.agent_id is None
-        assert engine.tenant_id is None
+        assert engine.zone_id is None
 
 
 class TestLoadMemory:

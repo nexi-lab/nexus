@@ -673,9 +673,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self.connect_timeout = connect_timeout
         self.max_retries = max_retries
 
-        # Set agent_id and tenant_id (required by NexusFilesystem protocol)
+        # Set agent_id and zone_id (required by NexusFilesystem protocol)
         self._agent_id: str | None = None
-        self._tenant_id: str | None = None
+        self._zone_id: str | None = None
 
         # Initialize semantic search as None (remote clients don't have local search)
         # LLM mixin will check this and fall back to direct file reading
@@ -715,7 +715,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
 
         if api_key:
-            # Fetch authenticated user info to get tenant_id
+            # Fetch authenticated user info to get zone_id
             try:
                 self._fetch_auth_info()
             except Exception as e:
@@ -750,7 +750,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
     def _negative_cache_key(self, path: str) -> str:
         """Generate cache key with tenant isolation."""
-        return f"{self._tenant_id or 'default'}:{path}"
+        return f"{self._zone_id or 'default'}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
         """Check if path is known to not exist (in negative cache).
@@ -804,19 +804,19 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self._agent_id = value
 
     @property
-    def tenant_id(self) -> str | None:
-        """Tenant ID for this filesystem instance."""
-        return self._tenant_id
+    def zone_id(self) -> str | None:
+        """Zone ID for this filesystem instance."""
+        return self._zone_id
 
-    @tenant_id.setter
-    def tenant_id(self, value: str | None) -> None:
-        """Set tenant ID for this filesystem instance."""
-        self._tenant_id = value
+    @zone_id.setter
+    def zone_id(self, value: str | None) -> None:
+        """Set zone ID for this filesystem instance."""
+        self._zone_id = value
 
     def _fetch_auth_info(self) -> None:
         """Fetch authenticated user info from server.
 
-        This populates self.tenant_id, self.agent_id, and other auth metadata
+        This populates self.zone_id, self.agent_id, and other auth metadata
         from the server's /api/auth/whoami endpoint.
         """
         try:
@@ -827,7 +827,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             if response.status_code == 200:
                 auth_info = response.json()
                 if auth_info.get("authenticated"):
-                    self.tenant_id = auth_info.get("tenant_id")
+                    self.zone_id = auth_info.get("zone_id")
                     # BUGFIX: Only set agent_id if subject_type is "agent"
                     # For users, agent_id should remain None
                     subject_type = auth_info.get("subject_type")
@@ -837,7 +837,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                         self.agent_id = None
                     logger.info(
                         f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(tenant: {self.tenant_id})"
+                        f"(tenant: {self.zone_id})"
                     )
                 else:
                     logger.debug("Not authenticated (anonymous access)")
@@ -906,9 +906,9 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             if self.agent_id:
                 headers["X-Agent-ID"] = self.agent_id
 
-            # Add tenant identity header if set
-            if self.tenant_id:
-                headers["X-Tenant-ID"] = self.tenant_id
+            # Add zone identity header if set
+            if self.zone_id:
+                headers["X-Nexus-Zone-ID"] = self.zone_id
 
             # Use custom read_timeout if provided, otherwise use client default
             actual_read_timeout = read_timeout if read_timeout is not None else self.timeout
@@ -2496,7 +2496,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         relation: str,
         object: tuple[str, str],
         expires_at: Any = None,
-        tenant_id: str | None = None,  # Auto-filled from auth if None
+        zone_id: str | None = None,  # Auto-filled from auth if None
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
         context: dict[str, Any] | None = None,  # Operation context for permission checks
     ) -> dict[str, Any]:
@@ -2507,8 +2507,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             relation: Relation type (e.g., 'member-of', 'owner-of', 'dynamic_viewer')
             object: (object_type, object_id) tuple (e.g., ('group', 'developers'))
             expires_at: Optional expiration datetime for temporary relationships
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from authenticated user's credentials.
+            zone_id: Optional zone ID for multi-zone isolation. If None, uses
+                       zone_id from authenticated user's credentials.
             column_config: Optional column-level permissions config for dynamic_viewer relation.
                           Only applies to CSV files.
                           Structure: {
@@ -2541,8 +2541,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ... )
             True
         """
-        # Use tenant_id from auth if not specified
-        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+        # Use zone_id from auth if not specified
+        effective_zone_id = zone_id if zone_id is not None else self.zone_id
 
         result = self._call_rpc(
             "rebac_create",
@@ -2551,7 +2551,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "relation": relation,
                 "object": object,
                 "expires_at": expires_at.isoformat() if expires_at else None,
-                "tenant_id": effective_tenant_id,
+                "zone_id": effective_zone_id,
                 "column_config": column_config,
                 "context": context,
             },
@@ -2563,7 +2563,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Auto-filled from auth if None
+        zone_id: str | None = None,  # Auto-filled from auth if None
         consistency_mode: str | None = None,  # Issue #1081
         min_revision: int | None = None,  # Issue #1081
     ) -> bool:
@@ -2575,7 +2575,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation.
+            zone_id: Optional zone ID for multi-zone isolation.
             consistency_mode: Per-request consistency mode (Issue #1081):
                 - "minimize_latency" (default): Use cache for fastest response
                 - "at_least_as_fresh": Cache must be >= min_revision
@@ -2615,8 +2615,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ... )
             True
         """
-        # Use tenant_id from auth if not specified
-        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+        # Use zone_id from auth if not specified
+        effective_zone_id = zone_id if zone_id is not None else self.zone_id
 
         result = self._call_rpc(
             "rebac_check",
@@ -2624,7 +2624,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "subject": subject,
                 "permission": permission,
                 "object": object,
-                "tenant_id": effective_tenant_id,
+                "zone_id": effective_zone_id,
                 "consistency_mode": consistency_mode,
                 "min_revision": min_revision,
             },
@@ -2703,7 +2703,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Auto-filled from auth if None
+        zone_id: str | None = None,  # Auto-filled from auth if None
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -2714,8 +2714,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., 'read', 'write', 'owner')
             object: (object_type, object_id) tuple
-            tenant_id: Optional tenant ID for multi-tenant isolation. If None, uses
-                       tenant_id from authenticated user's credentials.
+            zone_id: Optional zone ID for multi-zone isolation. If None, uses
+                       zone_id from authenticated user's credentials.
 
         Returns:
             Dictionary with:
@@ -2734,8 +2734,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ... )
             >>> print(explanation["reason"])
         """
-        # Use tenant_id from auth if not specified
-        effective_tenant_id = tenant_id if tenant_id is not None else self.tenant_id
+        # Use zone_id from auth if not specified
+        effective_zone_id = zone_id if zone_id is not None else self.zone_id
 
         result = self._call_rpc(
             "rebac_explain",
@@ -2743,7 +2743,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "subject": subject,
                 "permission": permission,
                 "object": object,
-                "tenant_id": effective_tenant_id,
+                "zone_id": effective_zone_id,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -3121,7 +3121,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         from_subject: tuple[str, str],
         to_subject: tuple[str, str],
         expires_at: Any = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> str:
         """Grant consent for one subject to discover another (privacy/consent management).
 
@@ -3129,7 +3129,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             from_subject: Who is granting consent (e.g., ("profile", "alice"))
             to_subject: Who can now discover (e.g., ("user", "bob"))
             expires_at: Optional expiration datetime for temporary consent
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             Tuple ID of the consent relationship
@@ -3147,7 +3147,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "from_subject": from_subject,
                 "to_subject": to_subject,
                 "expires_at": expires_at.isoformat() if expires_at else None,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
             },
         )
         return result  # type: ignore[no-any-return]
@@ -3174,12 +3174,12 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         )
         return result  # type: ignore[no-any-return]
 
-    def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
+    def make_public(self, resource: tuple[str, str], zone_id: str | None = None) -> str:
         """Make a resource publicly discoverable (anyone can discover it without consent).
 
         Args:
             resource: Resource to make public (e.g., ("profile", "alice"))
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             Tuple ID of the public relationship
@@ -3188,7 +3188,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> # Make Alice's profile publicly discoverable
             >>> public_id = nx.make_public(("profile", "alice"))
         """
-        result = self._call_rpc("make_public", {"resource": resource, "tenant_id": tenant_id})
+        result = self._call_rpc("make_public", {"resource": resource, "zone_id": zone_id})
         return result  # type: ignore[no-any-return]
 
     def make_private(self, resource: tuple[str, str]) -> bool:
@@ -3216,8 +3216,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         resource: tuple[str, str],
         user_id: str,
         relation: str = "viewer",
-        tenant_id: str | None = None,
-        user_tenant_id: str | None = None,
+        zone_id: str | None = None,
+        user_zone_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> str:
         """Share a resource with a specific user (same or different tenant).
@@ -3229,8 +3229,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             user_id: User to share with (e.g., "bob@partner-company.com")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            tenant_id: Resource owner's tenant ID (defaults to current tenant)
-            user_tenant_id: Recipient user's tenant ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current tenant)
+            user_zone_id: Recipient user's zone ID (for cross-tenant shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
@@ -3248,7 +3248,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> share_id = nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="bob@partner.com",
-            ...     user_tenant_id="partner-tenant",
+            ...     user_zone_id="partner-tenant",
             ...     relation="viewer"
             ... )
         """
@@ -3258,8 +3258,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "resource": resource,
                 "user_id": user_id,
                 "relation": relation,
-                "tenant_id": tenant_id,
-                "user_tenant_id": user_tenant_id,
+                "zone_id": zone_id,
+                "user_zone_id": user_zone_id,
                 "expires_at": expires_at.isoformat() if expires_at else None,
             },
         )
@@ -3270,8 +3270,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         resource: tuple[str, str],
         group_id: str,
         relation: str = "viewer",
-        tenant_id: str | None = None,
-        group_tenant_id: str | None = None,
+        zone_id: str | None = None,
+        group_zone_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> str:
         """Share a resource with a group (all members get access).
@@ -3286,8 +3286,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             group_id: Group to share with (e.g., "developers")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            tenant_id: Resource owner's tenant ID (defaults to current tenant)
-            group_tenant_id: Group's tenant ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current tenant)
+            group_zone_id: Group's zone ID (for cross-tenant shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
@@ -3305,7 +3305,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> share_id = nx.share_with_group(
             ...     resource=("file", "/project/doc.txt"),
             ...     group_id="partner-team",
-            ...     group_tenant_id="partner-tenant",
+            ...     group_zone_id="partner-tenant",
             ...     relation="viewer"
             ... )
         """
@@ -3315,8 +3315,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "resource": resource,
                 "group_id": group_id,
                 "relation": relation,
-                "tenant_id": tenant_id,
-                "group_tenant_id": group_tenant_id,
+                "zone_id": zone_id,
+                "group_zone_id": group_zone_id,
                 "expires_at": expires_at.isoformat() if expires_at else None,
             },
         )
@@ -3365,7 +3365,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     def list_outgoing_shares(
         self,
         resource: tuple[str, str] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[dict[str, Any]]:
@@ -3373,7 +3373,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             resource: Filter by specific resource (optional)
-            tenant_id: Tenant ID to list shares for (defaults to current tenant)
+            zone_id: Zone ID to list shares for (defaults to current tenant)
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -3389,7 +3389,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "list_outgoing_shares",
             {
                 "resource": resource,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
                 "limit": limit,
                 "offset": offset,
             },
@@ -3417,7 +3417,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Examples:
             >>> shares = nx.list_incoming_shares(user_id="alice@mycompany.com")
             >>> for share in shares:
-            ...     print(f"{share['resource_id']} from {share['owner_tenant_id']}")
+            ...     print(f"{share['resource_id']} from {share['owner_zone_id']}")
         """
         result = self._call_rpc(
             "list_incoming_shares",
@@ -3440,7 +3440,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Add a dynamic backend mount to the filesystem.
 
         This adds a backend mount at runtime without requiring server restart.
-        Useful for user-specific storage, temporary backends, or multi-tenant scenarios.
+        Useful for user-specific storage, temporary backends, or multi-zone scenarios.
 
         Args:
             mount_point: Virtual path where backend is mounted (e.g., "/personal/alice")
@@ -3640,7 +3640,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
     ) -> str:
         """Save a mount configuration to the database for persistence.
@@ -3655,7 +3655,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             priority: Mount priority (default: 0)
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)
-            tenant_id: Tenant ID for multi-tenant isolation (optional)
+            zone_id: Zone ID for multi-zone isolation (optional)
             description: Human-readable description (optional)
 
         Returns:
@@ -3672,7 +3672,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     backend_type="google_drive",
             ...     backend_config={"access_token": "ya29.xxx"},
             ...     owner_user_id="google:alice123",
-            ...     tenant_id="acme",
+            ...     zone_id="acme",
             ...     description="Alice's personal Google Drive"
             ... )
         """
@@ -3685,20 +3685,20 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 "priority": priority,
                 "readonly": readonly,
                 "owner_user_id": owner_user_id,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
                 "description": description,
             },
         )
         return result  # type: ignore[no-any-return]
 
     def list_saved_mounts(
-        self, owner_user_id: str | None = None, tenant_id: str | None = None
+        self, owner_user_id: str | None = None, zone_id: str | None = None
     ) -> builtins.list[dict[str, Any]]:
         """List mount configurations saved in the database.
 
         Args:
             owner_user_id: Filter by owner user ID (optional)
-            tenant_id: Filter by tenant ID (optional)
+            zone_id: Filter by zone ID (optional)
 
         Returns:
             List of saved mount configurations
@@ -3714,7 +3714,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             >>> alice_mounts = nx.list_saved_mounts(owner_user_id="google:alice123")
         """
         result = self._call_rpc(
-            "list_saved_mounts", {"owner_user_id": owner_user_id, "tenant_id": tenant_id}
+            "list_saved_mounts", {"owner_user_id": owner_user_id, "zone_id": zone_id}
         )
         return result  # type: ignore[no-any-return]
 
@@ -4372,7 +4372,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         user_id: str,
         email: str,
         display_name: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         create_api_key: bool = True,
         create_agents: bool = True,
         import_skills: bool = True,
@@ -4382,8 +4382,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Creates:
         - User record (UserModel) in database
-        - Tenant record (TenantModel) if it doesn't exist
-        - All user directories under /tenant:{tenant_id}/user:{user_id}/
+        - Zone record (ZoneModel) if it doesn't exist
+        - All user directories under /zone/{zone_id}/user:{user_id}/
         - Default workspace
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
@@ -4395,7 +4395,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             user_id: Unique user identifier
             email: User email address
             display_name: Optional display name
-            tenant_id: Tenant ID (extracted from email if not provided)
+            zone_id: Zone ID (extracted from email if not provided)
             create_api_key: Whether to create API key for user
             create_agents: Whether to create default agents
             import_skills: Whether to import default skills
@@ -4404,7 +4404,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Returns:
             {
                 "user_id": str,
-                "tenant_id": str,
+                "zone_id": str,
                 "api_key": str | None,
                 "workspace_path": str,
                 "agent_paths": list[str],
@@ -4427,7 +4427,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "user_id": user_id,
             "email": email,
             "display_name": display_name,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "create_api_key": create_api_key,
             "create_agents": create_agents,
             "import_skills": import_skills,
@@ -4443,7 +4443,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     def deprovision_user(
         self,
         user_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         delete_user_record: bool = False,
         force: bool = False,
         context: dict | None = None,
@@ -4464,7 +4464,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             user_id: User ID to deprovision
-            tenant_id: Tenant ID (looked up from user if not provided)
+            zone_id: Zone ID (looked up from user if not provided)
             delete_user_record: If True, soft-deletes UserModel record
             force: Bypass safety checks (e.g., allow deprovisioning admin users)
             context: Optional operation context
@@ -4472,7 +4472,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Returns:
             {
                 "user_id": str,
-                "tenant_id": str,
+                "zone_id": str,
                 "deleted_directories": list[str],
                 "deleted_api_keys": int,
                 "deleted_permissions": int,
@@ -4487,7 +4487,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Example:
             >>> result = nx.deprovision_user(
             ...     user_id="alice",
-            ...     tenant_id="example",
+            ...     zone_id="example",
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
@@ -4495,7 +4495,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """
         params: dict[str, Any] = {
             "user_id": user_id,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "delete_user_record": delete_user_record,
             "force": force,
         }
@@ -4996,7 +4996,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         context: dict | None = None,
         verify_status: bool = False,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
     ) -> dict:
@@ -5006,7 +5006,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             context: Operation context
             verify_status: Verify actual sandbox status with provider (default: False)
             user_id: Filter by user_id (admin only)
-            tenant_id: Filter by tenant_id (admin only)
+            zone_id: Filter by zone_id (admin only)
             agent_id: Filter by agent_id
             status: Filter by status (e.g., 'active', 'stopped', 'paused')
 
@@ -5023,8 +5023,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             params["context"] = context
         if user_id is not None:
             params["user_id"] = user_id
-        if tenant_id is not None:
-            params["tenant_id"] = tenant_id
+        if zone_id is not None:
+            params["zone_id"] = zone_id
         if agent_id is not None:
             params["agent_id"] = agent_id
         if status is not None:
@@ -5341,7 +5341,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self,
         skill_name: str,
         source_tier: str = "agent",
-        target_tier: str = "tenant",
+        target_tier: str = "zone",
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Publish skill to another tier."""
@@ -5393,7 +5393,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         reviewed_by: str,
         reviewer_type: str = "user",
         comments: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Approve a skill for publication."""
@@ -5404,8 +5404,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         }
         if comments is not None:
             params["comments"] = comments
-        if tenant_id is not None:
-            params["tenant_id"] = tenant_id
+        if zone_id is not None:
+            params["zone_id"] = zone_id
         result = self._call_rpc("skills_approve", params)
         return result  # type: ignore[no-any-return]
 
@@ -5415,7 +5415,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         reviewed_by: str,
         reviewer_type: str = "user",
         comments: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         _context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Reject a skill for publication."""
@@ -5426,8 +5426,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         }
         if comments is not None:
             params["comments"] = comments
-        if tenant_id is not None:
-            params["tenant_id"] = tenant_id
+        if zone_id is not None:
+            params["zone_id"] = zone_id
         result = self._call_rpc("skills_reject", params)
         return result  # type: ignore[no-any-return]
 
@@ -5527,10 +5527,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Share a skill with users, groups, or make public.
 
         Args:
-            skill_path: Path to the skill (e.g., /tenant:acme/user:alice/skill/code-review/)
+            skill_path: Path to the skill (e.g., /zone/acme/user:alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make skill visible to everyone
-                - "tenant" - Share with all users in current tenant
+                - "zone" - Share with all users in current zone
                 - "group:<name>" - Share with a group
                 - "user:<id>" - Share with a specific user
                 - "agent:<id>" - Share with a specific agent
@@ -6102,7 +6102,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     def backfill_directory_index(
         self,
         prefix: str = "/",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Backfill sparse directory index from existing files.
 
@@ -6112,14 +6112,14 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             prefix: Path prefix to backfill (default: "/" for all)
-            tenant_id: Optional tenant filter
+            zone_id: Optional tenant filter
 
         Returns:
             Dict with 'created' count of new index entries
         """
         result = self._call_rpc(
             "backfill_directory_index",
-            {"prefix": prefix, "tenant_id": tenant_id},
+            {"prefix": prefix, "zone_id": zone_id},
         )
         return result  # type: ignore[no-any-return]
 

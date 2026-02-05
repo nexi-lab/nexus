@@ -28,7 +28,7 @@ from nexus.storage.models import APIKeyModel  # noqa: E402
 
 
 def setup_admin_api_key(
-    database_url: str, admin_api_key: str, tenant_id: str = "system", user_id: str = "admin"
+    database_url: str, admin_api_key: str, zone_id: str = "system", user_id: str = "admin"
 ) -> bool:
     """
     Setup admin user and API key in the database.
@@ -36,7 +36,7 @@ def setup_admin_api_key(
     Args:
         database_url: Database connection URL (postgresql://, sqlite://, etc.)
         admin_api_key: Admin API key to create/verify
-        tenant_id: Tenant ID (default: "system")
+        zone_id: Zone ID (default: "system")
         user_id: User ID (default: "admin")
 
     Returns:
@@ -52,8 +52,8 @@ def setup_admin_api_key(
             entity_registry.register_entity(
                 entity_type="user",
                 entity_id=user_id,
-                parent_type="tenant",
-                parent_id=tenant_id,
+                parent_type="zone",
+                parent_id=zone_id,
             )
             print(f"✓ Registered user {user_id} in entity registry")
         except Exception:
@@ -81,7 +81,7 @@ def setup_admin_api_key(
                     user_id=user_id,
                     subject_type="user",
                     subject_id=user_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     is_admin=1,  # PostgreSQL uses INTEGER for boolean
                     name=f"{user_id.capitalize()} Bootstrap Key",
                     created_at=datetime.now(UTC),
@@ -116,7 +116,7 @@ def main() -> None:
     """Main entry point for CLI usage."""
     if len(sys.argv) < 3:
         print(
-            "Usage: python setup_admin_api_key.py <database_url> <api_key> [tenant_id] [user_id]",
+            "Usage: python setup_admin_api_key.py <database_url> <api_key> [zone_id] [user_id]",
             file=sys.stderr,
         )
         print("\nExample:", file=sys.stderr)
@@ -128,7 +128,7 @@ def main() -> None:
 
     database_url = sys.argv[1]
     admin_api_key = sys.argv[2]
-    tenant_id = sys.argv[3] if len(sys.argv) > 3 else "system"
+    zone_id = sys.argv[3] if len(sys.argv) > 3 else "system"
     user_id = sys.argv[4] if len(sys.argv) > 4 else "admin"
 
     if not database_url:
@@ -139,7 +139,7 @@ def main() -> None:
         print("ERROR: API key cannot be empty", file=sys.stderr)
         sys.exit(1)
 
-    success = setup_admin_api_key(database_url, admin_api_key, tenant_id, user_id)
+    success = setup_admin_api_key(database_url, admin_api_key, zone_id, user_id)
     sys.exit(0 if success else 1)
 
 

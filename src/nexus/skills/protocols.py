@@ -51,8 +51,8 @@ class NexusFilesystem(Protocol):
         ...
 
     @property
-    def tenant_id(self) -> str | None:
-        """Tenant ID for this filesystem instance."""
+    def zone_id(self) -> str | None:
+        """Zone ID for this filesystem instance."""
         ...
 
     # ============================================================
@@ -917,7 +917,7 @@ class NexusFilesystem(Protocol):
         context: dict | None = None,
         verify_status: bool = False,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
     ) -> dict[Any, Any]:
@@ -927,7 +927,7 @@ class NexusFilesystem(Protocol):
             context: Operation context
             verify_status: Whether to verify sandbox status
             user_id: Filter by user ID
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             agent_id: Filter by agent ID
             status: Filter by status
 

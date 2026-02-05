@@ -42,7 +42,7 @@ class TestGraphSearchEndpoint:
     @pytest.fixture
     def mock_auth(self):
         """Mock authentication."""
-        return {"user": "test", "tenant_id": "default"}
+        return {"user": "test", "zone_id": "default"}
 
     def test_graph_mode_parameter_exists(self):
         """Test that graph_mode parameter is accepted."""

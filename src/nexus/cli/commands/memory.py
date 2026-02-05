@@ -27,7 +27,7 @@ def memory() -> None:
 
 @memory.command()
 @click.argument("content")
-@click.option("--scope", default="user", help="Memory scope (agent/user/tenant/global)")
+@click.option("--scope", default="user", help="Memory scope (agent/user/zone/global)")
 @click.option(
     "--type", "memory_type", default=None, help="Memory type (fact/preference/experience)"
 )

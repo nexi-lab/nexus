@@ -35,7 +35,7 @@ interface OAuthConfirmationResponse {
     oauth_state: string | null;
   };
   tenant_info: {
-    tenant_id: string;
+    zone_id: string;
     name: string;
     domain: string | null;
     description: string | null;
@@ -51,7 +51,7 @@ interface OAuthCallbackResponse {
   user: object;
   is_new_user: boolean;
   api_key: string | null;
-  tenant_id: string | null;
+  zone_id: string | null;
   message: string;
   needs_confirmation: false;
 }
@@ -145,7 +145,7 @@ interface ConfirmationPageProps {
       avatar_url: string | null;
     };
     tenant_info: {
-      tenant_id: string;
+      zone_id: string;
       name: string;
       domain: string | null;
       is_personal: boolean;
@@ -371,11 +371,11 @@ function OAuthCallbackHandler() {
 
 **Verify in Database:**
 ```sql
-SELECT tenant_id, name, domain FROM tenants;
--- Expected: tenant_id='alice', name='Alice's Projects' (or 'Alice's Workspace')
+SELECT zone_id, name, domain FROM tenants;
+-- Expected: zone_id='alice', name='Alice's Projects' (or 'Alice's Workspace')
 
-SELECT email, tenant_id FROM users;
--- Expected: email='alice@gmail.com', tenant_id='alice'
+SELECT email, zone_id FROM users;
+-- Expected: email='alice@gmail.com', zone_id='alice'
 ```
 
 ### Test Case 2: New Company Email User
@@ -390,8 +390,8 @@ SELECT email, tenant_id FROM users;
 
 **Verify in Database:**
 ```sql
-SELECT tenant_id, name, domain FROM tenants;
--- Expected: tenant_id='acme-com', name='Acme', domain='acme.com'
+SELECT zone_id, name, domain FROM tenants;
+-- Expected: zone_id='acme-com', name='Acme', domain='acme.com'
 ```
 
 ### Test Case 3: Existing User
@@ -482,7 +482,7 @@ nexus serve --config ./configs/config.demo.yaml --auth-type database --async
     "oauth_state": "..."
   },
   "tenant_info": {
-    "tenant_id": "alice",
+    "zone_id": "alice",
     "name": "Alice's Workspace",
     "domain": "gmail.com",
     "description": "Personal workspace for Alice Smith",
@@ -500,7 +500,7 @@ nexus serve --config ./configs/config.demo.yaml --auth-type database --async
   "user": { "user_id": "...", "email": "alice@gmail.com", ... },
   "is_new_user": false,
   "api_key": "nx_...",
-  "tenant_id": "alice",
+  "zone_id": "alice",
   "message": "OAuth authentication successful",
   "needs_confirmation": false
 }
@@ -523,7 +523,7 @@ nexus serve --config ./configs/config.demo.yaml --auth-type database --async
   "user": { "user_id": "...", "email": "alice@gmail.com", ... },
   "is_new_user": true,
   "api_key": "nx_...",
-  "tenant_id": "alice",
+  "zone_id": "alice",
   "message": "Registration completed successfully"
 }
 ```

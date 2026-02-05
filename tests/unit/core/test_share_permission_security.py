@@ -475,75 +475,75 @@ class TestHelperMethodIntegration:
             nx.close()
 
 
-class TestCrossTenantSharing:
-    """Test cross-tenant sharing functionality."""
+class TestCrossZoneSharing:
+    """Test cross-zone sharing functionality."""
 
-    def test_share_with_user_cross_tenant(
+    def test_share_with_user_cross_zone(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
-        """Test sharing file with user in different tenant."""
-        # Create a file as admin in tenant1
+        """Test sharing file with user in different zone."""
+        # Create a file as admin in zone1
         test_file = "/test_file.txt"
         nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
-        admin_context_tenant1 = {
+        admin_context_zone1 = {
             "user": "admin",
             "groups": [],
             "is_admin": True,
             "is_system": False,
-            "tenant_id": "tenant1",
+            "zone_id": "zone1",
         }
         nx.rebac_create(
             subject=("user", "admin"),
             relation="direct_owner",
             object=("file", test_file),
-            tenant_id="tenant1",
-            context=admin_context_tenant1,
+            zone_id="zone1",
+            context=admin_context_zone1,
         )
 
-        # Share with user in tenant2
+        # Share with user in zone2
         share_id = nx.share_with_user(
             resource=("file", test_file),
             user_id="alice",
             relation="viewer",
-            tenant_id="tenant1",
-            user_tenant_id="tenant2",
-            context=admin_context_tenant1,
+            zone_id="zone1",
+            user_zone_id="zone2",
+            context=admin_context_zone1,
         )
         assert share_id
 
-    def test_share_with_group_cross_tenant(
+    def test_share_with_group_cross_zone(
         self, nx: NexusFS, temp_dir: Path, admin_context: dict
     ) -> None:
-        """Test sharing file with group in different tenant."""
-        # Create a file as admin in tenant1
+        """Test sharing file with group in different zone."""
+        # Create a file as admin in zone1
         test_file = "/test_file.txt"
         nx.write(test_file, b"test content", context=OperationContext(**admin_context))
 
         # Grant admin ownership
-        admin_context_tenant1 = {
+        admin_context_zone1 = {
             "user": "admin",
             "groups": [],
             "is_admin": True,
             "is_system": False,
-            "tenant_id": "tenant1",
+            "zone_id": "zone1",
         }
         nx.rebac_create(
             subject=("user", "admin"),
             relation="direct_owner",
             object=("file", test_file),
-            tenant_id="tenant1",
-            context=admin_context_tenant1,
+            zone_id="zone1",
+            context=admin_context_zone1,
         )
 
-        # Share with group in tenant2
+        # Share with group in zone2
         share_id = nx.share_with_group(
             resource=("file", test_file),
             group_id="partner-team",
             relation="viewer",
-            tenant_id="tenant1",
-            group_tenant_id="tenant2",
-            context=admin_context_tenant1,
+            zone_id="zone1",
+            group_zone_id="zone2",
+            context=admin_context_zone1,
         )
         assert share_id

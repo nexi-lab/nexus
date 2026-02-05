@@ -23,7 +23,7 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext, Permission
-    from nexus.storage.metadata import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 class NexusFSShareLinksMixin:
@@ -37,7 +37,7 @@ class NexusFSShareLinksMixin:
 
     # Type hints for attributes provided by NexusFS parent class
     if TYPE_CHECKING:
-        metadata: SQLAlchemyMetadataStore
+        metadata: RaftMetadataStore
         _enforce_permissions: bool
 
         def _validate_path(self, path: str) -> str: ...
@@ -124,11 +124,11 @@ class NexusFSShareLinksMixin:
         except Exception as e:
             return HandlerResponse.error(f"Invalid path: {e}", code=400, is_expected=True)
 
-        # Get tenant_id and user_id from context
-        tenant_id = "default"
+        # Get zone_id and user_id from context
+        zone_id = "default"
         created_by = "anonymous"
         if context:
-            tenant_id = getattr(context, "tenant_id", None) or "default"
+            zone_id = getattr(context, "zone_id", None) or "default"
             created_by = (
                 getattr(context, "user", None)
                 or getattr(context, "subject_id", None)
@@ -172,12 +172,12 @@ class NexusFSShareLinksMixin:
 
         # Create share link record
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 share_link = ShareLinkModel(
                     resource_type=resource_type,
                     resource_id=normalized_path,
                     permission_level=permission_level,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     created_by=created_by,
                     password_hash=password_hash,
                     expires_at=expires_at,
@@ -223,7 +223,7 @@ class NexusFSShareLinksMixin:
         from nexus.storage.models import ShareLinkModel
 
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
 
                 if not link:
@@ -232,11 +232,11 @@ class NexusFSShareLinksMixin:
                     )
 
                 # Check authorization - only creator or admin can see full details
-                tenant_id = "default"
+                zone_id = "default"
                 user_id = "anonymous"
                 is_admin = False
                 if context:
-                    tenant_id = getattr(context, "tenant_id", None) or "default"
+                    zone_id = getattr(context, "zone_id", None) or "default"
                     user_id = (
                         getattr(context, "user", None)
                         or getattr(context, "subject_id", None)
@@ -245,7 +245,7 @@ class NexusFSShareLinksMixin:
                     is_admin = getattr(context, "is_admin", False)
 
                 # Check ownership
-                is_owner = link.created_by == user_id and link.tenant_id == tenant_id
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
 
                 if not is_owner and not is_admin:
                     # Return limited info for non-owners
@@ -266,7 +266,7 @@ class NexusFSShareLinksMixin:
                         "path": link.resource_id,
                         "resource_type": link.resource_type,
                         "permission_level": link.permission_level,
-                        "tenant_id": link.tenant_id,
+                        "zone_id": link.zone_id,
                         "created_by": link.created_by,
                         "created_at": link.created_at.isoformat(),
                         "expires_at": link.expires_at.isoformat() if link.expires_at else None,
@@ -307,11 +307,11 @@ class NexusFSShareLinksMixin:
 
         from nexus.storage.models import ShareLinkModel
 
-        tenant_id = "default"
+        zone_id = "default"
         user_id = "anonymous"
         is_admin = False
         if context:
-            tenant_id = getattr(context, "tenant_id", None) or "default"
+            zone_id = getattr(context, "zone_id", None) or "default"
             user_id = (
                 getattr(context, "user", None)
                 or getattr(context, "subject_id", None)
@@ -320,9 +320,9 @@ class NexusFSShareLinksMixin:
             is_admin = getattr(context, "is_admin", False)
 
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 # Base query
-                query = session.query(ShareLinkModel).filter_by(tenant_id=tenant_id)
+                query = session.query(ShareLinkModel).filter_by(zone_id=zone_id)
 
                 # Non-admins can only see their own links
                 if not is_admin:
@@ -393,11 +393,11 @@ class NexusFSShareLinksMixin:
         """
         from nexus.storage.models import ShareLinkModel
 
-        tenant_id = "default"
+        zone_id = "default"
         user_id = "anonymous"
         is_admin = False
         if context:
-            tenant_id = getattr(context, "tenant_id", None) or "default"
+            zone_id = getattr(context, "zone_id", None) or "default"
             user_id = (
                 getattr(context, "user", None)
                 or getattr(context, "subject_id", None)
@@ -406,7 +406,7 @@ class NexusFSShareLinksMixin:
             is_admin = getattr(context, "is_admin", False)
 
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
 
                 if not link:
@@ -415,7 +415,7 @@ class NexusFSShareLinksMixin:
                     )
 
                 # Check authorization
-                is_owner = link.created_by == user_id and link.tenant_id == tenant_id
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
                 if not is_owner and not is_admin:
                     return HandlerResponse.error(
                         "Permission denied: only link creator or admin can revoke",
@@ -477,15 +477,15 @@ class NexusFSShareLinksMixin:
 
         # Get authenticated user info if available
         accessed_by_user_id = None
-        accessed_by_tenant_id = None
+        accessed_by_zone_id = None
         if context:
             accessed_by_user_id = getattr(context, "user", None) or getattr(
                 context, "subject_id", None
             )
-            accessed_by_tenant_id = getattr(context, "tenant_id", None)
+            accessed_by_zone_id = getattr(context, "zone_id", None)
 
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
 
                 # Helper to log access attempt
@@ -497,7 +497,7 @@ class NexusFSShareLinksMixin:
                         success=1 if success else 0,
                         failure_reason=failure_reason,
                         accessed_by_user_id=accessed_by_user_id,
-                        accessed_by_tenant_id=accessed_by_tenant_id,
+                        accessed_by_zone_id=accessed_by_zone_id,
                     )
                     session.add(log_entry)
 
@@ -565,7 +565,7 @@ class NexusFSShareLinksMixin:
                         "path": link.resource_id,
                         "resource_type": link.resource_type,
                         "permission_level": link.permission_level,
-                        "tenant_id": link.tenant_id,
+                        "zone_id": link.zone_id,
                         "access_granted": True,
                         "remaining_accesses": (
                             link.max_access_count - link.access_count
@@ -598,11 +598,11 @@ class NexusFSShareLinksMixin:
         """
         from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
-        tenant_id = "default"
+        zone_id = "default"
         user_id = "anonymous"
         is_admin = False
         if context:
-            tenant_id = getattr(context, "tenant_id", None) or "default"
+            zone_id = getattr(context, "zone_id", None) or "default"
             user_id = (
                 getattr(context, "user", None)
                 or getattr(context, "subject_id", None)
@@ -611,7 +611,7 @@ class NexusFSShareLinksMixin:
             is_admin = getattr(context, "is_admin", False)
 
         try:
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 # First verify the link exists and user has access
                 link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
 
@@ -621,7 +621,7 @@ class NexusFSShareLinksMixin:
                     )
 
                 # Check authorization
-                is_owner = link.created_by == user_id and link.tenant_id == tenant_id
+                is_owner = link.created_by == user_id and link.zone_id == zone_id
                 if not is_owner and not is_admin:
                     return HandlerResponse.error(
                         "Permission denied: only link creator or admin can view logs",
@@ -649,7 +649,7 @@ class NexusFSShareLinksMixin:
                             "success": bool(log.success),
                             "failure_reason": log.failure_reason,
                             "accessed_by_user_id": log.accessed_by_user_id,
-                            "accessed_by_tenant_id": log.accessed_by_tenant_id,
+                            "accessed_by_zone_id": log.accessed_by_zone_id,
                         }
                     )
 

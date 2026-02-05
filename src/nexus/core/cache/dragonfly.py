@@ -276,7 +276,7 @@ class DragonflyPermissionCache:
     different TTLs (denials expire faster for security).
 
     Key format:
-        perm:{tenant_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}
+        perm:{zone_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}
 
     Value:
         "1" for grant, "0" for denial
@@ -306,12 +306,10 @@ class DragonflyPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> str:
         """Create cache key for permission entry."""
-        return (
-            f"perm:{tenant_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}"
-        )
+        return f"perm:{zone_id}:{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}"
 
     async def get(
         self,
@@ -320,12 +318,10 @@ class DragonflyPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool | None:
         """Get cached permission result."""
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
         value = await self._client.client.get(key)
         if value is None:
             return None
@@ -339,12 +335,10 @@ class DragonflyPermissionCache:
         object_type: str,
         object_id: str,
         result: bool,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Cache permission result."""
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
         ttl = self._ttl if result else self._denial_ttl
         await self._client.client.setex(key, ttl, "1" if result else "0")
 
@@ -352,21 +346,21 @@ class DragonflyPermissionCache:
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all permissions for a subject."""
-        pattern = f"perm:{tenant_id}:{subject_type}:{subject_id}:*"
+        pattern = f"perm:{zone_id}:{subject_type}:{subject_id}:*"
         return await self._delete_by_pattern(pattern)
 
     async def invalidate_object(
         self,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all permissions for an object."""
         # Need to scan all subjects - use pattern with wildcards
-        pattern = f"perm:{tenant_id}:*:*:*:{object_type}:{object_id}"
+        pattern = f"perm:{zone_id}:*:*:*:{object_type}:{object_id}"
         return await self._delete_by_pattern(pattern)
 
     async def invalidate_subject_object(
@@ -375,15 +369,15 @@ class DragonflyPermissionCache:
         subject_id: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate permissions for a specific subject-object pair."""
-        pattern = f"perm:{tenant_id}:{subject_type}:{subject_id}:*:{object_type}:{object_id}"
+        pattern = f"perm:{zone_id}:{subject_type}:{subject_id}:*:{object_type}:{object_id}"
         return await self._delete_by_pattern(pattern)
 
-    async def clear(self, tenant_id: str | None = None) -> int:
+    async def clear(self, zone_id: str | None = None) -> int:
         """Clear all cached permissions."""
-        pattern = f"perm:{tenant_id}:*" if tenant_id else "perm:*"
+        pattern = f"perm:{zone_id}:*" if zone_id else "perm:*"
         return await self._delete_by_pattern(pattern)
 
     async def _delete_by_pattern(self, pattern: str) -> int:
@@ -415,7 +409,7 @@ class DragonflyTigerCache:
     Stores Roaring Bitmap data for O(1) list filtering.
 
     Key format:
-        tiger:{tenant_id}:{subject_type}:{subject_id}:{permission}:{resource_type}
+        tiger:{zone_id}:{subject_type}:{subject_id}:{permission}:{resource_type}
 
     Value:
         Hash with fields:
@@ -443,10 +437,10 @@ class DragonflyTigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> str:
         """Create cache key for Tiger entry."""
-        return f"tiger:{tenant_id}:{subject_type}:{subject_id}:{permission}:{resource_type}"
+        return f"tiger:{zone_id}:{subject_type}:{subject_id}:{permission}:{resource_type}"
 
     async def get_bitmap(
         self,
@@ -454,10 +448,10 @@ class DragonflyTigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject."""
-        key = self._make_key(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = self._make_key(subject_type, subject_id, permission, resource_type, zone_id)
         result = await self._client.client.hgetall(key)  # type: ignore[misc]
         if not result:
             return None
@@ -476,12 +470,12 @@ class DragonflyTigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         bitmap_data: bytes,
         revision: int,
     ) -> None:
         """Store Tiger bitmap for a subject."""
-        key = self._make_key(subject_type, subject_id, permission, resource_type, tenant_id)
+        key = self._make_key(subject_type, subject_id, permission, resource_type, zone_id)
         pipe = self._client.client.pipeline()
         pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
         pipe.expire(key, self._ttl)
@@ -493,12 +487,12 @@ class DragonflyTigerCache:
         subject_id: str | None = None,
         permission: str | None = None,
         resource_type: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria."""
         # Build pattern from provided filters
         parts = [
-            tenant_id or "*",
+            zone_id or "*",
             subject_type or "*",
             subject_id or "*",
             permission or "*",
@@ -526,7 +520,7 @@ class DragonflyResourceMapCache:
     Maps resource UUIDs to integer IDs for Roaring Bitmap compatibility.
 
     Key format:
-        resmap:{tenant_id}:{resource_type}
+        resmap:{zone_id}:{resource_type}
 
     Value:
         Hash mapping resource_id -> int_id
@@ -540,18 +534,18 @@ class DragonflyResourceMapCache:
         """
         self._client = client
 
-    def _make_key(self, resource_type: str, tenant_id: str) -> str:
+    def _make_key(self, resource_type: str, zone_id: str) -> str:
         """Create cache key for resource map."""
-        return f"resmap:{tenant_id}:{resource_type}"
+        return f"resmap:{zone_id}:{resource_type}"
 
     async def get_int_id(
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int | None:
         """Get integer ID for a resource."""
-        key = self._make_key(resource_type, tenant_id)
+        key = self._make_key(resource_type, zone_id)
         result = await self._client.client.hget(key, resource_id)  # type: ignore[misc]
         if result is None:
             return None
@@ -565,22 +559,22 @@ class DragonflyResourceMapCache:
         if not resources:
             return {}
 
-        # Group by (resource_type, tenant_id) for efficient HMGET
+        # Group by (resource_type, zone_id) for efficient HMGET
         groups: dict[tuple[str, str], list[str]] = {}
-        for resource_type, resource_id, tenant_id in resources:
-            group_key = (resource_type, tenant_id)
+        for resource_type, resource_id, zone_id in resources:
+            group_key = (resource_type, zone_id)
             if group_key not in groups:
                 groups[group_key] = []
             groups[group_key].append(resource_id)
 
         results: dict[tuple[str, str, str], int | None] = {}
 
-        for (resource_type, tenant_id), resource_ids in groups.items():
-            key = self._make_key(resource_type, tenant_id)
+        for (resource_type, zone_id), resource_ids in groups.items():
+            key = self._make_key(resource_type, zone_id)
             values = await self._client.client.hmget(key, resource_ids)  # type: ignore[misc]
 
             for resource_id, value in zip(resource_ids, values, strict=True):
-                result_key = (resource_type, resource_id, tenant_id)
+                result_key = (resource_type, resource_id, zone_id)
                 results[result_key] = int(value) if value is not None else None
 
         return results
@@ -589,11 +583,11 @@ class DragonflyResourceMapCache:
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
         int_id: int,
     ) -> None:
         """Store integer ID for a resource."""
-        key = self._make_key(resource_type, tenant_id)
+        key = self._make_key(resource_type, zone_id)
         await self._client.client.hset(key, resource_id, str(int_id))  # type: ignore[misc]
 
     async def set_int_ids_bulk(
@@ -604,17 +598,17 @@ class DragonflyResourceMapCache:
         if not mappings:
             return
 
-        # Group by (resource_type, tenant_id) for efficient HSET
+        # Group by (resource_type, zone_id) for efficient HSET
         groups: dict[tuple[str, str], dict[str, str]] = {}
-        for (resource_type, resource_id, tenant_id), int_id in mappings.items():
-            group_key = (resource_type, tenant_id)
+        for (resource_type, resource_id, zone_id), int_id in mappings.items():
+            group_key = (resource_type, zone_id)
             if group_key not in groups:
                 groups[group_key] = {}
             groups[group_key][resource_id] = str(int_id)
 
         pipe = self._client.client.pipeline()
-        for (resource_type, tenant_id), mapping in groups.items():
-            key = self._make_key(resource_type, tenant_id)
+        for (resource_type, zone_id), mapping in groups.items():
+            key = self._make_key(resource_type, zone_id)
             pipe.hset(key, mapping=mapping)
         await pipe.execute()
 

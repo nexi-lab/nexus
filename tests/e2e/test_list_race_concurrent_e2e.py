@@ -27,7 +27,7 @@ def make_rpc_request(
     params: dict,
 ) -> dict:
     """Make an RPC request to the server."""
-    headers = {"X-Tenant-ID": "system"}
+    headers = {"X-Nexus-Zone-ID": "system"}
     response = client.post(
         f"/api/nfs/{method}",
         json={
@@ -80,7 +80,7 @@ class TestConcurrentRaceCondition:
         """
         base_url = nexus_server["base_url"]
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/tenant:system/race_stress_{unique_id}"
+        test_dir = f"/zone/system/race_stress_{unique_id}"
 
         num_files = 8  # Reduced to avoid overwhelming test server
         num_list_ops = 15  # Reduced to avoid overwhelming test server
@@ -181,7 +181,7 @@ class TestConcurrentRaceCondition:
         """
         base_url = nexus_server["base_url"]
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/tenant:system/burst_{unique_id}"
+        test_dir = f"/zone/system/burst_{unique_id}"
         test_file = f"{test_dir}/target.txt"
 
         # Write the file
@@ -231,9 +231,9 @@ class TestConcurrentRaceCondition:
         test_user = f"raceuser_{unique_id}"
 
         agent_dirs = [
-            f"/tenant:system/user:{test_user}/agent/ImpersonatedUser",
-            f"/tenant:system/user:{test_user}/agent/UntrustedAgent",
-            f"/tenant:system/user:{test_user}/agent/SkillBuilder",
+            f"/zone/system/user:{test_user}/agent/ImpersonatedUser",
+            f"/zone/system/user:{test_user}/agent/UntrustedAgent",
+            f"/zone/system/user:{test_user}/agent/SkillBuilder",
         ]
 
         race_detected = []

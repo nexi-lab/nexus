@@ -20,19 +20,19 @@ logger = logging.getLogger(__name__)
 class WorkflowStore:
     """Storage layer for workflow persistence."""
 
-    def __init__(self, session_factory, tenant_id: str | None = None):  # type: ignore[no-untyped-def]
+    def __init__(self, session_factory, zone_id: str | None = None):  # type: ignore[no-untyped-def]
         """Initialize workflow store.
 
         Args:
             session_factory: SQLAlchemy session factory
-            tenant_id: Tenant ID (optional, defaults to "default")
+            zone_id: Zone ID (optional, defaults to "default")
         """
         self.session_factory = session_factory
-        self.tenant_id = tenant_id or "default"
+        self.zone_id = zone_id or "default"
 
-    def _get_tenant_id(self) -> str:
-        """Get current tenant ID."""
-        return self.tenant_id
+    def _get_zone_id(self) -> str:
+        """Get current zone ID."""
+        return self.zone_id
 
     def _compute_hash(self, definition_yaml: str) -> str:
         """Compute SHA256 hash of workflow definition.
@@ -82,7 +82,7 @@ class WorkflowStore:
 
             # Check if workflow already exists
             stmt = select(WorkflowModel).where(
-                WorkflowModel.tenant_id == self._get_tenant_id(),
+                WorkflowModel.zone_id == self._get_zone_id(),
                 WorkflowModel.name == definition.name,
             )
             existing = session.execute(stmt).scalar_one_or_none()
@@ -101,7 +101,7 @@ class WorkflowStore:
                 # Create new workflow
                 workflow = WorkflowModel(
                     workflow_id=str(uuid.uuid4()),
-                    tenant_id=self._get_tenant_id(),
+                    zone_id=self._get_zone_id(),
                     name=definition.name,
                     version=definition.version,
                     description=definition.description,
@@ -150,7 +150,7 @@ class WorkflowStore:
         """
         with self.session_factory() as session:
             stmt = select(WorkflowModel).where(
-                WorkflowModel.tenant_id == self._get_tenant_id(),
+                WorkflowModel.zone_id == self._get_zone_id(),
                 WorkflowModel.name == name,
             )
             workflow = session.execute(stmt).scalar_one_or_none()
@@ -171,7 +171,7 @@ class WorkflowStore:
             List of workflow info dictionaries
         """
         with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(WorkflowModel.tenant_id == self._get_tenant_id())
+            stmt = select(WorkflowModel).where(WorkflowModel.zone_id == self._get_zone_id())
             workflows = session.execute(stmt).scalars().all()
 
             result = []
@@ -228,7 +228,7 @@ class WorkflowStore:
         """
         with self.session_factory() as session:
             stmt = select(WorkflowModel).where(
-                WorkflowModel.tenant_id == self._get_tenant_id(),
+                WorkflowModel.zone_id == self._get_zone_id(),
                 WorkflowModel.name == name,
             )
             workflow = session.execute(stmt).scalar_one_or_none()
@@ -276,7 +276,7 @@ class WorkflowStore:
         """
         with self.session_factory() as session:
             stmt = select(WorkflowModel).where(
-                WorkflowModel.tenant_id == self._get_tenant_id(),
+                WorkflowModel.zone_id == self._get_zone_id(),
                 WorkflowModel.name == name,
             )
             workflow = session.execute(stmt).scalar_one_or_none()
@@ -388,7 +388,7 @@ class WorkflowStore:
         # First get workflow ID
         with self.session_factory() as session:
             stmt = select(WorkflowModel).where(
-                WorkflowModel.tenant_id == self._get_tenant_id(),
+                WorkflowModel.zone_id == self._get_zone_id(),
                 WorkflowModel.name == name,
             )
             workflow = session.execute(stmt).scalar_one_or_none()

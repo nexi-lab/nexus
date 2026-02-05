@@ -95,7 +95,7 @@ class TestOAuthAPIKeyModel:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
             expires_at=datetime.now(UTC) + timedelta(days=90),
         )
@@ -131,7 +131,7 @@ class TestOAuthAPIKeyModel:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
         )
 
@@ -167,7 +167,7 @@ class TestOAuthAPIKeyModel:
                 db_session,
                 user_id=test_user.user_id,
                 name=f"OAuth Key {i}",
-                tenant_id="test-tenant",
+                zone_id="test-zone",
                 is_admin=False,
             )
             encrypted_value = oauth_crypto.encrypt_token(api_key_value)
@@ -207,7 +207,7 @@ class TestOAuthAPIKeyFlow:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
             expires_at=datetime.now(UTC) + timedelta(days=90),
         )
@@ -234,7 +234,7 @@ class TestOAuthAPIKeyFlow:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
             expires_at=datetime.now(UTC) + timedelta(days=90),
         )
@@ -263,7 +263,7 @@ class TestOAuthAPIKeyFlow:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
             expires_at=datetime.now(UTC) - timedelta(days=1),  # Expired yesterday
         )
@@ -296,7 +296,7 @@ class TestOAuthAPIKeyFlow:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
         )
         encrypted_value = oauth_crypto.encrypt_token(api_key_value)
@@ -323,7 +323,7 @@ class TestOAuthAPIKeyFlow:
             db_session,
             user_id=test_user.user_id,
             name="OAuth Auto-generated Key",
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             is_admin=False,
         )
 

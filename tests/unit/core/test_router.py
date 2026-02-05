@@ -234,8 +234,8 @@ def test_match_prevents_false_prefix(router: PathRouter, temp_backend: LocalBack
 
 def test_validate_path_accepts_valid_path(router: PathRouter) -> None:
     """Test that validate_path accepts valid paths."""
-    result = router.validate_path("/workspace/tenant1/agent1/data.txt")
-    assert result == "/workspace/tenant1/agent1/data.txt"
+    result = router.validate_path("/workspace/zone1/agent1/data.txt")
+    assert result == "/workspace/zone1/agent1/data.txt"
 
 
 def test_validate_path_rejects_null_byte(router: PathRouter) -> None:
@@ -346,7 +346,7 @@ def test_parse_path_workspace(router: PathRouter) -> None:
     path_info = router.parse_path("/workspace/my-project/data/file.txt")
 
     assert path_info.namespace == "workspace"
-    assert path_info.tenant_id is None  # No tenant in path for workspace
+    assert path_info.zone_id is None  # No zone in path for workspace
     assert path_info.agent_id is None  # No agent in path for workspace
     assert path_info.relative_path == "my-project/data/file.txt"
 
@@ -356,7 +356,7 @@ def test_parse_path_shared(router: PathRouter) -> None:
     path_info = router.parse_path("/shared/acme/datasets/model.pkl")
 
     assert path_info.namespace == "shared"
-    assert path_info.tenant_id == "acme"
+    assert path_info.zone_id == "acme"
     assert path_info.agent_id is None
     assert path_info.relative_path == "datasets/model.pkl"
 
@@ -366,7 +366,7 @@ def test_parse_path_archives(router: PathRouter) -> None:
     path_info = router.parse_path("/archives/acme/2024/01/backup.tar")
 
     assert path_info.namespace == "archives"
-    assert path_info.tenant_id == "acme"
+    assert path_info.zone_id == "acme"
     assert path_info.agent_id is None
     assert path_info.relative_path == "2024/01/backup.tar"
 
@@ -376,7 +376,7 @@ def test_parse_path_external(router: PathRouter) -> None:
     path_info = router.parse_path("/external/s3/bucket/file.txt")
 
     assert path_info.namespace == "external"
-    assert path_info.tenant_id is None
+    assert path_info.zone_id is None
     assert path_info.agent_id is None
     assert path_info.relative_path == "s3/bucket/file.txt"
 
@@ -386,7 +386,7 @@ def test_parse_path_system(router: PathRouter) -> None:
     path_info = router.parse_path("/system/config/settings.json")
 
     assert path_info.namespace == "system"
-    assert path_info.tenant_id is None
+    assert path_info.zone_id is None
     assert path_info.agent_id is None
     assert path_info.relative_path == "config/settings.json"
 
@@ -396,14 +396,14 @@ def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
     # /workspace - just namespace
     path_info = router.parse_path("/workspace")
     assert path_info.namespace == "workspace"
-    assert path_info.tenant_id is None
+    assert path_info.zone_id is None
     assert path_info.agent_id is None
     assert path_info.relative_path == ""
 
-    # /workspace/project-dir - simple path, no tenant/agent parsing
+    # /workspace/project-dir - simple path, no zone/agent parsing
     path_info = router.parse_path("/workspace/project-dir")
     assert path_info.namespace == "workspace"
-    assert path_info.tenant_id is None  # No tenant parsing for workspace
+    assert path_info.zone_id is None  # No zone parsing for workspace
     assert path_info.agent_id is None  # No agent parsing for workspace
     assert path_info.relative_path == "project-dir"
 
@@ -413,12 +413,12 @@ def test_parse_path_shared_partial_paths(router: PathRouter) -> None:
     # /shared - just namespace
     path_info = router.parse_path("/shared")
     assert path_info.namespace == "shared"
-    assert path_info.tenant_id is None
+    assert path_info.zone_id is None
 
-    # /shared/tenant1 - namespace + tenant
-    path_info = router.parse_path("/shared/tenant1")
+    # /shared/zone1 - namespace + zone
+    path_info = router.parse_path("/shared/zone1")
     assert path_info.namespace == "shared"
-    assert path_info.tenant_id == "tenant1"
+    assert path_info.zone_id == "zone1"
 
 
 def test_namespace_configuration_defaults(router: PathRouter) -> None:
@@ -445,43 +445,41 @@ def test_namespace_archives_is_readonly(router: PathRouter) -> None:
     assert router._namespaces["archives"].readonly is True
 
 
-def test_route_with_tenant_isolation(router: PathRouter, temp_backend: LocalBackend) -> None:
-    """Test routing with tenant isolation enforced."""
+def test_route_with_zone_isolation(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test routing with zone isolation enforced."""
     router.add_mount("/workspace", temp_backend)
 
-    # Should succeed - matching tenant
-    result = router.route("/workspace/acme/agent1/data.txt", tenant_id="acme")
+    # Should succeed - matching zone
+    result = router.route("/workspace/acme/agent1/data.txt", zone_id="acme")
     assert result.backend == temp_backend
     assert result.backend_path == "acme/agent1/data.txt"
 
 
-def test_route_with_tenant_mismatch_raises_error(
+def test_route_with_zone_mismatch_raises_error(
     router: PathRouter, temp_backend: LocalBackend
 ) -> None:
-    """Test that tenant mismatch raises AccessDeniedError for shared namespace (not workspace).
+    """Test that zone mismatch raises AccessDeniedError for shared namespace (not workspace).
 
-    Workspace no longer has path-based tenant isolation - uses ReBAC instead.
-    Tenant isolation still applies to /shared namespace.
+    Workspace no longer has path-based zone isolation - uses ReBAC instead.
+    Zone isolation still applies to /shared namespace.
     """
     from nexus.core.router import AccessDeniedError
 
     router.add_mount("/shared", temp_backend)
 
-    # Shared namespace still enforces tenant isolation via path
+    # Shared namespace still enforces zone isolation via path
     with pytest.raises(AccessDeniedError) as exc_info:
-        router.route("/shared/acme/data.txt", tenant_id="other_tenant")
+        router.route("/shared/acme/data.txt", zone_id="other_zone")
 
     assert "cannot access" in str(exc_info.value)
 
 
-def test_route_admin_can_access_any_tenant(router: PathRouter, temp_backend: LocalBackend) -> None:
-    """Test that admin can access any tenant's resources."""
+def test_route_admin_can_access_any_zone(router: PathRouter, temp_backend: LocalBackend) -> None:
+    """Test that admin can access any zone's resources."""
     router.add_mount("/workspace", temp_backend)
 
-    # Admin can access other tenant's resources
-    result = router.route(
-        "/workspace/acme/agent1/data.txt", tenant_id="other_tenant", is_admin=True
-    )
+    # Admin can access other zone's resources
+    result = router.route("/workspace/acme/agent1/data.txt", zone_id="other_zone", is_admin=True)
     assert result.backend == temp_backend
 
 
@@ -514,7 +512,7 @@ def test_route_readonly_namespace_rejects_writes(
     router.add_mount("/archives", temp_backend)
 
     with pytest.raises(AccessDeniedError) as exc_info:
-        router.route("/archives/acme/backup.tar", tenant_id="acme", check_write=True)
+        router.route("/archives/acme/backup.tar", zone_id="acme", check_write=True)
 
     assert "read-only" in str(exc_info.value)
 
@@ -526,7 +524,7 @@ def test_route_readonly_namespace_allows_reads(
     router.add_mount("/archives", temp_backend)
 
     # Should succeed - reading from readonly namespace
-    result = router.route("/archives/acme/backup.tar", tenant_id="acme", check_write=False)
+    result = router.route("/archives/acme/backup.tar", zone_id="acme", check_write=False)
     assert result.backend == temp_backend
     assert result.readonly is True
 
@@ -536,7 +534,7 @@ def test_register_custom_namespace(router: PathRouter) -> None:
     from nexus.core.router import NamespaceConfig
 
     custom_ns = NamespaceConfig(
-        name="custom", readonly=False, admin_only=False, requires_tenant=False
+        name="custom", readonly=False, admin_only=False, requires_zone=False
     )
     router.register_namespace(custom_ns)
 
@@ -544,12 +542,12 @@ def test_register_custom_namespace(router: PathRouter) -> None:
     assert router._namespaces["custom"] == custom_ns
 
 
-def test_route_without_tenant_id_allows_external(
+def test_route_without_zone_id_allows_external(
     router: PathRouter, temp_backend: LocalBackend
 ) -> None:
-    """Test that external namespace doesn't require tenant."""
+    """Test that external namespace doesn't require zone."""
     router.add_mount("/external", temp_backend)
 
-    # Should succeed - external doesn't require tenant
+    # Should succeed - external doesn't require zone
     result = router.route("/external/s3/bucket/file.txt")
     assert result.backend == temp_backend

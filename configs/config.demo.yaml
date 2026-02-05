@@ -38,8 +38,8 @@ backends:
   # This provides direct path mapping to a GCS bucket, allowing external tools
   # to browse the bucket as if it were a local filesystem.
   - type: gcs_connector
-    # For single-tenant demo, include tenant prefix so sync_service can infer tenant_id
-    mount_point: /tenant:default/connector/gcs_demo
+    # For single-zone demo, include zone prefix so sync_service can infer zone_id
+    mount_point: /zone/default/connector/gcs_demo
     config:
       bucket: nexus-connector-test-1763281655
       project_id: nexi-lab-888
@@ -106,7 +106,7 @@ auth:
 
 # Permission and Security Settings
 enforce_permissions: true            # Enable permission enforcement by default (use --no-permissions to disable)
-enforce_tenant_isolation: true       # Enable tenant isolation by default (use --no-tenant-isolation to disable)
+enforce_zone_isolation: true         # Enable zone isolation by default (use --no-zone-isolation to disable)
 
 # Features
 features:

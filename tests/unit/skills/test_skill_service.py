@@ -73,7 +73,7 @@ def context() -> OperationContext:
     return OperationContext(
         user="alice",
         groups=["developers"],
-        tenant_id="acme",
+        zone_id="acme",
         user_id="alice",
         is_admin=False,
         is_system=False,
@@ -104,7 +104,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill publicly."""
-        result = service.share("/tenant:acme/user:alice/skill/test/", "public", context)
+        result = service.share("/zone/acme/user:alice/skill/test/", "public", context)
 
         assert result == "tuple-123"
         # NexusFS.rebac_create internally calls _rebac_manager.rebac_write
@@ -117,7 +117,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a group."""
-        service.share("/tenant:acme/user:alice/skill/test/", "group:eng", context)
+        service.share("/zone/acme/user:alice/skill/test/", "group:eng", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("group", "eng", "member")
@@ -126,7 +126,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a user."""
-        service.share("/tenant:acme/user:alice/skill/test/", "user:bob", context)
+        service.share("/zone/acme/user:alice/skill/test/", "user:bob", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("user", "bob")
@@ -237,7 +237,7 @@ class TestSkillServiceDiscover:
         """Test discover returns SkillInfo objects."""
         # Create a skill
         nx.write(
-            "/tenant:acme/user:alice/skill/test/SKILL.md",
+            "/zone/acme/user:alice/skill/test/SKILL.md",
             b"---\nname: Test\ndescription: A test\nauthor: alice\n---\nContent",
             context=context,
         )
@@ -255,18 +255,18 @@ class TestSkillServiceDiscover:
         """Test discover with subscribed filter."""
         # Create two skills
         nx.write(
-            "/tenant:acme/user:alice/skill/sub/SKILL.md",
+            "/zone/acme/user:alice/skill/sub/SKILL.md",
             b"---\nname: Subscribed\n---\n",
             context=context,
         )
         nx.write(
-            "/tenant:acme/user:alice/skill/unsub/SKILL.md",
+            "/zone/acme/user:alice/skill/unsub/SKILL.md",
             b"---\nname: NotSubscribed\n---\n",
             context=context,
         )
 
         # Subscribe to one
-        service.subscribe("/tenant:acme/user:alice/skill/sub/", context)
+        service.subscribe("/zone/acme/user:alice/skill/sub/", context)
 
         result = service.discover(context, filter="subscribed")
 
@@ -281,7 +281,7 @@ class TestSkillServiceLoad:
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test loading a skill."""
-        skill_path = "/tenant:acme/user:alice/skill/test/"
+        skill_path = "/zone/acme/user:alice/skill/test/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: Test\ndescription: A test\nauthor: alice\nversion: '1.0'\n---\n# Content\nHere",
@@ -323,7 +323,7 @@ class TestSkillServicePromptContext:
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test prompt context with subscribed skills."""
-        skill_path = "/tenant:acme/user:alice/skill/test/"
+        skill_path = "/zone/acme/user:alice/skill/test/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: PromptSkill\ndescription: For prompts\n---\nContent",
@@ -347,15 +347,15 @@ class TestSkillServiceValidation:
         with pytest.raises(ValidationError, match="Context"):
             service._validate_context(None)
 
-    def test_validate_context_missing_tenant(self, service: SkillService) -> None:
-        """Test validation fails without tenant_id."""
+    def test_validate_context_missing_zone(self, service: SkillService) -> None:
+        """Test validation fails without zone_id."""
         ctx = OperationContext(
             user="alice",
             groups=[],
-            tenant_id=None,
+            zone_id=None,
             user_id="alice",
         )
-        with pytest.raises(ValidationError, match="tenant_id"):
+        with pytest.raises(ValidationError, match="zone_id"):
             service._validate_context(ctx)
 
     def test_validate_context_empty_user_id(self, service: SkillService) -> None:
@@ -363,7 +363,7 @@ class TestSkillServiceValidation:
         ctx = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             user_id="",  # Empty string
         )
         with pytest.raises(ValidationError, match="user_id"):

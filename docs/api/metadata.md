@@ -23,7 +23,7 @@ def export_metadata(
 - `filter` (ExportFilter, optional): Export filter options
   - `path_prefix`: Only export files with this prefix
   - `after_time`: Only export files modified after this timestamp
-  - `tenant_id`: Only export files for specific tenant
+  - `zone_id`: Only export files for specific tenant
   - `include_deleted`: Include deleted files (default: False)
 - `prefix` (str, optional): **Deprecated** - Use filter.path_prefix instead
 
@@ -44,7 +44,7 @@ from datetime import datetime
 filter = ExportFilter(
     path_prefix="/workspace",
     after_time=datetime(2024, 1, 1),
-    tenant_id="acme-corp"
+    zone_id="acme-corp"
 )
 count = nx.export_metadata("backup.jsonl", filter=filter)
 

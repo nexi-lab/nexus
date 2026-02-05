@@ -682,7 +682,7 @@ class TestOAuthWithContext:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             subject_type="user",
             subject_id="alice",
         )
@@ -723,7 +723,7 @@ class TestOAuthWithContext:
         context = OperationContext(
             user="admin",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             is_admin=True,
         )
 

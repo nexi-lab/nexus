@@ -86,7 +86,7 @@ class OperationContext:
         subject_type: Type of subject (user, agent, service, session)
         subject_id: Unique identifier for the subject
         groups: List of group IDs the subject belongs to
-        tenant_id: Tenant/organization ID for multi-tenant isolation (optional)
+        zone_id: Tenant/organization ID for multi-zone isolation (optional)
         is_admin: Whether the subject has admin privileges
         is_system: Whether this is a system operation (bypasses all checks)
         admin_capabilities: Set of granted admin capabilities (P0-4)
@@ -98,7 +98,7 @@ class OperationContext:
         >>> ctx = OperationContext(
         ...     user="alice",
         ...     groups=["developers"],
-        ...     tenant_id="org_acme"
+        ...     zone_id="org_acme"
         ... )
         >>> # User-authenticated agent (uses user's auth)
         >>> ctx = OperationContext(
@@ -119,7 +119,7 @@ class OperationContext:
 
     user: str  # LEGACY: Kept for backward compatibility (maps to user_id)
     groups: list[str]
-    tenant_id: str | None = None
+    zone_id: str | None = None
     agent_id: str | None = None  # Agent identity (optional)
     is_admin: bool = False
     is_system: bool = False
@@ -360,13 +360,13 @@ class PermissionEnforcer:
         # perf19: Bitmap completeness cache
         # Tracks users whose Tiger bitmap contains ALL their permissions
         # (no directory-level grants that could provide inherited access)
-        # Key: (subject_type, subject_id, tenant_id) -> (is_complete, cached_at)
+        # Key: (subject_type, subject_id, zone_id) -> (is_complete, cached_at)
         self._bitmap_completeness_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
         self._bitmap_completeness_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
 
         # perf19: Leopard Directory Index (Option 4)
         # Caches which directories a user can access (for inheritance checks)
-        # Key: (subject_type, subject_id, tenant_id) -> (accessible_dirs: set, cached_at)
+        # Key: (subject_type, subject_id, zone_id) -> (accessible_dirs: set, cached_at)
         # When filtering, if any ancestor dir is in this set, path inherits access
         self._leopard_dir_index: dict[tuple[str, str, str], tuple[set[str], float]] = {}
         self._leopard_dir_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
@@ -386,7 +386,7 @@ class PermissionEnforcer:
         self,
         subject_type: str | None = None,
         subject_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> None:
         """Invalidate permission caches when permissions change.
 
@@ -395,11 +395,11 @@ class PermissionEnforcer:
         Args:
             subject_type: If provided, only invalidate cache for this subject type
             subject_id: If provided, only invalidate cache for this subject
-            tenant_id: If provided, only invalidate cache for this tenant
+            zone_id: If provided, only invalidate cache for this zone
         """
-        if subject_type and subject_id and tenant_id:
+        if subject_type and subject_id and zone_id:
             # Invalidate specific user's cache
-            cache_key = (subject_type, subject_id, tenant_id)
+            cache_key = (subject_type, subject_id, zone_id)
             self._bitmap_completeness_cache.pop(cache_key, None)
             self._leopard_dir_index.pop(cache_key, None)
             logger.debug(f"[CACHE-INVALIDATE] Invalidated cache for {cache_key}")
@@ -438,7 +438,7 @@ class PermissionEnforcer:
         try:
             subject = context.get_subject()
             subject_type, subject_id = subject
-            tenant_id = context.tenant_id
+            zone_id = context.zone_id
 
             # Get user's bitmap
             bitmap_bytes = tiger_cache.get_bitmap_bytes(
@@ -446,7 +446,7 @@ class PermissionEnforcer:
                 subject_id=subject_id,
                 permission="read",
                 resource_type="file",
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if bitmap_bytes is None:
@@ -566,34 +566,34 @@ class PermissionEnforcer:
             # Import AdminCapability here to avoid circular imports
             from nexus.core.permissions_enhanced import AdminCapability
 
-            # P0-4: Tenant boundary check (security fix for issue #819)
-            # Extract tenant from path (format: /tenant:{tenant_id}/...)
-            path_tenant_id = None
-            if path.startswith("/tenant:"):
-                parts = path[8:].split("/", 1)  # Remove "/tenant:" prefix
+            # P0-4: Zone boundary check (security fix for issue #819)
+            # Extract zone from path (format: /zone/{zone_id}/...)
+            path_zone_id = None
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)  # Remove "/zone/" prefix
                 if parts:
-                    path_tenant_id = parts[0]
+                    path_zone_id = parts[0]
 
-            # Check if admin is attempting cross-tenant access
+            # Check if admin is attempting cross-zone access
             if (
-                path_tenant_id
-                and context.tenant_id
-                and path_tenant_id != context.tenant_id
-                and AdminCapability.MANAGE_TENANTS not in context.admin_capabilities
+                path_zone_id
+                and context.zone_id
+                and path_zone_id != context.zone_id
+                and AdminCapability.MANAGE_ZONES not in context.admin_capabilities
             ):
-                # Cross-tenant access requires MANAGE_TENANTS capability (system admin only)
-                # Not system admin - deny cross-tenant access
+                # Cross-zone access requires MANAGE_ZONES capability (system admin only)
+                # Not system admin - deny cross-zone access
                 self._log_bypass_denied(
                     context,
                     path,
                     permission_str,
                     "admin",
-                    f"cross_tenant_access_denied_path_tenant={path_tenant_id}_context_tenant={context.tenant_id}",
+                    f"cross_zone_access_denied_path_zone={path_zone_id}_context_zone={context.zone_id}",
                 )
-                # Immediately raise PermissionError for cross-tenant access violation
+                # Immediately raise PermissionError for cross-zone access violation
                 raise PermissionError(
-                    f"Access denied: Cross-tenant access requires MANAGE_TENANTS capability. "
-                    f"Context tenant: {context.tenant_id}, Path tenant: {path_tenant_id}"
+                    f"Access denied: Cross-zone access requires MANAGE_ZONES capability. "
+                    f"Context zone: {context.zone_id}, Path zone: {path_zone_id}"
                 )
 
             required_capability = AdminCapability.get_required_capability(path, permission_str)
@@ -665,7 +665,7 @@ class PermissionEnforcer:
                 # Route path to backend to get object type
                 route = self.router.route(
                     path,
-                    tenant_id=context.tenant_id,
+                    zone_id=context.zone_id,
                     is_admin=context.is_admin,
                     check_write=False,
                 )
@@ -696,12 +696,12 @@ class PermissionEnforcer:
                 )
 
         # Check ReBAC permission using backend-provided object type
-        # P0-4: Pass tenant_id for multi-tenant isolation
-        tenant_id = context.tenant_id or "default"
+        # P0-4: Pass zone_id for multi-zone isolation
+        zone_id = context.zone_id or "default"
         subject = context.get_subject()
 
         logger.debug(
-            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), tenant_id={tenant_id}"
+            f"[_check_rebac] Calling rebac_check: subject={subject}, permission={permission_name}, object=('{object_type}', '{object_id}'), zone_id={zone_id}"
         )
 
         # Issue #921: Record access for hotspot detection (before cache/graph check)
@@ -712,7 +712,7 @@ class PermissionEnforcer:
                 subject_id=subject[1],
                 resource_type=object_type,
                 permission=permission_name,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
         # NOTE: Removed implicit directory TRAVERSE optimization (was incorrectly granting
@@ -725,7 +725,7 @@ class PermissionEnforcer:
             subject=subject,  # P0-2: Use typed subject
             permission=permission_name,
             object=(object_type, object_id),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         logger.debug(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
 
@@ -739,7 +739,7 @@ class PermissionEnforcer:
                 subject=subject,
                 permission="read",
                 object=(object_type, object_id),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             if read_result:
                 logger.debug("[_check_rebac] ALLOW TRAVERSE (has READ permission)")
@@ -750,7 +750,7 @@ class PermissionEnforcer:
                 subject=subject,
                 permission="write",
                 object=(object_type, object_id),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             if write_result:
                 logger.debug("[_check_rebac] ALLOW TRAVERSE (has WRITE permission)")
@@ -770,7 +770,7 @@ class PermissionEnforcer:
             # FAST PATH: Check boundary cache first (Issue #922)
             if self._boundary_cache:
                 boundary = self._boundary_cache.get_boundary(
-                    tenant_id, subject_type, subject_id, permission_name, object_id
+                    zone_id, subject_type, subject_id, permission_name, object_id
                 )
                 if boundary:
                     # Found cached boundary - verify it's still valid
@@ -778,7 +778,7 @@ class PermissionEnforcer:
                         subject=subject,
                         permission=permission_name,
                         object=(object_type, boundary),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                     if boundary_result:
                         logger.debug(
@@ -791,7 +791,7 @@ class PermissionEnforcer:
                             f"[_check_rebac] Boundary cache stale: {boundary} no longer grants {permission_name}"
                         )
                         self._boundary_cache.invalidate_permission_change(
-                            tenant_id, subject_type, subject_id, permission_name, boundary
+                            zone_id, subject_type, subject_id, permission_name, boundary
                         )
 
             # SLOW PATH: Walk up the directory tree
@@ -812,7 +812,7 @@ class PermissionEnforcer:
                     subject=subject,
                     permission=permission_name,
                     object=(object_type, parent_path),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
                 if parent_result:
@@ -822,7 +822,7 @@ class PermissionEnforcer:
                     # Cache this boundary for future lookups (Issue #922)
                     if self._boundary_cache:
                         self._boundary_cache.set_boundary(
-                            tenant_id,
+                            zone_id,
                             subject_type,
                             subject_id,
                             permission_name,
@@ -888,7 +888,7 @@ class PermissionEnforcer:
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
             user=context.user,
-            tenant_id=context.tenant_id,
+            zone_id=context.zone_id,
             path=path,
             permission=permission,
             bypass_type=bypass_type,
@@ -918,7 +918,7 @@ class PermissionEnforcer:
             timestamp=datetime.now(UTC).isoformat(),
             request_id=getattr(context, "request_id", str(uuid.uuid4())),
             user=context.user,
-            tenant_id=context.tenant_id,
+            zone_id=context.zone_id,
             path=path,
             permission=permission,
             bypass_type=bypass_type,
@@ -1071,9 +1071,9 @@ class PermissionEnforcer:
             import time
 
             overall_start = time.time()
-            tenant_id = context.tenant_id or "default"
+            zone_id = context.zone_id or "default"
             logger.debug(
-                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, tenant={tenant_id}"
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, zone={zone_id}"
             )
 
             # TIGER CACHE + RUST ACCELERATION (Issue #896)
@@ -1091,7 +1091,7 @@ class PermissionEnforcer:
                         subject_id=subject_id,
                         permission="read",
                         resource_type="file",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
 
                     if bitmap_bytes is not None:
@@ -1161,7 +1161,7 @@ class PermissionEnforcer:
                                     # BITMAP COMPLETENESS CHECK (perf19 - Option 3):
                                     # If we've previously determined this user's bitmap is complete
                                     # (no directory grants providing inherited access), skip fallback entirely
-                                    completeness_key = (subject_type, subject_id, tenant_id)
+                                    completeness_key = (subject_type, subject_id, zone_id)
                                     cached_completeness = self._bitmap_completeness_cache.get(
                                         completeness_key
                                     )
@@ -1175,7 +1175,7 @@ class PermissionEnforcer:
                                             subject_id=subject_id,
                                             permission="read",
                                             resource_type="directory",
-                                            tenant_id=tenant_id,
+                                            zone_id=zone_id,
                                         )
                                         if dir_bitmap_bytes is None:
                                             # No directory grants -> bitmap is complete
@@ -1211,7 +1211,7 @@ class PermissionEnforcer:
                                     # LEOPARD DIRECTORY INDEX (perf19 - Option 4):
                                     # Check cached accessible directories first - if any ancestor
                                     # of a path is in the index, the path inherits access
-                                    leopard_key = (subject_type, subject_id, tenant_id)
+                                    leopard_key = (subject_type, subject_id, zone_id)
                                     cached_leopard = self._leopard_dir_index.get(leopard_key)
                                     leopard_allowed: list[str] = []
 
@@ -1299,7 +1299,7 @@ class PermissionEnforcer:
                                                 for d in top_level_dirs
                                             ]
                                             top_level_results = self.rebac_manager.rebac_check_bulk(
-                                                top_level_checks, tenant_id=tenant_id
+                                                top_level_checks, zone_id=zone_id
                                             )
 
                                             # Find denied top-level dirs
@@ -1354,7 +1354,7 @@ class PermissionEnforcer:
                                         ]
                                         if parent_checks:
                                             parent_results = self.rebac_manager.rebac_check_bulk(
-                                                parent_checks, tenant_id=tenant_id
+                                                parent_checks, zone_id=zone_id
                                             )
                                         else:
                                             parent_results = {}
@@ -1430,7 +1430,7 @@ class PermissionEnforcer:
                                     # Check fallback paths via rebac_check_bulk
                                     if fallback_checks:
                                         fallback_results = self.rebac_manager.rebac_check_bulk(
-                                            fallback_checks, tenant_id=tenant_id
+                                            fallback_checks, zone_id=zone_id
                                         )
                                     else:
                                         fallback_results = {}
@@ -1502,21 +1502,21 @@ class PermissionEnforcer:
                         f"[TIGER-RUST] Tiger Cache integration error: {e}, falling back to rebac_check_bulk"
                     )
 
-            # OPTIMIZATION: Pre-filter paths by tenant before permission checks
+            # OPTIMIZATION: Pre-filter paths by zone before permission checks
             # This avoids checking permissions on paths the user can never access
-            # For /tenants/* paths, only keep paths matching the user's tenant
+            # For /zones/* paths, only keep paths matching the user's zone
             prefilter_start = time.time()
             paths_to_check = []
             paths_prefiltered = 0
             for path in paths:
-                # Fast path: /tenants/X paths should only be checked for tenant X
-                if path.startswith("/tenants/"):
-                    # Extract tenant from path: /tenants/tenant_name/...
+                # Fast path: /zones/X paths should only be checked for zone X
+                if path.startswith("/zones/"):
+                    # Extract zone from path: /zones/zone_name/...
                     path_parts = path.split("/")
                     if len(path_parts) >= 3:
-                        path_tenant = path_parts[2]  # /tenants/<tenant_name>/...
-                        if path_tenant != tenant_id:
-                            # Skip paths for other tenants entirely
+                        path_zone = path_parts[2]  # /zones/<zone_name>/...
+                        if path_zone != zone_id:
+                            # Skip paths for other zones entirely
                             paths_prefiltered += 1
                             continue
                 paths_to_check.append(path)
@@ -1524,8 +1524,8 @@ class PermissionEnforcer:
             prefilter_elapsed = time.time() - prefilter_start
             if paths_prefiltered > 0:
                 logger.debug(
-                    f"[PERF-FILTER] Tenant pre-filter: {paths_prefiltered} paths skipped "
-                    f"(not in tenant {tenant_id}), {len(paths_to_check)} remaining in {prefilter_elapsed:.3f}s"
+                    f"[PERF-FILTER] Zone pre-filter: {paths_prefiltered} paths skipped "
+                    f"(not in zone {zone_id}), {len(paths_to_check)} remaining in {prefilter_elapsed:.3f}s"
                 )
 
             # Build list of checks: (subject, "read", object) for each path
@@ -1546,7 +1546,7 @@ class PermissionEnforcer:
                         # Use router to determine correct object type for special paths
                         route = self.router.route(
                             path,
-                            tenant_id=context.tenant_id,
+                            zone_id=context.zone_id,
                             agent_id=context.agent_id,
                             is_admin=context.is_admin,
                         )
@@ -1567,7 +1567,7 @@ class PermissionEnforcer:
             try:
                 # Perform bulk permission check
                 bulk_start = time.time()
-                results = self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
+                results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
                 bulk_elapsed = time.time() - bulk_start
                 logger.debug(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
 

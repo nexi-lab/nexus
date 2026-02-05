@@ -38,10 +38,10 @@ def engine():
                 member_id VARCHAR(255) NOT NULL,
                 group_type VARCHAR(50) NOT NULL,
                 group_id VARCHAR(255) NOT NULL,
-                tenant_id VARCHAR(255) NOT NULL,
+                zone_id VARCHAR(255) NOT NULL,
                 depth INTEGER NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
+                PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
             )
         """
             )
@@ -69,7 +69,7 @@ def manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=50,
-        enforce_tenant_isolation=False,  # Simplify tests
+        enforce_zone_isolation=False,  # Simplify tests
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=True,
@@ -85,7 +85,7 @@ def manager_no_tiger(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=50,
-        enforce_tenant_isolation=False,
+        enforce_zone_isolation=False,
         enable_graph_limits=True,
         enable_leopard=True,
         enable_tiger_cache=False,
@@ -100,37 +100,37 @@ class TestTigerResourceMap:
     def test_get_or_create_int_id(self, resource_map):
         """Test creating and retrieving integer IDs."""
         # First call creates
-        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant1")
+        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
         assert id1 > 0
 
         # Second call retrieves same ID
-        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant1")
+        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
         assert id2 == id1
 
         # Different resource gets different ID
-        id3 = resource_map.get_or_create_int_id("file", "file-uuid-2", "tenant1")
+        id3 = resource_map.get_or_create_int_id("file", "file-uuid-2", "zone1")
         assert id3 != id1
 
-    def test_tenant_ignored_for_resource_mapping(self, resource_map):
-        """Test that tenant is ignored for resource mapping (global resource IDs)."""
-        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant1")
-        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "tenant2")
+    def test_zone_ignored_for_resource_mapping(self, resource_map):
+        """Test that zone is ignored for resource mapping (global resource IDs)."""
+        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
+        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone2")
 
-        # Same resource ID gets same int ID regardless of tenant
+        # Same resource ID gets same int ID regardless of zone
         assert id1 == id2
 
     def test_get_resource_id(self, resource_map):
         """Test reverse lookup from int ID to resource info."""
-        int_id = resource_map.get_or_create_int_id("file", "my-file", "tenant1")
+        int_id = resource_map.get_or_create_int_id("file", "my-file", "zone1")
 
         info = resource_map.get_resource_id(int_id)
-        assert info == ("file", "my-file")  # Returns (type, id), tenant is not stored
+        assert info == ("file", "my-file")  # Returns (type, id), zone is not stored
 
     def test_memory_cache(self, resource_map):
         """Test that mappings are cached in memory."""
-        int_id = resource_map.get_or_create_int_id("file", "cached-file", "tenant1")
+        int_id = resource_map.get_or_create_int_id("file", "cached-file", "zone1")
 
-        # Check it's in memory cache - key is (type, id), tenant is not part of key
+        # Check it's in memory cache - key is (type, id), zone is not part of key
         assert ("file", "cached-file") in resource_map._uuid_to_int
         assert int_id in resource_map._int_to_uuid
 
@@ -147,9 +147,9 @@ class TestTigerCache:
     def test_update_and_check(self, tiger_cache, resource_map):
         """Test updating cache and checking access."""
         # Create some resources
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
-        _r3 = resource_map.get_or_create_int_id("file", "file3", "tenant1")  # noqa: F841
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        _r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")  # noqa: F841
 
         # Update cache with accessible resources
         tiger_cache.update_cache(
@@ -157,70 +157,66 @@ class TestTigerCache:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1, r2},  # Alice can read file1 and file2
             revision=1,
         )
 
         # Check access
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
-        assert (
-            tiger_cache.check_access("user", "alice", "read", "file", "file3", "tenant1") is False
-        )
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "zone1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file3", "zone1") is False
 
     def test_get_accessible_resources(self, tiger_cache, resource_map):
         """Test retrieving all accessible resources."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
 
         tiger_cache.update_cache(
             subject_type="user",
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1, r2},
             revision=1,
         )
 
-        accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "read", "file", "tenant1"
-        )
+        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "zone1")
         assert accessible == {r1, r2}
 
     def test_cache_miss_returns_none(self, tiger_cache, resource_map):
         """Test that cache miss returns None (not False)."""
-        resource_map.get_or_create_int_id("file", "uncached-file", "tenant1")
+        resource_map.get_or_create_int_id("file", "uncached-file", "zone1")
 
         result = tiger_cache.check_access(
-            "user", "nobody", "read", "file", "uncached-file", "tenant1"
+            "user", "nobody", "read", "file", "uncached-file", "zone1"
         )
         assert result is None  # Not in cache
 
     def test_invalidate(self, tiger_cache, resource_map):
         """Test cache invalidation."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
 
         tiger_cache.update_cache(
             subject_type="user",
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1},
             revision=1,
         )
 
         # Verify it's cached
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is True
 
         # Invalidate
         count = tiger_cache.invalidate(subject_type="user", subject_id="alice")
         assert count == 1
 
         # Now should be cache miss
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is None
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is None
 
 
 @pytest.mark.skip(reason="Tiger Cache disabled on SQLite - PostgreSQL only optimization")
@@ -237,26 +233,26 @@ class TestEnhancedReBACManagerWithTiger:
 
     def test_tiger_register_resource(self, manager):
         """Test registering resources."""
-        int_id = manager.tiger_register_resource("file", "new-file", "tenant1")
+        int_id = manager.tiger_register_resource("file", "new-file", "zone1")
         assert int_id > 0
 
         # Same resource returns same ID
-        int_id2 = manager.tiger_register_resource("file", "new-file", "tenant1")
+        int_id2 = manager.tiger_register_resource("file", "new-file", "zone1")
         assert int_id2 == int_id
 
     def test_tiger_methods_return_defaults_when_disabled(self, manager_no_tiger):
         """Test that Tiger methods return sensible defaults when disabled."""
         result = manager_no_tiger.tiger_check_access(
-            ("user", "alice"), "read", ("file", "file1"), "tenant1"
+            ("user", "alice"), "read", ("file", "file1"), "zone1"
         )
         assert result is None
 
         resources = manager_no_tiger.tiger_get_accessible_resources(
-            ("user", "alice"), "read", "file", "tenant1"
+            ("user", "alice"), "read", "file", "zone1"
         )
         assert resources == set()
 
-        queue_id = manager_no_tiger.tiger_queue_update(("user", "alice"), "read", "file", "tenant1")
+        queue_id = manager_no_tiger.tiger_queue_update(("user", "alice"), "read", "file", "zone1")
         assert queue_id is None
 
         count = manager_no_tiger.tiger_invalidate_cache()
@@ -268,21 +264,21 @@ class TestEnhancedReBACManagerWithTiger:
             subject=("user", "alice"),
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             priority=50,
         )
 
         assert queue_id is not None
         assert queue_id > 0
 
-    def test_tiger_invalidate_by_tenant(self, manager):
-        """Test invalidating cache by tenant."""
+    def test_tiger_invalidate_by_zone(self, manager):
+        """Test invalidating cache by zone."""
         # Register some resources
-        manager.tiger_register_resource("file", "file1", "tenant1")
-        manager.tiger_register_resource("file", "file2", "tenant2")
+        manager.tiger_register_resource("file", "file1", "zone1")
+        manager.tiger_register_resource("file", "file2", "zone2")
 
         # This should not error even with empty cache
-        count = manager.tiger_invalidate_cache(tenant_id="tenant1")
+        count = manager.tiger_invalidate_cache(zone_id="zone1")
         assert count >= 0
 
 
@@ -297,11 +293,11 @@ class TestTigerCacheIntegration:
             subject=("user", "alice"),
             relation="owner-of",
             object=("file", "important.txt"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # 2. Register the resource
-        int_id = manager.tiger_register_resource("file", "important.txt", "tenant1")
+        int_id = manager.tiger_register_resource("file", "important.txt", "zone1")
         assert int_id > 0
 
         # 3. Manually populate cache (in production, done by background worker)
@@ -311,7 +307,7 @@ class TestTigerCacheIntegration:
                 subject_id="alice",
                 permission="owner-of",
                 resource_type="file",
-                tenant_id="tenant1",
+                zone_id="zone1",
                 resource_int_ids={int_id},
                 revision=1,
             )
@@ -321,7 +317,7 @@ class TestTigerCacheIntegration:
             subject=("user", "alice"),
             permission="owner-of",
             object=("file", "important.txt"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
         assert result is True
 
@@ -330,7 +326,7 @@ class TestTigerCacheIntegration:
             subject=("user", "bob"),
             permission="owner-of",
             object=("file", "important.txt"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
         assert result is None  # Not in cache (bob)
 
@@ -340,7 +336,7 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_creates_new_bitmap(self, tiger_cache, resource_map):
         """Test that add_to_bitmap creates a new bitmap if none exists."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
 
         # Add to bitmap when none exists
         result = tiger_cache.add_to_bitmap(
@@ -348,18 +344,18 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_id=r1,
         )
         assert result is True
 
         # Verify resource is now accessible
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is True
 
     def test_add_to_bitmap_updates_existing_bitmap(self, tiger_cache, resource_map):
         """Test that add_to_bitmap adds to an existing bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
 
         # Create initial bitmap with r1
         tiger_cache.update_cache(
@@ -367,7 +363,7 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1},
             revision=1,
         )
@@ -378,33 +374,31 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_id=r2,
         )
         assert result is True
 
         # Verify both resources are accessible
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is True
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "zone1") is True
 
     def test_add_to_bitmap_idempotent(self, tiger_cache, resource_map):
         """Test that adding same resource twice is idempotent."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
 
         # Add same resource twice
-        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
-        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "zone1", r1)
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "zone1", r1)
 
         # Should still have only 1 resource in bitmap
-        accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "read", "file", "tenant1"
-        )
+        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "zone1")
         assert accessible == {r1}
 
     def test_remove_from_bitmap(self, tiger_cache, resource_map):
         """Test removing a resource from bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
 
         # Create bitmap with both resources
         tiger_cache.update_cache(
@@ -412,7 +406,7 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1, r2},
             revision=1,
         )
@@ -423,20 +417,18 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_id=r1,
         )
         assert result is True
 
         # Verify r1 is no longer accessible but r2 is
-        assert (
-            tiger_cache.check_access("user", "alice", "read", "file", "file1", "tenant1") is False
-        )
-        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "tenant1") is True
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file1", "zone1") is False
+        assert tiger_cache.check_access("user", "alice", "read", "file", "file2", "zone1") is True
 
     def test_remove_from_bitmap_not_in_cache(self, tiger_cache, resource_map):
         """Test removing from non-existent bitmap returns False."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
 
         # Try to remove from non-existent bitmap
         result = tiger_cache.remove_from_bitmap(
@@ -444,16 +436,16 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="nobody",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_id=r1,
         )
         assert result is False
 
     def test_add_to_bitmap_bulk(self, tiger_cache, resource_map):
         """Test bulk adding resources to bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
-        r3 = resource_map.get_or_create_int_id("file", "file3", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")
 
         # Bulk add all resources
         added = tiger_cache.add_to_bitmap_bulk(
@@ -461,22 +453,20 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1, r2, r3},
         )
         assert added == 3
 
         # Verify all are accessible
-        accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "read", "file", "tenant1"
-        )
+        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "zone1")
         assert accessible == {r1, r2, r3}
 
     def test_add_to_bitmap_bulk_partial_duplicates(self, tiger_cache, resource_map):
         """Test bulk add with some resources already in bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
-        r3 = resource_map.get_or_create_int_id("file", "file3", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")
 
         # Create bitmap with r1
         tiger_cache.update_cache(
@@ -484,7 +474,7 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1},
             revision=1,
         )
@@ -495,15 +485,13 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids={r1, r2, r3},
         )
         assert added == 2  # Only r2 and r3 are new
 
         # Verify all are accessible
-        accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "read", "file", "tenant1"
-        )
+        accessible = tiger_cache.get_accessible_resources("user", "alice", "read", "file", "zone1")
         assert accessible == {r1, r2, r3}
 
     def test_add_to_bitmap_bulk_empty_set(self, tiger_cache):
@@ -513,28 +501,28 @@ class TestTigerCacheIncrementalUpdates:
             subject_id="alice",
             permission="read",
             resource_type="file",
-            tenant_id="tenant1",
+            zone_id="zone1",
             resource_int_ids=set(),
         )
         assert added == 0
 
     def test_incremental_updates_different_permissions(self, tiger_cache, resource_map):
         """Test incremental updates maintain separate bitmaps per permission."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "tenant1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "tenant1")
+        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
 
         # Add r1 to read bitmap
-        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "tenant1", r1)
+        tiger_cache.add_to_bitmap("user", "alice", "read", "file", "zone1", r1)
 
         # Add r2 to write bitmap
-        tiger_cache.add_to_bitmap("user", "alice", "write", "file", "tenant1", r2)
+        tiger_cache.add_to_bitmap("user", "alice", "write", "file", "zone1", r2)
 
         # Verify bitmaps are separate
         read_accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "read", "file", "tenant1"
+            "user", "alice", "read", "file", "zone1"
         )
         write_accessible = tiger_cache.get_accessible_resources(
-            "user", "alice", "write", "file", "tenant1"
+            "user", "alice", "write", "file", "zone1"
         )
 
         assert read_accessible == {r1}

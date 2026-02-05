@@ -80,14 +80,14 @@ def main() -> None:
     admin_context = OperationContext(
         user="admin",
         groups=[],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_admin=True,
     )
 
     # Test user details
     test_user_id = "test_deprovision_user"
     test_email = "test_deprovision@example.com"
-    test_tenant_id = "test_tenant"
+    test_zone_id = "test_zone"
 
     try:
         # Step 1: Check if user already exists and clean up if needed
@@ -101,7 +101,7 @@ def main() -> None:
                 print("⚠️  User already exists, cleaning up first...")
                 nx.deprovision_user(
                     user_id=test_user_id,
-                    tenant_id=test_tenant_id,
+                    zone_id=test_zone_id,
                     delete_user_record=True,
                     force=False,
                     context=admin_context,
@@ -117,7 +117,7 @@ def main() -> None:
             user_id=test_user_id,
             email=test_email,
             display_name="Test Deprovision User",
-            tenant_id=test_tenant_id,
+            zone_id=test_zone_id,
             create_api_key=True,
             create_agents=False,  # Skip agents for faster test
             import_skills=False,
@@ -126,7 +126,7 @@ def main() -> None:
 
         print("✓ User provisioned successfully!")
         print(f"  - user_id: {test_user_id}")
-        print(f"  - tenant_id: {test_tenant_id}")
+        print(f"  - zone_id: {test_zone_id}")
         if provision_result.get("api_key"):
             print(f"  - api_key: {provision_result['api_key'][:30]}...")
         print(f"  - directories: {len(provision_result.get('directories', []))}")
@@ -134,7 +134,7 @@ def main() -> None:
 
         # Step 3: Verify user resources
         print("Step 3: Verifying user resources...")
-        user_base = f"/tenant:{test_tenant_id}/user:{test_user_id}"
+        user_base = f"/zone/{test_zone_id}/user:{test_user_id}"
         resource_types = ["workspace", "memory", "skill", "agent", "connector", "resource"]
 
         existing_resources = []
@@ -171,7 +171,7 @@ def main() -> None:
 
         deprovision_result = nx.deprovision_user(
             user_id=test_user_id,
-            tenant_id=test_tenant_id,
+            zone_id=test_zone_id,
             delete_user_record=True,
             force=False,
             context=admin_context,
@@ -181,7 +181,7 @@ def main() -> None:
         print()
         print("Results:")
         print(f"  - user_id: {deprovision_result['user_id']}")
-        print(f"  - tenant_id: {deprovision_result['tenant_id']}")
+        print(f"  - zone_id: {deprovision_result['zone_id']}")
         print(
             f"  - deleted_directories: {len(deprovision_result['deleted_directories'])} directories"
         )

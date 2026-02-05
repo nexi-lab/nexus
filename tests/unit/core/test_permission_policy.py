@@ -17,7 +17,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/data.txt",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -31,7 +31,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -49,7 +49,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/**",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -65,7 +65,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/shared/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="root",
             default_group="shared",
             default_mode=0o664,
@@ -82,7 +82,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="${agent_id}",
             default_group="agents",
             default_mode=0o644,
@@ -95,18 +95,18 @@ class TestPermissionPolicy:
         assert group == "agents"
         assert mode == 0o644
 
-    def test_apply_with_tenant_id_substitution(self):
-        """Test applying policy with ${tenant_id} substitution."""
+    def test_apply_with_zone_id_substitution(self):
+        """Test applying policy with ${zone_id} substitution."""
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/shared/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="root",
-            default_group="${tenant_id}",
+            default_group="${zone_id}",
             default_mode=0o664,
         )
 
-        context = {"tenant_id": "acme-corp"}
+        context = {"zone_id": "acme-corp"}
         owner, group, mode = policy.apply(context)
 
         assert owner == "root"
@@ -118,7 +118,7 @@ class TestPermissionPolicy:
         policy = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="${agent_id}",
             default_group="agents",
             default_mode=0o644,
@@ -140,7 +140,7 @@ class TestPolicyMatcher:
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -158,7 +158,7 @@ class TestPolicyMatcher:
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -168,7 +168,7 @@ class TestPolicyMatcher:
         policy2 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/**",
-            tenant_id=None,
+            zone_id=None,
             default_owner="bob",
             default_group="admins",
             default_mode=0o600,
@@ -182,12 +182,12 @@ class TestPolicyMatcher:
         assert result is not None
         assert result.policy_id == policy2.policy_id
 
-    def test_find_matching_policy_tenant_specific_wins(self):
-        """Test that tenant-specific policies take precedence over system-wide."""
+    def test_find_matching_policy_zone_specific_wins(self):
+        """Test that zone-specific policies take precedence over system-wide."""
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,  # System-wide
+            zone_id=None,  # System-wide
             default_owner="root",
             default_group="users",
             default_mode=0o644,
@@ -197,7 +197,7 @@ class TestPolicyMatcher:
         policy2 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id="acme-corp",  # Tenant-specific
+            zone_id="acme-corp",  # Zone-specific
             default_owner="alice",
             default_group="acme",
             default_mode=0o600,
@@ -205,9 +205,9 @@ class TestPolicyMatcher:
         )
 
         matcher = PolicyMatcher([policy1, policy2])
-        result = matcher.find_matching_policy("/workspace/file.txt", tenant_id="acme-corp")
+        result = matcher.find_matching_policy("/workspace/file.txt", zone_id="acme-corp")
 
-        # Tenant-specific policy should win
+        # Zone-specific policy should win
         assert result is not None
         assert result.policy_id == policy2.policy_id
 
@@ -216,7 +216,7 @@ class TestPolicyMatcher:
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -232,7 +232,7 @@ class TestPolicyMatcher:
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="${agent_id}",
             default_group="agents",
             default_mode=0o644,
@@ -254,7 +254,7 @@ class TestPolicyMatcher:
         policy1 = PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,
+            zone_id=None,
             default_owner="alice",
             default_group="users",
             default_mode=0o644,
@@ -284,13 +284,13 @@ class TestDefaultPolicies:
         # Check shared policy
         shared_policy = next(p for p in policies if "/shared/" in p.namespace_pattern)
         assert shared_policy.default_owner == "root"
-        assert shared_policy.default_group == "${tenant_id}"
+        assert shared_policy.default_group == "${zone_id}"
         assert shared_policy.default_mode == 0o664
 
         # Check archives policy
         archives_policy = next(p for p in policies if "/archives/" in p.namespace_pattern)
         assert archives_policy.default_owner == "root"
-        assert archives_policy.default_group == "${tenant_id}"
+        assert archives_policy.default_group == "${zone_id}"
         assert archives_policy.default_mode == 0o444  # Read-only
 
         # Check system policy
@@ -305,7 +305,7 @@ class TestDefaultPolicies:
         matcher = PolicyMatcher(policies)
 
         # Test workspace policy
-        context = {"agent_id": "alice", "tenant_id": "acme-corp"}
+        context = {"agent_id": "alice", "zone_id": "acme-corp"}
         result = matcher.apply_policy("/workspace/file.txt", context=context)
         assert result is not None
         owner, group, mode = result

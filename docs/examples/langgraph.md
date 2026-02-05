@@ -182,7 +182,7 @@ write_file("/config/settings.json", "{}")
                                           ▼
                               ┌─────────────────────┐
                               │  Remote Nexus Server │
-                              │  Multi-tenant        │
+                              │  Multi-zone        │
                               │  Persistent storage  │
                               └─────────────────────┘
 ```
@@ -195,19 +195,19 @@ Nexus supports isolated workspaces for different teams:
 # Development team agent
 dev_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
+    config={"zone_id": "team-dev", "agent_id": "code-analyzer"}
 )
 
 # QA team agent
 qa_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"tenant_id": "team-qa", "agent_id": "test-validator"}
+    config={"zone_id": "team-qa", "agent_id": "test-validator"}
 )
 
 # Shared documentation
 docs_nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"tenant_id": "shared-docs", "agent_id": "doc-generator"}
+    config={"zone_id": "shared-docs", "agent_id": "doc-generator"}
 )
 ```
 
@@ -435,7 +435,7 @@ Or in code:
 nx = nexus.connect(
     remote_url="http://server:2026",
     config={
-        "tenant_id": "my-team",
+        "zone_id": "my-team",
         "agent_id": "code-analyzer"
     }
 )

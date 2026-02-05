@@ -3,7 +3,7 @@ Enhanced ReBAC Manager with P0 Fixes
 
 This module implements critical security and reliability fixes for GA:
 - P0-1: Consistency levels and version tokens
-- P0-2: Tenant scoping (integrates TenantAwareReBACManager)
+- P0-2: Zone scoping (integrates ZoneAwareReBACManager)
 - P0-5: Graph limits and DoS protection
 
 Usage:
@@ -16,7 +16,7 @@ Usage:
         subject=("user", "alice"),
         permission="read",
         object=("file", "/doc.txt"),
-        tenant_id="org_123",
+        zone_id="org_123",
         consistency=ConsistencyLevel.STRONG,  # Bypass cache
     )
 
@@ -34,8 +34,8 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS, Entity
-from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager
+from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
+from nexus.core.rebac_manager_zone_aware import ZoneAwareReBACManager
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -143,7 +143,7 @@ class WriteResult:
 
     Example:
         # Write a permission
-        result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+        result = manager.rebac_write(subject, relation, object, zone_id=zone)
 
         # Immediately check with read-your-writes guarantee
         allowed = manager.rebac_check(
@@ -272,12 +272,12 @@ class GraphLimitExceeded(Exception):
 # ============================================================================
 
 
-class EnhancedReBACManager(TenantAwareReBACManager):
+class EnhancedReBACManager(ZoneAwareReBACManager):
     """ReBAC Manager with all P0 fixes integrated.
 
     Combines:
     - P0-1: Consistency levels and version tokens
-    - P0-2: Tenant scoping (via TenantAwareReBACManager)
+    - P0-2: Zone scoping (via ZoneAwareReBACManager)
     - P0-5: Graph limits and DoS protection
     - Leopard: Pre-computed transitive group closure for O(1) group lookups
 
@@ -292,7 +292,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
-        enforce_tenant_isolation: bool = True,
+        enforce_zone_isolation: bool = True,
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
@@ -303,22 +303,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             engine: SQLAlchemy database engine
             cache_ttl_seconds: Cache TTL in seconds (default: 5 minutes)
             max_depth: Maximum graph traversal depth (default: 10 hops)
-            enforce_tenant_isolation: Enable tenant isolation checks (default: True)
+            enforce_zone_isolation: Enable zone isolation checks (default: True)
             enable_graph_limits: Enable graph limit enforcement (default: True)
             enable_leopard: Enable Leopard transitive closure index (default: True)
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
         """
-        super().__init__(engine, cache_ttl_seconds, max_depth, enforce_tenant_isolation)
+        super().__init__(engine, cache_ttl_seconds, max_depth, enforce_zone_isolation)
         self.enable_graph_limits = enable_graph_limits
         self.enable_leopard = enable_leopard
         self.enable_tiger_cache = enable_tiger_cache
         # REMOVED: self._version_counter (replaced with DB sequence in Issue #2 fix)
 
-        # PERFORMANCE FIX: Cache tenant tuples to avoid O(T) fetch per permission check
-        # Key: tenant_id, Value: (tuples_list, namespace_configs, cached_at_timestamp)
+        # PERFORMANCE FIX: Cache zone tuples to avoid O(T) fetch per permission check
+        # Key: zone_id, Value: (tuples_list, namespace_configs, cached_at_timestamp)
         # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
-        self._tenant_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
-        self._tenant_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
+        self._zone_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
+        self._zone_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
@@ -385,7 +385,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
         """Check permission with explicit consistency control (P0-1, Issue #1081).
@@ -399,7 +399,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission: Permission to check
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
-            tenant_id: Tenant ID to scope check
+            zone_id: Zone ID to scope check
             consistency: Consistency control, one of:
                 - None: Uses EVENTUAL/MINIMIZE_LATENCY (default, fastest)
                 - ConsistencyLevel.EVENTUAL: Use cache (up to 5min staleness)
@@ -453,12 +453,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
         logger.debug(
-            f"EnhancedReBACManager.rebac_check called: enforce_tenant_isolation={self.enforce_tenant_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
+            f"EnhancedReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
         object_type, object_id = object
         subject_type, subject_id = subject
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
@@ -468,12 +468,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             and self._boundary_cache
         ):
             boundary = self._boundary_cache.get_boundary(
-                effective_tenant, subject_type, subject_id, permission, object_id
+                effective_zone, subject_type, subject_id, permission, object_id
             )
             if boundary:
                 # Found cached boundary - verify it's still valid by checking the boundary path
                 boundary_result = self._check_direct_grant(
-                    subject, permission, (object_type, boundary), tenant_id
+                    subject, permission, (object_type, boundary), zone_id
                 )
                 if boundary_result:
                     logger.debug(f"  -> Boundary Cache HIT: {object_id} → {boundary}")
@@ -484,12 +484,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         f"  -> Boundary Cache STALE: {boundary} no longer grants {permission}"
                     )
                     self._boundary_cache.invalidate_permission_change(
-                        effective_tenant, subject_type, subject_id, permission, boundary
+                        effective_zone, subject_type, subject_id, permission, boundary
                     )
 
         # OPTIMIZATION 2: Try Tiger Cache (O(1) bitmap lookup)
         # Tiger Cache stores pre-materialized permissions as Roaring Bitmaps
-        if self._tiger_cache and tenant_id:
+        if self._tiger_cache and zone_id:
             tiger_result = self.tiger_check_access(
                 subject=subject,
                 permission=permission,
@@ -504,38 +504,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 logger.debug("  -> Tiger Cache: explicit deny, checking graph")
             # If tiger_result is None, cache miss - continue with normal check
 
-        # If tenant isolation is disabled, use base ReBACManager implementation
-        if not self.enforce_tenant_isolation:
+        # If zone isolation is disabled, use base ReBACManager implementation
+        if not self.enforce_zone_isolation:
             from nexus.core.rebac_manager import ReBACManager
 
             logger.debug(f"  -> Falling back to base ReBACManager, base max_depth={self.max_depth}")
-            result = ReBACManager.rebac_check(self, subject, permission, object, context, tenant_id)
+            result = ReBACManager.rebac_check(self, subject, permission, object, context, zone_id)
 
             # Write-through to Tiger Cache (Issue #935)
-            if result and self._tiger_cache and tenant_id:
-                self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+            if result and self._tiger_cache and zone_id:
+                self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
             # Issue #922: Cache boundary if permission was granted via parent
             if result and object_type == "file" and self._boundary_cache:
-                self._cache_boundary_if_inherited(subject, permission, object, tenant_id, logger)
+                self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
             return result
 
         logger.debug("  -> Using rebac_check_detailed")
         detailed_result = self.rebac_check_detailed(
-            subject, permission, object, context, tenant_id, consistency_level, min_revision
+            subject, permission, object, context, zone_id, consistency_level, min_revision
         )
         logger.debug(
             f"  -> rebac_check_detailed result: allowed={detailed_result.allowed}, indeterminate={detailed_result.indeterminate}"
         )
 
         # Write-through to Tiger Cache (Issue #935)
-        if detailed_result.allowed and self._tiger_cache and tenant_id:
-            self._tiger_write_through_single(subject, permission, object, tenant_id, logger)
+        if detailed_result.allowed and self._tiger_cache and zone_id:
+            self._tiger_write_through_single(subject, permission, object, zone_id, logger)
 
         # Issue #922: Cache boundary if permission was granted via parent
         if detailed_result.allowed and object_type == "file" and self._boundary_cache:
-            self._cache_boundary_if_inherited(subject, permission, object, tenant_id, logger)
+            self._cache_boundary_if_inherited(subject, permission, object, zone_id, logger)
 
         return detailed_result.allowed
 
@@ -544,7 +544,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> bool:
         """Check if subject has a DIRECT grant on the object (no inheritance).
 
@@ -555,7 +555,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if direct grant exists, False otherwise
@@ -573,7 +573,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         # Check if any direct relation tuple exists
         for relation in relations_to_check:
-            if self.has_direct_relation(subject, relation, object, tenant_id):
+            if self.has_direct_relation(subject, relation, object, zone_id):
                 return True
 
         return False
@@ -583,7 +583,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> bool:
         """Check if a specific relation tuple exists (no graph traversal).
 
@@ -593,14 +593,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             relation: Relation name (e.g., "direct_viewer")
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if tuple exists, False otherwise
         """
         from datetime import UTC, datetime
 
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
         subject_type, subject_id = subject
         object_type, object_id = object
 
@@ -608,7 +608,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
-            # Check 1: Direct subject match (tenant-scoped)
+            # Check 1: Direct subject match (zone-scoped)
             cursor.execute(
                 self._fix_sql_placeholders(
                     """
@@ -616,7 +616,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
                       AND object_type = ? AND object_id = ?
-                      AND tenant_id = ?
+                      AND zone_id = ?
                       AND subject_relation IS NULL
                       AND (expires_at IS NULL OR expires_at >= ?)
                     LIMIT 1
@@ -628,7 +628,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     relation,
                     object_type,
                     object_id,
-                    effective_tenant,
+                    effective_zone,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -636,7 +636,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 return True
 
             # Check 2: Wildcard/public access (Issue #1064)
-            # Wildcards should grant access across ALL tenants.
+            # Wildcards should grant access across ALL zones.
             # Only check if subject is not already the wildcard.
             if (subject_type, subject_id) != WILDCARD_SUBJECT:
                 cursor.execute(
@@ -670,7 +670,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None,
+        zone_id: str | None,
         logger: Any,
     ) -> None:
         """Cache the permission boundary if permission was granted via parent inheritance.
@@ -682,17 +682,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission that was granted
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             logger: Logger instance
         """
         import os
 
         object_type, object_id = object
         subject_type, subject_id = subject
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
 
         # Check if this was a direct grant (if so, no need to cache boundary)
-        if self._check_direct_grant(subject, permission, object, tenant_id):
+        if self._check_direct_grant(subject, permission, object, zone_id):
             return  # Direct grant, no boundary caching needed
 
         # Walk up the path to find the boundary (ancestor with direct grant)
@@ -703,10 +703,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 parent_path = "/"
 
             # Check if parent has direct grant
-            if self._check_direct_grant(subject, permission, (object_type, parent_path), tenant_id):
+            if self._check_direct_grant(subject, permission, (object_type, parent_path), zone_id):
                 # Found the boundary! Cache it
                 self._boundary_cache.set_boundary(
-                    effective_tenant, subject_type, subject_id, permission, object_id, parent_path
+                    effective_zone, subject_type, subject_id, permission, object_id, parent_path
                 )
                 logger.info(
                     f"[BoundaryCache] Cached: {subject_type}:{subject_id} {permission} "
@@ -724,7 +724,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
         min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
@@ -735,7 +735,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission: Permission to check
             object: (object_type, object_id) tuple
             context: Optional ABAC context for condition evaluation
-            tenant_id: Tenant ID to scope check
+            zone_id: Zone ID to scope check
             consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
             min_revision: Minimum acceptable revision for AT_LEAST_AS_FRESH mode.
                 When provided with BOUNDED consistency, cache will only be used
@@ -744,15 +744,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             CheckResult with consistency metadata and traversal stats
         """
-        # BUGFIX (Issue #3): Fail fast on missing tenant_id in production
-        # In production, missing tenant_id is a security issue - reject immediately
-        if not tenant_id:
+        # BUGFIX (Issue #3): Fail fast on missing zone_id in production
+        # In production, missing zone_id is a security issue - reject immediately
+        if not zone_id:
             import logging
             import os
 
             logger = logging.getLogger(__name__)
 
-            # Public role checks are tenant-agnostic, so skip warning
+            # Public role checks are zone-agnostic, so skip warning
             is_public_check = subject[0] == "role" and subject[1] == "public"
 
             # Check if we're in production mode (via env var or config)
@@ -761,11 +761,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
 
             if is_production and not is_public_check:
-                # SECURITY: In production, missing tenant_id is a critical error
-                logger.error("rebac_check called without tenant_id in production - REJECTING")
+                # SECURITY: In production, missing zone_id is a critical error
+                logger.error("rebac_check called without zone_id in production - REJECTING")
                 raise ValueError(
-                    "tenant_id is required for permission checks in production. "
-                    "Missing tenant_id can lead to cross-tenant data leaks. "
+                    "zone_id is required for permission checks in production. "
+                    "Missing zone_id can lead to cross-zone data leaks. "
                     "Set NEXUS_ENV=development to allow defaulting for local testing."
                 )
             elif not is_public_check:
@@ -773,10 +773,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 import traceback
 
                 logger.warning(
-                    f"rebac_check called without tenant_id, defaulting to 'default'. "
+                    f"rebac_check called without zone_id, defaulting to 'default'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
                 )
-            tenant_id = "default"
+            zone_id = "default"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -796,7 +796,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             limit_error = None  # Track if we hit a limit
             try:
                 result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, tenant_id, stats, context
+                    subject_entity, permission, object_entity, zone_id, stats, context
                 )
             except GraphLimitExceeded as e:
                 # BUGFIX (Issue #5): Fail-closed on limit exceeded, but mark as indeterminate
@@ -814,7 +814,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return CheckResult(
                 allowed=result,
-                consistency_token=self._get_version_token(tenant_id),
+                consistency_token=self._get_version_token(zone_id),
                 decision_time_ms=decision_time_ms,
                 cached=False,
                 cache_age_ms=None,
@@ -838,20 +838,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     permission,
                     object_entity.entity_type,
                     object_entity.entity_id,
-                    tenant_id,
+                    zone_id,
                     min_revision,
                 )
             else:
                 # Legacy time-based bounded check
-                cached = self._get_cached_check_tenant_aware_bounded(
-                    subject_entity, permission, object_entity, tenant_id, max_age_seconds=1
+                cached = self._get_cached_check_zone_aware_bounded(
+                    subject_entity, permission, object_entity, zone_id, max_age_seconds=1
                 )
 
             if cached is not None:
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
-                    consistency_token=self._get_version_token(tenant_id),
+                    consistency_token=self._get_version_token(zone_id),
                     decision_time_ms=decision_time_ms,
                     cached=True,
                     cache_age_ms=None,  # Within staleness bound
@@ -863,14 +863,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             limit_error = None
             try:
                 result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, tenant_id, stats, context
+                    subject_entity, permission, object_entity, zone_id, stats, context
                 )
             except GraphLimitExceeded as e:
                 result = False
                 limit_error = e
 
-            self._cache_check_result_tenant_aware(
-                subject_entity, permission, object_entity, tenant_id, result
+            self._cache_check_result_zone_aware(
+                subject_entity, permission, object_entity, zone_id, result
             )
 
             decision_time_ms = (time.perf_counter() - start_time) * 1000
@@ -878,7 +878,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return CheckResult(
                 allowed=result,
-                consistency_token=self._get_version_token(tenant_id),
+                consistency_token=self._get_version_token(zone_id),
                 decision_time_ms=decision_time_ms,
                 cached=False,
                 cache_age_ms=None,
@@ -892,15 +892,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             import logging
 
             logger = logging.getLogger(__name__)
-            cached = self._get_cached_check_tenant_aware(
-                subject_entity, permission, object_entity, tenant_id
+            cached = self._get_cached_check_zone_aware(
+                subject_entity, permission, object_entity, zone_id
             )
             if cached is not None:
                 logger.debug(f"  -> CACHE HIT: returning cached result={cached}")
                 decision_time_ms = (time.perf_counter() - start_time) * 1000
                 return CheckResult(
                     allowed=cached,
-                    consistency_token=self._get_version_token(tenant_id),
+                    consistency_token=self._get_version_token(zone_id),
                     decision_time_ms=decision_time_ms,
                     cached=True,
                     cache_age_ms=None,  # Could be up to cache_ttl_seconds old
@@ -913,14 +913,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             limit_error = None
             try:
                 result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, tenant_id, stats, context
+                    subject_entity, permission, object_entity, zone_id, stats, context
                 )
             except GraphLimitExceeded as e:
                 result = False
                 limit_error = e
 
-            self._cache_check_result_tenant_aware(
-                subject_entity, permission, object_entity, tenant_id, result
+            self._cache_check_result_zone_aware(
+                subject_entity, permission, object_entity, zone_id, result
             )
 
             decision_time_ms = (time.perf_counter() - start_time) * 1000
@@ -928,7 +928,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return CheckResult(
                 allowed=result,
-                consistency_token=self._get_version_token(tenant_id),
+                consistency_token=self._get_version_token(zone_id),
                 decision_time_ms=decision_time_ms,
                 cached=False,
                 cache_age_ms=None,
@@ -942,7 +942,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         stats: TraversalStats,
         context: dict[str, Any] | None = None,
     ) -> bool:
@@ -956,7 +956,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: Subject entity
             permission: Permission to check
             obj: Object entity
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             stats: Traversal statistics
             context: Optional ABAC context
 
@@ -974,8 +974,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             if is_rust_available():
                 # Fetch tuples and namespace configs for Rust
-                # CROSS-TENANT FIX: Pass subject to include cross-tenant shares
-                tuples = self._fetch_tuples_for_rust(tenant_id, subject=subject)
+                # CROSS-ZONE FIX: Pass subject to include cross-zone shares
+                tuples = self._fetch_tuples_for_rust(zone_id, subject=subject)
                 namespace_configs = self._get_namespace_configs_for_rust()
 
                 result = check_permission_single_rust(
@@ -1002,11 +1002,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # Fall through to Python implementation
 
         # Fallback to Python implementation
-        result = self._compute_permission_tenant_aware_with_limits(
+        result = self._compute_permission_zone_aware_with_limits(
             subject=subject,
             permission=permission,
             obj=obj,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             visited=set(),
             depth=0,
             start_time=start_time,
@@ -1017,20 +1017,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         return result
 
     def _fetch_tuples_for_rust(
-        self, tenant_id: str, subject: Entity | None = None
+        self, zone_id: str, subject: Entity | None = None
     ) -> list[dict[str, Any]]:
         """Fetch ReBAC tuples for Rust permission computation with caching.
 
-        PERFORMANCE FIX: This method now caches tenant tuples to avoid O(T) fetches
+        PERFORMANCE FIX: This method now caches zone tuples to avoid O(T) fetches
         on every permission check. The cache is invalidated on tuple mutations.
 
         Cache strategy:
-        - Tenant tuples: Cached with TTL (the O(T) part)
-        - Cross-tenant shares: Always fresh (small, indexed query)
+        - Zone tuples: Cached with TTL (the O(T) part)
+        - Cross-zone shares: Always fresh (small, indexed query)
 
         Args:
-            tenant_id: Tenant ID to scope tuples
-            subject: Optional subject for cross-tenant share lookup
+            zone_id: Zone ID to scope tuples
+            subject: Optional subject for cross-zone share lookup
 
         Returns:
             List of tuple dictionaries for Rust
@@ -1039,42 +1039,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
 
-        # PERFORMANCE: Check tenant tuples cache first
-        cached_tuples = self._get_cached_tenant_tuples(tenant_id)
+        # PERFORMANCE: Check zone tuples cache first
+        cached_tuples = self._get_cached_zone_tuples(zone_id)
 
         if cached_tuples is not None:
-            logger.debug(
-                f"[GRAPH-CACHE] Cache HIT for tenant {tenant_id}: {len(cached_tuples)} tuples"
-            )
+            logger.debug(f"[GRAPH-CACHE] Cache HIT for zone {zone_id}: {len(cached_tuples)} tuples")
             tuples = list(cached_tuples)  # Copy to avoid modifying cache
         else:
             # Cache miss - fetch from DB
-            logger.debug(f"[GRAPH-CACHE] Cache MISS for tenant {tenant_id}, fetching from DB")
-            tuples = self._fetch_tenant_tuples_from_db(tenant_id)
+            logger.debug(f"[GRAPH-CACHE] Cache MISS for zone {zone_id}, fetching from DB")
+            tuples = self._fetch_zone_tuples_from_db(zone_id)
 
             # Cache the result
-            self._cache_tenant_tuples(tenant_id, tuples)
-            logger.debug(f"[GRAPH-CACHE] Cached {len(tuples)} tuples for tenant {tenant_id}")
+            self._cache_zone_tuples(zone_id, tuples)
+            logger.debug(f"[GRAPH-CACHE] Cached {len(tuples)} tuples for zone {zone_id}")
 
-        # CROSS-TENANT FIX: Always fetch cross-tenant shares fresh (small, indexed query)
-        # Cross-tenant shares are stored in the resource owner's tenant but need
-        # to be visible when checking permissions from the recipient's tenant.
+        # CROSS-ZONE FIX: Always fetch cross-zone shares fresh (small, indexed query)
+        # Cross-zone shares are stored in the resource owner's zone but need
+        # to be visible when checking permissions from the recipient's zone.
         if subject is not None:
-            cross_tenant_tuples = self._fetch_cross_tenant_shares(tenant_id, subject)
-            if cross_tenant_tuples:
+            cross_zone_tuples = self._fetch_cross_zone_shares(zone_id, subject)
+            if cross_zone_tuples:
                 logger.debug(
-                    f"[GRAPH-CACHE] Fetched {len(cross_tenant_tuples)} cross-tenant shares for {subject}"
+                    f"[GRAPH-CACHE] Fetched {len(cross_zone_tuples)} cross-zone shares for {subject}"
                 )
-                tuples.extend(cross_tenant_tuples)
+                tuples.extend(cross_zone_tuples)
 
-        # WILDCARD FIX (Issue #1064): Fetch cross-tenant wildcard tuples (*:*)
-        # Wildcard tuples grant access to ALL users regardless of tenant.
+        # WILDCARD FIX (Issue #1064): Fetch cross-zone wildcard tuples (*:*)
+        # Wildcard tuples grant access to ALL users regardless of zone.
         # This is the industry-standard pattern used by SpiceDB, OpenFGA, and Ory Keto.
-        wildcard_tuples = self._fetch_cross_tenant_wildcards(tenant_id)
+        wildcard_tuples = self._fetch_cross_zone_wildcards(zone_id)
         if wildcard_tuples:
-            logger.debug(
-                f"[GRAPH-CACHE] Fetched {len(wildcard_tuples)} cross-tenant wildcard tuples"
-            )
+            logger.debug(f"[GRAPH-CACHE] Fetched {len(wildcard_tuples)} cross-zone wildcard tuples")
             tuples.extend(wildcard_tuples)
 
         # LEOPARD OPTIMIZATION (Issue #840): Add synthetic membership tuples from
@@ -1084,7 +1080,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             transitive_groups = self._leopard.get_transitive_groups(
                 member_type=subject.entity_type,
                 member_id=subject.entity_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             if transitive_groups:
                 logger.debug(
@@ -1105,43 +1101,43 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return tuples
 
-    def _get_cached_tenant_tuples(self, tenant_id: str) -> list[dict[str, Any]] | None:
-        """Get cached tenant tuples if not expired.
+    def _get_cached_zone_tuples(self, zone_id: str) -> list[dict[str, Any]] | None:
+        """Get cached zone tuples if not expired.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Cached tuples list or None if cache miss/expired
         """
-        if tenant_id not in self._tenant_graph_cache:
+        if zone_id not in self._zone_graph_cache:
             return None
 
-        tuples, _namespace_configs, cached_at = self._tenant_graph_cache[tenant_id]
+        tuples, _namespace_configs, cached_at = self._zone_graph_cache[zone_id]
         age = time.perf_counter() - cached_at
 
-        if age > self._tenant_graph_cache_ttl:
+        if age > self._zone_graph_cache_ttl:
             # Cache expired
-            del self._tenant_graph_cache[tenant_id]
+            del self._zone_graph_cache[zone_id]
             return None
 
         return tuples
 
-    def _cache_tenant_tuples(self, tenant_id: str, tuples: list[dict[str, Any]]) -> None:
-        """Cache tenant tuples with timestamp.
+    def _cache_zone_tuples(self, zone_id: str, tuples: list[dict[str, Any]]) -> None:
+        """Cache zone tuples with timestamp.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             tuples: Tuples list to cache
         """
         namespace_configs = self._get_namespace_configs_for_rust()
-        self._tenant_graph_cache[tenant_id] = (tuples, namespace_configs, time.perf_counter())
+        self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
 
-    def _fetch_tenant_tuples_from_db(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Fetch all tuples for a tenant from database.
+    def _fetch_zone_tuples_from_db(self, zone_id: str) -> list[dict[str, Any]]:
+        """Fetch all tuples for a zone from database.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of tuple dictionaries
@@ -1155,11 +1151,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     SELECT subject_type, subject_id, subject_relation, relation,
                            object_type, object_id
                     FROM rebac_tuples
-                    WHERE tenant_id = ?
+                    WHERE zone_id = ?
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
-                (tenant_id, datetime.now(UTC).isoformat()),
+                (zone_id, datetime.now(UTC).isoformat()),
             )
 
             tuples = []
@@ -1177,25 +1173,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return tuples
 
-    def _fetch_cross_tenant_shares(self, tenant_id: str, subject: Entity) -> list[dict[str, Any]]:
-        """Fetch cross-tenant shares for a subject.
+    def _fetch_cross_zone_shares(self, zone_id: str, subject: Entity) -> list[dict[str, Any]]:
+        """Fetch cross-zone shares for a subject.
 
-        Cross-tenant shares are stored in the resource owner's tenant but need
-        to be visible when checking permissions from the recipient's tenant.
+        Cross-zone shares are stored in the resource owner's zone but need
+        to be visible when checking permissions from the recipient's zone.
         This query is indexed and returns only the small number of shares.
 
         Args:
-            tenant_id: Current tenant ID (to exclude)
+            zone_id: Current zone ID (to exclude)
             subject: Subject entity to find shares for
 
         Returns:
-            List of cross-tenant share tuples
+            List of cross-zone share tuples
         """
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
 
-            cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
-            placeholders = ", ".join("?" * len(cross_tenant_relations))
+            cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+            placeholders = ", ".join("?" * len(cross_zone_relations))
 
             cursor.execute(
                 self._fix_sql_placeholders(
@@ -1205,15 +1201,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     FROM rebac_tuples
                     WHERE relation IN ({placeholders})
                       AND subject_type = ? AND subject_id = ?
-                      AND tenant_id != ?
+                      AND zone_id != ?
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
-                tuple(cross_tenant_relations)
+                tuple(cross_zone_relations)
                 + (
                     subject.entity_type,
                     subject.entity_id,
-                    tenant_id,
+                    zone_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -1233,20 +1229,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return tuples
 
-    def _fetch_cross_tenant_wildcards(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Fetch cross-tenant wildcard tuples (*:*) (Issue #1064).
+    def _fetch_cross_zone_wildcards(self, zone_id: str) -> list[dict[str, Any]]:
+        """Fetch cross-zone wildcard tuples (*:*) (Issue #1064).
 
-        Wildcard tuples grant access to ALL users regardless of tenant.
-        This query fetches all wildcard tuples from OTHER tenants so they
+        Wildcard tuples grant access to ALL users regardless of zone.
+        This query fetches all wildcard tuples from OTHER zones so they
         can be included in permission checks.
 
         This is the industry-standard pattern used by SpiceDB, OpenFGA, Ory Keto.
 
         Args:
-            tenant_id: Current tenant ID (to exclude duplicates from same tenant)
+            zone_id: Current zone ID (to exclude duplicates from same zone)
 
         Returns:
-            List of wildcard tuples from other tenants
+            List of wildcard tuples from other zones
         """
         from nexus.core.rebac import WILDCARD_SUBJECT
 
@@ -1260,14 +1256,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                            object_type, object_id
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
-                      AND tenant_id != ?
+                      AND zone_id != ?
                       AND (expires_at IS NULL OR expires_at > ?)
                     """
                 ),
                 (
                     WILDCARD_SUBJECT[0],
                     WILDCARD_SUBJECT[1],
-                    tenant_id,
+                    zone_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -1287,25 +1283,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return tuples
 
-    def invalidate_tenant_graph_cache(self, tenant_id: str | None = None) -> None:
-        """Invalidate the tenant graph cache.
+    def invalidate_zone_graph_cache(self, zone_id: str | None = None) -> None:
+        """Invalidate the zone graph cache.
 
         Call this when tuples are created, updated, or deleted.
 
         Args:
-            tenant_id: Specific tenant to invalidate, or None to clear all
+            zone_id: Specific zone to invalidate, or None to clear all
         """
         import logging
 
         logger = logging.getLogger(__name__)
 
-        if tenant_id is None:
-            count = len(self._tenant_graph_cache)
-            self._tenant_graph_cache.clear()
-            logger.debug(f"[GRAPH-CACHE] Cleared all {count} cached tenant graphs")
-        elif tenant_id in self._tenant_graph_cache:
-            del self._tenant_graph_cache[tenant_id]
-            logger.debug(f"[GRAPH-CACHE] Invalidated cache for tenant {tenant_id}")
+        if zone_id is None:
+            count = len(self._zone_graph_cache)
+            self._zone_graph_cache.clear()
+            logger.debug(f"[GRAPH-CACHE] Cleared all {count} cached zone graphs")
+        elif zone_id in self._zone_graph_cache:
+            del self._zone_graph_cache[zone_id]
+            logger.debug(f"[GRAPH-CACHE] Invalidated cache for zone {zone_id}")
 
     # =========================================================================
     # Issue #922: Permission Boundary Cache Invalidation
@@ -1323,13 +1319,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         Args:
             callback_id: Unique identifier for this callback (for deregistration)
-            callback: Function that takes (tenant_id, subject_type, subject_id,
+            callback: Function that takes (zone_id, subject_type, subject_id,
                       permission, object_path) and invalidates relevant cache entries
 
         Example:
-            >>> def invalidator(tenant_id, subject_type, subject_id, perm, path):
+            >>> def invalidator(zone_id, subject_type, subject_id, perm, path):
             ...     boundary_cache.invalidate_permission_change(
-            ...         tenant_id, subject_type, subject_id, perm, path
+            ...         zone_id, subject_type, subject_id, perm, path
             ...     )
             >>> manager.register_boundary_cache_invalidator("enforcer1", invalidator)
         """
@@ -1356,7 +1352,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
     def _notify_boundary_cache_invalidators(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject: tuple[str, str] | tuple[str, str, str],
         relation: str,
         object: tuple[str, str],
@@ -1413,7 +1409,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         for callback_id, callback in self._boundary_cache_invalidators:
             try:
                 for permission in permissions:
-                    callback(tenant_id, subject_type, subject_id, permission, object_id)
+                    callback(zone_id, subject_type, subject_id, permission, object_id)
             except Exception as e:
                 logger.warning(f"[BOUNDARY-CACHE] Invalidator {callback_id} failed: {e}")
 
@@ -1433,12 +1429,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         Args:
             callback_id: Unique identifier for this callback (for deregistration)
-            callback: Function that takes (tenant_id, object_path) and invalidates
+            callback: Function that takes (zone_id, object_path) and invalidates
                       relevant cache entries for that path and its ancestors
 
         Example:
-            >>> def invalidator(tenant_id, path):
-            ...     dir_visibility_cache.invalidate_for_resource(path, tenant_id)
+            >>> def invalidator(zone_id, path):
+            ...     dir_visibility_cache.invalidate_for_resource(path, zone_id)
             >>> manager.register_dir_visibility_invalidator("nexusfs", invalidator)
         """
         # Avoid duplicate registrations
@@ -1464,7 +1460,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
     def _notify_dir_visibility_invalidators(
         self,
-        tenant_id: str,
+        zone_id: str,
         object: tuple[str, str],
     ) -> None:
         """Notify all registered directory visibility cache invalidators.
@@ -1473,7 +1469,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         for the affected path and all its ancestors must be invalidated.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             object: (object_type, object_id) tuple - only file objects trigger invalidation
         """
         import logging
@@ -1492,9 +1488,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         for callback_id, callback in self._dir_visibility_invalidators:
             try:
-                callback(tenant_id, object_path)
+                callback(zone_id, object_path)
                 logger.debug(
-                    f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {tenant_id}:{object_path}"
+                    f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {zone_id}:{object_path}"
                 )
             except Exception as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
@@ -1506,13 +1502,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
-        subject_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
-        object_tenant_id: str | None = None,  # Defaults to tenant_id if not provided
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        subject_zone_id: str | None = None,  # Defaults to zone_id if not provided
+        object_zone_id: str | None = None,  # Defaults to zone_id if not provided
     ) -> WriteResult:
         """Create a relationship tuple with cache invalidation (Issue #1081).
 
-        Overrides parent to invalidate the tenant graph cache after writes.
+        Overrides parent to invalidate the zone graph cache after writes.
         Returns a WriteResult with consistency metadata for read-your-writes.
 
         Args:
@@ -1521,9 +1517,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object: (object_type, object_id) tuple
             expires_at: Optional expiration time
             conditions: Optional JSON conditions
-            tenant_id: Tenant ID for this relationship
-            subject_tenant_id: Subject's tenant
-            object_tenant_id: Object's tenant
+            zone_id: Zone ID for this relationship
+            subject_zone_id: Subject's zone
+            object_zone_id: Object's zone
 
         Returns:
             WriteResult with tuple_id, revision, and consistency_token.
@@ -1532,7 +1528,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         Example:
             # Write and immediately check with read-your-writes guarantee
-            result = manager.rebac_write(subject, relation, object, tenant_id=tenant)
+            result = manager.rebac_write(subject, relation, object, zone_id=zone)
             allowed = manager.rebac_check(
                 subject, permission, object,
                 consistency=ConsistencyRequirement(
@@ -1542,9 +1538,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             )
         """
         write_start = time.perf_counter()
-        # Issue #773: Default subject_tenant_id and object_tenant_id to tenant_id
-        effective_subject_tenant = subject_tenant_id if subject_tenant_id is not None else tenant_id
-        effective_object_tenant = object_tenant_id if object_tenant_id is not None else tenant_id
+        # Issue #773: Default subject_zone_id and object_zone_id to zone_id
+        effective_subject_zone = subject_zone_id if subject_zone_id is not None else zone_id
+        effective_object_zone = object_zone_id if object_zone_id is not None else zone_id
 
         # Call parent implementation
         result = super().rebac_write(
@@ -1553,20 +1549,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             object=object,
             expires_at=expires_at,
             conditions=conditions,
-            tenant_id=tenant_id,
-            subject_tenant_id=effective_subject_tenant,
-            object_tenant_id=effective_object_tenant,
+            zone_id=zone_id,
+            subject_zone_id=effective_subject_zone,
+            object_zone_id=effective_object_zone,
         )
 
-        # Invalidate cache for affected tenants
-        effective_tenant = tenant_id or "default"
-        self.invalidate_tenant_graph_cache(effective_tenant)
+        # Invalidate cache for affected zones
+        effective_zone = zone_id or "default"
+        self.invalidate_zone_graph_cache(effective_zone)
 
-        # For cross-tenant shares, also invalidate the other tenant
-        if subject_tenant_id and subject_tenant_id != effective_tenant:
-            self.invalidate_tenant_graph_cache(subject_tenant_id)
-        if object_tenant_id and object_tenant_id != effective_tenant:
-            self.invalidate_tenant_graph_cache(object_tenant_id)
+        # For cross-zone shares, also invalidate the other zone
+        if subject_zone_id and subject_zone_id != effective_zone:
+            self.invalidate_zone_graph_cache(subject_zone_id)
+        if object_zone_id and object_zone_id != effective_zone:
+            self.invalidate_zone_graph_cache(object_zone_id)
 
         # Leopard: Update transitive closure for membership relations
         if self._leopard and relation in self.MEMBERSHIP_RELATIONS:
@@ -1584,7 +1580,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject_id=subject_id,
                     group_type=object_type,
                     group_id=object_id,
-                    tenant_id=effective_tenant,
+                    zone_id=effective_zone,
                 )
                 logger.debug(
                     f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
@@ -1616,7 +1612,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Legacy/alternative naming
                 "viewer-of": ["read"],
                 "owner-of": ["read", "write", "execute"],
-                # Cross-tenant shared relations
+                # Cross-zone shared relations
                 "shared-viewer": ["read"],
                 "shared-editor": ["read", "write"],
                 "shared-owner": ["read", "write", "execute"],
@@ -1646,7 +1642,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     permission=permission,
                     resource_type=object_type,
                     resource_id=object_id,
-                    tenant_id=effective_tenant,
+                    zone_id=effective_zone,
                 )
 
             # Leopard-style Directory Grant Expansion
@@ -1656,25 +1652,25 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject=subject_tuple,
                     permissions=permissions,
                     directory_path=object_id,
-                    tenant_id=effective_tenant,
+                    zone_id=effective_zone,
                 )
 
         # Issue #922: Notify boundary cache invalidators
-        self._notify_boundary_cache_invalidators(effective_tenant, subject, relation, object)
+        self._notify_boundary_cache_invalidators(effective_zone, subject, relation, object)
 
         # Issue #919: Notify directory visibility cache invalidators
-        self._notify_dir_visibility_invalidators(effective_tenant, object)
+        self._notify_dir_visibility_invalidators(effective_zone, object)
 
         # Invalidate L1 permission cache for affected subject and object
         # This ensures subsequent rebac_check_bulk calls see the new permission
         if self._l1_cache is not None:
             subject_type, subject_id = subject[0], subject[1]
             object_type, object_id = object[0], object[1]
-            self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
-            self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
+            self._l1_cache.invalidate_subject(subject_type, subject_id, effective_zone)
+            self._l1_cache.invalidate_object(object_type, object_id, effective_zone)
 
         # Issue #1081: Get revision for consistency token (Zanzibar zookie pattern)
-        revision = self._get_tenant_revision_for_grant(effective_tenant)
+        revision = self._get_zone_revision_for_grant(effective_zone)
         write_time_ms = (time.perf_counter() - write_start) * 1000
 
         return WriteResult(
@@ -1690,7 +1686,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     ) -> int:
         """Create multiple relationship tuples with cache invalidation (batch operation).
 
-        Overrides parent to invalidate the tenant graph cache after batch writes.
+        Overrides parent to invalidate the zone graph cache after batch writes.
 
         Args:
             tuples: List of tuple dicts (same format as parent rebac_write_batch)
@@ -1702,20 +1698,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         created_count = super().rebac_write_batch(tuples)
 
         if created_count > 0:
-            # Invalidate cache for all affected tenants
-            affected_tenants: set[str] = set()
+            # Invalidate cache for all affected zones
+            affected_zones: set[str] = set()
             for t in tuples:
-                tenant_id = t.get("tenant_id") or "default"
-                affected_tenants.add(tenant_id)
-                # Also check cross-tenant shares
-                if t.get("subject_tenant_id") and t.get("subject_tenant_id") != tenant_id:
-                    affected_tenants.add(t["subject_tenant_id"])
-                if t.get("object_tenant_id") and t.get("object_tenant_id") != tenant_id:
-                    affected_tenants.add(t["object_tenant_id"])
+                zone_id = t.get("zone_id") or "default"
+                affected_zones.add(zone_id)
+                # Also check cross-zone shares
+                if t.get("subject_zone_id") and t.get("subject_zone_id") != zone_id:
+                    affected_zones.add(t["subject_zone_id"])
+                if t.get("object_zone_id") and t.get("object_zone_id") != zone_id:
+                    affected_zones.add(t["object_zone_id"])
 
-            # Invalidate cache for all affected tenants
-            for tenant_id in affected_tenants:
-                self.invalidate_tenant_graph_cache(tenant_id)
+            # Invalidate cache for all affected zones
+            for zone_id in affected_zones:
+                self.invalidate_zone_graph_cache(zone_id)
 
             # Leopard: Update transitive closure for membership relations
             if self._leopard:
@@ -1727,7 +1723,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     if relation in self.MEMBERSHIP_RELATIONS:
                         subject = t["subject"]
                         obj = t["object"]
-                        tenant_id = t.get("tenant_id") or "default"
+                        zone_id = t.get("zone_id") or "default"
 
                         subject_type = subject[0]
                         subject_id = subject[1]
@@ -1740,7 +1736,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 subject_id=subject_id,
                                 group_type=object_type,
                                 group_id=object_id,
-                                tenant_id=tenant_id,
+                                zone_id=zone_id,
                             )
                             logger.debug(
                                 f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
@@ -1784,7 +1780,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject = t["subject"]
                     obj = t["object"]
                     relation = t.get("relation", "")
-                    tenant_id = t.get("tenant_id") or "default"
+                    zone_id = t.get("zone_id") or "default"
                     subject_tuple = (subject[0], subject[1])
                     object_type = obj[0]
                     object_id = obj[1]
@@ -1800,30 +1796,30 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             permission=permission,
                             resource_type=object_type,
                             resource_id=object_id,
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                         )
 
             # Issue #919: Notify directory visibility cache invalidators for all affected objects
             for t in tuples:
                 obj = t["object"]
-                tenant_id = t.get("tenant_id") or "default"
-                self._notify_dir_visibility_invalidators(tenant_id, obj)
+                zone_id = t.get("zone_id") or "default"
+                self._notify_dir_visibility_invalidators(zone_id, obj)
 
             # Invalidate L1 permission cache for all affected subjects and objects
             if self._l1_cache is not None:
                 for t in tuples:
                     subject = t["subject"]
                     obj = t["object"]
-                    tenant_id = t.get("tenant_id") or "default"
-                    self._l1_cache.invalidate_subject(subject[0], subject[1], tenant_id)
-                    self._l1_cache.invalidate_object(obj[0], obj[1], tenant_id)
+                    zone_id = t.get("zone_id") or "default"
+                    self._l1_cache.invalidate_subject(subject[0], subject[1], zone_id)
+                    self._l1_cache.invalidate_object(obj[0], obj[1], zone_id)
 
         return created_count
 
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple with cache invalidation.
 
-        Overrides parent to invalidate the tenant graph cache after deletes.
+        Overrides parent to invalidate the zone graph cache after deletes.
 
         Args:
             tuple_id: ID of tuple to delete
@@ -1831,14 +1827,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Returns:
             True if tuple was deleted, False if not found
         """
-        # First, get the tuple info to know which tenant to invalidate
+        # First, get the tuple info to know which zone to invalidate
         # and for Leopard closure update
         tuple_info: dict[str, Any] | None = None
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
             cursor.execute(
                 self._fix_sql_placeholders(
-                    "SELECT tenant_id, subject_type, subject_id, relation, "
+                    "SELECT zone_id, subject_type, subject_id, relation, "
                     "object_type, object_id FROM rebac_tuples WHERE tuple_id = ?"
                 ),
                 (tuple_id,),
@@ -1846,7 +1842,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             row = cursor.fetchone()
             if row:
                 tuple_info = {
-                    "tenant_id": row["tenant_id"],
+                    "zone_id": row["zone_id"],
                     "subject_type": row["subject_type"],
                     "subject_id": row["subject_id"],
                     "relation": row["relation"],
@@ -1857,11 +1853,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # Call parent implementation
         result = super().rebac_delete(tuple_id)
 
-        # Invalidate cache for the affected tenant
+        # Invalidate cache for the affected zone
         if result and tuple_info:
-            tenant_id = tuple_info["tenant_id"]
-            if tenant_id:
-                self.invalidate_tenant_graph_cache(tenant_id)
+            zone_id = tuple_info["zone_id"]
+            if zone_id:
+                self.invalidate_zone_graph_cache(zone_id)
 
             # Tiger Cache: Write-through revocation
             if self._tiger_cache:
@@ -1911,7 +1907,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 permission=permission,
                                 resource_type=object_type,
                                 resource_id=object_id,
-                                tenant_id=tenant_id or "default",
+                                zone_id=zone_id or "default",
                             )
                         except Exception as e:
                             import logging
@@ -1923,7 +1919,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 import logging
 
                 logger = logging.getLogger(__name__)
-                effective_tenant = tenant_id or "default"
+                effective_zone = zone_id or "default"
 
                 try:
                     entries = self._leopard.update_closure_on_membership_remove(
@@ -1931,7 +1927,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         subject_id=tuple_info["subject_id"],
                         group_type=tuple_info["object_type"],
                         group_id=tuple_info["object_id"],
-                        tenant_id=effective_tenant,
+                        zone_id=effective_zone,
                     )
                     logger.debug(
                         f"[LEOPARD] Removed closure for "
@@ -1944,7 +1940,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
-            self._notify_dir_visibility_invalidators(tenant_id or "default", object_tuple)
+            self._notify_dir_visibility_invalidators(zone_id or "default", object_tuple)
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:
@@ -1952,9 +1948,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject_id = tuple_info["subject_id"]
                 object_type = tuple_info["object_type"]
                 object_id = tuple_info["object_id"]
-                effective_tenant = tenant_id or "default"
-                self._l1_cache.invalidate_subject(subject_type, subject_id, effective_tenant)
-                self._l1_cache.invalidate_object(object_type, object_id, effective_tenant)
+                effective_zone = zone_id or "default"
+                self._l1_cache.invalidate_subject(subject_type, subject_id, effective_zone)
+                self._l1_cache.invalidate_object(object_type, object_id, effective_zone)
 
         return result
 
@@ -1966,7 +1962,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> set[tuple[str, str]]:
         """Get all groups a subject transitively belongs to using Leopard index.
 
@@ -1976,7 +1972,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Args:
             subject_type: Type of subject (e.g., "user", "agent")
             subject_id: ID of subject
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Set of (group_type, group_id) tuples representing all groups
@@ -1984,19 +1980,19 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         """
         if not self._leopard:
             # Fallback: compute on-the-fly (slower)
-            return self._compute_transitive_groups_fallback(subject_type, subject_id, tenant_id)
+            return self._compute_transitive_groups_fallback(subject_type, subject_id, zone_id)
 
         return self._leopard.get_transitive_groups(
             member_type=subject_type,
             member_id=subject_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def _compute_transitive_groups_fallback(
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> set[tuple[str, str]]:
         """Compute transitive groups without Leopard index (fallback).
 
@@ -2005,7 +2001,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Args:
             subject_type: Type of subject
             subject_id: ID of subject
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Set of (group_type, group_id) tuples
@@ -2034,12 +2030,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     WHERE subject_type = :subj_type
                       AND subject_id = :subj_id
                       AND relation IN ('member-of', 'member', 'belongs-to')
-                      AND tenant_id = :tenant_id
+                      AND zone_id = :zone_id
                       AND (expires_at IS NULL OR expires_at > {now_sql})
                 """)
                 result = conn.execute(
                     query,
-                    {"subj_type": curr_type, "subj_id": curr_id, "tenant_id": tenant_id},
+                    {"subj_type": curr_type, "subj_id": curr_id, "zone_id": zone_id},
                 )
 
                 for row in result:
@@ -2050,8 +2046,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return groups
 
-    def rebuild_leopard_closure(self, tenant_id: str) -> int:
-        """Rebuild the Leopard transitive closure for a tenant.
+    def rebuild_leopard_closure(self, zone_id: str) -> int:
+        """Rebuild the Leopard transitive closure for a zone.
 
         Useful for:
         - Initial migration from existing data
@@ -2059,7 +2055,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         - Periodic verification
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of closure entries created
@@ -2067,20 +2063,20 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if not self._leopard:
             raise RuntimeError("Leopard index is not enabled")
 
-        return self._leopard.rebuild_closure_for_tenant(tenant_id)
+        return self._leopard.rebuild_closure_for_zone(zone_id)
 
-    def invalidate_leopard_cache(self, tenant_id: str | None = None) -> None:
+    def invalidate_leopard_cache(self, zone_id: str | None = None) -> None:
         """Invalidate Leopard in-memory cache.
 
         Args:
-            tenant_id: If provided, only invalidate for this tenant.
+            zone_id: If provided, only invalidate for this zone.
                        If None, invalidate all.
         """
         if not self._leopard:
             return
 
-        if tenant_id:
-            self._leopard.invalidate_cache_for_tenant(tenant_id)
+        if zone_id:
+            self._leopard.invalidate_cache_for_zone(zone_id)
         else:
             self._leopard.clear_cache()
 
@@ -2093,7 +2089,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str,
+        zone_id: str,
         logger: Any = None,
     ) -> None:
         """Write-through single permission result to Tiger Cache (Issue #935).
@@ -2110,7 +2106,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission that was granted
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             logger: Optional logger instance
         """
         if not self._tiger_cache:
@@ -2118,7 +2114,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         try:
             # Check memory cache ONLY - no DB hit on read path
-            # Note: resource_key excludes tenant - paths are globally unique
+            # Note: resource_key excludes zone - paths are globally unique
             resource_key = (object[0], object[1])
             resource_int_id = self._tiger_cache._resource_map._uuid_to_int.get(resource_key)
 
@@ -2129,7 +2125,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject_id=subject[1],
                     permission=permission,
                     resource_type=object[0],
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     resource_int_id=resource_int_id,
                 )
                 if logger:
@@ -2152,7 +2148,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
     ) -> bool | None:
         """Check permission using Tiger Cache (O(1) bitmap lookup).
 
@@ -2160,7 +2156,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission to check
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if allowed, False if denied, None if not in cache (use rebac_check fallback)
@@ -2181,7 +2177,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> set[int]:
         """Get all resources accessible by subject using Tiger Cache.
 
@@ -2189,7 +2185,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission type
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Set of integer resource IDs (use tiger_resource_map for UUID lookup)
@@ -2202,7 +2198,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject_id=subject[1],
             permission=permission,
             resource_type=resource_type,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def tiger_queue_update(
@@ -2210,7 +2206,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         priority: int = 100,
     ) -> int | None:
         """Queue a Tiger Cache update for background processing.
@@ -2221,7 +2217,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permission: Permission to recompute
             resource_type: Type of resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             priority: Priority (lower = higher priority)
 
         Returns:
@@ -2235,7 +2231,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject_id=subject[1],
             permission=permission,
             resource_type=resource_type,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             priority=priority,
         )
 
@@ -2245,7 +2241,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool:
         """Write-through: Persist a single permission grant to Tiger Cache.
 
@@ -2258,7 +2254,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being granted
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if persisted successfully, False on error
@@ -2272,7 +2268,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission=permission,
             resource_type=resource_type,
             resource_id=resource_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def tiger_persist_revoke(
@@ -2281,7 +2277,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         permission: str,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool:
         """Write-through: Persist a single permission revocation to Tiger Cache.
 
@@ -2292,7 +2288,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being revoked
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if persisted successfully, False on error
@@ -2306,7 +2302,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             permission=permission,
             resource_type=resource_type,
             resource_id=resource_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def tiger_process_queue(self, batch_size: int = 100) -> int:
@@ -2338,7 +2334,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str] | None = None,
         permission: str | None = None,
         resource_type: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate Tiger Cache entries.
 
@@ -2346,7 +2342,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple (None = all subjects)
             permission: Filter by permission (None = all)
             resource_type: Filter by resource type (None = all)
-            tenant_id: Filter by tenant (None = all)
+            zone_id: Filter by zone (None = all)
 
         Returns:
             Number of entries invalidated
@@ -2362,14 +2358,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject_id=subject_id,
             permission=permission,
             resource_type=resource_type,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def tiger_register_resource(
         self,
         resource_type: str,
         resource_id: str,
-        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
     ) -> int:
         """Register a resource in the Tiger resource map.
 
@@ -2378,7 +2374,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         Args:
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of resource (e.g., UUID or path)
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Integer ID for use in bitmaps
@@ -2517,7 +2513,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permissions: list[str],
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Expand a directory permission grant to all descendants (Leopard-style).
 
@@ -2529,7 +2525,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple
             permissions: List of permissions granted (e.g., ["read", "write"])
             directory_path: Directory path that was granted
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Trade-offs (Zanzibar Leopard pattern):
             - Write amplification: 1 grant -> N bitmap updates
@@ -2548,10 +2544,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             directory_path = directory_path + "/"
 
         # Get current revision for consistency (prevents "new enemy" problem)
-        grant_revision = self._get_tenant_revision_for_grant(tenant_id)
+        grant_revision = self._get_zone_revision_for_grant(zone_id)
 
         # Get all descendants of the directory
-        descendants = self._get_directory_descendants(directory_path, tenant_id)
+        descendants = self._get_directory_descendants(directory_path, zone_id)
 
         logger.info(
             f"[LEOPARD] Directory grant expansion: {directory_path} "
@@ -2566,7 +2562,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject_id=subject[1],
                     permission=permission,
                     directory_path=directory_path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     grant_revision=grant_revision,
                     include_future_files=True,
                 )
@@ -2576,7 +2572,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject[1],
                     permission,
                     directory_path,
-                    tenant_id,
+                    zone_id,
                     status="completed",
                     expanded_count=0,
                     total_count=0,
@@ -2596,7 +2592,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject_id=subject[1],
                     permission=permission,
                     directory_path=directory_path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     grant_revision=grant_revision,
                     include_future_files=True,
                 )
@@ -2611,7 +2607,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject_id=subject[1],
                 permission=permission,
                 directory_path=directory_path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 grant_revision=grant_revision,
                 include_future_files=True,
             )
@@ -2622,7 +2618,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject_id=subject[1],
                 permission=permission,
                 directory_path=directory_path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 grant_revision=grant_revision,
                 descendants=descendants,
             )
@@ -2635,15 +2631,15 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             else:
                 logger.error(f"[LEOPARD] Failed to expand {permission} on {directory_path}")
 
-    def _get_tenant_revision_for_grant(self, tenant_id: str) -> int:
-        """Get current tenant revision for consistency during expansion.
+    def _get_zone_revision_for_grant(self, zone_id: str) -> int:
+        """Get current zone revision for consistency during expansion.
 
         This prevents the "new enemy" problem: files created after the grant
         revision are not automatically included (user must explicitly include
         future files or re-grant).
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Current revision number
@@ -2653,10 +2649,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         try:
             query = text("""
                 SELECT current_version FROM rebac_version_sequences
-                WHERE tenant_id = :tenant_id
+                WHERE zone_id = :zone_id
             """)
             with self.engine.connect() as conn:
-                result = conn.execute(query, {"tenant_id": tenant_id})
+                result = conn.execute(query, {"zone_id": zone_id})
                 row = result.fetchone()
                 return int(row.current_version) if row else 0
         except Exception:
@@ -2665,13 +2661,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     def _get_directory_descendants(
         self,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> list[str]:
         """Get all file paths under a directory.
 
         Args:
             directory_path: Directory path (with trailing /)
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of descendant file paths
@@ -2686,7 +2682,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 files = self._metadata_store.list(
                     prefix=directory_path,
                     recursive=True,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 return [f.path for f in files]
             except Exception as e:
@@ -2701,13 +2697,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 FROM file_paths
                 WHERE virtual_path LIKE :prefix
                   AND deleted_at IS NULL
-                  AND (tenant_id = :tenant_id OR tenant_id = 'default' OR tenant_id IS NULL)
+                  AND (zone_id = :zone_id OR zone_id = 'default' OR zone_id IS NULL)
             """)
 
             with self.engine.connect() as conn:
-                result = conn.execute(
-                    query, {"prefix": f"{directory_path}%", "tenant_id": tenant_id}
-                )
+                result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
                 return [row.virtual_path for row in result]
         except Exception as e:
             logger.error(f"[LEOPARD] Failed to query descendants: {e}")
@@ -2729,7 +2723,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         """
         # Get the standard object types that we need namespace configs for
         # These are the common object types used in permission checks
-        object_types = ["file", "tenant", "user", "group", "agent", "memory"]
+        object_types = ["file", "zone", "user", "group", "agent", "memory"]
 
         configs = {}
         for obj_type in object_types:
@@ -2738,12 +2732,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 configs[obj_type] = namespace.config
         return configs
 
-    def _compute_permission_tenant_aware_with_limits(
+    def _compute_permission_zone_aware_with_limits(
         self,
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         visited: set[tuple[str, str, str, str, str]],
         depth: int,
         start_time: float,
@@ -2815,8 +2809,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-            result = self._has_direct_relation_tenant_aware(
-                subject, permission, obj, tenant_id, context
+            result = self._has_direct_relation_zone_aware(
+                subject, permission, obj, zone_id, context
             )
             logger.debug(f"{indent}← RESULT: {result}")
             memo[memo_key] = result  # Cache result
@@ -2837,11 +2831,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         f"{indent}├─[PERM-REL {i + 1}/{len(usersets)}] Checking relation '{relation}' for permission '{permission}'"
                     )
                     try:
-                        result = self._compute_permission_tenant_aware_with_limits(
+                        result = self._compute_permission_zone_aware_with_limits(
                             subject,
                             relation,
                             obj,
-                            tenant_id,
+                            zone_id,
                             visited.copy(),  # Copy visited to prevent false cycles
                             depth + 1,
                             start_time,
@@ -2874,8 +2868,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             stats.queries += 1
             if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
                 raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-            result = self._has_direct_relation_tenant_aware(
-                subject, permission, obj, tenant_id, context
+            result = self._has_direct_relation_zone_aware(
+                subject, permission, obj, zone_id, context
             )
             logger.debug(f"{indent}← RESULT: {result}")
             memo[memo_key] = result  # Cache result
@@ -2895,11 +2889,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     f"{indent}│ ├─[UNION {i + 1}/{len(union_relations)}] Checking: '{rel}'"
                 )
                 try:
-                    result = self._compute_permission_tenant_aware_with_limits(
+                    result = self._compute_permission_zone_aware_with_limits(
                         subject,
                         rel,
                         obj,
-                        tenant_id,
+                        zone_id,
                         visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
@@ -2946,8 +2940,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
                     )
 
-                related_objects = self._find_related_objects_tenant_aware(
-                    obj, tupleset_relation, tenant_id
+                related_objects = self._find_related_objects_zone_aware(
+                    obj, tupleset_relation, zone_id
                 )
                 logger.debug(
                     f"{indent}│ ├─[TTU-PARENT] Found {len(related_objects)} objects via '{tupleset_relation}': {[f'{o.entity_type}:{o.entity_id}' for o in related_objects]}"
@@ -2964,11 +2958,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     logger.debug(
                         f"{indent}  Checking '{computed_userset}' on related object {related_obj.entity_type}:{related_obj.entity_id}"
                     )
-                    if self._compute_permission_tenant_aware_with_limits(
+                    if self._compute_permission_zone_aware_with_limits(
                         subject,
                         computed_userset,
                         related_obj,
-                        tenant_id,
+                        zone_id,
                         visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
@@ -2999,8 +2993,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         "queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries
                     )
 
-                related_subjects = self._find_subjects_with_relation_tenant_aware(
-                    obj, tupleset_relation, tenant_id
+                related_subjects = self._find_subjects_with_relation_zone_aware(
+                    obj, tupleset_relation, zone_id
                 )
                 logger.debug(
                     f"{indent}[depth={depth}]   Pattern 2 (group): Found {len(related_subjects)} subjects with '{tupleset_relation}' on obj: {[f'{s.entity_type}:{s.entity_id}' for s in related_subjects]}"
@@ -3017,11 +3011,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     logger.debug(
                         f"{indent}  Checking if {subject} has '{computed_userset}' on {related_subj.entity_type}:{related_subj.entity_id}"
                     )
-                    if self._compute_permission_tenant_aware_with_limits(
+                    if self._compute_permission_zone_aware_with_limits(
                         subject,
                         computed_userset,
                         related_subj,
-                        tenant_id,
+                        zone_id,
                         visited.copy(),  # Copy visited to prevent false cycles
                         depth + 1,
                         start_time,
@@ -3044,40 +3038,38 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         stats.queries += 1
         if self.enable_graph_limits and stats.queries > GraphLimits.MAX_TUPLE_QUERIES:
             raise GraphLimitExceeded("queries", GraphLimits.MAX_TUPLE_QUERIES, stats.queries)
-        result = self._has_direct_relation_tenant_aware(
-            subject, permission, obj, tenant_id, context
-        )
+        result = self._has_direct_relation_zone_aware(subject, permission, obj, zone_id, context)
         logger.debug(f"{indent}← [EXIT depth={depth}] Direct relation result: {result}")
         memo[memo_key] = result  # Cache result
         return result
 
-    def _find_related_objects_tenant_aware(
-        self, obj: Entity, relation: str, tenant_id: str
+    def _find_related_objects_zone_aware(
+        self, obj: Entity, relation: str, zone_id: str
     ) -> list[Entity]:
-        """Find all objects related to obj via relation (tenant-scoped).
+        """Find all objects related to obj via relation (zone-scoped).
 
         Args:
             obj: Object entity
             relation: Relation type
-            tenant_id: Tenant ID to scope the query
+            zone_id: Zone ID to scope the query
 
         Returns:
-            List of related object entities within the tenant
+            List of related object entities within the zone
         """
         import logging
 
         logger = logging.getLogger(__name__)
         logger.debug(
-            f"_find_related_objects_tenant_aware: obj={obj}, relation={relation}, tenant_id={tenant_id}"
+            f"_find_related_objects_zone_aware: obj={obj}, relation={relation}, zone_id={zone_id}"
         )
 
         # For parent relation on files, compute from path instead of querying DB
-        # This handles cross-tenant scenarios where parent tuples are in different tenant
+        # This handles cross-zone scenarios where parent tuples are in different zone
         if relation == "parent" and obj.entity_type == "file":
             parent_path = str(PurePosixPath(obj.entity_id).parent)
             if parent_path != obj.entity_id and parent_path != ".":
                 logger.debug(
-                    f"_find_related_objects_tenant_aware: Computed parent from path: {obj.entity_id} -> {parent_path}"
+                    f"_find_related_objects_zone_aware: Computed parent from path: {obj.entity_id} -> {parent_path}"
                 )
                 return [Entity("file", parent_path)]
             return []
@@ -3095,7 +3087,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     FROM rebac_tuples
                     WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
-                      AND tenant_id = ?
+                      AND zone_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
@@ -3103,7 +3095,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     obj.entity_type,
                     obj.entity_id,
                     relation,
-                    tenant_id,
+                    zone_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -3113,14 +3105,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 results.append(Entity(row["object_type"], row["object_id"]))
 
             logger.debug(
-                f"_find_related_objects_tenant_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
+                f"_find_related_objects_zone_aware: Found {len(results)} objects for {obj} via '{relation}': {[str(r) for r in results]}"
             )
             return results
 
-    def _find_subjects_with_relation_tenant_aware(
-        self, obj: Entity, relation: str, tenant_id: str
+    def _find_subjects_with_relation_zone_aware(
+        self, obj: Entity, relation: str, zone_id: str
     ) -> list[Entity]:
-        """Find all subjects that have a relation to obj (tenant-scoped).
+        """Find all subjects that have a relation to obj (zone-scoped).
 
         For group-style tupleToUserset traversal, finds subjects where: (subject, relation, obj)
         Example: Finding groups with direct_viewer on file X means finding tuples where:
@@ -3128,13 +3120,13 @@ class EnhancedReBACManager(TenantAwareReBACManager):
           - relation = "direct_viewer"
           - object = file X
 
-        This is the reverse of _find_related_objects_tenant_aware and is used for group
+        This is the reverse of _find_related_objects_zone_aware and is used for group
         permission inheritance patterns like: group_viewer -> find groups with direct_viewer -> check member.
 
         Args:
             obj: Object entity (the object in the tuple)
             relation: Relation type (e.g., "direct_viewer")
-            tenant_id: Tenant ID to scope the query
+            zone_id: Zone ID to scope the query
 
         Returns:
             List of subject entities (the subjects from matching tuples)
@@ -3143,7 +3135,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         logger = logging.getLogger(__name__)
         logger.debug(
-            f"_find_subjects_with_relation_tenant_aware: Looking for (?, '{relation}', {obj})"
+            f"_find_subjects_with_relation_zone_aware: Looking for (?, '{relation}', {obj})"
         )
 
         with self._connection() as conn:
@@ -3158,7 +3150,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     FROM rebac_tuples
                     WHERE object_type = ? AND object_id = ?
                       AND relation = ?
-                      AND tenant_id = ?
+                      AND zone_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
@@ -3166,7 +3158,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     obj.entity_type,
                     obj.entity_id,
                     relation,
-                    tenant_id,
+                    zone_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -3176,29 +3168,29 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 results.append(Entity(row["subject_type"], row["subject_id"]))
 
             logger.debug(
-                f"_find_subjects_with_relation_tenant_aware: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"
+                f"_find_subjects_with_relation_zone_aware: Found {len(results)} subjects for (?, '{relation}', {obj}): {[str(r) for r in results]}"
             )
             return results
 
-    def _has_direct_relation_tenant_aware(
+    def _has_direct_relation_zone_aware(
         self,
         subject: Entity,
         relation: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         context: dict[str, Any] | None = None,
     ) -> bool:
-        """Check if subject has direct relation to object (tenant-scoped).
+        """Check if subject has direct relation to object (zone-scoped).
 
         Args:
             subject: Subject entity
             relation: Relation type
             obj: Object entity
-            tenant_id: Tenant ID to scope the query
+            zone_id: Zone ID to scope the query
             context: Optional ABAC context for condition evaluation
 
         Returns:
-            True if direct relation exists within the tenant
+            True if direct relation exists within the zone
         """
         import logging
 
@@ -3207,7 +3199,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         # EXTENSIVE DEBUG LOGGING
         logger.debug(
             f"[DIRECT-CHECK] Checking: ({subject.entity_type}:{subject.entity_id}) "
-            f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? tenant={tenant_id}"
+            f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? zone={zone_id}"
         )
 
         with self._connection() as conn:
@@ -3219,7 +3211,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     WHERE subject_type = ? AND subject_id = ?
                       AND relation = ?
                       AND object_type = ? AND object_id = ?
-                      AND tenant_id = ?
+                      AND zone_id = ?
                       AND subject_relation IS NULL
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
@@ -3229,7 +3221,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 relation,
                 obj.entity_type,
                 obj.entity_id,
-                tenant_id,
+                zone_id,
                 datetime.now(UTC).isoformat(),
             )
             logger.debug(f"[DIRECT-CHECK] SQL Query params: {params}")
@@ -3263,12 +3255,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 else:
                     return True  # No conditions, allow
 
-            # Cross-tenant check for shared-* relations (PR #647, #648)
-            # Cross-tenant shares are stored in the resource owner's tenant
-            # but should be visible when checking from the recipient's tenant.
-            from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+            # Cross-zone check for shared-* relations (PR #647, #648)
+            # Cross-zone shares are stored in the resource owner's zone
+            # but should be visible when checking from the recipient's zone.
+            from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
 
-            if relation in CROSS_TENANT_ALLOWED_RELATIONS:
+            if relation in CROSS_ZONE_ALLOWED_RELATIONS:
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -3293,16 +3285,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     import logging
 
                     logger = logging.getLogger(__name__)
-                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    logger.debug(f"Cross-zone share found: {subject} -> {relation} -> {obj}")
                     return True
 
             # Check for wildcard/public access (*:*) - Issue #1064
-            # Wildcards grant access to ALL users regardless of tenant.
+            # Wildcards grant access to ALL users regardless of zone.
             # Only check if subject is not already the wildcard.
             from nexus.core.rebac import WILDCARD_SUBJECT
 
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                # Check for wildcard tuples in ANY tenant (cross-tenant public access)
+                # Check for wildcard tuples in ANY zone (cross-zone public access)
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -3340,7 +3332,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     WHERE relation = ?
                       AND object_type = ? AND object_id = ?
                       AND subject_relation IS NOT NULL
-                      AND tenant_id = ?
+                      AND zone_id = ?
                       AND (expires_at IS NULL OR expires_at >= ?)
                     """
                 ),
@@ -3348,7 +3340,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     relation,
                     obj.entity_type,
                     obj.entity_id,
-                    tenant_id,
+                    zone_id,
                     datetime.now(UTC).isoformat(),
                 ),
             )
@@ -3374,11 +3366,11 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Use a bounded sub-check to prevent infinite recursion
                 # We inherit the same visited set to detect cycles across the full graph
                 try:
-                    if self._compute_permission_tenant_aware_with_limits(
+                    if self._compute_permission_zone_aware_with_limits(
                         subject=subject,
                         permission=userset_relation,
                         obj=userset_entity,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         visited=set(),  # Fresh visited set for this sub-check
                         depth=0,  # Reset depth for sub-check
                         start_time=time.perf_counter(),  # Fresh timer
@@ -3398,17 +3390,17 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             return False
 
-    def _get_version_token(self, tenant_id: str = "default") -> str:
+    def _get_version_token(self, zone_id: str = "default") -> str:
         """Get current version token (P0-1).
 
-        BUGFIX (Issue #2): Use DB-backed per-tenant sequence instead of in-memory counter.
+        BUGFIX (Issue #2): Use DB-backed per-zone sequence instead of in-memory counter.
         This ensures version tokens are:
         - Monotonic across process restarts
         - Consistent across multiple processes/replicas
-        - Scoped per-tenant for proper isolation
+        - Scoped per-zone for proper isolation
 
         Args:
-            tenant_id: Tenant ID to get version for
+            zone_id: Zone ID to get version for
 
         Returns:
             Monotonic version token string (e.g., "v123")
@@ -3422,14 +3414,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Atomic increment-and-return
                 cursor.execute(
                     """
-                    INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                    INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
                     VALUES (%s, 1, NOW())
-                    ON CONFLICT (tenant_id)
+                    ON CONFLICT (zone_id)
                     DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
                                   updated_at = NOW()
                     RETURNING current_version
                     """,
-                    (tenant_id,),
+                    (zone_id,),
                 )
                 row = cursor.fetchone()
                 version = row["current_version"] if row else 1
@@ -3437,9 +3429,9 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # SQLite: Two-step increment
                 cursor.execute(
                     self._fix_sql_placeholders(
-                        "SELECT current_version FROM rebac_version_sequences WHERE tenant_id = ?"
+                        "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
                     ),
-                    (tenant_id,),
+                    (zone_id,),
                 )
                 row = cursor.fetchone()
 
@@ -3451,22 +3443,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             """
                             UPDATE rebac_version_sequences
                             SET current_version = ?, updated_at = ?
-                            WHERE tenant_id = ?
+                            WHERE zone_id = ?
                             """
                         ),
-                        (new_version, datetime.now(UTC).isoformat(), tenant_id),
+                        (new_version, datetime.now(UTC).isoformat(), zone_id),
                     )
                 else:
-                    # First version for this tenant
+                    # First version for this zone
                     new_version = 1
                     cursor.execute(
                         self._fix_sql_placeholders(
                             """
-                            INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                            INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
                             VALUES (?, ?, ?)
                             """
                         ),
-                        (tenant_id, new_version, datetime.now(UTC).isoformat()),
+                        (zone_id, new_version, datetime.now(UTC).isoformat()),
                     )
 
                 version = new_version
@@ -3474,12 +3466,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             conn.commit()
             return f"v{version}"
 
-    def _get_cached_check_tenant_aware_bounded(
+    def _get_cached_check_zone_aware_bounded(
         self,
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         max_age_seconds: float,
     ) -> bool | None:
         """Get cached result with bounded staleness (P0-1).
@@ -3496,7 +3488,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     """
                     SELECT result, computed_at, expires_at
                     FROM rebac_check_cache
-                    WHERE tenant_id = ?
+                    WHERE zone_id = ?
                       AND subject_type = ? AND subject_id = ?
                       AND permission = ?
                       AND object_type = ? AND object_id = ?
@@ -3505,7 +3497,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     """
                 ),
                 (
-                    tenant_id,
+                    zone_id,
                     subject.entity_type,
                     subject.entity_id,
                     permission,
@@ -3525,7 +3517,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str,
+        zone_id: str,
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check permissions for multiple (subject, permission, object) tuples in batch.
@@ -3546,7 +3538,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             checks: List of (subject, permission, object) tuples to check
                 Example: [(("user", "alice"), "read", ("file", "/doc.txt")),
                           (("user", "alice"), "read", ("file", "/data.csv"))]
-            tenant_id: Tenant ID to scope all checks
+            zone_id: Zone ID to scope all checks
             consistency: Consistency level (EVENTUAL, BOUNDED, STRONG)
 
         Returns:
@@ -3560,7 +3552,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             ...     (("user", "alice"), "read", ("file", "/workspace/b.txt")),
             ...     (("user", "alice"), "read", ("file", "/workspace/c.txt")),
             ... ]
-            >>> results = manager.rebac_check_bulk(checks, tenant_id="org_123")
+            >>> results = manager.rebac_check_bulk(checks, zone_id="org_123")
             >>> # Returns: {check1: True, check2: True, check3: False}
         """
         import logging
@@ -3581,22 +3573,22 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         if not checks:
             return {}
 
-        # Note: When tenant isolation is disabled, we still use bulk processing
-        # but skip the tenant_id filter in the SQL query. This provides the same
-        # 50-100x speedup as the tenant-isolated case. (Issue #580)
+        # Note: When zone isolation is disabled, we still use bulk processing
+        # but skip the zone_id filter in the SQL query. This provides the same
+        # 50-100x speedup as the zone-isolated case. (Issue #580)
 
-        # Validate tenant_id (same logic as rebac_check)
-        if not tenant_id:
+        # Validate zone_id (same logic as rebac_check)
+        if not zone_id:
             import os
 
             is_production = (
                 os.getenv("NEXUS_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
             )
             if is_production:
-                raise ValueError("tenant_id is required for bulk permission checks in production")
+                raise ValueError("zone_id is required for bulk permission checks in production")
             else:
-                logger.warning("rebac_check_bulk called without tenant_id, defaulting to 'default'")
-                tenant_id = "default"
+                logger.warning("rebac_check_bulk called without zone_id, defaulting to 'default'")
+                zone_id = "default"
 
         # STRATEGY: Check L1 in-memory cache first (fast), then L2 DB cache, then compute
         results = {}
@@ -3621,7 +3613,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             for check in checks:
                 subject, permission, obj = check
                 cached = self._l1_cache.get(
-                    subject[0], subject[1], permission, obj[0], obj[1], tenant_id
+                    subject[0], subject[1], permission, obj[0], obj[1], zone_id
                 )
                 if cached is not None:
                     results[check] = cached
@@ -3660,7 +3652,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
             # Convert checks to Tiger Cache bulk format
             tiger_checks = [
-                (subject[0], subject[1], permission, obj[0], obj[1], tenant_id)
+                (subject[0], subject[1], permission, obj[0], obj[1], zone_id)
                 for subject, permission, obj in cache_misses
             ]
 
@@ -3670,7 +3662,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             # Process results
             for check in cache_misses:
                 subject, permission, obj = check
-                tiger_key = (subject[0], subject[1], permission, obj[0], obj[1], tenant_id)
+                tiger_key = (subject[0], subject[1], permission, obj[0], obj[1], zone_id)
                 tiger_result = tiger_results.get(tiger_key)
 
                 if tiger_result is True:
@@ -3679,7 +3671,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     # Also populate L1 cache
                     if self._l1_cache is not None:
                         self._l1_cache.set(
-                            subject[0], subject[1], permission, obj[0], obj[1], True, tenant_id
+                            subject[0], subject[1], permission, obj[0], obj[1], True, zone_id
                         )
                 elif tiger_result is None:
                     # Cache miss - need to compute
@@ -3783,7 +3775,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     # PostgreSQL: Use UNNEST for efficient bulk lookup (50x faster than temp tables)
                     # See: https://www.atdatabases.org/blog/2022/01/21/optimizing-postgres-using-unnest
                     # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
-                    if self.enforce_tenant_isolation:
+                    if self.enforce_zone_isolation:
                         query = """
                             WITH entity_list AS (
                                 SELECT unnest(%s::text[]) AS entity_type,
@@ -3793,14 +3785,14 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 t.subject_type, t.subject_id, t.subject_relation,
                                 t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                             FROM rebac_tuples t
-                            WHERE t.tenant_id = %s
+                            WHERE t.zone_id = %s
                               AND (t.expires_at IS NULL OR t.expires_at >= %s)
                               AND (
                                   EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
                                   OR EXISTS (SELECT 1 FROM entity_list e WHERE t.object_type = e.entity_type AND t.object_id = e.entity_id)
                               )
                         """
-                        params = [entity_types, entity_ids, tenant_id, now_iso]
+                        params = [entity_types, entity_ids, zone_id, now_iso]
                     else:
                         query = """
                             WITH entity_list AS (
@@ -3826,7 +3818,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     for etype, eid in entities:
                         value_params.extend([etype, eid])
 
-                    if self.enforce_tenant_isolation:
+                    if self.enforce_zone_isolation:
                         query = self._fix_sql_placeholders(
                             f"""
                             WITH entity_list(entity_type, entity_id) AS (
@@ -3836,7 +3828,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 t.subject_type, t.subject_id, t.subject_relation,
                                 t.relation, t.object_type, t.object_id, t.conditions, t.expires_at
                             FROM rebac_tuples t
-                            WHERE t.tenant_id = ?
+                            WHERE t.zone_id = ?
                               AND (t.expires_at IS NULL OR t.expires_at >= ?)
                               AND (
                                   EXISTS (SELECT 1 FROM entity_list e WHERE t.subject_type = e.entity_type AND t.subject_id = e.entity_id)
@@ -3844,7 +3836,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                               )
                             """
                         )
-                        value_params.extend([tenant_id, now_iso])
+                        value_params.extend([zone_id, now_iso])
                         params = value_params  # type: ignore[assignment]
                     else:
                         query = self._fix_sql_placeholders(
@@ -3898,12 +3890,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 f"[BULK-UNNEST] Fetched {len(tuples_graph)} tuples in {fetch_duration:.1f}ms"
             )
 
-            # CROSS-TENANT FIX: Also fetch cross-tenant shares for subjects in the check list
-            # Cross-tenant shares are stored in the resource owner's tenant but need to be
-            # visible when checking permissions from the recipient's tenant.
+            # CROSS-ZONE FIX: Also fetch cross-zone shares for subjects in the check list
+            # Cross-zone shares are stored in the resource owner's zone but need to be
+            # visible when checking permissions from the recipient's zone.
             # PERF FIX: Single UNNEST query instead of batched loops
-            if self.enforce_tenant_isolation and all_subjects_list:
-                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+            if self.enforce_zone_isolation and all_subjects_list:
+                cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
                 is_postgresql = self.engine.dialect.name == "postgresql"
 
                 subject_types = [s[0] for s in all_subjects_list]
@@ -3911,7 +3903,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                 if is_postgresql:
                     # Note: Use %s placeholders for psycopg2/psycopg3 compatibility (not $1 asyncpg style)
-                    cross_tenant_query = """
+                    cross_zone_query = """
                         WITH subject_list AS (
                             SELECT unnest(%s::text[]) AS subject_type,
                                    unnest(%s::text[]) AS subject_id
@@ -3927,10 +3919,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                               WHERE t.subject_type = s.subject_type AND t.subject_id = s.subject_id
                           )
                     """
-                    cross_tenant_params = [
+                    cross_zone_params = [
                         subject_types,
                         subject_ids,
-                        cross_tenant_relations,
+                        cross_zone_relations,
                         now_iso,
                     ]
                 else:
@@ -3940,8 +3932,8 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     for stype, sid in all_subjects_list:
                         ct_value_params.extend([stype, sid])
 
-                    relation_placeholders = ", ".join(["?" for _ in cross_tenant_relations])
-                    cross_tenant_query = self._fix_sql_placeholders(
+                    relation_placeholders = ", ".join(["?" for _ in cross_zone_relations])
+                    cross_zone_query = self._fix_sql_placeholders(
                         f"""
                         WITH subject_list(subject_type, subject_id) AS (
                             VALUES {values_list}
@@ -3958,12 +3950,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                           )
                         """
                     )
-                    ct_value_params.extend(cross_tenant_relations)
+                    ct_value_params.extend(cross_zone_relations)
                     ct_value_params.append(now_iso)
-                    cross_tenant_params = ct_value_params  # type: ignore[assignment]
+                    cross_zone_params = ct_value_params  # type: ignore[assignment]
 
-                cursor.execute(cross_tenant_query, cross_tenant_params)
-                cross_tenant_count = 0
+                cursor.execute(cross_zone_query, cross_zone_params)
+                cross_zone_count = 0
                 for row in cursor.fetchall():
                     tuples_graph.append(
                         {
@@ -3977,19 +3969,19 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             "expires_at": row["expires_at"],
                         }
                     )
-                    cross_tenant_count += 1
+                    cross_zone_count += 1
 
-                if cross_tenant_count > 0:
+                if cross_zone_count > 0:
                     logger.debug(
-                        f"[BULK-UNNEST] Fetched {cross_tenant_count} cross-tenant tuples in single query"
+                        f"[BULK-UNNEST] Fetched {cross_zone_count} cross-zone tuples in single query"
                     )
 
                 # PR #648: Compute parent relationships in memory (no DB query needed)
                 # For files, parent relationship is deterministic from path:
                 # - /workspace/project/file.txt → parent → /workspace/project
                 # - /workspace/project → parent → /workspace
-                # This enables cross-tenant folder sharing with children without
-                # any additional DB queries or cross-tenant complexity.
+                # This enables cross-zone folder sharing with children without
+                # any additional DB queries or cross-zone complexity.
                 if ancestor_paths:
                     computed_parent_count = 0
                     for file_path in ancestor_paths:
@@ -4126,7 +4118,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             obj[0],
                             obj[1],
                             result,
-                            tenant_id,
+                            zone_id,
                             delta=avg_delta,
                         )
                         l1_cache_writes += 1
@@ -4138,12 +4130,12 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
                 # Write-through to Tiger Cache (Issue #935)
                 # Only cache positive (allowed) results to Tiger Cache bitmaps
-                if self._tiger_cache and tenant_id:
+                if self._tiger_cache and zone_id:
                     tiger_writes = 0
                     # Group results by (subject, permission, resource_type) for efficient bulk updates
                     tiger_updates: dict[
                         tuple[str, str, str, str, str], set[int]
-                    ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+                    ] = {}  # (subj_type, subj_id, perm, res_type, zone) -> set of int_ids
 
                     for check in cache_misses:
                         subject, permission, obj = check
@@ -4155,7 +4147,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 # Get or create integer ID for the resource
                                 resource_int_id = (
                                     self._tiger_cache._resource_map.get_or_create_int_id(
-                                        obj[0], obj[1], tenant_id
+                                        obj[0], obj[1], zone_id
                                     )
                                 )
                                 if resource_int_id > 0:
@@ -4165,7 +4157,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                         subject[1],
                                         permission,
                                         obj[0],
-                                        tenant_id,
+                                        zone_id,
                                     )
                                     if group_key not in tiger_updates:
                                         tiger_updates[group_key] = set()
@@ -4182,7 +4174,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                             subject_id=subj_id,
                             permission=perm,
                             resource_type=res_type,
-                            tenant_id=tid,
+                            zone_id=tid,
                             resource_int_ids=int_ids,
                         )
 
@@ -4199,7 +4191,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                     permission=p,
                                     resource_type=rt,
                                     resource_int_ids=ids,
-                                    tenant_id=t,
+                                    zone_id=t,
                                 )
                             except Exception as e:
                                 logger.debug(f"[TIGER] Background persist failed: {e}")
@@ -4245,7 +4237,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         subject_entity,
                         permission,
                         obj_entity,
-                        tenant_id,
+                        zone_id,
                         tuples_graph,
                         bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
                         memo_stats=memo_stats,  # Pass stats tracker
@@ -4254,7 +4246,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     logger.warning(f"Bulk check failed for {check}, falling back: {e}")
                     # Fallback to individual check
                     result = self.rebac_check(
-                        subject, permission, obj, tenant_id=tenant_id, consistency=consistency
+                        subject, permission, obj, zone_id=zone_id, consistency=consistency
                     )
 
                 results[check] = result
@@ -4262,16 +4254,16 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 # Cache the result if using EVENTUAL consistency
                 if consistency == ConsistencyLevel.EVENTUAL:
                     self._cache_check_result(
-                        subject_entity, permission, obj_entity, result, tenant_id
+                        subject_entity, permission, obj_entity, result, zone_id
                     )
 
             # Write-through to Tiger Cache after Python fallback (Issue #935)
             # Collect all positive results and bulk update Tiger Cache
-            if self._tiger_cache and tenant_id:
+            if self._tiger_cache and zone_id:
                 tiger_writes = 0
                 fallback_tiger_updates: dict[
                     tuple[str, str, str, str, str], set[int]
-                ] = {}  # (subj_type, subj_id, perm, res_type, tenant) -> set of int_ids
+                ] = {}  # (subj_type, subj_id, perm, res_type, zone) -> set of int_ids
 
                 for check in cache_misses:
                     subject, permission, obj = check
@@ -4280,7 +4272,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     if result:  # Only cache positive results
                         try:
                             resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
-                                obj[0], obj[1], tenant_id
+                                obj[0], obj[1], zone_id
                             )
                             if resource_int_id > 0:
                                 group_key = (
@@ -4288,7 +4280,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                     subject[1],
                                     permission,
                                     obj[0],
-                                    tenant_id,
+                                    zone_id,
                                 )
                                 if group_key not in fallback_tiger_updates:
                                     fallback_tiger_updates[group_key] = set()
@@ -4305,7 +4297,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         subject_id=subj_id,
                         permission=perm,
                         resource_type=res_type,
-                        tenant_id=tid,
+                        zone_id=tid,
                         resource_int_ids=int_ids,
                     )
 
@@ -4322,7 +4314,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                                 permission=p,
                                 resource_type=rt,
                                 resource_int_ids=ids,
-                                tenant_id=t,
+                                zone_id=t,
                             )
                         except Exception as e:
                             logger.debug(f"[TIGER] Background persist failed: {e}")
@@ -4371,7 +4363,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: tuple[str, str],
         permission: str,
         object_type: str = "file",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         path_prefix: str | None = None,
         limit: int = 1000,
         offset: int = 0,
@@ -4395,7 +4387,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: (subject_type, subject_id) tuple, e.g., ("user", "alice")
             permission: Permission to check (e.g., "read", "write")
             object_type: Type of objects to find (default: "file")
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             path_prefix: Optional path prefix filter (e.g., "/workspace/")
             limit: Maximum number of results to return (default: 1000)
             offset: Number of results to skip for pagination (default: 0)
@@ -4409,7 +4401,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             >>> objects = manager.rebac_list_objects(
             ...     subject=("user", "alice"),
             ...     permission="read",
-            ...     tenant_id="org_123",
+            ...     zone_id="org_123",
             ... )
             >>> for obj_type, obj_id in objects:
             ...     print(f"{obj_type}: {obj_id}")
@@ -4442,19 +4434,19 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         start_time = time_module.perf_counter()
 
         subject_type, subject_id = subject
-        tenant_id = tenant_id or "default"
+        zone_id = zone_id or "default"
 
         logger.debug(
             f"[LIST-OBJECTS] Starting for {subject_type}:{subject_id} "
             f"permission={permission} object_type={object_type} "
-            f"path_prefix={path_prefix} tenant_id={tenant_id}"
+            f"path_prefix={path_prefix} zone_id={zone_id}"
         )
 
-        # Fetch all relevant tuples for this tenant
+        # Fetch all relevant tuples for this zone
         # This includes direct relations, group memberships, etc.
-        # CROSS-TENANT FIX: Include cross-tenant shares where this user is the recipient
-        tuples = self._fetch_tuples_for_tenant(tenant_id, include_cross_tenant_for_user=subject_id)
-        logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for tenant {tenant_id}")
+        # CROSS-ZONE FIX: Include cross-zone shares where this user is the recipient
+        tuples = self._fetch_tuples_for_zone(zone_id, include_cross_zone_for_user=subject_id)
+        logger.debug(f"[LIST-OBJECTS] Fetched {len(tuples)} tuples for zone {zone_id}")
 
         # Get namespace configs
         namespace_configs = self._get_namespace_configs_dict()
@@ -4492,7 +4484,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject_id=subject_id,
             permission=permission,
             object_type=object_type,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             tuples=tuples,
             _namespace_configs=namespace_configs,
             path_prefix=path_prefix,
@@ -4506,7 +4498,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject_id: str,
         permission: str,
         object_type: str,
-        tenant_id: str,
+        zone_id: str,
         tuples: list[dict[str, Any]],
         _namespace_configs: dict[str, Any],
         path_prefix: str | None = None,
@@ -4579,7 +4571,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                 subject=subject,
                 permission=permission,
                 obj=obj,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 tuples_graph=tuples,
                 depth=0,
             ):
@@ -4646,18 +4638,18 @@ class EnhancedReBACManager(TenantAwareReBACManager):
 
         return expanded
 
-    def _fetch_tuples_for_tenant(
-        self, tenant_id: str, include_cross_tenant_for_user: str | None = None
+    def _fetch_tuples_for_zone(
+        self, zone_id: str, include_cross_zone_for_user: str | None = None
     ) -> list[dict[str, Any]]:
-        """Fetch all ReBAC tuples for a tenant, optionally including cross-tenant shares.
+        """Fetch all ReBAC tuples for a zone, optionally including cross-zone shares.
 
         This is used by rebac_list_objects to get the full tuple graph.
 
         Args:
-            tenant_id: The tenant ID to fetch tuples for
-            include_cross_tenant_for_user: If provided, also include cross-tenant shares
+            zone_id: The zone ID to fetch tuples for
+            include_cross_zone_for_user: If provided, also include cross-zone shares
                 where this user is the recipient (subject). This enables users to see
-                resources shared with them from other tenants.
+                resources shared with them from other zones.
 
         Returns:
             List of tuple dictionaries for graph traversal
@@ -4665,10 +4657,10 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         from sqlalchemy import bindparam, text
 
         with self.engine.connect() as conn:
-            if include_cross_tenant_for_user:
-                # Include same-tenant tuples AND cross-tenant shares to this user
-                # Cross-tenant shares have relation in CROSS_TENANT_ALLOWED_RELATIONS
-                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
+            if include_cross_zone_for_user:
+                # Include same-zone tuples AND cross-zone shares to this user
+                # Cross-zone shares have relation in CROSS_ZONE_ALLOWED_RELATIONS
+                cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
                 # Use bindparam with expanding=True for IN clause compatibility with SQLite
                 result = conn.execute(
                     text("""
@@ -4677,34 +4669,34 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         FROM rebac_tuples
                         WHERE (expires_at IS NULL OR expires_at > :now)
                           AND (
-                              -- Same tenant tuples
-                              tenant_id = :tenant_id
-                              -- OR cross-tenant shares where this user is the recipient
+                              -- Same zone tuples
+                              zone_id = :zone_id
+                              -- OR cross-zone shares where this user is the recipient
                               OR (
-                                  relation IN :cross_tenant_relations
+                                  relation IN :cross_zone_relations
                                   AND subject_type = 'user'
                                   AND subject_id = :user_id
                               )
                           )
-                    """).bindparams(bindparam("cross_tenant_relations", expanding=True)),
+                    """).bindparams(bindparam("cross_zone_relations", expanding=True)),
                     {
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "now": datetime.now(UTC),
-                        "cross_tenant_relations": cross_tenant_relations,
-                        "user_id": include_cross_tenant_for_user,
+                        "cross_zone_relations": cross_zone_relations,
+                        "user_id": include_cross_zone_for_user,
                     },
                 )
             else:
-                # Original behavior: only same-tenant tuples
+                # Original behavior: only same-zone tuples
                 result = conn.execute(
                     text("""
                         SELECT subject_type, subject_id, subject_relation,
                                relation, object_type, object_id
                         FROM rebac_tuples
-                        WHERE tenant_id = :tenant_id
+                        WHERE zone_id = :zone_id
                           AND (expires_at IS NULL OR expires_at > :now)
                     """),
-                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                    {"zone_id": zone_id, "now": datetime.now(UTC)},
                 )
             return [
                 {
@@ -4721,7 +4713,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
     def _get_namespace_configs_dict(self) -> dict[str, Any]:
         """Get namespace configs as a dict for Rust interop."""
         configs: dict[str, Any] = {}
-        for obj_type in ["file", "group", "tenant", "memory"]:
+        for obj_type in ["file", "group", "zone", "memory"]:
             namespace = self.get_namespace(obj_type)
             if namespace and namespace.config:
                 configs[obj_type] = {
@@ -4735,7 +4727,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         tuples_graph: list[dict[str, Any]],
         depth: int = 0,
         visited: set[tuple[str, str, str, str, str]] | None = None,
@@ -4751,7 +4743,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
             subject: Subject entity
             permission: Permission to check
             obj: Object entity
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             tuples_graph: Pre-fetched list of all relevant tuples
             depth: Current traversal depth (for cycle detection)
             visited: Set of visited nodes (for cycle detection)
@@ -4831,7 +4823,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject,
                     userset,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     depth + 1,
                     visited.copy(),
@@ -4858,7 +4850,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject,
                     rel,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     depth + 1,
                     visited.copy(),
@@ -4884,7 +4876,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject,
                     rel,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     depth + 1,
                     visited.copy(),
@@ -4909,7 +4901,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                     subject,
                     excluded_rel,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     depth + 1,
                     visited.copy(),
@@ -4949,7 +4941,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         subject,
                         computed_userset,
                         related_obj,
-                        tenant_id,
+                        zone_id,
                         tuples_graph,
                         depth + 1,
                         visited.copy(),
@@ -4977,7 +4969,7 @@ class EnhancedReBACManager(TenantAwareReBACManager):
                         subject,
                         computed_userset,
                         related_subj,
-                        tenant_id,
+                        zone_id,
                         tuples_graph,
                         depth + 1,
                         visited.copy(),

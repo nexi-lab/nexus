@@ -144,7 +144,7 @@ class NexusConfig(BaseModel):
     # Custom namespace configurations
     namespaces: list[dict[str, Any]] | None = Field(
         default=None,
-        description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_tenant)",
+        description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_zone)",
     )
 
     # Parser configurations (v0.2.0)
@@ -186,13 +186,13 @@ class NexusConfig(BaseModel):
         description="Allow admin keys to bypass permission checks (default True for dev experience)",
     )
 
-    # Tenant isolation setting (P0-2)
-    # Default: True for multi-tenant security
-    # Set to False ONLY for single-tenant environments or development
-    # WARNING: Disabling tenant isolation allows cross-tenant data access
-    enforce_tenant_isolation: bool = Field(
+    # Zone isolation setting (P0-2)
+    # Default: True for multi-zone security
+    # Set to False ONLY for single-zone environments or development
+    # WARNING: Disabling zone isolation allows cross-zone data access
+    enforce_zone_isolation: bool = Field(
         default=True,
-        description="Enable tenant isolation enforcement (default True for security)",
+        description="Enable zone isolation enforcement (default True for security)",
     )
 
     # Workspace and Memory registry (v0.7.0)
@@ -255,7 +255,7 @@ class NexusConfig(BaseModel):
     )
 
     # Identity settings for memory API (v0.4.0)
-    tenant_id: str | None = Field(default=None, description="Tenant ID for memory operations")
+    zone_id: str | None = Field(default=None, description="Zone ID for memory operations")
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
 
@@ -406,11 +406,11 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_IS_ADMIN": "is_admin",
         "NEXUS_ENFORCE_PERMISSIONS": "enforce_permissions",
         "NEXUS_ALLOW_ADMIN_BYPASS": "allow_admin_bypass",
-        "NEXUS_ENFORCE_TENANT_ISOLATION": "enforce_tenant_isolation",
+        "NEXUS_ENFORCE_ZONE_ISOLATION": "enforce_zone_isolation",
         "NEXUS_URL": "url",
         "NEXUS_API_KEY": "api_key",
         "NEXUS_TIMEOUT": "timeout",
-        "NEXUS_TENANT_ID": "tenant_id",
+        "NEXUS_ZONE_ID": "zone_id",
         "NEXUS_USER_ID": "user_id",
         "NEXUS_AGENT_ID": "agent_id",
         # Thread pool and cache settings (Issue #932)
@@ -451,7 +451,7 @@ def _load_from_environment() -> NexusConfig:
                 "is_admin",
                 "enforce_permissions",
                 "allow_admin_bypass",
-                "enforce_tenant_isolation",
+                "enforce_zone_isolation",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

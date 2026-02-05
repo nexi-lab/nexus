@@ -27,14 +27,14 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     # Connect to Nexus to get the metadata store
     nx = nexus.connect(config={"data_dir": str(data_dir)})
 
-    # Get session factory from metadata store
-    session_factory = nx.metadata.SessionLocal  # type: ignore[attr-defined]
+    # Get session factory from NexusFS
+    session_factory = nx.SessionLocal  # type: ignore[attr-defined]
 
-    # Get tenant_id from Nexus filesystem (or use default)
-    tenant_id = getattr(nx, "tenant_id", None) or "default"
+    # Get zone_id from Nexus filesystem (or use default)
+    zone_id = getattr(nx, "zone_id", None) or "default"
 
-    # Create workflow store with tenant_id
-    workflow_store = WorkflowStore(session_factory, tenant_id=tenant_id)
+    # Create workflow store with zone_id
+    workflow_store = WorkflowStore(session_factory, zone_id=zone_id)
 
     # Initialize engine with storage
     engine = init_engine(

@@ -145,7 +145,7 @@ AsyncReBACManager (parallel async implementation - 1,211 lines)
 2. **TenantAwareReBACManager is a critical security layer**
    - Only 964 lines (focused)
    - Enforces tenant isolation (P0-2)
-   - Required for multi-tenant deployments
+   - Required for multi-zone deployments
 
 3. **ReBACManager is still widely used**
    - Legacy CLI tools

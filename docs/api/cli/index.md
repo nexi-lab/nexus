@@ -162,7 +162,7 @@ Most commands support these global options:
 - `--remote-api-key KEY` - API key for authentication (or use `NEXUS_API_KEY` env var)
 
 ### Multi-Tenancy & Identity
-- `--tenant-id TEXT` - Tenant ID for multi-tenant isolation (or use `NEXUS_TENANT_ID` env var)
+- `--tenant-id TEXT` - Zone ID for multi-zone isolation (or use `NEXUS_TENANT_ID` env var)
 - `--subject TEXT` - Subject in format 'type:id' (e.g., 'user:alice') (or use `NEXUS_SUBJECT` env var)
 
 ### Admin Operations
@@ -241,8 +241,8 @@ backend:
   gcs_bucket: my-bucket
   gcs_project: my-project
 
-# Multi-tenant
-tenant_id: org_acme
+# Multi-zone
+zone_id: org_acme
 
 # Subject identity
 subject: user:alice

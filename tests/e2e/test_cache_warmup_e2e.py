@@ -249,9 +249,9 @@ class TestCacheWarmupWithPermissions:
     """Tests for cache warmup with ReBAC permissions enabled."""
 
     @pytest.mark.asyncio
-    async def test_warmup_respects_tenant_isolation(self, test_app):
-        """Test that warmup respects tenant isolation."""
-        # The warmup should work within the authenticated tenant context
+    async def test_warmup_respects_zone_isolation(self, test_app):
+        """Test that warmup respects zone isolation."""
+        # The warmup should work within the authenticated zone context
         response = test_app.post(
             "/api/cache/warmup",
             json={

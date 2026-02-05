@@ -86,7 +86,7 @@ class HierarchicalMemoryManager:
 
     Example:
         >>> from nexus.core.ace.consolidation import ConsolidationEngine
-        >>> engine = ConsolidationEngine(session, backend, tenant_id)
+        >>> engine = ConsolidationEngine(session, backend, zone_id)
         >>> manager = HierarchicalMemoryManager(engine, session)
         >>> result = await manager.build_hierarchy_async(memories, max_levels=3)
         >>> print(f"Created {result.total_abstracts_created} abstracts")
@@ -96,18 +96,18 @@ class HierarchicalMemoryManager:
         self,
         consolidation_engine: ConsolidationEngine,
         session: Session,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ):
         """Initialize the hierarchical memory manager.
 
         Args:
             consolidation_engine: Engine for consolidating memory clusters
             session: SQLAlchemy session for database operations
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
         """
         self.engine = consolidation_engine
         self.session = session
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
 
     async def build_hierarchy_async(
         self,
@@ -409,7 +409,7 @@ class HierarchicalMemoryManager:
         """Load memories from database by IDs."""
         stmt = select(MemoryModel).where(
             MemoryModel.memory_id.in_(memory_ids),
-            MemoryModel.tenant_id == self.tenant_id,
+            MemoryModel.zone_id == self.zone_id,
         )
         result = self.session.execute(stmt)
         return list(result.scalars().all())
@@ -418,7 +418,7 @@ class HierarchicalMemoryManager:
         """Get a single memory by ID."""
         stmt = select(MemoryModel).where(
             MemoryModel.memory_id == memory_id,
-            MemoryModel.tenant_id == self.tenant_id,
+            MemoryModel.zone_id == self.zone_id,
         )
         result = self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -460,7 +460,7 @@ class HierarchicalMemoryManager:
             update(MemoryModel)
             .where(
                 MemoryModel.memory_id.in_(child_ids),
-                MemoryModel.tenant_id == self.tenant_id,
+                MemoryModel.zone_id == self.zone_id,
             )
             .values(parent_memory_id=parent_id, is_archived=True)
         )
@@ -480,7 +480,7 @@ class HierarchicalMemoryManager:
 
         stmt = select(MemoryModel).where(
             MemoryModel.memory_id.in_(child_ids),
-            MemoryModel.tenant_id == self.tenant_id,
+            MemoryModel.zone_id == self.zone_id,
         )
         if limit:
             stmt = stmt.limit(limit)
@@ -533,7 +533,7 @@ class HierarchicalMemoryManager:
 
         # Build query
         stmt = select(MemoryModel).where(
-            MemoryModel.tenant_id == self.tenant_id,
+            MemoryModel.zone_id == self.zone_id,
             MemoryModel.abstraction_level >= min_level,
             MemoryModel.embedding.isnot(None),
         )
@@ -578,7 +578,7 @@ def build_hierarchy(
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,
-    tenant_id: str = "default",
+    zone_id: str = "default",
     **kwargs: Any,
 ) -> HierarchyResult:
     """Synchronous wrapper for build_hierarchy_async.
@@ -588,7 +588,7 @@ def build_hierarchy(
         session: SQLAlchemy session
         memories: List of MemoryModel objects
         memory_ids: List of memory IDs (if memories not provided)
-        tenant_id: Tenant ID for multi-tenant isolation
+        zone_id: Zone ID for multi-zone isolation
         **kwargs: Additional arguments passed to build_hierarchy_async
 
     Returns:
@@ -596,7 +596,7 @@ def build_hierarchy(
     """
     import asyncio
 
-    manager = HierarchicalMemoryManager(consolidation_engine, session, tenant_id)
+    manager = HierarchicalMemoryManager(consolidation_engine, session, zone_id)
     return asyncio.run(
         manager.build_hierarchy_async(memories=memories, memory_ids=memory_ids, **kwargs)
     )

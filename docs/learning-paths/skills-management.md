@@ -437,7 +437,7 @@ async def main():
         subject=("group", "engineering"),
         relation="can_read",
         object=("file", "/shared/skills/git-best-practices"),
-        tenant_id="default"
+        zone_id="default"
     )
 
     print("✅ Skill published to tenant tier")
@@ -668,8 +668,8 @@ System Tier: Standard libraries, universal knowledge
 2. **[Team Collaboration](team-collaboration.md)** (20 min)
    Share skills across your organization with permissions
 
-3. **[Multi-Tenant SaaS](multi-tenant-saas.md)** (30 min)
-   Build skill libraries for multi-tenant applications
+3. **[Multi-Tenant SaaS](multi-zone-saas.md)** (30 min)
+   Build skill libraries for multi-zone applications
 
 ### 📚 Related Concepts
 

@@ -224,7 +224,7 @@ class SkillGovernance:
         reviewed_by: str,
         comments: str | None = None,
         reviewer_type: str = "user",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> None:
         """Approve a skill for publication.
 
@@ -233,7 +233,7 @@ class SkillGovernance:
             reviewed_by: ID of the reviewer
             comments: Optional review comments
             reviewer_type: Type of reviewer (user, agent) - default: user
-            tenant_id: Tenant ID for scoping (for ReBAC)
+            zone_id: Zone ID for scoping (for ReBAC)
 
         Raises:
             GovernanceError: If approval fails
@@ -262,7 +262,7 @@ class SkillGovernance:
                     subject=(reviewer_type, reviewed_by),
                     permission="approve",
                     object=("skill", approval.skill_name),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 if not has_permission:
                     raise PermissionDeniedError(
@@ -318,7 +318,7 @@ class SkillGovernance:
         reviewed_by: str,
         comments: str | None = None,
         reviewer_type: str = "user",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> None:
         """Reject a skill approval request.
 
@@ -327,7 +327,7 @@ class SkillGovernance:
             reviewed_by: ID of the reviewer
             comments: Optional rejection reason
             reviewer_type: Type of reviewer (user, agent) - default: user
-            tenant_id: Tenant ID for scoping (for ReBAC)
+            zone_id: Zone ID for scoping (for ReBAC)
 
         Raises:
             GovernanceError: If rejection fails
@@ -356,7 +356,7 @@ class SkillGovernance:
                     subject=(reviewer_type, reviewed_by),
                     permission="approve",
                     object=("skill", approval.skill_name),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 if not has_permission:
                     raise PermissionDeniedError(

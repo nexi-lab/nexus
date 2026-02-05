@@ -517,7 +517,7 @@ nexus mkdir /tenant/acme-corp
 nexus rebac create user agent_acme_1 editor file /tenant/acme-corp
 
 # Agents only see their tenant's data
-nx = nexus.connect(config={"tenant_id": "acme-corp"})
+nx = nexus.connect(config={"zone_id": "acme-corp"})
 ```
 
 ## 🔗 Comparison: CrewAI vs Other Frameworks

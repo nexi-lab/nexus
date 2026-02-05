@@ -23,7 +23,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core.context_utils import get_database_url, get_tenant_id, get_user_identity
+from nexus.core.context_utils import get_database_url, get_user_identity, get_zone_id
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class MountService:
         """Add a dynamic backend mount to the filesystem.
 
         This adds a backend mount at runtime without requiring server restart.
-        Useful for user-specific storage, temporary backends, or multi-tenant scenarios.
+        Useful for user-specific storage, temporary backends, or multi-zone scenarios.
 
         Automatically grants direct_owner permission to the user who creates the mount.
 
@@ -199,12 +199,8 @@ class MountService:
 
                 # Get session factory for caching support if available
                 session_factory = None
-                if (
-                    self.nexus_fs
-                    and hasattr(self.nexus_fs, "metadata")
-                    and hasattr(self.nexus_fs.metadata, "SessionLocal")
-                ):
-                    session_factory = self.nexus_fs.metadata.SessionLocal
+                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                    session_factory = self.nexus_fs.SessionLocal
 
                 backend = GCSConnectorBackend(
                     bucket_name=config["bucket"],
@@ -221,12 +217,8 @@ class MountService:
 
                 # Get session factory for caching support if available
                 session_factory = None
-                if (
-                    self.nexus_fs
-                    and hasattr(self.nexus_fs, "metadata")
-                    and hasattr(self.nexus_fs.metadata, "SessionLocal")
-                ):
-                    session_factory = self.nexus_fs.metadata.SessionLocal
+                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                    session_factory = self.nexus_fs.SessionLocal
 
                 backend = S3ConnectorBackend(
                     bucket_name=config["bucket"],
@@ -261,12 +253,8 @@ class MountService:
 
                 # Get session factory for caching support if available
                 hn_session_factory = None
-                if (
-                    self.nexus_fs
-                    and hasattr(self.nexus_fs, "metadata")
-                    and hasattr(self.nexus_fs.metadata, "SessionLocal")
-                ):
-                    hn_session_factory = self.nexus_fs.metadata.SessionLocal
+                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                    hn_session_factory = self.nexus_fs.SessionLocal
 
                 backend = HNConnectorBackend(
                     cache_ttl=config.get("cache_ttl", 300),
@@ -279,12 +267,8 @@ class MountService:
 
                 # Get session factory for caching support if available
                 gmail_session_factory = None
-                if (
-                    self.nexus_fs
-                    and hasattr(self.nexus_fs, "metadata")
-                    and hasattr(self.nexus_fs.metadata, "SessionLocal")
-                ):
-                    gmail_session_factory = self.nexus_fs.metadata.SessionLocal
+                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                    gmail_session_factory = self.nexus_fs.SessionLocal
 
                 backend = GmailConnectorBackend(
                     token_manager_db=config["token_manager_db"],
@@ -375,9 +359,9 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "hierarchy_manager"):
                 try:
                     if hasattr(self.nexus_fs.hierarchy_manager, "remove_parent_tuples"):
-                        tenant_id = get_tenant_id(_context)
+                        zone_id = get_zone_id(_context)
                         tuples_removed = self.nexus_fs.hierarchy_manager.remove_parent_tuples(
-                            mount_point, tenant_id
+                            mount_point, zone_id
                         )
                         result["permissions_cleaned"] += tuples_removed
                         logger.info(f"Removed {tuples_removed} parent tuples for {mount_point}")
@@ -389,9 +373,9 @@ class MountService:
             # Remove direct_owner permission tuple for the mount point
             if self.nexus_fs and hasattr(self.nexus_fs, "rebac_delete_object_tuples"):
                 try:
-                    tenant_id = get_tenant_id(_context)
+                    zone_id = get_zone_id(_context)
                     deleted = self.nexus_fs.rebac_delete_object_tuples(
-                        object=("file", mount_point), tenant_id=tenant_id
+                        object=("file", mount_point), zone_id=zone_id
                     )
                     result["permissions_cleaned"] += deleted
                     logger.info(f"Removed {deleted} permission tuples for {mount_point}")
@@ -482,9 +466,9 @@ class MountService:
             if _context:
                 logger.info(f"[LIST_MOUNTS] Context type: {type(_context)}")
                 subject_type, subject_id = get_user_identity(_context)
-                tenant_id = get_tenant_id(_context)
+                zone_id = get_zone_id(_context)
                 logger.info(
-                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, tenant={tenant_id}"
+                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, tenant={zone_id}"
                 )
 
             router_mounts = list(self.router.list_mounts())
@@ -500,11 +484,11 @@ class MountService:
                 if _context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
                     try:
                         subject_type, subject_id = get_user_identity(_context)
-                        tenant_id = get_tenant_id(_context)
+                        zone_id = get_zone_id(_context)
 
                         logger.info(
                             f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
-                            f"on {mount_point} (tenant={tenant_id})"
+                            f"on {mount_point} (tenant={zone_id})"
                         )
 
                         # Admin users can see all mounts
@@ -521,7 +505,7 @@ class MountService:
                                 subject=(subject_type, subject_id),
                                 permission="read",
                                 object=("file", mount_point),
-                                tenant_id=tenant_id,
+                                zone_id=zone_id,
                             )
                             logger.info(
                                 f"[LIST_MOUNTS] Permission check result for "
@@ -622,7 +606,7 @@ class MountService:
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -640,7 +624,7 @@ class MountService:
             priority: Mount priority (default: 0)
             readonly: Whether mount is read-only (default: False)
             owner_user_id: User who owns this mount (optional)
-            tenant_id: Tenant ID for multi-tenant isolation (optional)
+            zone_id: Zone ID for multi-zone isolation (optional)
             description: Human-readable description (optional)
             context: Operation context (automatically provided by RPC server)
 
@@ -658,7 +642,7 @@ class MountService:
                 backend_type="google_drive",
                 backend_config={"access_token": "ya29.xxx"},
                 owner_user_id="google:alice123",
-                tenant_id="acme",
+                zone_id="acme",
                 description="Alice's personal Google Drive"
             )
         """
@@ -668,8 +652,8 @@ class MountService:
             )
 
         def _save_mount_sync() -> str:
-            # Auto-populate owner_user_id and tenant_id from context if not provided
-            nonlocal owner_user_id, tenant_id
+            # Auto-populate owner_user_id and zone_id from context if not provided
+            nonlocal owner_user_id, zone_id
 
             if owner_user_id is None and context:
                 subject_type, subject_id = get_user_identity(context)
@@ -677,10 +661,10 @@ class MountService:
                     owner_user_id = f"{subject_type}:{subject_id}"
                     logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
 
-            if tenant_id is None and context:
-                tenant_id = get_tenant_id(context)
-                if tenant_id:
-                    logger.info(f"[SAVE_MOUNT] Auto-populated tenant_id: {tenant_id}")
+            if zone_id is None and context:
+                zone_id = get_zone_id(context)
+                if zone_id:
+                    logger.info(f"[SAVE_MOUNT] Auto-populated zone_id: {zone_id}")
 
             assert self.mount_manager is not None
             mount_id = self.mount_manager.save_mount(
@@ -690,7 +674,7 @@ class MountService:
                 priority=priority,
                 readonly=readonly,
                 owner_user_id=owner_user_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 description=description,
             )
 
@@ -709,18 +693,18 @@ class MountService:
     async def list_saved_mounts(
         self,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List mount configurations saved in the database.
 
-        Automatically filters by the current user's context (subject_id and tenant_id)
+        Automatically filters by the current user's context (subject_id and zone_id)
         unless explicit filter parameters are provided. This ensures users can only
         see their own mounts and mounts from their tenant.
 
         Args:
             owner_user_id: Filter by owner user ID (optional, defaults to current user)
-            tenant_id: Filter by tenant ID (optional, defaults to current tenant)
+            zone_id: Filter by zone ID (optional, defaults to current tenant)
             context: Operation context (automatically provided by RPC server)
 
         Returns:
@@ -743,7 +727,7 @@ class MountService:
 
         def _list_saved_mounts_sync() -> list[dict[str, Any]]:
             # Auto-populate filters from context if not explicitly provided
-            nonlocal owner_user_id, tenant_id
+            nonlocal owner_user_id, zone_id
 
             if owner_user_id is None and context:
                 subject_type, subject_id = get_user_identity(context)
@@ -751,13 +735,13 @@ class MountService:
                     owner_user_id = f"{subject_type}:{subject_id}"
                     logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
 
-            if tenant_id is None and context:
-                tenant_id = get_tenant_id(context)
-                if tenant_id:
-                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {tenant_id}")
+            if zone_id is None and context:
+                zone_id = get_zone_id(context)
+                if zone_id:
+                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {zone_id}")
 
             assert self.mount_manager is not None
-            return self.mount_manager.list_mounts(owner_user_id=owner_user_id, tenant_id=tenant_id)
+            return self.mount_manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)
 
         return await asyncio.to_thread(_list_saved_mounts_sync)
 
@@ -1078,7 +1062,7 @@ class MountService:
         # Grant direct_owner permission to the creating user
         if context:
             subject_type, subject_id = get_user_identity(context)
-            tenant_id = get_tenant_id(context)
+            zone_id = get_zone_id(context)
 
             if subject_id and self.nexus_fs and hasattr(self.nexus_fs, "rebac_add_tuple"):
                 try:
@@ -1086,7 +1070,7 @@ class MountService:
                         subject=(subject_type, subject_id),
                         relation="direct_owner",
                         object=("file", mount_point),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                     logger.info(
                         f"✓ Granted direct_owner to {subject_type}:{subject_id} for {mount_point}"

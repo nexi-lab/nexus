@@ -1,6 +1,6 @@
 """Clean up all users from the database for testing.
 
-This script removes all users, OAuth accounts, API keys, and tenants from the database.
+This script removes all users, OAuth accounts, API keys, and zones from the database.
 USE WITH CAUTION - this will delete all user data!
 
 Usage:
@@ -19,9 +19,9 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models import (
     APIKeyModel,
-    TenantModel,
     UserModel,
     UserOAuthAccountModel,
+    ZoneModel,
 )
 
 
@@ -41,13 +41,13 @@ def cleanup_database():
         user_count = session.query(UserModel).count()
         oauth_count = session.query(UserOAuthAccountModel).count()
         api_key_count = session.query(APIKeyModel).count()
-        tenant_count = session.query(TenantModel).count()
+        zone_count = session.query(ZoneModel).count()
 
         print("\nBefore cleanup:")
         print(f"  Users: {user_count}")
         print(f"  OAuth accounts: {oauth_count}")
         print(f"  API keys: {api_key_count}")
-        print(f"  Tenants: {tenant_count}")
+        print(f"  Zones: {zone_count}")
 
         if user_count == 0:
             print("\nNo users to delete. Database is already clean.")
@@ -83,9 +83,9 @@ def cleanup_database():
             deleted = session.query(UserModel).delete()
             print(f"  Deleted {deleted} users")
 
-            # 6. Delete tenants
-            deleted = session.query(TenantModel).delete()
-            print(f"  Deleted {deleted} tenants")
+            # 6. Delete zones
+            deleted = session.query(ZoneModel).delete()
+            print(f"  Deleted {deleted} zones")
 
             session.commit()
             print("\n✅ Database cleaned successfully!")

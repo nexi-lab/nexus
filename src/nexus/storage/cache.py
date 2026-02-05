@@ -13,9 +13,9 @@ from typing import Any, cast
 
 from cachetools import LRUCache
 
+from nexus.core._compact_generated import CompactFileMetadata
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.adaptive_ttl import AdaptiveTTLMixin
-from nexus.core.compact_metadata import CompactFileMetadata
-from nexus.core.metadata import FileMetadata
 
 
 class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
@@ -354,7 +354,7 @@ class MetadataCache(AdaptiveTTLMixin):
             # Need to invalidate all prefixes that could include this path
             # Cache keys are in format:
             #   - Old: "prefix:r" or "prefix:nr"
-            #   - New (Issue #904): "prefix:r:t=tenant_id" or "prefix:nr:t=tenant_id"
+            #   - New (Issue #904): "prefix:r:t=zone_id" or "prefix:nr:t=zone_id"
             cache_keys_to_invalidate = []
             for cache_key in list(self._list_cache.keys()):
                 # Extract prefix from cache key
@@ -445,9 +445,9 @@ class MetadataCache(AdaptiveTTLMixin):
 
             # Add interning pool stats when using compact mode
             if self._use_compact:
-                from nexus.core.compact_metadata import get_pool_stats
+                from nexus.core._compact_generated import get_intern_pool_stats
 
-                stats["intern_pools"] = get_pool_stats()
+                stats["intern_pools"] = get_intern_pool_stats()
 
             # Add adaptive TTL stats (Issue #715)
             stats["adaptive_ttl"] = self.get_adaptive_ttl_stats()

@@ -20,9 +20,9 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.core.zookie import Zookie
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 class NexusFSCoreMixin:
@@ -45,7 +45,7 @@ class NexusFSCoreMixin:
     if TYPE_CHECKING:
         from nexus.core.permissions import PermissionEnforcer
 
-        metadata: SQLAlchemyMetadataStore
+        metadata: RaftMetadataStore
         backend: Backend
         router: PathRouter
         is_admin: bool
@@ -59,7 +59,7 @@ class NexusFSCoreMixin:
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
 
         @property
-        def tenant_id(self) -> str | None: ...
+        def zone_id(self) -> str | None: ...
         @property
         def agent_id(self) -> str | None: ...
 
@@ -112,7 +112,7 @@ class NexusFSCoreMixin:
         self,
         event_type: str,
         path: str,
-        tenant_id: str | None,
+        zone_id: str | None,
         size: int | None = None,
         etag: str | None = None,
         agent_id: str | None = None,
@@ -127,7 +127,7 @@ class NexusFSCoreMixin:
         Args:
             event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
             path: Path of the affected file
-            tenant_id: Tenant ID (defaults to "default" if None)
+            zone_id: Zone ID (defaults to "default" if None)
             size: File size in bytes (optional)
             etag: Content hash (optional)
             agent_id: Agent that performed the operation (optional)
@@ -153,7 +153,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                tenant_id=tenant_id or "default",
+                zone_id=zone_id or "default",
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -382,8 +382,7 @@ class NexusFSCoreMixin:
         if not hasattr(self, "_lock_manager") or self._lock_manager is None:
             raise RuntimeError(
                 "write(lock=True) called but distributed lock manager not configured. "
-                "Set NEXUS_DRAGONFLY_COORDINATION_URL environment variable "
-                "or pass coordination_url to NexusFS constructor."
+                "Ensure NexusFS is initialized with enable_distributed_locks=True."
             )
 
         from nexus.core.exceptions import LockTimeout
@@ -402,31 +401,17 @@ class NexusFSCoreMixin:
                 raise  # Re-raise our custom error
             # No running loop - safe to proceed
 
-        # For sync context, we need to create a fresh Redis connection for each operation
-        # because asyncio.run() creates/closes event loops, and connections are loop-bound
-        tenant_id = self._get_tenant_id(context)  # type: ignore[attr-defined]  # allowed
+        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed
 
-        async def acquire_with_fresh_connection() -> str | None:
-            from nexus.core.cache.dragonfly import DragonflyClient
-            from nexus.core.distributed_lock import RedisLockManager
+        # Use the existing Raft-based lock manager
+        async def acquire_lock() -> str | None:
+            return await self._lock_manager.acquire(
+                zone_id=zone_id,
+                path=path,
+                timeout=timeout,
+            )
 
-            # Get Redis URL from the existing lock manager's client
-            redis_url = self._lock_manager._redis._url
-
-            # Create fresh connection for this operation
-            client = DragonflyClient(url=redis_url)
-            await client.connect()
-            try:
-                manager = RedisLockManager(client)
-                return await manager.acquire(
-                    tenant_id=tenant_id,
-                    path=path,
-                    timeout=timeout,
-                )
-            finally:
-                await client.disconnect()
-
-        lock_id = asyncio.run(acquire_with_fresh_connection())
+        lock_id = asyncio.run(acquire_lock())
 
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
@@ -460,26 +445,15 @@ class NexusFSCoreMixin:
         except RuntimeError:
             pass  # No running loop - safe to proceed
 
-        tenant_id = self._get_tenant_id(context)  # type: ignore[attr-defined]  # allowed
+        zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed
 
-        async def release_with_fresh_connection() -> None:
-            from nexus.core.cache.dragonfly import DragonflyClient
-            from nexus.core.distributed_lock import RedisLockManager
-
-            # Get Redis URL from the existing lock manager's client
-            redis_url = self._lock_manager._redis._url
-
-            # Create fresh connection for this operation
-            client = DragonflyClient(url=redis_url)
-            await client.connect()
-            try:
-                manager = RedisLockManager(client)
-                await manager.release(lock_id, tenant_id, path)
-            finally:
-                await client.disconnect()
+        # Use the existing Raft-based lock manager
+        # Note: lock_id is the holder_id (owner ID) from acquire()
+        async def release_lock() -> None:
+            await self._lock_manager.release(lock_id, zone_id, path)
 
         try:
-            asyncio.run(release_with_fresh_connection())
+            asyncio.run(release_lock())
         except RuntimeError as e:
             if "cannot be called from a running event loop" in str(e):
                 logger.error(
@@ -768,10 +742,10 @@ class NexusFSCoreMixin:
             logger.info(f"read: Virtual view detected, reading original file: {original_path}")
 
             # Read the original file
-            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 original_path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
@@ -811,10 +785,10 @@ class NexusFSCoreMixin:
             return content
 
         # Normal file path - proceed with regular read
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
@@ -995,7 +969,7 @@ class NexusFSCoreMixin:
 
         # Read allowed files
         read_start = time.time()
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
 
         # Group paths by backend for potential bulk optimization
         # Use batch_get for metadata lookup (single SQL query instead of N queries)
@@ -1023,7 +997,7 @@ class NexusFSCoreMixin:
 
                 route = self.router.route(
                     path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
@@ -1337,10 +1311,10 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.READ, context)
 
         # Route to backend with access control
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
@@ -1406,10 +1380,10 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.READ, context)
 
         # Route to backend with access control
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
@@ -1465,10 +1439,10 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Route to backend with write access check
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
@@ -1508,8 +1482,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            tenant_id=tenant_id
-            or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
+            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1640,10 +1613,10 @@ class NexusFSCoreMixin:
         """
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
@@ -1757,8 +1730,7 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            tenant_id=tenant_id
-            or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
+            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -1774,7 +1746,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        tenant_id=tenant_id or "default",
+                        zone_id=zone_id or "default",
                     )
                     if added_count > 0:
                         import logging
@@ -1817,9 +1789,9 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.tenant_id or "default")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "default")
                 if meta is None and ctx.user and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.tenant_id or "default")
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "default")
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -1827,10 +1799,10 @@ class NexusFSCoreMixin:
             if hasattr(self, "_hierarchy_manager"):
                 try:
                     logger.info(
-                        f"write: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
+                        f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, tenant_id=ctx.tenant_id or "default"
+                        path, zone_id=ctx.zone_id or "default"
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -1849,7 +1821,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user),
                             relation="direct_owner",
                             object=("file", path),
-                            tenant_id=ctx.tenant_id or "default",
+                            zone_id=ctx.zone_id or "default",
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user} for {path}"
@@ -1867,12 +1839,12 @@ class NexusFSCoreMixin:
         try:
             from nexus.storage.operation_logger import OperationLogger
 
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 op_logger = OperationLogger(session)
                 op_logger.log_operation(
                     operation_type="write",
                     path=path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
@@ -1923,7 +1895,7 @@ class NexusFSCoreMixin:
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "tenant_id": tenant_id or "default",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
@@ -1945,7 +1917,7 @@ class NexusFSCoreMixin:
                 if self.subscription_manager:  # type: ignore[attr-defined]
                     self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_write", event_context, event_context.get("tenant_id", "default")
+                            "file_write", event_context, event_context.get("zone_id", "default")
                         ),
                         name=f"webhook:file_write:{path}",
                     )
@@ -1976,7 +1948,7 @@ class NexusFSCoreMixin:
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                                     "file_write",
                                     event_context,
-                                    event_context.get("tenant_id", "default"),
+                                    event_context.get("zone_id", "default"),
                                 )
                             )
                         else:
@@ -1998,7 +1970,7 @@ class NexusFSCoreMixin:
         self._publish_file_event(
             event_type="file_write",
             path=path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             size=len(content),
             etag=content_hash,
             agent_id=agent_id,
@@ -2082,7 +2054,7 @@ class NexusFSCoreMixin:
         if not hasattr(self, "_lock_manager") or self._lock_manager is None:
             raise RuntimeError(
                 "atomic_update() requires distributed lock manager. "
-                "Set NEXUS_DRAGONFLY_COORDINATION_URL environment variable "
+                "Set NEXUS_REDIS_URL environment variable "
                 "or pass coordination_url to NexusFS constructor."
             )
 
@@ -2474,12 +2446,12 @@ class NexusFSCoreMixin:
             validated_files.append((validated_path, content))
 
         # Route all paths and check write access
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         routes = []
         for path, _ in validated_files:
             route = self.router.route(
                 path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=True,
@@ -2530,8 +2502,8 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                tenant_id=tenant_id
-                or "default",  # Issue #904, #773: Store tenant_id for PREWHERE filtering
+                zone_id=zone_id
+                or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2556,7 +2528,7 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
-        tenant_id_for_perms = ctx.tenant_id or "default"
+        zone_id_for_perms = ctx.zone_id or "default"
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = _time.perf_counter()
@@ -2566,7 +2538,7 @@ class NexusFSCoreMixin:
         ):
             try:
                 created_count = self._hierarchy_manager.ensure_parent_tuples_batch(
-                    all_paths, tenant_id=tenant_id_for_perms
+                    all_paths, zone_id=zone_id_for_perms
                 )
                 logger.info(
                     f"write_batch: Batch created {created_count} parent tuples for {len(all_paths)} files"
@@ -2579,7 +2551,7 @@ class NexusFSCoreMixin:
                 for path in all_paths:
                     try:
                         self._hierarchy_manager.ensure_parent_tuples(
-                            path, tenant_id=tenant_id_for_perms
+                            path, zone_id=zone_id_for_perms
                         )
                     except Exception as e2:
                         logger.warning(
@@ -2589,9 +2561,7 @@ class NexusFSCoreMixin:
             # No batch method available, use individual calls
             for path in all_paths:
                 try:
-                    self._hierarchy_manager.ensure_parent_tuples(
-                        path, tenant_id=tenant_id_for_perms
-                    )
+                    self._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id_for_perms)
                 except Exception as e:
                     logger.warning(f"write_batch: Failed to create parent tuples for {path}: {e}")
         _hierarchy_elapsed = (_time.perf_counter() - _hierarchy_start) * 1000
@@ -2614,7 +2584,7 @@ class NexusFSCoreMixin:
                             "subject": ("user", ctx.user),
                             "relation": "direct_owner",
                             "object": ("file", path),
-                            "tenant_id": tenant_id_for_perms,
+                            "zone_id": zone_id_for_perms,
                         }
                     )
 
@@ -2633,7 +2603,7 @@ class NexusFSCoreMixin:
                                 subject=grant["subject"],
                                 relation=grant["relation"],
                                 object=grant["object"],
-                                tenant_id=grant["tenant_id"],
+                                zone_id=grant["zone_id"],
                             )
                         except Exception as e2:
                             logger.warning(f"write_batch: Failed to grant direct_owner: {e2}")
@@ -2645,7 +2615,7 @@ class NexusFSCoreMixin:
                             subject=grant["subject"],
                             relation=grant["relation"],
                             object=grant["object"],
-                            tenant_id=grant["tenant_id"],
+                            zone_id=grant["zone_id"],
                         )
                     except Exception as e:
                         logger.warning(f"write_batch: Failed to grant direct_owner: {e}")
@@ -2786,10 +2756,10 @@ class NexusFSCoreMixin:
 
         # Route to backend with write access check FIRST (to check tenant/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
@@ -2821,12 +2791,12 @@ class NexusFSCoreMixin:
         try:
             from nexus.storage.operation_logger import OperationLogger
 
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 op_logger = OperationLogger(session)
                 op_logger.log_operation(
                     operation_type="delete",
                     path=path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
@@ -2859,7 +2829,7 @@ class NexusFSCoreMixin:
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "tenant_id": tenant_id or "default",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -2879,7 +2849,7 @@ class NexusFSCoreMixin:
                 if self.subscription_manager:  # type: ignore[attr-defined]
                     self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_delete", event_context, event_context.get("tenant_id", "default")
+                            "file_delete", event_context, event_context.get("zone_id", "default")
                         ),
                         name=f"webhook:file_delete:{path}",
                     )
@@ -2899,7 +2869,7 @@ class NexusFSCoreMixin:
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                                     "file_delete",
                                     event_context,
-                                    event_context.get("tenant_id", "default"),
+                                    event_context.get("zone_id", "default"),
                                 )
                             )
                     except Exception as e:
@@ -2917,7 +2887,7 @@ class NexusFSCoreMixin:
         self._publish_file_event(
             event_type="file_delete",
             path=path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             size=meta.size,
             etag=meta.etag,
             agent_id=agent_id,
@@ -2968,17 +2938,17 @@ class NexusFSCoreMixin:
         new_path = self._validate_path(new_path)
 
         # Route both paths
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         old_route = self.router.route(
             old_path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to source
         )
         new_route = self.router.route(
             new_path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to destination
@@ -3126,7 +3096,7 @@ class NexusFSCoreMixin:
                         old_path=old_path,
                         new_path=new_path,
                         is_directory=bool(is_directory),
-                        tenant_id=tenant_id or "default",
+                        zone_id=zone_id or "default",
                     )
             except Exception as e:
                 # Log but don't fail the rename operation
@@ -3136,13 +3106,13 @@ class NexusFSCoreMixin:
         try:
             from nexus.storage.operation_logger import OperationLogger
 
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 op_logger = OperationLogger(session)
                 op_logger.log_operation(
                     operation_type="rename",
                     path=old_path,
                     new_path=new_path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
@@ -3165,7 +3135,7 @@ class NexusFSCoreMixin:
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "tenant_id": tenant_id or "default",
+                "zone_id": zone_id or "default",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3185,7 +3155,7 @@ class NexusFSCoreMixin:
                 if self.subscription_manager:  # type: ignore[attr-defined]
                     self._create_tracked_event_task(
                         self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_rename", event_context, event_context.get("tenant_id", "default")
+                            "file_rename", event_context, event_context.get("zone_id", "default")
                         ),
                         name=f"webhook:file_rename:{old_path}->{new_path}",
                     )
@@ -3205,7 +3175,7 @@ class NexusFSCoreMixin:
                                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                                     "file_rename",
                                     event_context,
-                                    event_context.get("tenant_id", "default"),
+                                    event_context.get("zone_id", "default"),
                                 )
                             )
                     except Exception as e:
@@ -3222,7 +3192,7 @@ class NexusFSCoreMixin:
             event_type="file_rename",
             path=new_path,
             old_path=old_path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             size=meta.size if meta else 0,
             etag=meta.etag if meta else None,
             agent_id=agent_id,
@@ -3241,7 +3211,7 @@ class NexusFSCoreMixin:
         old_path: str,
         new_path: str,
         is_directory: bool,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Update Tiger Cache bitmaps when a file/directory is moved.
 
@@ -3256,11 +3226,11 @@ class NexusFSCoreMixin:
             old_path: Original file path
             new_path: New file path
             is_directory: Whether this is a directory move
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
         # Get grants that apply to old and new paths
-        old_grants = tiger_cache.get_directory_grants_for_path(old_path, tenant_id)
-        new_grants = tiger_cache.get_directory_grants_for_path(new_path, tenant_id)
+        old_grants = tiger_cache.get_directory_grants_for_path(old_path, zone_id)
+        new_grants = tiger_cache.get_directory_grants_for_path(new_path, zone_id)
 
         # Create grant keys for comparison (subject_type, subject_id, permission)
         def grant_key(g: dict) -> tuple:
@@ -3282,7 +3252,7 @@ class NexusFSCoreMixin:
 
         # Get files to update (single file or all descendants for directory)
         if is_directory:
-            files_to_update = self._get_directory_files_for_move(old_path, new_path, tenant_id)
+            files_to_update = self._get_directory_files_for_move(old_path, new_path, zone_id)
         else:
             files_to_update = [(old_path, new_path)]
 
@@ -3313,7 +3283,7 @@ class NexusFSCoreMixin:
                         subject_id=subject_id,
                         permission=permission,
                         resource_type="file",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         resource_int_id=int_id,
                     )
                     logger.debug(
@@ -3339,7 +3309,7 @@ class NexusFSCoreMixin:
                         grant["subject_id"],
                         grant["permission"],
                         "file",
-                        tenant_id,
+                        zone_id,
                         int_id,
                     )
 
@@ -3350,7 +3320,7 @@ class NexusFSCoreMixin:
                         grant["permission"],
                         "file",
                         new_file_path,
-                        tenant_id,
+                        zone_id,
                     )
 
                     logger.debug(
@@ -3366,14 +3336,14 @@ class NexusFSCoreMixin:
         self,
         old_dir_path: str,
         new_dir_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> list[tuple[str, str]]:
         """Get all files under a directory for move permission updates.
 
         Args:
             old_dir_path: Original directory path
             new_dir_path: New directory path
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of (old_file_path, new_file_path) tuples
@@ -3385,7 +3355,7 @@ class NexusFSCoreMixin:
         try:
             # Query all files under directory (using new path since already renamed)
             # The files have already been renamed via metadata update, so query new paths
-            files = self.metadata.list(prefix=new_prefix, recursive=True, tenant_id=tenant_id)
+            files = self.metadata.list(prefix=new_prefix, recursive=True, zone_id=zone_id)
             result = []
             for file_meta in files:
                 new_file_path = file_meta.path
@@ -3474,10 +3444,10 @@ class NexusFSCoreMixin:
         size = meta.size
         if size is None and meta.etag:
             # Try to get size from backend
-            tenant_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 path,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
@@ -3751,7 +3721,7 @@ class NexusFSCoreMixin:
         Returns:
             Dictionary mapping each path to its metadata dict or None if not found.
             Metadata includes: path, size, etag, mime_type, created_at, modified_at,
-            version, tenant_id, is_directory.
+            version, zone_id, is_directory.
 
         Performance:
             - Single RPC call instead of N calls
@@ -3812,7 +3782,7 @@ class NexusFSCoreMixin:
                     "created_at": meta.created_at,
                     "modified_at": meta.modified_at,
                     "version": meta.version,
-                    "tenant_id": meta.tenant_id,
+                    "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
             except Exception:
@@ -3851,7 +3821,7 @@ class NexusFSCoreMixin:
         from nexus.core.memory_router import MemoryViewRouter
 
         # Get memory via router
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             router = MemoryViewRouter(session, EntityRegistry(session))
             memory = router.resolve(path)
@@ -3936,7 +3906,7 @@ class NexusFSCoreMixin:
         from nexus.core.memory_router import MemoryViewRouter
 
         # Get memory via router
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             router = MemoryViewRouter(session, EntityRegistry(session))
             memory = router.resolve(path)
@@ -4106,11 +4076,11 @@ class NexusFSCoreMixin:
         import errno
 
         path = self._validate_path(path)
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
 
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,

@@ -35,10 +35,10 @@ def engine():
                 member_id VARCHAR(255) NOT NULL,
                 group_type VARCHAR(50) NOT NULL,
                 group_id VARCHAR(255) NOT NULL,
-                tenant_id VARCHAR(255) NOT NULL,
+                zone_id VARCHAR(255) NOT NULL,
                 depth INTEGER NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
+                PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
             )
         """
             )
@@ -60,7 +60,7 @@ def manager(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=50,
-        enforce_tenant_isolation=False,  # Simplify tests
+        enforce_zone_isolation=False,  # Simplify tests
         enable_graph_limits=True,
         enable_leopard=True,
     )
@@ -75,7 +75,7 @@ def manager_no_leopard(engine):
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=50,
-        enforce_tenant_isolation=False,
+        enforce_zone_isolation=False,
         enable_graph_limits=True,
         enable_leopard=False,
     )
@@ -91,14 +91,14 @@ class TestLeopardCache:
         cache = LeopardCache(max_size=100)
 
         # Initially empty
-        result = cache.get_transitive_groups("user", "alice", "tenant1")
+        result = cache.get_transitive_groups("user", "alice", "zone1")
         assert result is None
 
         # Set and retrieve
         groups = {("group", "team-a"), ("group", "engineering")}
-        cache.set_transitive_groups("user", "alice", "tenant1", groups)
+        cache.set_transitive_groups("user", "alice", "zone1", groups)
 
-        result = cache.get_transitive_groups("user", "alice", "tenant1")
+        result = cache.get_transitive_groups("user", "alice", "zone1")
         assert result == groups
 
     def test_cache_returns_copy(self):
@@ -106,60 +106,60 @@ class TestLeopardCache:
         cache = LeopardCache(max_size=100)
 
         groups = {("group", "team-a")}
-        cache.set_transitive_groups("user", "alice", "tenant1", groups)
+        cache.set_transitive_groups("user", "alice", "zone1", groups)
 
-        result = cache.get_transitive_groups("user", "alice", "tenant1")
+        result = cache.get_transitive_groups("user", "alice", "zone1")
         result.add(("group", "should-not-be-in-cache"))
 
         # Original cache should be unchanged
-        result2 = cache.get_transitive_groups("user", "alice", "tenant1")
+        result2 = cache.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "should-not-be-in-cache") not in result2
 
     def test_invalidate_member(self):
         """Test invalidating cache for a specific member."""
         cache = LeopardCache(max_size=100)
 
-        cache.set_transitive_groups("user", "alice", "tenant1", {("group", "team-a")})
-        cache.set_transitive_groups("user", "bob", "tenant1", {("group", "team-b")})
+        cache.set_transitive_groups("user", "alice", "zone1", {("group", "team-a")})
+        cache.set_transitive_groups("user", "bob", "zone1", {("group", "team-b")})
 
         # Invalidate alice
-        cache.invalidate_member("user", "alice", "tenant1")
+        cache.invalidate_member("user", "alice", "zone1")
 
-        assert cache.get_transitive_groups("user", "alice", "tenant1") is None
-        assert cache.get_transitive_groups("user", "bob", "tenant1") == {("group", "team-b")}
+        assert cache.get_transitive_groups("user", "alice", "zone1") is None
+        assert cache.get_transitive_groups("user", "bob", "zone1") == {("group", "team-b")}
 
     def test_invalidate_group(self):
         """Test invalidating cache for all members of a group."""
         cache = LeopardCache(max_size=100)
 
         # Alice and Bob both in team-a
-        cache.set_transitive_groups("user", "alice", "tenant1", {("group", "team-a")})
-        cache.set_transitive_groups("user", "bob", "tenant1", {("group", "team-a")})
-        cache.set_transitive_groups("user", "charlie", "tenant1", {("group", "team-b")})
+        cache.set_transitive_groups("user", "alice", "zone1", {("group", "team-a")})
+        cache.set_transitive_groups("user", "bob", "zone1", {("group", "team-a")})
+        cache.set_transitive_groups("user", "charlie", "zone1", {("group", "team-b")})
 
         # Invalidate team-a - should clear alice and bob
-        cache.invalidate_group("group", "team-a", "tenant1")
+        cache.invalidate_group("group", "team-a", "zone1")
 
-        assert cache.get_transitive_groups("user", "alice", "tenant1") is None
-        assert cache.get_transitive_groups("user", "bob", "tenant1") is None
+        assert cache.get_transitive_groups("user", "alice", "zone1") is None
+        assert cache.get_transitive_groups("user", "bob", "zone1") is None
         # Charlie should be unaffected
-        assert cache.get_transitive_groups("user", "charlie", "tenant1") == {("group", "team-b")}
+        assert cache.get_transitive_groups("user", "charlie", "zone1") == {("group", "team-b")}
 
-    def test_invalidate_tenant(self):
-        """Test invalidating cache for entire tenant."""
+    def test_invalidate_zone(self):
+        """Test invalidating cache for entire zone."""
         cache = LeopardCache(max_size=100)
 
-        cache.set_transitive_groups("user", "alice", "tenant1", {("group", "team-a")})
-        cache.set_transitive_groups("user", "bob", "tenant1", {("group", "team-b")})
-        cache.set_transitive_groups("user", "charlie", "tenant2", {("group", "team-c")})
+        cache.set_transitive_groups("user", "alice", "zone1", {("group", "team-a")})
+        cache.set_transitive_groups("user", "bob", "zone1", {("group", "team-b")})
+        cache.set_transitive_groups("user", "charlie", "zone2", {("group", "team-c")})
 
-        # Invalidate tenant1
-        cache.invalidate_tenant("tenant1")
+        # Invalidate zone1
+        cache.invalidate_zone("zone1")
 
-        assert cache.get_transitive_groups("user", "alice", "tenant1") is None
-        assert cache.get_transitive_groups("user", "bob", "tenant1") is None
-        # tenant2 should be unaffected
-        assert cache.get_transitive_groups("user", "charlie", "tenant2") == {("group", "team-c")}
+        assert cache.get_transitive_groups("user", "alice", "zone1") is None
+        assert cache.get_transitive_groups("user", "bob", "zone1") is None
+        # zone2 should be unaffected
+        assert cache.get_transitive_groups("user", "charlie", "zone2") == {("group", "team-c")}
 
     def test_lru_eviction(self):
         """Test LRU eviction when cache is full."""
@@ -192,11 +192,11 @@ class TestLeopardIndex:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Check closure (should be updated by rebac_write)
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
 
     def test_transitive_membership_closure(self, manager):
@@ -205,21 +205,19 @@ class TestLeopardIndex:
         Hierarchy: alice -> team-a -> engineering -> all-employees
         """
         # Create membership tuples
+        manager.rebac_write(("user", "alice"), "member-of", ("group", "team-a"), zone_id="zone1")
         manager.rebac_write(
-            ("user", "alice"), "member-of", ("group", "team-a"), tenant_id="tenant1"
+            ("group", "team-a"), "member-of", ("group", "engineering"), zone_id="zone1"
         )
         manager.rebac_write(
-            ("group", "team-a"), "member-of", ("group", "engineering"), tenant_id="tenant1"
-        )
-        manager.rebac_write(
-            ("group", "engineering"), "member-of", ("group", "all-employees"), tenant_id="tenant1"
+            ("group", "engineering"), "member-of", ("group", "all-employees"), zone_id="zone1"
         )
 
         # Build closure from scratch
-        manager.rebuild_leopard_closure("tenant1")
+        manager.rebuild_leopard_closure("zone1")
 
         # Verify alice has transitive access to all groups
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
         assert ("group", "engineering") in groups
         assert ("group", "all-employees") in groups
@@ -227,29 +225,27 @@ class TestLeopardIndex:
     def test_rebuild_closure(self, manager):
         """Test rebuilding closure from existing tuples."""
         # Create membership hierarchy
+        manager.rebac_write(("user", "alice"), "member-of", ("group", "team-a"), zone_id="zone1")
+        manager.rebac_write(("user", "bob"), "member-of", ("group", "team-b"), zone_id="zone1")
         manager.rebac_write(
-            ("user", "alice"), "member-of", ("group", "team-a"), tenant_id="tenant1"
-        )
-        manager.rebac_write(("user", "bob"), "member-of", ("group", "team-b"), tenant_id="tenant1")
-        manager.rebac_write(
-            ("group", "team-a"), "member-of", ("group", "engineering"), tenant_id="tenant1"
+            ("group", "team-a"), "member-of", ("group", "engineering"), zone_id="zone1"
         )
         manager.rebac_write(
-            ("group", "team-b"), "member-of", ("group", "engineering"), tenant_id="tenant1"
+            ("group", "team-b"), "member-of", ("group", "engineering"), zone_id="zone1"
         )
 
         # Rebuild closure
-        entries = manager.rebuild_leopard_closure("tenant1")
+        entries = manager.rebuild_leopard_closure("zone1")
         assert entries > 0
 
         # Verify alice's groups
-        alice_groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        alice_groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in alice_groups
         assert ("group", "engineering") in alice_groups
         assert ("group", "team-b") not in alice_groups  # Alice not in team-b
 
         # Verify bob's groups
-        bob_groups = manager.get_transitive_groups("user", "bob", "tenant1")
+        bob_groups = manager.get_transitive_groups("user", "bob", "zone1")
         assert ("group", "team-b") in bob_groups
         assert ("group", "engineering") in bob_groups
         assert ("group", "team-a") not in bob_groups  # Bob not in team-a
@@ -265,11 +261,11 @@ class TestEnhancedReBACManagerWithLeopard:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Check closure was updated
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
 
     def test_delete_updates_closure(self, manager):
@@ -279,31 +275,31 @@ class TestEnhancedReBACManagerWithLeopard:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Verify it's in closure
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
 
         # Delete membership
         manager.rebac_delete(write_result.tuple_id)
 
         # Rebuild closure to ensure consistency
-        manager.rebuild_leopard_closure("tenant1")
+        manager.rebuild_leopard_closure("zone1")
 
         # Verify it's removed from closure
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") not in groups
 
     def test_deep_nesting(self, manager):
         """Test deep group nesting (5 levels)."""
         # Create hierarchy: user -> g1 -> g2 -> g3 -> g4 -> g5
-        manager.rebac_write(("user", "alice"), "member-of", ("group", "g1"), tenant_id="t1")
-        manager.rebac_write(("group", "g1"), "member-of", ("group", "g2"), tenant_id="t1")
-        manager.rebac_write(("group", "g2"), "member-of", ("group", "g3"), tenant_id="t1")
-        manager.rebac_write(("group", "g3"), "member-of", ("group", "g4"), tenant_id="t1")
-        manager.rebac_write(("group", "g4"), "member-of", ("group", "g5"), tenant_id="t1")
+        manager.rebac_write(("user", "alice"), "member-of", ("group", "g1"), zone_id="t1")
+        manager.rebac_write(("group", "g1"), "member-of", ("group", "g2"), zone_id="t1")
+        manager.rebac_write(("group", "g2"), "member-of", ("group", "g3"), zone_id="t1")
+        manager.rebac_write(("group", "g3"), "member-of", ("group", "g4"), zone_id="t1")
+        manager.rebac_write(("group", "g4"), "member-of", ("group", "g5"), zone_id="t1")
 
         # Rebuild to ensure all transitive relationships
         manager.rebuild_leopard_closure("t1")
@@ -323,44 +319,44 @@ class TestEnhancedReBACManagerWithLeopard:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
         manager_no_leopard.rebac_write(
             subject=("group", "team-a"),
             relation="member-of",
             object=("group", "engineering"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Get transitive groups (should use fallback)
-        groups = manager_no_leopard.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager_no_leopard.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
         assert ("group", "engineering") in groups
 
-    def test_tenant_isolation(self, manager):
-        """Test that closure is tenant-isolated."""
-        # Write memberships in different tenants
+    def test_zone_isolation(self, manager):
+        """Test that closure is zone-isolated."""
+        # Write memberships in different zones
         manager.rebac_write(
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
         manager.rebac_write(
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-b"),
-            tenant_id="tenant2",
+            zone_id="zone2",
         )
 
-        # Verify tenant isolation
-        tenant1_groups = manager.get_transitive_groups("user", "alice", "tenant1")
-        assert ("group", "team-a") in tenant1_groups
-        assert ("group", "team-b") not in tenant1_groups
+        # Verify zone isolation
+        zone1_groups = manager.get_transitive_groups("user", "alice", "zone1")
+        assert ("group", "team-a") in zone1_groups
+        assert ("group", "team-b") not in zone1_groups
 
-        tenant2_groups = manager.get_transitive_groups("user", "alice", "tenant2")
-        assert ("group", "team-b") in tenant2_groups
-        assert ("group", "team-a") not in tenant2_groups
+        zone2_groups = manager.get_transitive_groups("user", "alice", "zone2")
+        assert ("group", "team-b") in zone2_groups
+        assert ("group", "team-a") not in zone2_groups
 
     def test_invalidate_leopard_cache(self, manager):
         """Test cache invalidation."""
@@ -369,17 +365,17 @@ class TestEnhancedReBACManagerWithLeopard:
             subject=("user", "alice"),
             relation="member-of",
             object=("group", "team-a"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Warm up cache
-        manager.get_transitive_groups("user", "alice", "tenant1")
+        manager.get_transitive_groups("user", "alice", "zone1")
 
         # Invalidate cache
-        manager.invalidate_leopard_cache("tenant1")
+        manager.invalidate_leopard_cache("zone1")
 
         # Should still work (fetches from DB)
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("group", "team-a") in groups
 
 
@@ -388,7 +384,7 @@ class TestLeopardEdgeCases:
 
     def test_empty_closure(self, manager):
         """Test getting closure for member with no groups."""
-        groups = manager.get_transitive_groups("user", "nobody", "tenant1")
+        groups = manager.get_transitive_groups("user", "nobody", "zone1")
         assert groups == set()
 
     def test_self_loop(self, manager):
@@ -398,13 +394,13 @@ class TestLeopardEdgeCases:
             subject=("group", "team-a"),
             relation="member-of",
             object=("group", "team-a"),  # Self-loop
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
-        manager.rebuild_leopard_closure("tenant1")
+        manager.rebuild_leopard_closure("zone1")
 
         # Should not cause infinite loop
-        groups = manager.get_transitive_groups("group", "team-a", "tenant1")
+        groups = manager.get_transitive_groups("group", "team-a", "zone1")
         # Self-membership might or might not be in closure depending on implementation
         # Just verify it doesn't hang and returns a set
         assert isinstance(groups, set)
@@ -416,9 +412,9 @@ class TestLeopardEdgeCases:
             subject=("user", "alice"),
             relation="owner-of",
             object=("file", "readme.txt"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Closure should be empty (owner-of is not a membership relation)
-        groups = manager.get_transitive_groups("user", "alice", "tenant1")
+        groups = manager.get_transitive_groups("user", "alice", "zone1")
         assert ("file", "readme.txt") not in groups

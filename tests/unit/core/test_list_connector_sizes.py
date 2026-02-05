@@ -125,7 +125,7 @@ class TestListConnectorSizes:
                     backend_id="mock_connector",
                     physical_path="/file1.txt",
                     size_bytes=1234,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.add(
@@ -135,7 +135,7 @@ class TestListConnectorSizes:
                     backend_id="mock_connector",
                     physical_path="/file2.yaml",
                     size_bytes=5678,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.add(
@@ -145,7 +145,7 @@ class TestListConnectorSizes:
                     backend_id="mock_connector",
                     physical_path="/file3.md",
                     size_bytes=9012,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -226,7 +226,7 @@ class TestListConnectorSizes:
                     backend_id="mock_connector",
                     physical_path="/file1.txt",
                     size_bytes=large_size,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -261,7 +261,7 @@ class TestListConnectorSizes:
                     backend_id="mock_connector",
                     physical_path="/file1.txt",
                     size_bytes=file_size,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -309,7 +309,7 @@ class TestListConnectorSizesRegression:
                     backend_id="mock_connector",
                     physical_path="/file1.txt",
                     size_bytes=100,
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()

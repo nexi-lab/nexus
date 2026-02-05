@@ -62,7 +62,7 @@ class NexusFSEventsMixin:
         _cache_invalidation_started: bool
 
         @property
-        def tenant_id(self) -> str | None: ...
+        def zone_id(self) -> str | None: ...
 
         @property
         def agent_id(self) -> str | None: ...
@@ -121,19 +121,19 @@ class NexusFSEventsMixin:
 
         return self._file_watcher
 
-    def _get_tenant_id(self, context: OperationContext | None) -> str:
-        """Get tenant ID from context or default.
+    def _get_zone_id(self, context: OperationContext | None) -> str:
+        """Get zone ID from context or default.
 
         Args:
             context: Operation context
 
         Returns:
-            Tenant ID string (defaults to "default")
+            Zone ID string (defaults to "default")
         """
-        if context and hasattr(context, "tenant_id") and context.tenant_id:
-            return context.tenant_id
-        if hasattr(self, "tenant_id") and self.tenant_id:
-            return self.tenant_id
+        if context and hasattr(context, "zone_id") and context.zone_id:
+            return context.zone_id
+        if hasattr(self, "zone_id") and self.zone_id:
+            return self.zone_id
         return "default"
 
     def _should_auto__start_cache_invalidation(self) -> bool:
@@ -237,13 +237,13 @@ class NexusFSEventsMixin:
         await self._ensure_distributed_system_ready()
 
         path = self._validate_path(path)
-        tenant_id = self._get_tenant_id(_context)
+        zone_id = self._get_zone_id(_context)
 
         # Layer 2: Distributed event bus (preferred)
         if self._has_distributed_events():
             logger.debug(f"Using distributed event bus for {path}")
             event = await self._event_bus.wait_for_event(  # type: ignore[union-attr]
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path_pattern=path,
                 timeout=timeout,
                 since_revision=since_revision,  # Issue #1187: Zookie-based resumption
@@ -297,7 +297,7 @@ class NexusFSEventsMixin:
                     return None
 
                 # Convert to unified FileEvent format
-                event = FileEvent.from_file_change(change, tenant_id=tenant_id)
+                event = FileEvent.from_file_change(change, zone_id=zone_id)
 
                 # For glob/directory patterns, filter using matches_path_pattern
                 if is_pattern:
@@ -392,14 +392,14 @@ class NexusFSEventsMixin:
         await self._ensure_distributed_system_ready()
 
         path = self._validate_path(path)
-        tenant_id = self._get_tenant_id(_context)
+        zone_id = self._get_zone_id(_context)
 
         # Layer 2: Distributed lock manager (preferred)
         if self._has_distributed_locks():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using distributed lock manager for {path} ({mode})")
             lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=timeout,
                 ttl=ttl,
@@ -471,14 +471,14 @@ class NexusFSEventsMixin:
             ...             raise RuntimeError("Lost lock!")
             ...         await asyncio.sleep(15)  # Extend every 15s for 30s TTL
         """
-        tenant_id = self._get_tenant_id(_context)
+        zone_id = self._get_zone_id(_context)
 
         # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
             path = self._validate_path(path)
             extended = await self._lock_manager.extend(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 ttl=ttl,
             )
@@ -524,7 +524,7 @@ class NexusFSEventsMixin:
             >>> success = await nexus.unlock(lock_id, "/shared/config.json")
             >>> assert success
         """
-        tenant_id = self._get_tenant_id(_context)
+        zone_id = self._get_zone_id(_context)
 
         # Layer 2: Distributed lock manager
         if self._has_distributed_locks():
@@ -533,7 +533,7 @@ class NexusFSEventsMixin:
             path = self._validate_path(path)
             released = await self._lock_manager.release(  # type: ignore[union-attr]
                 lock_id=lock_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
             )
             if released:
@@ -758,7 +758,7 @@ class NexusFSEventsMixin:
 
         # Layer 2: Distributed event bus (Redis Pub/Sub)
         if self._has_distributed_events():
-            tenant_id = self._get_tenant_id(None)
+            zone_id = self._get_zone_id(None)
 
             async def _subscribe_loop() -> None:
                 """Background task to subscribe to distributed events."""
@@ -775,8 +775,8 @@ class NexusFSEventsMixin:
                         except Exception as e:
                             logger.warning(f"Startup sync failed (continuing anyway): {e}")
 
-                    logger.info(f"Starting distributed cache invalidation for tenant: {tenant_id}")
-                    async for event in self._event_bus.subscribe(tenant_id):  # type: ignore[union-attr]
+                    logger.info(f"Starting distributed cache invalidation for tenant: {zone_id}")
+                    async for event in self._event_bus.subscribe(zone_id):  # type: ignore[union-attr]
                         self._on_distributed_event(event)
                 except asyncio.CancelledError:
                     logger.info("Distributed cache invalidation stopped")

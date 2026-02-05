@@ -11,8 +11,8 @@ Nexus provides WebSocket endpoints for receiving real-time file system events. T
 ### Endpoint
 
 ```
-ws://<host>:<port>/ws/<tenant_id>
-wss://<host>:<port>/ws/<tenant_id>  # Production (recommended)
+ws://<host>:<port>/ws/<zone_id>
+wss://<host>:<port>/ws/<zone_id>  # Production (recommended)
 ```
 
 ### Example Connection

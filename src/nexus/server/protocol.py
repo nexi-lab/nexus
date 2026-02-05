@@ -566,7 +566,7 @@ class RebacCreateParams:
     relation: str
     object: tuple[str, str]
     expires_at: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     column_config: dict[str, Any] | None = None
     context: dict[str, Any] | None = None  # Operation context for permission checks
 
@@ -581,7 +581,7 @@ class RebacCheckParams:
     subject: tuple[str, str]
     permission: str
     object: tuple[str, str]
-    tenant_id: str | None = None
+    zone_id: str | None = None
     # Issue #1081: Per-request consistency control
     consistency_mode: str | None = (
         None  # "minimize_latency" | "at_least_as_fresh" | "fully_consistent"
@@ -640,7 +640,7 @@ class RebacExplainParams:
     subject: tuple[str, str]
     permission: str
     object: tuple[str, str]
-    tenant_id: str | None = None
+    zone_id: str | None = None
 
 
 @dataclass
@@ -667,8 +667,8 @@ class ShareWithUserParams:
     resource: tuple[str, str]
     user_id: str
     relation: str = "viewer"
-    tenant_id: str | None = None
-    user_tenant_id: str | None = None
+    zone_id: str | None = None
+    user_zone_id: str | None = None
     expires_at: str | None = None
 
 
@@ -692,7 +692,7 @@ class ListOutgoingSharesParams:
     """Parameters for list_outgoing_shares() method."""
 
     resource: tuple[str, str] | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     limit: int = 100
     offset: int = 0
     cursor: str | None = None
@@ -714,7 +714,7 @@ class MakePublicParams:
     """Parameters for make_public() method."""
 
     resource: tuple[str, str]
-    tenant_id: str | None = None
+    zone_id: str | None = None
 
 
 @dataclass
@@ -1253,7 +1253,7 @@ class AdminCreateKeyParams:
     """
 
     name: str
-    tenant_id: str
+    zone_id: str
     user_id: str | None = None  # Auto-generate if not provided
     is_admin: bool = False
     expires_days: int | None = None
@@ -1269,7 +1269,7 @@ class AdminListKeysParams:
     """
 
     user_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     is_admin: bool | None = None
     include_revoked: bool = False
     include_expired: bool = False
@@ -1342,7 +1342,7 @@ class ProvisionUserParams:
     user_id: str
     email: str
     display_name: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     create_api_key: bool = True
     create_agents: bool = True
     import_skills: bool = True
@@ -1356,7 +1356,7 @@ class DeprovisionUserParams:
     """
 
     user_id: str
-    tenant_id: str | None = None
+    zone_id: str | None = None
     delete_user_record: bool = False
     force: bool = False
 
@@ -1421,7 +1421,7 @@ class SandboxListParams:
     context: dict | None = None
     verify_status: bool = False
     user_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     agent_id: str | None = None
     status: str | None = None
 
@@ -1537,7 +1537,7 @@ class SaveMountParams:
     priority: int = 0
     readonly: bool = False
     owner_user_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     description: str | None = None
 
 
@@ -1546,7 +1546,7 @@ class ListSavedMountsParams:
     """Parameters for list_saved_mounts() method."""
 
     owner_user_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     context: dict | None = None  # For compatibility with NexusFS signature
 
 
@@ -1687,7 +1687,7 @@ class SkillsPublishParams:
 
     skill_name: str
     source_tier: str = "agent"
-    target_tier: str = "tenant"
+    target_tier: str = "zone"
 
 
 @dataclass
@@ -1717,7 +1717,7 @@ class SkillsApproveParams:
     reviewed_by: str
     reviewer_type: str = "user"
     comments: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
 
 
 @dataclass
@@ -1728,7 +1728,7 @@ class SkillsRejectParams:
     reviewed_by: str
     reviewer_type: str = "user"
     comments: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
 
 
 @dataclass

@@ -52,7 +52,7 @@ def encode_cursor(
     Args:
         last_path: Virtual path of last item in current page
         last_path_id: UUID of last item (tiebreaker for stable ordering)
-        filters: Query filters (prefix, recursive, tenant_id) for tampering detection
+        filters: Query filters (prefix, recursive, zone_id) for tampering detection
 
     Returns:
         URL-safe base64-encoded cursor string

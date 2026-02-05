@@ -13,13 +13,13 @@ class AuthResult:
         authenticated: Whether authentication succeeded
         subject_type: Type of authenticated entity ("user", "agent", "service", "session")
         subject_id: Unique identifier for the subject (e.g., "alice", "agent_123", "session_abc")
-        tenant_id: Optional tenant/organization identifier (metadata only, not used for identity)
+        zone_id: Optional zone/organization identifier (metadata only, not used for identity)
         is_admin: Whether this subject has admin privileges
         metadata: Optional additional metadata about the subject
 
     Note:
         The subject_type + subject_id tuple forms the ReBAC subject identity.
-        tenant_id is kept for metadata/logging but does not define identity.
+        zone_id is kept for metadata/logging but does not define identity.
 
     Examples:
         # Human user
@@ -38,7 +38,7 @@ class AuthResult:
     authenticated: bool
     subject_type: str = "user"  # "user", "agent", "service", "session"
     subject_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     is_admin: bool = False
     metadata: dict[str, Any] | None = None
 

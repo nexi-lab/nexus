@@ -119,8 +119,8 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
 
         # 3. User ownership check
         # Check if the requesting user matches the memory's user
-        # BUT only for user/tenant/global scoped memories (not agent-scoped)
-        if memory.user_id and self.entity_registry and memory.scope in ["user", "tenant", "global"]:
+        # BUT only for user/zone/global scoped memories (not agent-scoped)
+        if memory.user_id and self.entity_registry and memory.scope in ["user", "zone", "global"]:
             # Look up the requesting user/agent in the entity registry
             requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
 
@@ -129,30 +129,30 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                 if entity.entity_type == "user" and entity.entity_id == memory.user_id:
                     return True
 
-        # 4. Tenant-scoped sharing
-        if memory.scope == "tenant" and memory.tenant_id and self.entity_registry:
-            # Check if requesting agent belongs to same tenant
+        # 4. Zone-scoped sharing
+        if memory.scope == "zone" and memory.zone_id and self.entity_registry:
+            # Check if requesting agent belongs to same zone
             requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
 
             for entity in requesting_entities:
-                # Check tenant membership through hierarchy
+                # Check zone membership through hierarchy
                 if entity.entity_type == "agent":
                     # Get agent's parent (user)
                     if entity.parent_id:
                         user_entities = self.entity_registry.lookup_entity_by_id(entity.parent_id)
                         for user_entity in user_entities:
-                            # Check if user belongs to same tenant
+                            # Check if user belongs to same zone
                             if (
                                 user_entity.entity_type == "user"
-                                and user_entity.parent_id == memory.tenant_id
+                                and user_entity.parent_id == memory.zone_id
                             ):
                                 return True
 
                 elif (
                     entity.entity_type == "user"
-                    and entity.parent_id == memory.tenant_id
-                    or entity.entity_type == "tenant"
-                    and entity.entity_id == memory.tenant_id
+                    and entity.parent_id == memory.zone_id
+                    or entity.entity_type == "zone"
+                    and entity.entity_id == memory.zone_id
                 ):
                     return True
 
@@ -168,15 +168,15 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
             else:
                 return False
 
-            # P0-4: Pass tenant_id for multi-tenant isolation
-            tenant_id = context.tenant_id or "default"
+            # P0-4: Pass zone_id for multi-zone isolation
+            zone_id = context.zone_id or "default"
 
             # 5a. Direct permission check
             if self.rebac_manager.rebac_check(
                 subject=context.get_subject(),  # P0-2: Use typed subject
                 permission=permission_name,
                 object=("memory", memory.memory_id),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             ):
                 return True
 
@@ -195,7 +195,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                         subject=("user", parent.entity_id),
                         permission=permission_name,
                         object=("memory", memory.memory_id),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                 ):
                     # ✅ Agent inherits user's permission

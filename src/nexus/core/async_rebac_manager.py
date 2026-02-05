@@ -22,7 +22,7 @@ Example:
         subject=("user", "alice"),
         permission="read",
         object=("file", "/doc.txt"),
-        tenant_id="org_123"
+        zone_id="org_123"
     )
 """
 
@@ -39,7 +39,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from nexus.core.rebac import (
-    CROSS_TENANT_ALLOWED_RELATIONS,
+    CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
     Entity,
     NamespaceConfig,
@@ -70,13 +70,13 @@ _QUERY_DIRECT_TUPLE = text("""
     WHERE subject_type = :subject_type AND subject_id = :subject_id
       AND relation = :relation
       AND object_type = :object_type AND object_id = :object_id
-      AND tenant_id = :tenant_id
+      AND zone_id = :zone_id
       AND subject_relation IS NULL
       AND (expires_at IS NULL OR expires_at >= :now)
 """)
 
-# Hot path: Cross-tenant tuple lookup for shared-* relations
-_QUERY_CROSS_TENANT_TUPLE = text("""
+# Hot path: Cross-zone tuple lookup for shared-* relations
+_QUERY_CROSS_ZONE_TUPLE = text("""
     SELECT tuple_id FROM rebac_tuples
     WHERE subject_type = :subject_type AND subject_id = :subject_id
       AND relation = :relation
@@ -92,7 +92,7 @@ _QUERY_USERSET_SUBJECTS = text("""
     WHERE relation = :relation
       AND object_type = :object_type AND object_id = :object_id
       AND subject_relation IS NOT NULL
-      AND tenant_id = :tenant_id
+      AND zone_id = :zone_id
       AND (expires_at IS NULL OR expires_at >= :now)
 """)
 
@@ -102,24 +102,24 @@ _QUERY_RELATED_OBJECTS = text("""
     FROM rebac_tuples
     WHERE subject_type = :subject_type AND subject_id = :subject_id
       AND relation = :relation
-      AND tenant_id = :tenant_id
+      AND zone_id = :zone_id
       AND (expires_at IS NULL OR expires_at >= :now)
 """)
 
 # Namespace configuration loading
 _QUERY_LOAD_NAMESPACES = text("SELECT namespace_id, object_type, config FROM rebac_namespaces")
 
-# Bulk fetch: All tuples for tenant (used in rebac_check_bulk)
+# Bulk fetch: All tuples for zone (used in rebac_check_bulk)
 _QUERY_BULK_TUPLES = text("""
     SELECT subject_type, subject_id, subject_relation, relation,
            object_type, object_id, conditions, expires_at
     FROM rebac_tuples
-    WHERE tenant_id = :tenant_id
+    WHERE zone_id = :zone_id
       AND (expires_at IS NULL OR expires_at >= :now)
 """)
 
-# Bulk fetch: Cross-tenant shared tuples
-_QUERY_BULK_CROSS_TENANT = text("""
+# Bulk fetch: Cross-zone shared tuples
+_QUERY_BULK_CROSS_ZONE = text("""
     SELECT subject_type, subject_id, subject_relation, relation,
            object_type, object_id, conditions, expires_at
     FROM rebac_tuples
@@ -132,23 +132,23 @@ _QUERY_BULK_CROSS_TENANT = text("""
 _QUERY_LEOPARD_CLOSURE = text("""
     SELECT member_type, member_id, group_type, group_id
     FROM rebac_group_closure
-    WHERE tenant_id = :tenant_id
+    WHERE zone_id = :zone_id
 """)
 
 # Leopard closure: Insert/update closure entry for membership
 _QUERY_LEOPARD_UPSERT_SQLITE = text("""
     INSERT OR REPLACE INTO rebac_group_closure
-        (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+        (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
     VALUES
-        (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, datetime('now'))
+        (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, datetime('now'))
 """)
 
 _QUERY_LEOPARD_UPSERT_POSTGRES = text("""
     INSERT INTO rebac_group_closure
-        (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+        (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
     VALUES
-        (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, NOW())
-    ON CONFLICT (member_type, member_id, group_type, group_id, tenant_id)
+        (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, NOW())
+    ON CONFLICT (member_type, member_id, group_type, group_id, zone_id)
     DO UPDATE SET depth = EXCLUDED.depth, updated_at = NOW()
 """)
 
@@ -157,7 +157,7 @@ _QUERY_LEOPARD_DELETE_MEMBER = text("""
     DELETE FROM rebac_group_closure
     WHERE member_type = :member_type
       AND member_id = :member_id
-      AND tenant_id = :tenant_id
+      AND zone_id = :zone_id
 """)
 
 # Relations that represent group membership
@@ -167,11 +167,11 @@ MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
 _QUERY_INSERT_TUPLE = text("""
     INSERT INTO rebac_tuples (
         tuple_id, subject_type, subject_id, subject_relation,
-        relation, object_type, object_id, tenant_id,
+        relation, object_type, object_id, zone_id,
         conditions, expires_at, created_at, updated_at
     ) VALUES (
         :tuple_id, :subject_type, :subject_id, :subject_relation,
-        :relation, :object_type, :object_id, :tenant_id,
+        :relation, :object_type, :object_id, :zone_id,
         :conditions, :expires_at, :created_at, :updated_at
     )
 """)
@@ -181,7 +181,7 @@ _QUERY_DELETE_TUPLE = text("""
     WHERE subject_type = :subject_type AND subject_id = :subject_id
       AND relation = :relation
       AND object_type = :object_type AND object_id = :object_id
-      AND tenant_id = :tenant_id
+      AND zone_id = :zone_id
 """)
 
 
@@ -294,7 +294,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
         context: dict[str, Any] | None = None,
     ) -> bool:
         """Check permission asynchronously.
@@ -303,7 +303,7 @@ class AsyncReBACManager:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., "read", "write")
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             context: Optional ABAC context for condition evaluation
 
         Returns:
@@ -314,11 +314,11 @@ class AsyncReBACManager:
             ...     subject=("user", "alice"),
             ...     permission="read",
             ...     object=("file", "/doc.txt"),
-            ...     tenant_id="org_123"
+            ...     zone_id="org_123"
             ... )
         """
-        if not tenant_id:
-            tenant_id = "default"
+        if not zone_id:
+            zone_id = "default"
 
         # Ensure namespaces are loaded
         await self._load_namespaces()
@@ -329,7 +329,7 @@ class AsyncReBACManager:
         # Check L1 cache first
         if self._l1_cache:
             cached = self._l1_cache.get(
-                subject[0], subject[1], permission, object[0], object[1], tenant_id
+                subject[0], subject[1], permission, object[0], object[1], zone_id
             )
             if cached is not None:
                 return cached
@@ -337,7 +337,7 @@ class AsyncReBACManager:
         # Compute permission with delta tracking for XFetch (Issue #718)
         start_time = time.perf_counter()
         result = await self._compute_permission(
-            subject_entity, permission, obj_entity, tenant_id, context
+            subject_entity, permission, obj_entity, zone_id, context
         )
         delta = time.perf_counter() - start_time
         elapsed_ms = delta * 1000
@@ -351,7 +351,7 @@ class AsyncReBACManager:
                 object[0],
                 object[1],
                 result,
-                tenant_id,
+                zone_id,
                 delta=delta,
             )
 
@@ -366,7 +366,7 @@ class AsyncReBACManager:
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         context: dict[str, Any] | None = None,
         visited: set[tuple[str, str, str, str, str]] | None = None,
         depth: int = 0,
@@ -407,7 +407,7 @@ class AsyncReBACManager:
             usersets = namespace.get_permission_usersets(permission)
             for userset in usersets:
                 if await self._compute_permission(
-                    subject, userset, obj, tenant_id, context, visited.copy(), depth + 1
+                    subject, userset, obj, zone_id, context, visited.copy(), depth + 1
                 ):
                     return True
             return False
@@ -417,7 +417,7 @@ class AsyncReBACManager:
             union_relations = namespace.get_union_relations(permission)
             for rel in union_relations:
                 if await self._compute_permission(
-                    subject, rel, obj, tenant_id, context, visited.copy(), depth + 1
+                    subject, rel, obj, zone_id, context, visited.copy(), depth + 1
                 ):
                     return True
             return False
@@ -430,16 +430,14 @@ class AsyncReBACManager:
                 computed_userset = ttu["computedUserset"]
 
                 # Find related objects
-                related_objects = await self._find_related_objects(
-                    obj, tupleset_relation, tenant_id
-                )
+                related_objects = await self._find_related_objects(obj, tupleset_relation, zone_id)
 
                 for related_obj in related_objects:
                     if await self._compute_permission(
                         subject,
                         computed_userset,
                         related_obj,
-                        tenant_id,
+                        zone_id,
                         context,
                         visited.copy(),
                         depth + 1,
@@ -448,14 +446,14 @@ class AsyncReBACManager:
                 return False
 
         # Direct relation check
-        return await self._has_direct_relation(subject, permission, obj, tenant_id, context)
+        return await self._has_direct_relation(subject, permission, obj, zone_id, context)
 
     async def _has_direct_relation(
         self,
         subject: Entity,
         relation: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         context: dict[str, Any] | None = None,
     ) -> bool:
         """Check for direct relation tuple in database.
@@ -474,7 +472,7 @@ class AsyncReBACManager:
                     "relation": relation,
                     "object_type": obj.entity_type,
                     "object_id": obj.entity_id,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "now": now_iso,
                 },
             )
@@ -498,12 +496,12 @@ class AsyncReBACManager:
                 else:
                     return True
 
-            # Cross-tenant check for shared-* relations (PR #647, #648)
-            # Cross-tenant shares are stored in the resource owner's tenant
-            # but should be visible when checking from the recipient's tenant.
-            if relation in CROSS_TENANT_ALLOWED_RELATIONS:
+            # Cross-zone check for shared-* relations (PR #647, #648)
+            # Cross-zone shares are stored in the resource owner's zone
+            # but should be visible when checking from the recipient's zone.
+            if relation in CROSS_ZONE_ALLOWED_RELATIONS:
                 result = await session.execute(
-                    _QUERY_CROSS_TENANT_TUPLE,
+                    _QUERY_CROSS_ZONE_TUPLE,
                     {
                         "subject_type": subject.entity_type,
                         "subject_id": subject.entity_id,
@@ -514,17 +512,17 @@ class AsyncReBACManager:
                     },
                 )
                 if result.fetchone():
-                    logger.debug(f"Cross-tenant share found: {subject} -> {relation} -> {obj}")
+                    logger.debug(f"Cross-zone share found: {subject} -> {relation} -> {obj}")
                     return True
 
             # Check for wildcard/public access (*:*) - Issue #1064
-            # Wildcards grant access to ALL subjects regardless of tenant.
+            # Wildcards grant access to ALL subjects regardless of zone.
             # Only check if subject is NOT already the wildcard (avoid infinite loop).
             # Performance: O(1) indexed lookup via idx_rebac_alive_by_subject.
             # Industry standard: SpiceDB, OpenFGA, Ory Keto all use query-time wildcard check.
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
                 result = await session.execute(
-                    _QUERY_CROSS_TENANT_TUPLE,  # Reuses no-tenant-filter query
+                    _QUERY_CROSS_ZONE_TUPLE,  # Reuses no-zone-filter query
                     {
                         "subject_type": WILDCARD_SUBJECT[0],  # "*"
                         "subject_id": WILDCARD_SUBJECT[1],  # "*"
@@ -545,7 +543,7 @@ class AsyncReBACManager:
                     "relation": relation,
                     "object_type": obj.entity_type,
                     "object_id": obj.entity_id,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "now": now_iso,
                 },
             )
@@ -558,7 +556,7 @@ class AsyncReBACManager:
                 # Recursively check if subject has userset_relation on userset entity
                 userset_entity = Entity(userset_type, userset_id)
                 if await self._compute_permission(
-                    subject, userset_relation, userset_entity, tenant_id, context, set(), 0
+                    subject, userset_relation, userset_entity, zone_id, context, set(), 0
                 ):
                     return True
 
@@ -568,14 +566,14 @@ class AsyncReBACManager:
         self,
         obj: Entity,
         relation: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> list[Entity]:
         """Find all objects related to obj via relation.
 
         Uses prepared statement constants for optimal query plan caching.
         """
         # For parent relation, compute from path instead of querying DB
-        # This handles cross-tenant scenarios where parent tuples are in different tenant
+        # This handles cross-zone scenarios where parent tuples are in different zone
         if relation == "parent" and obj.entity_type == "file":
             from pathlib import PurePosixPath
 
@@ -592,7 +590,7 @@ class AsyncReBACManager:
                     "subject_type": obj.entity_type,
                     "subject_id": obj.entity_id,
                     "relation": relation,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "now": datetime.now(UTC).isoformat(),
                 },
             )
@@ -620,7 +618,7 @@ class AsyncReBACManager:
     async def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str,
+        zone_id: str,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check multiple permissions in batch (async).
 
@@ -629,7 +627,7 @@ class AsyncReBACManager:
 
         Args:
             checks: List of (subject, permission, object) tuples
-            tenant_id: Tenant ID for all checks
+            zone_id: Zone ID for all checks
 
         Returns:
             Dict mapping each check to its result (True/False)
@@ -644,8 +642,8 @@ class AsyncReBACManager:
         if not checks:
             return {}
 
-        if not tenant_id:
-            tenant_id = "default"
+        if not zone_id:
+            zone_id = "default"
 
         await self._load_namespaces()
 
@@ -657,7 +655,7 @@ class AsyncReBACManager:
             for check in checks:
                 subject, permission, obj = check
                 cached = self._l1_cache.get(
-                    subject[0], subject[1], permission, obj[0], obj[1], tenant_id
+                    subject[0], subject[1], permission, obj[0], obj[1], zone_id
                 )
                 if cached is not None:
                     results[check] = cached
@@ -670,7 +668,7 @@ class AsyncReBACManager:
             return results
 
         # Fetch all relevant tuples in bulk
-        tuples_graph = await self._fetch_tuples_bulk(cache_misses, tenant_id)
+        tuples_graph = await self._fetch_tuples_bulk(cache_misses, zone_id)
 
         # Compute permissions using in-memory graph
         memo_cache: dict[tuple[str, str, str, str, str], bool] = {}
@@ -683,7 +681,7 @@ class AsyncReBACManager:
             # Track delta for XFetch (Issue #718)
             start_time = time.perf_counter()
             result = await self._compute_permission_bulk(
-                subject_entity, permission, obj_entity, tenant_id, tuples_graph, memo_cache
+                subject_entity, permission, obj_entity, zone_id, tuples_graph, memo_cache
             )
             delta = time.perf_counter() - start_time
             results[check] = result
@@ -697,7 +695,7 @@ class AsyncReBACManager:
                     obj[0],
                     obj[1],
                     result,
-                    tenant_id,
+                    zone_id,
                     delta=delta,
                 )
 
@@ -706,7 +704,7 @@ class AsyncReBACManager:
     async def _fetch_tuples_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str,
+        zone_id: str,
     ) -> list[dict[str, Any]]:
         """Fetch all relevant tuples for bulk permission checks."""
         # Collect all subjects and objects
@@ -736,7 +734,7 @@ class AsyncReBACManager:
             result = await session.execute(
                 _QUERY_BULK_TUPLES,
                 {
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "now": now_iso,
                 },
             )
@@ -760,14 +758,14 @@ class AsyncReBACManager:
                         }
                     )
 
-            # Cross-tenant share tuple fetch (PR #647, #648)
-            # Fetch shared-* tuples for subjects without tenant filter
+            # Cross-zone share tuple fetch (PR #647, #648)
+            # Fetch shared-* tuples for subjects without zone filter
             # Uses prepared statement constant for optimal caching
             result = await session.execute(
-                _QUERY_BULK_CROSS_TENANT,
+                _QUERY_BULK_CROSS_ZONE,
                 {"now": now_iso},
             )
-            cross_tenant_count = 0
+            cross_zone_count = 0
             for row in result.fetchall():
                 subj = (row[0], row[1])
                 obj = (row[4], row[5])
@@ -784,9 +782,9 @@ class AsyncReBACManager:
                             "expires_at": row[7],
                         }
                     )
-                    cross_tenant_count += 1
-            if cross_tenant_count > 0:
-                logger.debug(f"Fetched {cross_tenant_count} cross-tenant share tuples")
+                    cross_zone_count += 1
+            if cross_zone_count > 0:
+                logger.debug(f"Fetched {cross_zone_count} cross-zone share tuples")
 
             # Compute parent tuples in memory (PR #648)
             # For file paths, parent relationships are deterministic from path
@@ -815,7 +813,7 @@ class AsyncReBACManager:
             try:
                 result = await session.execute(
                     _QUERY_LEOPARD_CLOSURE,
-                    {"tenant_id": tenant_id},
+                    {"zone_id": zone_id},
                 )
                 leopard_count = 0
                 for row in result.fetchall():
@@ -850,7 +848,7 @@ class AsyncReBACManager:
         subject: Entity,
         permission: str,
         obj: Entity,
-        tenant_id: str,
+        zone_id: str,
         tuples_graph: list[dict[str, Any]],
         memo_cache: dict[tuple[str, str, str, str, str], bool],
         depth: int = 0,
@@ -892,7 +890,7 @@ class AsyncReBACManager:
                     subject,
                     userset,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     memo_cache,
                     depth + 1,
@@ -912,7 +910,7 @@ class AsyncReBACManager:
                     subject,
                     rel,
                     obj,
-                    tenant_id,
+                    zone_id,
                     tuples_graph,
                     memo_cache,
                     depth + 1,
@@ -938,7 +936,7 @@ class AsyncReBACManager:
                         subject,
                         computed_userset,
                         related_obj,
-                        tenant_id,
+                        zone_id,
                         tuples_graph,
                         memo_cache,
                         depth + 1,
@@ -996,7 +994,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
         subject_relation: str | None = None,
         conditions: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
@@ -1007,7 +1005,7 @@ class AsyncReBACManager:
             subject: (subject_type, subject_id) tuple
             relation: Relation name (e.g., "owner", "viewer", "parent")
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID for isolation
+            zone_id: Zone ID for isolation
             subject_relation: For userset subjects (e.g., "member" in group#member)
             conditions: ABAC conditions for conditional access
             expires_at: Optional expiry time
@@ -1018,8 +1016,8 @@ class AsyncReBACManager:
         import json
         import uuid
 
-        if not tenant_id:
-            tenant_id = "default"
+        if not zone_id:
+            zone_id = "default"
 
         tuple_id = str(uuid.uuid4())
         now = datetime.now(UTC)
@@ -1035,7 +1033,7 @@ class AsyncReBACManager:
                     "relation": relation,
                     "object_type": object[0],
                     "object_id": object[1],
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "conditions": json.dumps(conditions) if conditions else None,
                     "expires_at": expires_at.isoformat() if expires_at else None,
                     "created_at": now,
@@ -1059,7 +1057,7 @@ class AsyncReBACManager:
                             "member_id": subject[1],
                             "group_type": object[0],
                             "group_id": object[1],
-                            "tenant_id": tenant_id,
+                            "zone_id": zone_id,
                             "depth": 1,
                         },
                     )
@@ -1074,7 +1072,7 @@ class AsyncReBACManager:
 
         # Invalidate L1 cache for this object
         if self._l1_cache:
-            self._l1_cache.invalidate_object(object[0], object[1], tenant_id)
+            self._l1_cache.invalidate_object(object[0], object[1], zone_id)
 
         return tuple_id
 
@@ -1083,7 +1081,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
     ) -> bool:
         """Delete a relationship tuple (async).
 
@@ -1091,13 +1089,13 @@ class AsyncReBACManager:
             subject: (subject_type, subject_id) tuple
             relation: Relation name
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if tuple was deleted, False if not found
         """
-        if not tenant_id:
-            tenant_id = "default"
+        if not zone_id:
+            zone_id = "default"
 
         async with self._session() as session:
             result = await session.execute(
@@ -1108,7 +1106,7 @@ class AsyncReBACManager:
                     "relation": relation,
                     "object_type": object[0],
                     "object_id": object[1],
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                 },
             )
             await session.commit()
@@ -1127,14 +1125,14 @@ class AsyncReBACManager:
                               AND member_id = :member_id
                               AND group_type = :group_type
                               AND group_id = :group_id
-                              AND tenant_id = :tenant_id
+                              AND zone_id = :zone_id
                         """),
                         {
                             "member_type": subject[0],
                             "member_id": subject[1],
                             "group_type": object[0],
                             "group_id": object[1],
-                            "tenant_id": tenant_id,
+                            "zone_id": zone_id,
                         },
                     )
                     await session.commit()
@@ -1147,7 +1145,7 @@ class AsyncReBACManager:
 
         # Invalidate L1 cache
         if self._l1_cache:
-            self._l1_cache.invalidate_object(object[0], object[1], tenant_id)
+            self._l1_cache.invalidate_object(object[0], object[1], zone_id)
 
         return deleted
 

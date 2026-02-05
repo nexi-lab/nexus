@@ -39,7 +39,7 @@ Production-grade deployment with PostgreSQL backend.
 ### :material-shield-key: Authenticated Mode
 Secure deployment with API key authentication.
 
-**Best for:** Public-facing services, multi-tenant SaaS
+**Best for:** Public-facing services, multi-zone SaaS
 
 [Learn More →](../authentication.md){ .md-button }
 </div>

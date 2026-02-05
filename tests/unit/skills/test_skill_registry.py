@@ -205,17 +205,17 @@ description: User version
 User content
 """
 
-    tenant_skill = b"""---
+    zone_skill = b"""---
 name: duplicate-skill
-description: Tenant version
+description: Zone version
 ---
-Tenant content
+Zone content
 """
 
     fs = MockFilesystem(
         {
             "/skills/user/duplicate-skill/SKILL.md": user_skill,
-            "/skills/tenant/duplicate-skill/SKILL.md": tenant_skill,
+            "/skills/zone/duplicate-skill/SKILL.md": zone_skill,
         }
     )
 
@@ -339,7 +339,7 @@ async def test_list_skills_by_tier() -> None:
     fs = MockFilesystem(
         {
             "/skills/user/agent-skill/SKILL.md": SKILL_1,
-            "/skills/tenant/tenant-skill/SKILL.md": SKILL_2,
+            "/skills/zone/zone-skill/SKILL.md": SKILL_2,
         }
     )
 
@@ -350,9 +350,9 @@ async def test_list_skills_by_tier() -> None:
     assert len(agent_skills) == 1
     assert "skill-1" in agent_skills
 
-    tenant_skills = registry.list_skills(tier="tenant")
-    assert len(tenant_skills) == 1
-    assert "skill-2" in tenant_skills
+    zone_skills = registry.list_skills(tier="zone")
+    assert len(zone_skills) == 1
+    assert "skill-2" in zone_skills
 
 
 @pytest.mark.asyncio

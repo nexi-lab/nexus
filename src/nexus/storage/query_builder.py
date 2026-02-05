@@ -57,7 +57,7 @@ class WorkQueryBuilder:
             return [
                 {
                     "path_id": row[0],
-                    "tenant_id": row[1],
+                    "zone_id": row[1],
                     "virtual_path": row[2],
                     "backend_id": row[3],
                     "physical_path": row[4],
@@ -103,7 +103,7 @@ class WorkQueryBuilder:
             return [
                 {
                     "path_id": row[0],
-                    "tenant_id": row[1],
+                    "zone_id": row[1],
                     "virtual_path": row[2],
                     "backend_id": row[3],
                     "physical_path": row[4],
@@ -149,7 +149,7 @@ class WorkQueryBuilder:
             return [
                 {
                     "path_id": row[0],
-                    "tenant_id": row[1],
+                    "zone_id": row[1],
                     "virtual_path": row[2],
                     "backend_id": row[3],
                     "physical_path": row[4],
@@ -196,7 +196,7 @@ class WorkQueryBuilder:
             return [
                 {
                     "path_id": row[0],
-                    "tenant_id": row[1],
+                    "zone_id": row[1],
                     "virtual_path": row[2],
                     "backend_id": row[3],
                     "file_type": row[4],
@@ -241,7 +241,7 @@ class WorkQueryBuilder:
             return [
                 {
                     "path_id": row[0],
-                    "tenant_id": row[1],
+                    "zone_id": row[1],
                     "virtual_path": row[2],
                     "backend_id": row[3],
                     "file_type": row[4],

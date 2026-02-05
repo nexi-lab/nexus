@@ -612,8 +612,8 @@ class TestLoadOAuthYaml:
         assert microsoft.client_id_env == "NEXUS_OAUTH_MICROSOFT_CLIENT_ID"
         assert microsoft.client_secret_env == "NEXUS_OAUTH_MICROSOFT_CLIENT_SECRET"
         assert microsoft.requires_pkce is False
-        # Verify tenant_id_env is NOT in metadata (we removed it)
-        assert "tenant_id_env" not in microsoft.metadata
+        # Verify zone_id_env is NOT in metadata (we removed it)
+        assert "zone_id_env" not in microsoft.metadata
 
         # Test X provider
         x = factory.get_provider_config("x")

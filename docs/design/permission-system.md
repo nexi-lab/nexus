@@ -12,7 +12,7 @@
 4. [Embedded vs Server Mode](#embedded-vs-server-mode)
 5. [Usage Examples](#usage-examples)
 6. [Configuration](#configuration)
-7. [Multi-Tenant Support](#multi-tenant-support)
+7. [Multi-Tenant Support](#multi-zone-support)
 8. [CLI Commands](#cli-commands)
 9. [Security & Best Practices](#security--best-practices)
 10. [Migration Guide](#migration-guide)
@@ -80,7 +80,7 @@ Traditional permission systems don't scale well for modern applications:
 - ✅ Group membership with transitive access
 - ✅ Temporary permissions with expiry
 - ✅ Relationship graphs (teams, departments, orgs)
-- ✅ Multi-tenant isolation
+- ✅ Multi-zone isolation
 - ✅ Audit trails for compliance
 - ✅ Proven at scale (Google, Airbnb, Auth0)
 
@@ -670,7 +670,7 @@ try:
         "/workspace/protected.txt",
         b"content",
         subject=("user", "alice"),
-        tenant_id="acme"
+        zone_id="acme"
     )
 except PermissionError:
     print("Access denied - no write permission")
@@ -687,7 +687,7 @@ nx.write(
     "/workspace/protected.txt",
     b"content",
     subject=("user", "alice"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 # → Success!
 ```
@@ -747,7 +747,7 @@ rebac = EnhancedReBACManager(
     engine=db_engine,
     cache_ttl_seconds=300,              # 5 minute cache
     max_depth=10,                       # Graph traversal depth limit
-    enforce_tenant_isolation=True,      # Multi-tenant support (P0-2)
+    enforce_tenant_isolation=True,      # Multi-zone support (P0-2)
     enable_graph_limits=True,           # DoS protection (P0-5)
 )
 ```
@@ -874,7 +874,7 @@ nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/doc.txt"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 
 # Tenant B - TechCorp
@@ -882,7 +882,7 @@ nx.rebac_create(
     subject=("user", "alice"),  # Same user, different tenant!
     relation="direct_owner",
     object=("file", "/workspace/doc.txt"),  # Same path!
-    tenant_id="techcorp"
+    zone_id="techcorp"
 )
 
 # Queries are tenant-scoped
@@ -890,7 +890,7 @@ acme_access = nx.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/workspace/doc.txt"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 # → True
 
@@ -898,7 +898,7 @@ techcorp_access = nx.rebac_check(
     subject=("user", "alice"),
     permission="write",
     object=("file", "/workspace/doc.txt"),
-    tenant_id="techcorp"
+    zone_id="techcorp"
 )
 # → True (but different file!)
 ```
@@ -914,7 +914,7 @@ try:
         subject=("user", "alice"),  # From tenant "acme"
         relation="viewer",
         object=("file", "/workspace/doc.txt"),  # From tenant "techcorp"
-        tenant_id="acme"
+        zone_id="acme"
     )
 except ValidationError:
     print("Cross-tenant relationship not allowed")
@@ -925,12 +925,12 @@ except ValidationError:
 **Cache entries are isolated by tenant:**
 
 ```python
-# Cache key includes tenant_id
+# Cache key includes zone_id
 cache_key = (
     subject_type, subject_id,
     permission,
     object_type, object_id,
-    tenant_id  # ← Tenant isolation
+    zone_id  # ← Tenant isolation
 )
 
 # Cache hits only for same tenant
@@ -1068,21 +1068,21 @@ with session_factory() as session:
 ### 5. Tenant Isolation
 
 ```python
-# ✅ Always specify tenant_id
+# ✅ Always specify zone_id
 nx.rebac_create(
     subject=("user", "alice"),
     relation="owner",
     object=("file", "/doc.txt"),
-    tenant_id="acme"  # Required!
+    zone_id="acme"  # Required!
 )
 
 # ❌ Never mix tenants
 # This will fail with ValidationError
 nx.rebac_create(
-    subject=("user", "alice"),  # tenant_id="acme"
+    subject=("user", "alice"),  # zone_id="acme"
     relation="viewer",
-    object=("file", "/doc.txt"),  # tenant_id="techcorp"
-    tenant_id="acme"
+    object=("file", "/doc.txt"),  # zone_id="techcorp"
+    zone_id="acme"
 )
 ```
 
@@ -1092,14 +1092,14 @@ nx.rebac_create(
 # ✅ Extract subject from authenticated token
 auth_result = await auth_provider.authenticate(token)
 subject = (auth_result.subject_type, auth_result.subject_id)
-tenant_id = auth_result.tenant_id
+zone_id = auth_result.zone_id
 
 # Use validated subject
 nx.rebac_check(
     subject=subject,
     permission="write",
     object=("file", "/doc.txt"),
-    tenant_id=tenant_id
+    zone_id=zone_id
 )
 
 # ❌ Never trust client-provided subjects without authentication
@@ -1208,7 +1208,7 @@ if mode & 0o020:
 
 ```python
 # v0.5.x: Implicit subject from config
-nx = connect({"agent_id": "alice", "tenant_id": "acme"})
+nx = connect({"agent_id": "alice", "zone_id": "acme"})
 nx.write("/workspace/doc.txt", b"content")
 
 # v0.6.0: Explicit subject per operation
@@ -1217,7 +1217,7 @@ nx.write(
     "/workspace/doc.txt",
     b"content",
     subject=("user", "alice"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 ```
 
@@ -1543,7 +1543,7 @@ for entry in audit_entries:
     "timestamp": "2025-10-24T10:30:00Z",
     "request_id": "req-abc-123",
     "user_id": "admin",
-    "tenant_id": "org_acme",
+    "zone_id": "org_acme",
     "path": "/system/config.yaml",
     "permission": "read",
     "bypass_type": "admin",
@@ -1594,19 +1594,19 @@ can_write = enforcer.check(
 ```python
 # Create relationships - enforces same tenant
 nx.rebac_create(
-    subject=("user", "alice"),        # tenant_id="acme"
+    subject=("user", "alice"),        # zone_id="acme"
     relation="owner",
-    object=("file", "/doc.txt"),      # tenant_id="acme"
-    tenant_id="acme"
+    object=("file", "/doc.txt"),      # zone_id="acme"
+    zone_id="acme"
 )
 
 # Cross-tenant relationships rejected
 try:
     nx.rebac_create(
-        subject=("user", "alice"),    # tenant_id="acme"
+        subject=("user", "alice"),    # zone_id="acme"
         relation="viewer",
-        object=("file", "/doc.txt"),  # tenant_id="techcorp"
-        tenant_id="acme"
+        object=("file", "/doc.txt"),  # zone_id="techcorp"
+        zone_id="acme"
     )
 except ValidationError as e:
     print(f"Rejected: {e}")
@@ -1617,14 +1617,14 @@ acme_result = nx.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/doc.txt"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 
 techcorp_result = nx.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/doc.txt"),
-    tenant_id="techcorp"
+    zone_id="techcorp"
 )
 # → Different results for different tenants!
 ```
@@ -1632,8 +1632,8 @@ techcorp_result = nx.rebac_check(
 **Protection Mechanisms:**
 
 1. **Write-time validation**: Rejects cross-tenant tuples
-2. **Query-time filtering**: All SQL queries include `WHERE tenant_id = ?`
-3. **Cache isolation**: Cache keys include tenant_id
+2. **Query-time filtering**: All SQL queries include `WHERE zone_id = ?`
+3. **Cache isolation**: Cache keys include zone_id
 4. **Graph traversal**: Cannot follow edges across tenants
 
 ### P0-5: Graph Limits (DoS Protection)
@@ -1775,8 +1775,8 @@ can_access = nx.rebac_check(("user", "alice"), "read", ("file", "/doc.txt"))
 **Problem:**
 ```python
 # Works in tenant A, fails in tenant B
-nx.rebac_check(..., tenant_id="tenant_a")  # → True
-nx.rebac_check(..., tenant_id="tenant_b")  # → False
+nx.rebac_check(..., zone_id="tenant_a")  # → True
+nx.rebac_check(..., zone_id="tenant_b")  # → False
 ```
 
 **Solution:**
@@ -1808,7 +1808,7 @@ Cache is invalidated on write/delete. If still stale:
 
 **Examples:**
 - `examples/py_demo/rebac_demo.py` - Comprehensive ReBAC examples
-- `examples/py_demo/multi_tenant_rebac_demo.py` - Multi-tenant usage
+- `examples/py_demo/multi_tenant_rebac_demo.py` - Multi-zone usage
 - `examples/script_demo/rebac_demo.sh` - CLI examples
 
 **Documentation:**
@@ -1828,7 +1828,7 @@ Cache is invalidated on write/delete. If still stale:
 1. ✅ **ReBAC = Relationships**: Permissions are relationships in a graph
 2. ✅ **Works in Both Modes**: Embedded (direct) and Server (RPC)
 3. ✅ **Subject-Based**: Identity per operation, not per connection
-4. ✅ **Multi-Tenant**: Complete isolation via tenant_id (P0-2)
+4. ✅ **Multi-Tenant**: Complete isolation via zone_id (P0-2)
 5. ✅ **Scalable**: Proven to billions of relationships (Google Zanzibar)
 6. ✅ **Flexible**: Model any permission structure (groups, hierarchies, expiry)
 7. ✅ **Auditable**: Every change logged to changelog
@@ -1842,7 +1842,7 @@ Cache is invalidated on write/delete. If still stale:
 - ✅ Complex organizational structures
 - ✅ Dynamic permissions (team changes, temporary access)
 - ✅ Audit requirements
-- ✅ Multi-tenant SaaS
+- ✅ Multi-zone SaaS
 
 **When NOT to Use:**
 - ❌ Single-user applications (just use admin mode)

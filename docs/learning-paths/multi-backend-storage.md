@@ -308,27 +308,27 @@ print("✓ 4 paths, 2 backends, only 2 physical copies (one per backend)")
 Each tenant gets their own backend mount:
 
 ```python
-def provision_tenant_storage(nx, tenant_id: str, gcs_bucket: str):
+def provision_tenant_storage(nx, zone_id: str, gcs_bucket: str):
     """Provision isolated storage for a new tenant"""
 
     # Create tenant-specific mount
     mount_id = nx.mount_manager.add_mount(
-        mount_point=f"/tenants/{tenant_id}",
+        mount_point=f"/tenants/{zone_id}",
         backend_type="gcs",
         backend_config={
             "bucket": gcs_bucket,
-            "prefix": f"tenant-{tenant_id}/",  # Bucket prefix isolation
+            "prefix": f"tenant-{zone_id}/",  # Bucket prefix isolation
             "project_id": "my-gcp-project"
         },
         priority=20
     )
 
     # Create tenant workspace structure
-    nx.mkdir(f"/tenants/{tenant_id}/documents")
-    nx.mkdir(f"/tenants/{tenant_id}/uploads")
-    nx.mkdir(f"/tenants/{tenant_id}/exports")
+    nx.mkdir(f"/tenants/{zone_id}/documents")
+    nx.mkdir(f"/tenants/{zone_id}/uploads")
+    nx.mkdir(f"/tenants/{zone_id}/exports")
 
-    print(f"✓ Tenant {tenant_id} provisioned with mount {mount_id}")
+    print(f"✓ Tenant {zone_id} provisioned with mount {mount_id}")
     return mount_id
 
 # Provision storage for new tenants
@@ -590,7 +590,7 @@ You've mastered multi-backend storage! Here's how to continue:
 
 ### Immediate Next Steps
 
-1. **[Multi-Tenant SaaS](multi-tenant-saas.md)** - Build production multi-tenant apps with backend isolation
+1. **[Multi-Tenant SaaS](multi-zone-saas.md)** - Build production multi-zone apps with backend isolation
 2. **[Team Collaboration](team-collaboration.md)** - Multi-user permissions with shared storage
 3. **[Workflow Automation](workflow-automation.md)** - Automate data tiering with workflows
 
@@ -624,7 +624,7 @@ Production multi-backend setup with:
 - Local storage for hot data
 - GCS for durable archival
 - Automatic tiering
-- Multi-tenant isolation
+- Multi-zone isolation
 """
 
 import nexus
@@ -748,6 +748,6 @@ print("  - Cold tier: GCS Coldline (/cold)")
 2. **Transparent Routing**: Path-based routing handled automatically
 3. **Cost Optimization**: Right storage tier for each use case
 4. **No Vendor Lock-in**: Switch backends without code changes
-5. **Production-Ready**: Multi-region, multi-tenant, automatic tiering
+5. **Production-Ready**: Multi-region, multi-zone, automatic tiering
 
-**Next:** [Multi-Tenant SaaS →](multi-tenant-saas.md)
+**Next:** [Multi-Tenant SaaS →](multi-zone-saas.md)

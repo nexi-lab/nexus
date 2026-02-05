@@ -17,13 +17,13 @@ class ExportFilter:
     """Filter options for metadata export.
 
     Attributes:
-        tenant_id: Filter by tenant ID (None = all tenants)
+        zone_id: Filter by zone ID (None = all tenants)
         path_prefix: Only export paths starting with this prefix (default: "")
         after_time: Only export files modified after this time (None = all)
         include_deleted: Include soft-deleted files in export (default: False)
     """
 
-    tenant_id: str | None = None
+    zone_id: str | None = None
     path_prefix: str = ""
     after_time: datetime | None = None
     include_deleted: bool = False

@@ -27,7 +27,7 @@ def register_agent(
     user_id: str,
     agent_id: str,
     name: str | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
     metadata: dict | None = None,
     entity_registry: EntityRegistry | None = None,
 ) -> dict:
@@ -43,7 +43,7 @@ def register_agent(
         user_id: Owner of the agent
         agent_id: Unique agent identifier (e.g., "agent_data_analyst")
         name: Human-readable name (e.g., "Data Analyst")
-        tenant_id: Organization ID
+        zone_id: Organization ID
         metadata: Additional metadata
         entity_registry: Registry for relationships
 
@@ -89,7 +89,7 @@ def register_agent(
         "agent_id": agent_id,
         "user_id": user_id,
         "name": name,
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "metadata": metadata or {},
         "created_at": datetime.now(UTC).isoformat(),
     }

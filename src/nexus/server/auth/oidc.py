@@ -62,10 +62,10 @@ class OIDCAuth(AuthProvider):
         jwks_uri: str | None = None,
         subject_type: str = "user",
         subject_id_claim: str = "sub",
-        tenant_id_claim: str | None = "org_id",
+        zone_id_claim: str | None = "org_id",
         admin_emails: list[str] | None = None,
-        allow_default_tenant: bool = False,  # P0-2: Strict tenant binding
-        require_tenant: bool = False,  # P0-2: Deny if tenant cannot be derived
+        allow_default_zone: bool = False,  # P0-2: Strict zone binding
+        require_zone: bool = False,  # P0-2: Deny if zone cannot be derived
     ):
         """Initialize OIDC authentication.
 
@@ -75,20 +75,20 @@ class OIDCAuth(AuthProvider):
             jwks_uri: JSON Web Key Set URI for public keys (auto-discovered if None)
             subject_type: Subject type for authenticated users (default: "user")
             subject_id_claim: JWT claim to use as subject_id (default: "sub")
-            tenant_id_claim: JWT claim to use as tenant_id (default: "org_id", None to disable)
+            zone_id_claim: JWT claim to use as zone_id (default: "org_id", None to disable)
             admin_emails: List of admin email addresses
-            allow_default_tenant: Allow fallback to default tenant if claim missing
-            require_tenant: Deny authentication if tenant cannot be derived
+            allow_default_zone: Allow fallback to default zone if claim missing
+            require_zone: Deny authentication if zone cannot be derived
         """
         self.issuer = issuer
         self.audience = audience
         self.jwks_uri = jwks_uri or self._discover_jwks_uri(issuer)
         self.subject_type = subject_type
         self.subject_id_claim = subject_id_claim
-        self.tenant_id_claim = tenant_id_claim
+        self.zone_id_claim = zone_id_claim
         self.admin_emails = set(admin_emails or [])
-        self.allow_default_tenant = allow_default_tenant
-        self.require_tenant = require_tenant
+        self.allow_default_zone = allow_default_zone
+        self.require_zone = require_zone
 
         # JWKS cache (P0-3)
         self._jwks_cache: dict[str, Any] | None = None
@@ -245,7 +245,7 @@ class OIDCAuth(AuthProvider):
     async def authenticate(self, token: str) -> AuthResult:
         """Authenticate using OIDC ID token.
 
-        P0-2: Strict subject & tenant binding contract
+        P0-2: Strict subject & zone binding contract
 
         Args:
             token: JWT ID token from Authorization header
@@ -266,17 +266,17 @@ class OIDCAuth(AuthProvider):
             provider_prefix = self._extract_provider_prefix(claims.get("iss", ""))
             subject_id = f"{provider_prefix}:{subject_id}"
 
-            # P0-2: Extract tenant ID with strict validation
-            tenant_id = None
-            if self.tenant_id_claim:
-                tenant_id = claims.get(self.tenant_id_claim)
+            # P0-2: Extract zone ID with strict validation
+            zone_id = None
+            if self.zone_id_claim:
+                zone_id = claims.get(self.zone_id_claim)
 
-            # P0-2: Deny if tenant cannot be derived and require_tenant is True
-            if self.require_tenant and not tenant_id and not self.allow_default_tenant:
+            # P0-2: Deny if zone cannot be derived and require_zone is True
+            if self.require_zone and not zone_id and not self.allow_default_zone:
                 logger.error(
-                    f"UNAUTHORIZED: Tenant required but not found in token. "
-                    f"Claim '{self.tenant_id_claim}' missing or empty. "
-                    f"Set allow_default_tenant=True to allow fallback."
+                    f"UNAUTHORIZED: Zone required but not found in token. "
+                    f"Claim '{self.zone_id_claim}' missing or empty. "
+                    f"Set allow_default_zone=True to allow fallback."
                 )
                 return AuthResult(authenticated=False)
 
@@ -285,7 +285,7 @@ class OIDCAuth(AuthProvider):
             is_admin = email in self.admin_emails if email else False
 
             logger.info(
-                f"OIDC authenticated: subject={subject_id}, tenant={tenant_id}, "
+                f"OIDC authenticated: subject={subject_id}, zone={zone_id}, "
                 f"admin={is_admin}, email={email}"
             )
 
@@ -293,7 +293,7 @@ class OIDCAuth(AuthProvider):
                 authenticated=True,
                 subject_type=self.subject_type,
                 subject_id=subject_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 is_admin=is_admin,
                 metadata={
                     "email": email,
@@ -360,10 +360,10 @@ class OIDCAuth(AuthProvider):
                 - jwks_uri: Public keys endpoint
                 - subject_type: Subject type (default: "user")
                 - subject_id_claim: Claim to use as subject_id (default: "sub")
-                - tenant_id_claim: Claim to use as tenant_id (default: "org_id")
+                - zone_id_claim: Claim to use as zone_id (default: "org_id")
                 - admin_emails: List of admin emails
-                - allow_default_tenant: Allow fallback to default tenant (default: False)
-                - require_tenant: Deny auth if tenant missing (default: False)
+                - allow_default_zone: Allow fallback to default zone (default: False)
+                - require_zone: Deny auth if zone missing (default: False)
 
         Returns:
             OIDCAuth instance
@@ -373,7 +373,7 @@ class OIDCAuth(AuthProvider):
                 "issuer": "https://accounts.google.com",
                 "audience": "your-client-id.apps.googleusercontent.com",
                 "admin_emails": ["admin@example.com"],
-                "require_tenant": True  # Enforce tenant binding
+                "require_zone": True  # Enforce zone binding
             }
             auth = OIDCAuth.from_config(config)
         """
@@ -383,10 +383,10 @@ class OIDCAuth(AuthProvider):
             jwks_uri=config.get("jwks_uri"),
             subject_type=config.get("subject_type", "user"),
             subject_id_claim=config.get("subject_id_claim", "sub"),
-            tenant_id_claim=config.get("tenant_id_claim", "org_id"),
+            zone_id_claim=config.get("zone_id_claim", "org_id"),
             admin_emails=config.get("admin_emails", []),
-            allow_default_tenant=config.get("allow_default_tenant", False),
-            require_tenant=config.get("require_tenant", False),
+            allow_default_zone=config.get("allow_default_zone", False),
+            require_zone=config.get("require_zone", False),
         )
 
 

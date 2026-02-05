@@ -165,11 +165,11 @@ class GlobStrategy(StrEnum):
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import PaginatedResult
+    from nexus.core._metadata_generated import PaginatedResult
     from nexus.core.permissions import OperationContext
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 class NexusFSSearchMixin:
@@ -181,7 +181,7 @@ class NexusFSSearchMixin:
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        metadata: SQLAlchemyMetadataStore
+        metadata: RaftMetadataStore
         router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext
@@ -220,47 +220,47 @@ class NexusFSSearchMixin:
             self, path: str = "/", recursive: bool = False
         ) -> builtins.list[str] | builtins.list[dict[str, Any]]: ...
 
-    def _get_cross_tenant_shared_paths(
+    def _get_cross_zone_shared_paths(
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
         prefix: str = "",
     ) -> list[str]:
-        """Fetch file paths shared with a user from other tenants.
+        """Fetch file paths shared with a user from other zones.
 
-        Issue #904: This method fetches cross-tenant shared file paths to include
-        in list() results. Uses the idx_rebac_cross_tenant_shares index.
+        Issue #904: This method fetches cross-zone shared file paths to include
+        in list() results. Uses the idx_rebac_cross_zone_shares index.
 
         Args:
             subject_type: Subject type (e.g., "user")
             subject_id: Subject ID (e.g., user ID)
-            tenant_id: Current tenant ID (to exclude from results)
+            zone_id: Current zone ID (to exclude from results)
             prefix: Path prefix filter (optional)
 
         Returns:
-            List of file paths shared with this subject from other tenants
+            List of file paths shared with this subject from other zones
         """
         from datetime import UTC, datetime
 
-        from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
+        from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
 
         try:
-            # Use the rebac manager's connection to query cross-tenant shares
+            # Use the rebac manager's connection to query cross-zone shares
             with self._rebac_manager._connection() as conn:
                 cursor = self._rebac_manager._create_cursor(conn)
 
-                cross_tenant_relations = list(CROSS_TENANT_ALLOWED_RELATIONS)
-                placeholders = ", ".join("?" * len(cross_tenant_relations))
+                cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+                placeholders = ", ".join("?" * len(cross_zone_relations))
 
-                # Query for file objects shared with this subject from other tenants
+                # Query for file objects shared with this subject from other zones
                 query = f"""
                     SELECT DISTINCT object_id
                     FROM rebac_tuples
                     WHERE relation IN ({placeholders})
                       AND subject_type = ? AND subject_id = ?
                       AND object_type = 'file'
-                      AND tenant_id != ?
+                      AND zone_id != ?
                       AND (expires_at IS NULL OR expires_at > ?)
                 """
 
@@ -268,19 +268,19 @@ class NexusFSSearchMixin:
                 if prefix:
                     query += " AND object_id LIKE ?"
                     params = (
-                        *cross_tenant_relations,
+                        *cross_zone_relations,
                         subject_type,
                         subject_id,
-                        tenant_id,
+                        zone_id,
                         datetime.now(UTC).isoformat(),
                         f"{prefix}%",
                     )
                 else:
                     params = (
-                        *cross_tenant_relations,
+                        *cross_zone_relations,
                         subject_type,
                         subject_id,
-                        tenant_id,
+                        zone_id,
                         datetime.now(UTC).isoformat(),
                     )
 
@@ -296,13 +296,13 @@ class NexusFSSearchMixin:
 
                 if paths:
                     logger.debug(
-                        f"[CROSS-TENANT] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
+                        f"[CROSS-ZONE] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
                     )
 
                 return paths
 
         except Exception as e:
-            logger.warning(f"Failed to fetch cross-tenant shared paths: {e}")
+            logger.warning(f"Failed to fetch cross-zone shared paths: {e}")
             return []
 
     @rpc_expose(description="List files in directory")
@@ -385,10 +385,10 @@ class NexusFSSearchMixin:
         # These connectors have virtual directories that don't exist in metadata
         if path and path != "/":
             try:
-                tenant_id, agent_id, is_admin = self._get_routing_params(context)
+                zone_id, agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
@@ -538,7 +538,7 @@ class NexusFSSearchMixin:
                             if not is_dir:
                                 try:
                                     # Convert virtual path to backend relative path
-                                    # e.g., "/tenant:.../connector/gmail/SENT" -> "SENT"
+                                    # e.g., "/zone/.../connector/gmail/SENT" -> "SENT"
                                     backend_relative = entry_path[len(path) :].lstrip("/")
                                     is_dir = route.backend.is_directory(
                                         backend_relative, context=list_context
@@ -596,17 +596,17 @@ class NexusFSSearchMixin:
                 )
                 # Fall through to normal metadata-based listing
 
-        # Issue #904: Extract tenant_id for PREWHERE-style DB filtering
+        # Issue #904: Extract zone_id for PREWHERE-style DB filtering
         # This filters files at the database level, reducing rows loaded by 30-90%
-        # NOTE: Only apply tenant filtering when permissions are enforced,
-        # because files are only stored with tenant_id when permissions are active.
-        list_tenant_id: str | None = None
+        # NOTE: Only apply zone filtering when permissions are enforced,
+        # because files are only stored with zone_id when permissions are active.
+        list_zone_id: str | None = None
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
-            if hasattr(context, "tenant_id"):
-                list_tenant_id = context.tenant_id
-            # Extract subject info for cross-tenant share lookup
+            if hasattr(context, "zone_id"):
+                list_zone_id = context.zone_id
+            # Extract subject info for cross-zone share lookup
             if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
                 subject_type = context.subject_type
                 subject_id = context.subject_id or context.user_id
@@ -628,7 +628,7 @@ class NexusFSSearchMixin:
             if prefix:
                 prefix = self._validate_path(prefix)
             _meta_start = _time.time()
-            all_files = self.metadata.list(prefix, tenant_id=list_tenant_id)
+            all_files = self.metadata.list(prefix, zone_id=list_zone_id)
             logger.info(
                 f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
             )
@@ -660,7 +660,7 @@ class NexusFSSearchMixin:
             )
 
             logger.info(
-                f"[LIST-DEBUG] START path={path}, recursive={recursive}, tenant={list_tenant_id}, details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
+                f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, has_context={context is not None}"
             )
             if (
                 not recursive
@@ -669,14 +669,14 @@ class NexusFSSearchMixin:
                 and context
             ):
                 # Issue #1147: Get revision BEFORE sparse index lookup to detect concurrent writes
-                if _rebac_manager and hasattr(_rebac_manager, "_get_tenant_revision_for_grant"):
-                    _revision_before = _rebac_manager._get_tenant_revision_for_grant(
-                        list_tenant_id or "default"
+                if _rebac_manager and hasattr(_rebac_manager, "_get_zone_revision_for_grant"):
+                    _revision_before = _rebac_manager._get_zone_revision_for_grant(
+                        list_zone_id or "default"
                     )
                     logger.debug(f"[LIST-DEBUG] Revision before sparse index: {_revision_before}")
 
                 _idx_start = _time.time()
-                dir_entries = self.metadata.list_directory_entries(path, tenant_id=list_tenant_id)
+                dir_entries = self.metadata.list_directory_entries(path, zone_id=list_zone_id)
                 _idx_elapsed = (_time.time() - _idx_start) * 1000
 
                 if dir_entries is not None:
@@ -685,7 +685,7 @@ class NexusFSSearchMixin:
                     )
 
                     # Use Tiger bitmap to check which directories have accessible descendants
-                    from nexus.core.metadata import FileMetadata
+                    from nexus.core._metadata_generated import FileMetadata
 
                     all_files = []
                     _perm_start = _time.time()
@@ -738,10 +738,10 @@ class NexusFSSearchMixin:
                     if (
                         _revision_before is not None
                         and _rebac_manager
-                        and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                        and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
                     ):
-                        _revision_after = _rebac_manager._get_tenant_revision_for_grant(
-                            list_tenant_id or "default"
+                        _revision_after = _rebac_manager._get_zone_revision_for_grant(
+                            list_zone_id or "default"
                         )
                         if _revision_after != _revision_before:
                             logger.warning(
@@ -790,10 +790,10 @@ class NexusFSSearchMixin:
                             if (
                                 _revision_before is None
                                 and _rebac_manager
-                                and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                                and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
                             ):
-                                _revision_before = _rebac_manager._get_tenant_revision_for_grant(
-                                    list_tenant_id or "default"
+                                _revision_before = _rebac_manager._get_zone_revision_for_grant(
+                                    list_zone_id or "default"
                                 )
 
                             _accessible_int_ids = tiger_cache.get_accessible_int_ids(
@@ -824,7 +824,7 @@ class NexusFSSearchMixin:
                 _meta_start = _time.time()
                 all_files = self.metadata.list(
                     list_prefix,
-                    tenant_id=list_tenant_id,
+                    zone_id=list_zone_id,
                     accessible_int_ids=_accessible_int_ids,
                 )
                 _pushdown_info = (
@@ -843,10 +843,10 @@ class NexusFSSearchMixin:
                     _accessible_int_ids is not None
                     and _revision_before is not None
                     and _rebac_manager
-                    and hasattr(_rebac_manager, "_get_tenant_revision_for_grant")
+                    and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
                 ):
-                    _revision_after = _rebac_manager._get_tenant_revision_for_grant(
-                        list_tenant_id or "default"
+                    _revision_after = _rebac_manager._get_zone_revision_for_grant(
+                        list_zone_id or "default"
                     )
                     if _revision_after != _revision_before:
                         logger.warning(
@@ -857,7 +857,7 @@ class NexusFSSearchMixin:
                         _meta_start = _time.time()
                         all_files = self.metadata.list(
                             list_prefix,
-                            tenant_id=list_tenant_id,
+                            zone_id=list_zone_id,
                             accessible_int_ids=None,  # No filter - get all, filter later
                         )
                         logger.info(
@@ -871,24 +871,24 @@ class NexusFSSearchMixin:
                 sample_paths = [m.path for m in all_files[:5]]
                 logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
-        # Issue #904: Fetch cross-tenant shared files
-        # If user has files shared from other tenants, include them in the listing
-        if list_tenant_id and subject_type and subject_id:
+        # Issue #904: Fetch cross-zone shared files
+        # If user has files shared from other zones, include them in the listing
+        if list_zone_id and subject_type and subject_id:
             _ct_start = _time.time()
-            cross_tenant_paths = self._get_cross_tenant_shared_paths(
+            cross_zone_paths = self._get_cross_zone_shared_paths(
                 subject_type=subject_type,
                 subject_id=subject_id,
-                tenant_id=list_tenant_id,
+                zone_id=list_zone_id,
                 prefix=list_prefix,
             )
             logger.info(
-                f"[LIST-TIMING] cross_tenant_lookup: {(_time.time() - _ct_start) * 1000:.1f}ms, {len(cross_tenant_paths) if cross_tenant_paths else 0} paths"
+                f"[LIST-TIMING] cross_zone_lookup: {(_time.time() - _ct_start) * 1000:.1f}ms, {len(cross_zone_paths) if cross_zone_paths else 0} paths"
             )
-            if cross_tenant_paths:
-                # Fetch metadata for cross-tenant shared paths
+            if cross_zone_paths:
+                # Fetch metadata for cross-zone shared paths
                 # Use get_batch if available, otherwise fetch individually
                 existing_paths = {meta.path for meta in all_files}
-                for ct_path in cross_tenant_paths:
+                for ct_path in cross_zone_paths:
                     if ct_path not in existing_paths:
                         try:
                             ct_meta = self.metadata.get(ct_path)
@@ -1086,32 +1086,32 @@ class NexusFSSearchMixin:
                 #
                 # Fix #1147: Two-phase optimization for TRAVERSE checks:
                 #
-                # Phase 1 — Cross-tenant shortcut: Skip directories that belong to a
-                # different tenant. Cross-tenant access uses shared-* relations on
+                # Phase 1 — Cross-zone shortcut: Skip directories that belong to a
+                # different zone. Cross-zone access uses shared-* relations on
                 # specific resources, never directory TRAVERSE grants. Applies to all
-                # tenant-scoped prefixes: /tenants/X/, /shared/X/, /archives/X/.
+                # zone-scoped prefixes: /zones/X/, /shared/X/, /archives/X/.
                 #
                 # Phase 2 — Bulk TRAVERSE check: Instead of N individual
                 # PermissionEnforcer.check() calls (each doing 4-6 SQL queries for
                 # traverse/read/write + parent walk = ~350ms), batch all remaining
                 # directories into a single rebac_check_bulk() call (1-2 SQL queries
                 # total). This reduces e.g. 15 dirs × 350ms = 5.25s → ~50ms.
-                user_tenant = ctx.tenant_id if hasattr(ctx, "tenant_id") else None
-                _skipped_cross_tenant = 0
-                _TENANT_PREFIXES = ("/tenants/", "/shared/", "/archives/")
+                user_zone = ctx.zone_id if hasattr(ctx, "zone_id") else None
+                _skipped_cross_zone = 0
+                _ZONE_PREFIXES = ("/zones/", "/shared/", "/archives/")
                 dirs_to_check: list[str] = []
 
                 for dir_path in dirs_needing_traverse:
-                    # Phase 1: Cross-tenant shortcut
-                    if user_tenant:
+                    # Phase 1: Cross-zone shortcut
+                    if user_zone:
                         skip = False
-                        for tp in _TENANT_PREFIXES:
+                        for tp in _ZONE_PREFIXES:
                             if dir_path.startswith(tp):
-                                # Extract tenant: /tenants/<T>/... or /shared/<T>/...
+                                # Extract zone: /zones/<Z>/... or /shared/<Z>/...
                                 rest = dir_path[len(tp) :]
-                                path_tenant = rest.split("/")[0] if rest else None
-                                if path_tenant and path_tenant != user_tenant:
-                                    _skipped_cross_tenant += 1
+                                path_zone = rest.split("/")[0] if rest else None
+                                if path_zone and path_zone != user_zone:
+                                    _skipped_cross_zone += 1
                                     skip = True
                                 break  # Only one prefix can match
                         if skip:
@@ -1123,7 +1123,7 @@ class NexusFSSearchMixin:
                 _traverse_checks = len(dirs_to_check)
                 if dirs_to_check and _rebac_manager and hasattr(_rebac_manager, "rebac_check_bulk"):
                     subject = ctx.get_subject()
-                    tenant_id = ctx.tenant_id or "default"
+                    zone_id = ctx.zone_id or "default"
 
                     # Build bulk checks: traverse, read, write for each dir
                     # (TRAVERSE is implied by READ or WRITE — mirrors _check_rebac logic)
@@ -1132,7 +1132,7 @@ class NexusFSSearchMixin:
                         for perm in ("traverse", "read", "write"):
                             bulk_checks.append((subject, perm, ("file", dp)))
 
-                    bulk_results = _rebac_manager.rebac_check_bulk(bulk_checks, tenant_id)
+                    bulk_results = _rebac_manager.rebac_check_bulk(bulk_checks, zone_id)
 
                     for dp in dirs_to_check:
                         if (
@@ -1150,7 +1150,7 @@ class NexusFSSearchMixin:
                 logger.info(
                     f"[LIST-TIMING] backend_dir_checks: {(_time.time() - _bd_start) * 1000:.1f}ms, "
                     f"traverse_checks={_traverse_checks}, prefix_checks={_prefix_checks}, "
-                    f"skipped_cross_tenant={_skipped_cross_tenant}, bulk={'yes' if _traverse_checks > 0 and _rebac_manager else 'no'}"
+                    f"skipped_cross_zone={_skipped_cross_zone}, bulk={'yes' if _traverse_checks > 0 and _rebac_manager else 'no'}"
                 )
             else:
                 # No permissions: infer directories from all files
@@ -1267,7 +1267,7 @@ class NexusFSSearchMixin:
         Returns:
             PaginatedResult with items, next_cursor, and has_more
         """
-        from nexus.core.metadata import PaginatedResult
+        from nexus.core._metadata_generated import PaginatedResult
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context
@@ -1275,13 +1275,13 @@ class NexusFSSearchMixin:
 
         _start = _time.time()
 
-        # Extract tenant_id for PREWHERE-style DB filtering (Issue #904)
-        list_tenant_id: str | None = None
-        if self._enforce_permissions and context and hasattr(context, "tenant_id"):
-            list_tenant_id = context.tenant_id
+        # Extract zone_id for PREWHERE-style DB filtering (Issue #904)
+        list_zone_id: str | None = None
+        if self._enforce_permissions and context and hasattr(context, "zone_id"):
+            list_zone_id = context.zone_id
 
         logger.info(
-            f"[LIST-PAGINATED] START path={path}, recursive={recursive}, limit={limit}, cursor={cursor}, tenant={list_tenant_id}"
+            f"[LIST-PAGINATED] START path={path}, recursive={recursive}, limit={limit}, cursor={cursor}, zone={list_zone_id}"
         )
 
         # Normalize path to prefix for metadata query
@@ -1308,7 +1308,7 @@ class NexusFSSearchMixin:
                 recursive=recursive,
                 limit=fetch_limit,
                 cursor=current_cursor,
-                tenant_id=list_tenant_id,
+                zone_id=list_zone_id,
             )
             _db_elapsed = (_time.time() - _db_start) * 1000
             sample_paths = [item.path for item in batch.items[:5]]
@@ -1346,7 +1346,7 @@ class NexusFSSearchMixin:
             filters = {
                 "prefix": list_prefix,
                 "recursive": recursive,
-                "tenant_id": list_tenant_id,
+                "zone_id": list_zone_id,
             }
             # Note: path_id is internal to metadata store, we pass None here
             # The actual cursor will use the path as the primary key
@@ -1878,10 +1878,10 @@ class NexusFSSearchMixin:
                 try:
                     from nexus.storage.file_cache import get_file_cache
 
-                    tenant_id, _, _ = self._get_routing_params(context)
-                    if tenant_id:
+                    zone_id, _, _ = self._get_routing_params(context)
+                    if zone_id:
                         file_cache = get_file_cache()
-                        disk_paths = file_cache.get_disk_paths_bulk(tenant_id, files_needing_raw)
+                        disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)
 
                         if disk_paths:
                             disk_to_virtual = {dp: vp for vp, dp in disk_paths.items()}
@@ -2539,7 +2539,7 @@ class NexusFSSearchMixin:
         def _prepare_documents_sync() -> list[tuple[str, str, str]]:
             """Synchronous helper to prepare documents inside a session."""
             docs: list[tuple[str, str, str]] = []
-            with self.metadata.SessionLocal() as session:
+            with self.SessionLocal() as session:
                 for file_path in files_to_index:
                     try:
                         # Get content
@@ -2757,7 +2757,7 @@ class NexusFSSearchMixin:
         parts = [p for p in path.split("/") if p]
 
         # Extract entity IDs from path
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             registry = EntityRegistry(session)
             router = MemoryViewRouter(session, registry)
@@ -2767,7 +2767,7 @@ class NexusFSSearchMixin:
 
             # Query memories
             memories = router.query_memories(
-                tenant_id=ids.get("tenant_id"),
+                zone_id=ids.get("zone_id"),
                 user_id=ids.get("user_id"),
                 agent_id=ids.get("agent_id"),
             )

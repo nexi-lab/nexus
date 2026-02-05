@@ -59,7 +59,7 @@ class HotspotEntry:
     subject_id: str
     resource_type: str
     permission: str
-    tenant_id: str
+    zone_id: str
     access_count: int
     last_access: float
 
@@ -70,7 +70,7 @@ class HotspotEntry:
             self.subject_id,
             self.permission,
             self.resource_type,
-            self.tenant_id,
+            self.zone_id,
         )
 
 
@@ -96,7 +96,7 @@ class HotspotDetector:
         """
         self._config = config or HotspotConfig()
 
-        # Rolling window counters: (subject_type, subject_id, resource_type, permission, tenant_id) -> timestamps
+        # Rolling window counters: (subject_type, subject_id, resource_type, permission, zone_id) -> timestamps
         self._access_log: dict[tuple[str, str, str, str, str], list[float]] = {}
         self._lock = threading.RLock()
 
@@ -116,7 +116,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> None:
         """Record a permission check access.
 
@@ -128,12 +128,12 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource (e.g., "file")
             permission: Permission being checked (e.g., "read", "write")
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
         """
         if not self._config.enabled:
             return
 
-        key = (subject_type, subject_id, resource_type, permission, tenant_id)
+        key = (subject_type, subject_id, resource_type, permission, zone_id)
         now = time.time()
         cutoff = now - self._config.window_seconds
 
@@ -159,7 +159,7 @@ class HotspotDetector:
         """Record multiple accesses efficiently.
 
         Args:
-            accesses: List of (subject_type, subject_id, resource_type, permission, tenant_id)
+            accesses: List of (subject_type, subject_id, resource_type, permission, zone_id)
         """
         if not self._config.enabled or not accesses:
             return
@@ -192,14 +192,14 @@ class HotspotDetector:
                 # Count accesses in current window
                 recent = [t for t in timestamps if t > cutoff]
                 if len(recent) >= self._config.hot_threshold:
-                    subject_type, subject_id, resource_type, permission, tenant_id = key
+                    subject_type, subject_id, resource_type, permission, zone_id = key
                     hot.append(
                         HotspotEntry(
                             subject_type=subject_type,
                             subject_id=subject_id,
                             resource_type=resource_type,
                             permission=permission,
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                             access_count=len(recent),
                             last_access=max(recent) if recent else 0,
                         )
@@ -220,7 +220,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> int:
         """Get current access count for a specific key within the window.
 
@@ -229,12 +229,12 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource
             permission: Permission
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
 
         Returns:
             Number of accesses in current window
         """
-        key = (subject_type, subject_id, resource_type, permission, tenant_id)
+        key = (subject_type, subject_id, resource_type, permission, zone_id)
         now = time.time()
         cutoff = now - self._config.window_seconds
 
@@ -249,7 +249,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> bool:
         """Check if a specific key is currently hot.
 
@@ -258,14 +258,12 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource
             permission: Permission
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
 
         Returns:
             True if access count exceeds hot threshold
         """
-        count = self.get_access_count(
-            subject_type, subject_id, resource_type, permission, tenant_id
-        )
+        count = self.get_access_count(subject_type, subject_id, resource_type, permission, zone_id)
         return count >= self._config.hot_threshold
 
     def get_prefetch_candidates(
@@ -292,7 +290,7 @@ class HotspotDetector:
                 subject_id=entry.subject_id,
                 permission=entry.permission,
                 resource_type=entry.resource_type,
-                tenant_id=entry.tenant_id,
+                zone_id=entry.zone_id,
             )
 
             if cache_age is not None:
@@ -456,7 +454,7 @@ class HotspotPrefetcher:
                     subject_id=entry.subject_id,
                     permission=entry.permission,
                     resource_type=entry.resource_type,
-                    tenant_id=entry.tenant_id,
+                    zone_id=entry.zone_id,
                     priority=1,  # High priority for hot entries
                 )
                 prefetched += 1

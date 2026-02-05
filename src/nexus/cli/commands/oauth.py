@@ -99,12 +99,12 @@ def oauth() -> None:
     help="Path to database (default: ~/.nexus/nexus.db)",
 )
 @click.option(
-    "--tenant-id",
+    "--zone-id",
     type=str,
     default=None,
-    help="Filter by tenant ID",
+    help="Filter by zone ID",
 )
-def list_credentials(db_path: str | None, tenant_id: str | None) -> None:
+def list_credentials(db_path: str | None, zone_id: str | None) -> None:
     """List all stored OAuth credentials.
 
     Shows metadata about each credential (provider, user, expiry status).
@@ -113,12 +113,12 @@ def list_credentials(db_path: str | None, tenant_id: str | None) -> None:
     \b
     Examples:
         nexus oauth list
-        nexus oauth list --tenant-id org_acme
+        nexus oauth list --zone-id org_acme
     """
     manager = get_token_manager(db_path)
 
     async def _list() -> None:
-        credentials = await manager.list_credentials(tenant_id=tenant_id)
+        credentials = await manager.list_credentials(zone_id=zone_id)
 
         if not credentials:
             console.print("[yellow]No OAuth credentials found[/yellow]")
@@ -128,7 +128,7 @@ def list_credentials(db_path: str | None, tenant_id: str | None) -> None:
         table = Table(title="OAuth Credentials", show_header=True, header_style="bold magenta")
         table.add_column("Provider", style="cyan")
         table.add_column("User Email", style="green")
-        table.add_column("Tenant ID", style="blue")
+        table.add_column("Zone ID", style="blue")
         table.add_column("Status", style="yellow")
         table.add_column("Expires At", style="white")
         table.add_column("Last Used", style="white")
@@ -141,7 +141,7 @@ def list_credentials(db_path: str | None, tenant_id: str | None) -> None:
             table.add_row(
                 cred["provider"],
                 cred["user_email"],
-                cred["tenant_id"] or "N/A",
+                cred["zone_id"] or "N/A",
                 status,
                 expires_at,
                 last_used,
@@ -164,13 +164,13 @@ def list_credentials(db_path: str | None, tenant_id: str | None) -> None:
     help="Path to database (default: ~/.nexus/nexus.db)",
 )
 @click.option(
-    "--tenant-id",
+    "--zone-id",
     type=str,
     default=None,
-    help="Tenant ID (optional)",
+    help="Zone ID (optional)",
 )
 def revoke_credential(
-    provider: str, user_email: str, db_path: str | None, tenant_id: str | None
+    provider: str, user_email: str, db_path: str | None, zone_id: str | None
 ) -> None:
     """Revoke an OAuth credential.
 
@@ -181,12 +181,12 @@ def revoke_credential(
     \b
     Examples:
         nexus oauth revoke google alice@example.com
-        nexus oauth revoke microsoft bob@company.com --tenant-id org_acme
+        nexus oauth revoke microsoft bob@company.com --zone-id org_acme
     """
     manager = get_token_manager(db_path)
 
     async def _revoke() -> None:
-        success = await manager.revoke_credential(provider, user_email, tenant_id or "default")
+        success = await manager.revoke_credential(provider, user_email, zone_id or "default")
 
         if success:
             console.print(f"[green]✓[/green] Revoked credential: {provider}:{user_email}")
@@ -208,13 +208,13 @@ def revoke_credential(
     help="Path to database (default: ~/.nexus/nexus.db)",
 )
 @click.option(
-    "--tenant-id",
+    "--zone-id",
     type=str,
     default=None,
-    help="Tenant ID (optional)",
+    help="Zone ID (optional)",
 )
 def test_credential(
-    provider: str, user_email: str, db_path: str | None, tenant_id: str | None
+    provider: str, user_email: str, db_path: str | None, zone_id: str | None
 ) -> None:
     """Test an OAuth credential's validity.
 
@@ -238,7 +238,7 @@ def test_credential(
     async def _test() -> None:
         try:
             # Try to get a valid token (will auto-refresh if needed)
-            token = await manager.get_valid_token(provider, user_email, tenant_id or "default")
+            token = await manager.get_valid_token(provider, user_email, zone_id or "default")
 
             console.print("[green]✓[/green] Credential is valid")
             console.print(f"[dim]Token length: {len(token)} chars[/dim]")
@@ -277,17 +277,17 @@ def test_credential(
     help="Path to database (default: ~/.nexus/nexus.db)",
 )
 @click.option(
-    "--tenant-id",
+    "--zone-id",
     type=str,
     default=None,
-    help="Tenant ID (optional)",
+    help="Zone ID (optional)",
 )
 def setup_gdrive(
     client_id: str | None,
     client_secret: str | None,
     user_email: str,
     db_path: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
 ) -> None:
     """Setup Google Drive OAuth credentials for backend integration.
 
@@ -384,7 +384,7 @@ def setup_gdrive(
             provider="google",
             user_email=user_email,
             credential=credential,
-            tenant_id=tenant_id or "default",
+            zone_id=zone_id or "default",
             created_by=user_email,
         )
         manager.close()
@@ -431,17 +431,17 @@ def setup_gdrive(
     help="Path to database (default: ~/.nexus/nexus.db)",
 )
 @click.option(
-    "--tenant-id",
+    "--zone-id",
     type=str,
     default=None,
-    help="Tenant ID (optional)",
+    help="Zone ID (optional)",
 )
 def setup_x(
     client_id: str | None,
     client_secret: str | None,
     user_email: str,
     db_path: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
 ) -> None:
     """Setup X (Twitter) OAuth credentials for backend integration.
 
@@ -546,7 +546,7 @@ def setup_x(
             provider="twitter",
             user_email=user_email,
             credential=credential,
-            tenant_id=tenant_id or "default",
+            zone_id=zone_id or "default",
             created_by=user_email,
         )
         manager.close()
@@ -627,7 +627,7 @@ def init_oauth_flow(
             provider_name="google-drive",
         )
     elif provider in ("microsoft", "microsoft-onedrive"):
-        # Note: tenant_id is hardcoded to "common" in MicrosoftOAuthProvider
+        # Note: zone_id is hardcoded to "common" in MicrosoftOAuthProvider
         oauth_provider = MicrosoftOAuthProvider(
             client_id=client_id,
             client_secret=client_secret,

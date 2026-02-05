@@ -220,7 +220,7 @@ PYTHONPATH=src python -m pytest tests/unit/storage/
    - Embedded systems
 
 2. **Use PostgreSQL for:**
-   - Multi-tenant SaaS
+   - Multi-zone SaaS
    - High-concurrency applications
    - Large-scale data (>10GB)
    - Production distributed systems

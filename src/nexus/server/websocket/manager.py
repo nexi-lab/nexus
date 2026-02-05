@@ -7,9 +7,9 @@ Issue #1116: Add WebSocket Connection Manager for Real-Time Events
 
 Performance Considerations:
 - O(1) connection lookup via nested dict structure
-- Single Redis subscription per tenant (not per connection)
+- Single Redis subscription per zone (not per connection)
 - Efficient pattern matching reuses existing fnmatch logic
-- Lazy tenant subscription (only subscribe when first client connects)
+- Lazy zone subscription (only subscribe when first client connects)
 - Background task cleanup on disconnect
 """
 
@@ -41,8 +41,8 @@ class ConnectionInfo:
     """Metadata for a WebSocket connection."""
 
     websocket: WebSocket
-    tenant_id: str
-    subscription_id: str | None  # None for tenant-wide subscriptions
+    zone_id: str
+    subscription_id: str | None  # None for zone-wide subscriptions
     user_id: str | None
     connected_at: float = field(default_factory=time.time)
     last_pong: float = field(default_factory=time.time)
@@ -61,7 +61,7 @@ class WebSocketStats:
     total_messages_sent: int = 0
     total_messages_received: int = 0
     current_connections: int = 0
-    connections_by_tenant: dict[str, int] = field(default_factory=dict)
+    connections_by_zone: dict[str, int] = field(default_factory=dict)
 
 
 class WebSocketManager:
@@ -71,15 +71,15 @@ class WebSocketManager:
     Designed for high performance with efficient data structures and lazy subscriptions.
 
     Architecture:
-        tenant_id -> connection_id -> ConnectionInfo
-        One Redis subscription task per tenant (shared by all connections)
+        zone_id -> connection_id -> ConnectionInfo
+        One Redis subscription task per zone (shared by all connections)
 
     Example:
         manager = WebSocketManager(event_bus)
         await manager.start()
 
         # In WebSocket endpoint
-        await manager.connect(websocket, tenant_id, subscription_id, user_id)
+        await manager.connect(websocket, zone_id, subscription_id, user_id)
         try:
             await manager.handle_client(websocket, connection_id)
         finally:
@@ -95,13 +95,13 @@ class WebSocketManager:
         self._event_bus = event_bus
         self._started = False
 
-        # Connection tracking: tenant_id -> connection_id -> ConnectionInfo
+        # Connection tracking: zone_id -> connection_id -> ConnectionInfo
         self._connections: dict[str, dict[str, ConnectionInfo]] = {}
 
-        # Connection ID to tenant mapping for O(1) lookup
-        self._connection_to_tenant: dict[str, str] = {}
+        # Connection ID to zone mapping for O(1) lookup
+        self._connection_to_zone: dict[str, str] = {}
 
-        # Redis subscription tasks per tenant
+        # Redis subscription tasks per zone
         self._subscription_tasks: dict[str, asyncio.Task[None]] = {}
 
         # Heartbeat task
@@ -149,19 +149,19 @@ class WebSocketManager:
 
         # Close all connections gracefully
         async with self._lock:
-            for tenant_connections in self._connections.values():
-                for conn_info in tenant_connections.values():
+            for zone_connections in self._connections.values():
+                for conn_info in zone_connections.values():
                     with suppress(Exception):
                         await conn_info.websocket.close(code=1001, reason="Server shutting down")
             self._connections.clear()
-            self._connection_to_tenant.clear()
+            self._connection_to_zone.clear()
 
         logger.info("WebSocket manager stopped")
 
     async def connect(
         self,
         websocket: WebSocket,
-        tenant_id: str,
+        zone_id: str,
         connection_id: str,
         user_id: str | None = None,
         subscription_id: str | None = None,
@@ -172,7 +172,7 @@ class WebSocketManager:
 
         Args:
             websocket: The WebSocket connection
-            tenant_id: Tenant ID for event filtering
+            zone_id: Zone ID for event filtering
             connection_id: Unique connection identifier
             user_id: Optional user ID for logging
             subscription_id: Optional subscription ID for filtering
@@ -186,7 +186,7 @@ class WebSocketManager:
 
         conn_info = ConnectionInfo(
             websocket=websocket,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             subscription_id=subscription_id,
             user_id=user_id,
             patterns=patterns or [],
@@ -195,29 +195,28 @@ class WebSocketManager:
 
         async with self._lock:
             # Add to connection tracking
-            if tenant_id not in self._connections:
-                self._connections[tenant_id] = {}
-            self._connections[tenant_id][connection_id] = conn_info
-            self._connection_to_tenant[connection_id] = tenant_id
+            if zone_id not in self._connections:
+                self._connections[zone_id] = {}
+            self._connections[zone_id][connection_id] = conn_info
+            self._connection_to_zone[connection_id] = zone_id
 
             # Update stats
             self._stats.total_connections += 1
             self._stats.current_connections += 1
-            self._stats.connections_by_tenant[tenant_id] = (
-                self._stats.connections_by_tenant.get(tenant_id, 0) + 1
+            self._stats.connections_by_zone[zone_id] = (
+                self._stats.connections_by_zone.get(zone_id, 0) + 1
             )
 
-            # Start Redis subscription for this tenant if needed
-            if self._event_bus and tenant_id not in self._subscription_tasks and self._started:
+            # Start Redis subscription for this zone if needed
+            if self._event_bus and zone_id not in self._subscription_tasks and self._started:
                 task = asyncio.create_task(
-                    self._redis_subscription_loop(tenant_id),
-                    name=f"ws-redis-{tenant_id}",
+                    self._redis_subscription_loop(zone_id),
+                    name=f"ws-redis-{zone_id}",
                 )
-                self._subscription_tasks[tenant_id] = task
+                self._subscription_tasks[zone_id] = task
 
         logger.info(
-            f"WebSocket connected: connection_id={connection_id}, "
-            f"tenant={tenant_id}, user={user_id}"
+            f"WebSocket connected: connection_id={connection_id}, zone={zone_id}, user={user_id}"
         )
 
         return conn_info
@@ -229,28 +228,28 @@ class WebSocketManager:
             connection_id: The connection ID to remove
         """
         async with self._lock:
-            tenant_id = self._connection_to_tenant.pop(connection_id, None)
-            if not tenant_id:
+            zone_id = self._connection_to_zone.pop(connection_id, None)
+            if not zone_id:
                 return
 
-            if tenant_id in self._connections:
-                conn_info = self._connections[tenant_id].pop(connection_id, None)
+            if zone_id in self._connections:
+                conn_info = self._connections[zone_id].pop(connection_id, None)
                 if conn_info:
                     self._stats.total_disconnections += 1
                     self._stats.current_connections -= 1
-                    if tenant_id in self._stats.connections_by_tenant:
-                        self._stats.connections_by_tenant[tenant_id] -= 1
-                        if self._stats.connections_by_tenant[tenant_id] <= 0:
-                            del self._stats.connections_by_tenant[tenant_id]
+                    if zone_id in self._stats.connections_by_zone:
+                        self._stats.connections_by_zone[zone_id] -= 1
+                        if self._stats.connections_by_zone[zone_id] <= 0:
+                            del self._stats.connections_by_zone[zone_id]
 
-                # Clean up empty tenant
-                if not self._connections[tenant_id]:
-                    del self._connections[tenant_id]
+                # Clean up empty zone
+                if not self._connections[zone_id]:
+                    del self._connections[zone_id]
 
-                    # Cancel Redis subscription if no more connections for tenant
-                    if tenant_id in self._subscription_tasks:
-                        self._subscription_tasks[tenant_id].cancel()
-                        del self._subscription_tasks[tenant_id]
+                    # Cancel Redis subscription if no more connections for zone
+                    if zone_id in self._subscription_tasks:
+                        self._subscription_tasks[zone_id].cancel()
+                        del self._subscription_tasks[zone_id]
 
         logger.info(f"WebSocket disconnected: connection_id={connection_id}")
 
@@ -284,11 +283,11 @@ class WebSocketManager:
             connection_id: The connection ID
             data: The parsed JSON message
         """
-        tenant_id = self._connection_to_tenant.get(connection_id)
-        if not tenant_id:
+        zone_id = self._connection_to_zone.get(connection_id)
+        if not zone_id:
             return
 
-        conn_info = self._connections.get(tenant_id, {}).get(connection_id)
+        conn_info = self._connections.get(zone_id, {}).get(connection_id)
         if not conn_info:
             return
 
@@ -315,17 +314,17 @@ class WebSocketManager:
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 
-    async def broadcast_to_tenant(self, tenant_id: str, event: FileEvent) -> int:
-        """Broadcast an event to all connections for a tenant.
+    async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
+        """Broadcast an event to all connections for a zone.
 
         Args:
-            tenant_id: The tenant ID
+            zone_id: The zone ID
             event: The file event to broadcast
 
         Returns:
             Number of connections that received the event
         """
-        connections = self._connections.get(tenant_id, {})
+        connections = self._connections.get(zone_id, {})
         if not connections:
             return 0
 
@@ -448,35 +447,35 @@ class WebSocketManager:
         conn_info.messages_sent += 1
         self._stats.total_messages_sent += 1
 
-    async def _redis_subscription_loop(self, tenant_id: str) -> None:
-        """Subscribe to Redis events for a tenant and broadcast to WebSocket clients.
+    async def _redis_subscription_loop(self, zone_id: str) -> None:
+        """Subscribe to Redis events for a zone and broadcast to WebSocket clients.
 
-        This creates a single Redis subscription per tenant, shared by all
-        WebSocket connections for that tenant.
+        This creates a single Redis subscription per zone, shared by all
+        WebSocket connections for that zone.
 
         Args:
-            tenant_id: The tenant ID to subscribe to
+            zone_id: The zone ID to subscribe to
         """
         if not self._event_bus:
             return
 
-        logger.info(f"Starting Redis subscription for tenant {tenant_id}")
+        logger.info(f"Starting Redis subscription for zone {zone_id}")
 
         try:
-            async for event in self._event_bus.subscribe(tenant_id):
+            async for event in self._event_bus.subscribe(zone_id):
                 if not self._started:
                     break
 
-                # Broadcast to all WebSocket clients for this tenant
-                sent = await self.broadcast_to_tenant(tenant_id, event)
+                # Broadcast to all WebSocket clients for this zone
+                sent = await self.broadcast_to_zone(zone_id, event)
                 if sent > 0:
                     logger.debug(f"Broadcast {event.type} on {event.path} to {sent} clients")
 
         except asyncio.CancelledError:
-            logger.debug(f"Redis subscription cancelled for tenant {tenant_id}")
+            logger.debug(f"Redis subscription cancelled for zone {zone_id}")
             raise
         except Exception as e:
-            logger.error(f"Redis subscription error for tenant {tenant_id}: {e}")
+            logger.error(f"Redis subscription error for zone {zone_id}: {e}")
 
     async def _heartbeat_loop(self) -> None:
         """Send periodic pings to all connections and check for stale connections."""
@@ -491,7 +490,7 @@ class WebSocketManager:
                 stale_connections: list[str] = []
 
                 # Check all connections
-                for _tenant_id, connections in list(self._connections.items()):
+                for _zone_id, connections in list(self._connections.items()):
                     for conn_id, conn_info in list(connections.items()):
                         # Check if connection is stale (no pong received)
                         time_since_pong = now - conn_info.last_pong
@@ -512,9 +511,9 @@ class WebSocketManager:
                 # Disconnect stale connections
                 for conn_id in stale_connections:
                     with suppress(Exception):
-                        stale_tenant_id = self._connection_to_tenant.get(conn_id)
-                        if stale_tenant_id:
-                            stale_conn = self._connections.get(stale_tenant_id, {}).get(conn_id)
+                        stale_zone_id = self._connection_to_zone.get(conn_id)
+                        if stale_zone_id:
+                            stale_conn = self._connections.get(stale_zone_id, {}).get(conn_id)
                             if stale_conn:
                                 await stale_conn.websocket.close(
                                     code=1001, reason="Connection timeout"
@@ -539,8 +538,8 @@ class WebSocketManager:
             "current_connections": self._stats.current_connections,
             "total_messages_sent": self._stats.total_messages_sent,
             "total_messages_received": self._stats.total_messages_received,
-            "connections_by_tenant": dict(self._stats.connections_by_tenant),
-            "active_tenant_subscriptions": len(self._subscription_tasks),
+            "connections_by_zone": dict(self._stats.connections_by_zone),
+            "active_zone_subscriptions": len(self._subscription_tasks),
         }
 
     def get_connection_count(self) -> int:
@@ -560,7 +559,7 @@ class WebSocketManager:
         Returns:
             ConnectionInfo or None if not found
         """
-        tenant_id = self._connection_to_tenant.get(connection_id)
-        if not tenant_id:
+        zone_id = self._connection_to_zone.get(connection_id)
+        if not zone_id:
             return None
-        return self._connections.get(tenant_id, {}).get(connection_id)
+        return self._connections.get(zone_id, {}).get(connection_id)

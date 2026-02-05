@@ -276,9 +276,9 @@ class GoogleDriveConnectorBackend(Backend):
             # Check if we have a valid token
             import asyncio
 
-            tenant_id = (
-                context.tenant_id
-                if context and hasattr(context, "tenant_id") and context.tenant_id
+            zone_id = (
+                context.zone_id
+                if context and hasattr(context, "zone_id") and context.zone_id
                 else "default"
             )
 
@@ -287,7 +287,7 @@ class GoogleDriveConnectorBackend(Backend):
                 self.token_manager.get_valid_token(
                     provider=self.provider,
                     user_email=user_email,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             )
 
@@ -299,7 +299,7 @@ class GoogleDriveConnectorBackend(Backend):
                     details={
                         "backend": self.name,
                         "user_email": user_email,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     },
                 )
 
@@ -333,7 +333,7 @@ class GoogleDriveConnectorBackend(Backend):
                     "backend": self.name,
                     "user_email": user_email,
                     "drive_user": drive_user,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "root_folder": self.root_folder,
                 },
             )
@@ -392,16 +392,16 @@ class GoogleDriveConnectorBackend(Backend):
 
         try:
             # Default to 'default' tenant if not specified to match mount configurations
-            tenant_id = (
-                context.tenant_id
-                if context and hasattr(context, "tenant_id") and context.tenant_id
+            zone_id = (
+                context.zone_id
+                if context and hasattr(context, "zone_id") and context.zone_id
                 else "default"
             )
             access_token = asyncio.run(
                 self.token_manager.get_valid_token(
                     provider=self.provider,
                     user_email=user_email,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             )
         except Exception as e:
@@ -435,7 +435,7 @@ class GoogleDriveConnectorBackend(Backend):
         """
         # Check cache first
         if context is not None and not isinstance(context, str):
-            cache_key = f"root:{context.user_id}:{context.tenant_id}"
+            cache_key = f"root:{context.user_id}:{context.zone_id}"
         else:
             cache_key = "root::"
 
@@ -526,7 +526,7 @@ class GoogleDriveConnectorBackend(Backend):
             # context is actually the parent_id in some calls
             cache_key = f":{path}"
         elif context is not None:
-            cache_key = f"{context.user_id}:{context.tenant_id}:{path}"
+            cache_key = f"{context.user_id}:{context.zone_id}:{path}"
         else:
             cache_key = f":{path}"
 

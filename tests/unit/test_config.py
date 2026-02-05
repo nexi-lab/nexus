@@ -716,8 +716,8 @@ class TestNexusConfigAdvanced:
 
     def test_identity_settings(self) -> None:
         """Test NexusConfig with identity settings."""
-        config = NexusConfig(tenant_id="tenant-123", user_id="user-456", agent_id="agent-789")
-        assert config.tenant_id == "tenant-123"
+        config = NexusConfig(zone_id="zone-123", user_id="user-456", agent_id="agent-789")
+        assert config.zone_id == "zone-123"
         assert config.user_id == "user-456"
         assert config.agent_id == "agent-789"
 
@@ -846,13 +846,13 @@ class TestLoadFromEnvironmentAdvanced:
 
     def test_identity_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading identity settings from environment."""
-        monkeypatch.setenv("NEXUS_TENANT_ID", "tenant-123")
+        monkeypatch.setenv("NEXUS_ZONE_ID", "zone-123")
         monkeypatch.setenv("NEXUS_USER_ID", "user-456")
         monkeypatch.setenv("NEXUS_AGENT_ID", "agent-789")
 
         result = _load_from_environment()
 
-        assert result.tenant_id == "tenant-123"
+        assert result.zone_id == "zone-123"
         assert result.user_id == "user-456"
         assert result.agent_id == "agent-789"
 

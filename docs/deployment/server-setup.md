@@ -10,7 +10,7 @@ Complete step-by-step guide for setting up a Nexus server using **only command-l
 4. [Production Setup](#production-setup)
 5. [Managing Permissions](#managing-permissions)
 6. [Client Access](#client-access)
-7. [Remote Administration (Multi-Tenant)](#remote-administration-multi-tenant)
+7. [Remote Administration (Multi-Tenant)](#remote-administration-multi-zone)
 8. [Troubleshooting](#troubleshooting)
 
 ---
@@ -1162,7 +1162,7 @@ echo "SELECT COUNT(*) FROM file_paths;" | psql $NEXUS_DATABASE_URL
    # If user is not listed, tuple doesn't exist
    ```
 
-2. **Wrong tenant_id** - Check you're using the same tenant_id:
+2. **Wrong zone_id** - Check you're using the same zone_id:
    ```bash
    # Create: --tenant-id default
    # Check: defaults to "default" if not specified
@@ -1226,7 +1226,7 @@ This indicates a schema error (circular dependency):
 
 ## Remote Administration (Multi-Tenant)
 
-For **production multi-tenant** scenarios where you manage multiple tenants remotely, use this workflow:
+For **production multi-zone** scenarios where you manage multiple tenants remotely, use this workflow:
 
 ### Setup: Start Server First
 
@@ -1303,13 +1303,13 @@ if ! nexus rebac check user tenant1_admin write file /tenant2 \
 fi
 
 echo ""
-echo "🎉 Multi-tenant setup complete - all managed remotely!"
+echo "🎉 Multi-zone setup complete - all managed remotely!"
 ```
 
 ### Key Advantages of Remote Administration:
 
 ✅ **No SSH needed** - Manage everything from your admin workstation
-✅ **Multi-tenant ready** - Each tenant isolated by `tenant_id`
+✅ **Multi-zone ready** - Each tenant isolated by `zone_id`
 ✅ **Scalable** - Add tenants without server access
 ✅ **Pure CLI** - No Python required
 ✅ **Secure** - Server runs continuously with permissions enabled
@@ -1325,7 +1325,7 @@ curl -X POST http://your-server.com:2026/api/nfs/rebac_create \
     "subject": ["user", "alice"],
     "relation": "direct_owner",
     "object": ["file", "/tenant1"],
-    "tenant_id": "tenant1"
+    "zone_id": "tenant1"
   }'
 
 # Check permission remotely
@@ -1336,7 +1336,7 @@ curl -X POST http://your-server.com:2026/api/nfs/rebac_check \
     "subject": ["user", "alice"],
     "permission": "write",
     "object": ["file", "/tenant1"],
-    "tenant_id": "tenant1"
+    "zone_id": "tenant1"
   }'
 ```
 
@@ -1345,7 +1345,7 @@ curl -X POST http://your-server.com:2026/api/nfs/rebac_check \
 | Approach | Best For | Pros | Cons |
 |----------|----------|------|------|
 | **Local Setup** (SSH to server) | Single-tenant, self-hosted | Simple, direct database access | Requires server access |
-| **Remote Admin** (CLI --remote-url) | Multi-tenant SaaS | Scalable, pure CLI, no SSH needed | Requires running server |
+| **Remote Admin** (CLI --remote-url) | Multi-zone SaaS | Scalable, pure CLI, no SSH needed | Requires running server |
 | **Remote Admin** (curl) | Automation, CI/CD | Language-agnostic, scriptable | More verbose |
 
 ---

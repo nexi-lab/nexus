@@ -17,7 +17,7 @@ class TestIteratorCache:
         # First call should compute results
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -28,7 +28,7 @@ class TestIteratorCache:
         # Second call with same query should return cached results
         cursor_id2, results2, total2 = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(20)],  # Different results
         )
 
@@ -43,7 +43,7 @@ class TestIteratorCache:
         # Create cached results
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(100)],
         )
 
@@ -75,7 +75,7 @@ class TestIteratorCache:
 
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -90,38 +90,38 @@ class TestIteratorCache:
         with pytest.raises(CursorExpiredError):
             cache.get_page(cursor_id, offset=0, limit=5)
 
-    def test_cache_invalidate_tenant(self):
-        """Test invalidating all entries for a tenant."""
+    def test_cache_invalidate_zone(self):
+        """Test invalidating all entries for a zone."""
         cache = IteratorCache(max_size=100, ttl_seconds=60)
 
-        # Create entries for different tenants
+        # Create entries for different zones
         cursor1, _, _ = cache.get_or_create(
             query_hash="query1",
-            tenant_id="tenant1",
+            zone_id="zone1",
             compute_fn=lambda: [{"id": 1}],
         )
         cursor2, _, _ = cache.get_or_create(
             query_hash="query2",
-            tenant_id="tenant1",
+            zone_id="zone1",
             compute_fn=lambda: [{"id": 2}],
         )
         cursor3, _, _ = cache.get_or_create(
             query_hash="query3",
-            tenant_id="tenant2",
+            zone_id="zone2",
             compute_fn=lambda: [{"id": 3}],
         )
 
-        # Invalidate tenant1
-        count = cache.invalidate_tenant("tenant1")
+        # Invalidate zone1
+        count = cache.invalidate_zone("zone1")
         assert count == 2
 
-        # tenant1 cursors should be expired
+        # zone1 cursors should be expired
         with pytest.raises(CursorExpiredError):
             cache.get_page(cursor1, offset=0, limit=10)
         with pytest.raises(CursorExpiredError):
             cache.get_page(cursor2, offset=0, limit=10)
 
-        # tenant2 cursor should still work
+        # zone2 cursor should still work
         items, _, _ = cache.get_page(cursor3, offset=0, limit=10)
         assert len(items) == 1
 
@@ -131,7 +131,7 @@ class TestIteratorCache:
 
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
@@ -158,14 +158,14 @@ class TestIteratorCache:
         # First call - miss
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
 
         # Second call with same query - hit
         cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [],
         )
 
@@ -193,14 +193,14 @@ class TestIteratorCache:
         # First call
         cursor1, _, _ = cache.get_or_create(
             query_hash="same:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=compute,
         )
 
         # Second call with same query
         cursor2, _, _ = cache.get_or_create(
             query_hash="same:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=compute,
         )
 
@@ -214,12 +214,12 @@ class TestIteratorCache:
 
         cursor1, _, _ = cache.get_or_create(
             query_hash="query1",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": 1}],
         )
         cursor2, _, _ = cache.get_or_create(
             query_hash="query2",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": 2}],
         )
 
@@ -235,12 +235,12 @@ class TestIteratorCache:
 
         cursor1, _, _ = cache.get_or_create(
             query_hash="query1",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": 1}],
         )
         cursor2, _, _ = cache.get_or_create(
             query_hash="query2",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": 2}],
         )
 
@@ -266,7 +266,7 @@ class TestIteratorCache:
         # Generate some metrics
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(10)],
         )
         cache.get_page(cursor_id, offset=0, limit=5)
@@ -290,7 +290,7 @@ class TestIteratorCache:
 
         cursor_id, results, total = cache.get_or_create(
             query_hash="empty:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [],
         )
 
@@ -308,7 +308,7 @@ class TestIteratorCache:
 
         cursor_id, _, _ = cache.get_or_create(
             query_hash="test:query",
-            tenant_id="default",
+            zone_id="default",
             compute_fn=lambda: [{"id": i} for i in range(15)],
         )
 
@@ -328,11 +328,11 @@ class TestIteratorCache:
             results=[1, 2, 3],
             total_count=3,
             created_at=time.time(),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert cached.cursor_id == "test-cursor"
         assert cached.query_hash == "test:hash"
         assert cached.results == [1, 2, 3]
         assert cached.total_count == 3
-        assert cached.tenant_id == "default"
+        assert cached.zone_id == "default"

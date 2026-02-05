@@ -32,7 +32,7 @@ class MockReBACManager:
         key = (subject, permission, object_id)
         self.granted_permissions[key] = True
 
-    def rebac_check(self, subject, permission, object, tenant_id):
+    def rebac_check(self, subject, permission, object, zone_id):
         """Check if permission was explicitly granted."""
         object_type, object_id = object
         key = (subject, permission, object_id)
@@ -41,7 +41,7 @@ class MockReBACManager:
                 "subject": subject,
                 "permission": permission,
                 "object": object,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
             }
         )
         return self.granted_permissions.get(key, False)

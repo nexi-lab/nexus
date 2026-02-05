@@ -120,18 +120,18 @@ class TestWorkflowContext:
         """Test creating basic workflow context."""
         workflow_id = uuid.uuid4()
         execution_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        zone_id = uuid.uuid4()
 
         context = WorkflowContext(
             workflow_id=workflow_id,
             execution_id=execution_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             trigger_type=TriggerType.MANUAL,
         )
 
         assert context.workflow_id == workflow_id
         assert context.execution_id == execution_id
-        assert context.tenant_id == tenant_id
+        assert context.zone_id == zone_id
         assert context.trigger_type == TriggerType.MANUAL
         assert context.trigger_context == {}
         assert context.variables == {}
@@ -142,12 +142,12 @@ class TestWorkflowContext:
         """Test creating context with file information."""
         workflow_id = uuid.uuid4()
         execution_id = uuid.uuid4()
-        tenant_id = uuid.uuid4()
+        zone_id = uuid.uuid4()
 
         context = WorkflowContext(
             workflow_id=workflow_id,
             execution_id=execution_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/test/file.txt",
             file_metadata={"size": 1024, "type": "text"},

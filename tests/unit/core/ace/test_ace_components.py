@@ -57,14 +57,14 @@ class TestTrajectoryManager:
             backend=mock_backend,
             user_id="alice",
             agent_id="agent1",
-            tenant_id="acme",
+            zone_id="acme",
         )
 
     def test_init(self, trajectory_manager):
         """Test initialization."""
         assert trajectory_manager.user_id == "alice"
         assert trajectory_manager.agent_id == "agent1"
-        assert trajectory_manager.tenant_id == "acme"
+        assert trajectory_manager.zone_id == "acme"
         assert isinstance(trajectory_manager._active_trajectories, dict)
 
     def test_start_trajectory(self, trajectory_manager, session):

@@ -37,7 +37,7 @@ alice_ctx = OperationContext(
     subject_type="user",
     subject_id="alice",
     groups=["developers"],
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # Mount with Alice's context - all operations will be as Alice
@@ -76,13 +76,13 @@ uid_mapping = {
         subject_type="user",
         subject_id="alice",
         groups=["developers"],
-        tenant_id="org_acme"
+        zone_id="org_acme"
     ),
     1001: OperationContext(  # Map UID 1001 (bob on the system)
         subject_type="user",
         subject_id="bob",
         groups=["qa"],
-        tenant_id="org_acme"
+        zone_id="org_acme"
     ),
 }
 
@@ -196,7 +196,7 @@ fuse = mount_nexus(
 acme_ctx = OperationContext(
     subject_type="user",
     subject_id="acme_admin",
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 fuse = mount_nexus(
@@ -259,13 +259,13 @@ dev_mapping = {
         subject_type="user",
         subject_id="senior_dev",
         groups=["developers", "reviewers"],
-        tenant_id="org_dev"
+        zone_id="org_dev"
     ),
     1001: OperationContext(
         subject_type="user",
         subject_id="junior_dev",
         groups=["developers"],
-        tenant_id="org_dev"
+        zone_id="org_dev"
     ),
 }
 
@@ -304,7 +304,7 @@ agent_ctx = OperationContext(
     subject_type="agent",
     subject_id="claude_001",
     groups=["ai_agents"],
-    tenant_id="user_alice"
+    zone_id="user_alice"
 )
 
 fuse = mount_nexus(
@@ -380,5 +380,5 @@ All permission checks are now implemented:
 
 - [Permission System Overview](PERMISSION_SYSTEM.md)
 - [ReBAC Integration](REBAC_INTEGRATION_COMPLETE.md)
-- [Multi-Tenant Architecture](multi-tenant-architecture.md)
+- [Multi-Tenant Architecture](multi-zone-architecture.md)
 - [P0 Security Implementation](P0_SECURITY_IMPLEMENTATION_COMPLETE.md)

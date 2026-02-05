@@ -64,7 +64,7 @@ async def session(async_engine):
 @pytest.fixture
 async def graph_store(session):
     """Create GraphStore instance."""
-    return GraphStore(session, tenant_id="test-tenant")
+    return GraphStore(session, zone_id="test-zone")
 
 
 class TestGraphStoreE2E:

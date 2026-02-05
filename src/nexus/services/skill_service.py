@@ -58,10 +58,10 @@ class SkillService:
         gateway = NexusFSGateway(fs)
         skill_service = SkillService(gateway=gateway)
 
-        # Share a skill with the tenant
+        # Share a skill with the zone
         skill_service.share(
-            skill_path="/tenant:acme/user:alice/skill/code-review/",
-            share_with="tenant",
+            skill_path="/zone/acme/user:alice/skill/code-review/",
+            share_with="zone",
             context=ctx,
         )
 
@@ -70,13 +70,13 @@ class SkillService:
 
         # Subscribe to a skill
         skill_service.subscribe(
-            skill_path="/tenant:acme/user:bob/skill/testing/",
+            skill_path="/zone/acme/user:bob/skill/testing/",
             context=ctx,
         )
 
         # Load full skill content for agent use
         content = skill_service.load(
-            skill_path="/tenant:acme/user:alice/skill/code-review/",
+            skill_path="/zone/acme/user:alice/skill/code-review/",
             context=ctx,
         )
         ```
@@ -111,14 +111,14 @@ class SkillService:
         The skill content stays at its original location - only permissions change.
 
         Args:
-            skill_path: Full path to skill (e.g., /tenant:acme/user:alice/skill/code-review/)
+            skill_path: Full path to skill (e.g., /zone/acme/user:alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make visible to everyone
-                - "tenant" - Share with all users in current tenant
+                - "zone" - Share with all users in current zone
                 - "group:<name>" - Share with a group
                 - "user:<id>" - Share with specific user
                 - "agent:<id>" - Share with specific agent
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Tuple ID of the created permission
@@ -165,7 +165,7 @@ class SkillService:
         Args:
             skill_path: Full path to skill
             unshare_from: Target to unshare from (same format as share_with)
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             True if permission was revoked, False if not found
@@ -220,12 +220,12 @@ class SkillService:
         Also indicates which skills are in the user's subscribed library.
 
         Args:
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
             filter: Filter mode:
                 - "all" - All skills user can see
                 - "public" - Only public skills
                 - "shared" - Only skills shared directly with user (not public, not owned)
-                - "tenant" - Only tenant-shared skills
+                - "zone" - Only zone-shared skills
                 - "subscribed" - Only skills in user's library
                 - "owned" - Only skills owned by user
 
@@ -235,7 +235,7 @@ class SkillService:
         self._validate_context(context)
         assert context is not None  # Validated by _validate_context
         logger.info(
-            f"[discover] START filter={filter}, context.user_id={context.user_id}, context.tenant_id={context.tenant_id}"
+            f"[discover] START filter={filter}, context.user_id={context.user_id}, context.zone_id={context.zone_id}"
         )
 
         rebac = self._get_rebac()
@@ -264,7 +264,7 @@ class SkillService:
 
         # For "owned" filter, directly scan user's skill directory
         if filter == "owned":
-            user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            user_skill_dir = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
             owned_paths = self._find_skills_in_directory(user_skill_dir, context)
             logger.info(f"[discover] Returning owned skills directly: {owned_paths}")
             results = []
@@ -331,9 +331,9 @@ class SkillService:
                 )
             return results
 
-        # TODO: Implement "tenant" filter - skills shared with the tenant
-        # if filter == "tenant":
-        #     tenant_skill_paths = self._find_tenant_shared_skills(context)
+        # TODO: Implement "zone" filter - skills shared with the zone
+        # if filter == "zone":
+        #     zone_skill_paths = self._find_zone_shared_skills(context)
         #     ...
 
         # Collect skill paths from filesystem for other filters
@@ -368,13 +368,13 @@ class SkillService:
                     subject=subject,
                     permission="owner",
                     object=("file", skill_md_path),
-                    tenant_id=context.tenant_id,
+                    zone_id=context.zone_id,
                 )
                 if not has_ownership:
                     continue
 
             # Load metadata (use cache if available)
-            # Pass is_public so we can read metadata for public skills from other tenants
+            # Pass is_public so we can read metadata for public skills from other zones
             metadata = self._load_skill_metadata(path, context, is_public=is_public)
 
             results.append(
@@ -403,7 +403,7 @@ class SkillService:
 
         Args:
             skill_path: Full path to skill
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             True if newly subscribed, False if already subscribed
@@ -434,7 +434,7 @@ class SkillService:
 
         Args:
             skill_path: Full path to skill
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             True if unsubscribed, False if was not subscribed
@@ -471,7 +471,7 @@ class SkillService:
         For agents: reads assigned_skills from config.yaml metadata
 
         Args:
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
             max_skills: Maximum number of skills to include
 
         Returns:
@@ -490,14 +490,14 @@ class SkillService:
         skills_for_prompt: list[SkillInfo] = []
 
         for skill_path in subscribed_skills[:max_skills]:
-            # Check read permission (includes public check, works cross-tenant)
+            # Check read permission (includes public check, works cross-zone)
             if not self._can_read_skill(skill_path, context):
                 continue
 
             # Check if skill is public (for metadata loading)
             is_public = self._is_skill_public(skill_path)
 
-            # Load metadata (with public flag for cross-tenant public skills)
+            # Load metadata (with public flag for cross-zone public skills)
             metadata = self._load_skill_metadata(skill_path, context, is_public=is_public)
 
             skills_for_prompt.append(
@@ -533,7 +533,7 @@ class SkillService:
 
         Args:
             skill_path: Full path to skill
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             SkillContent with full markdown content and metadata
@@ -576,8 +576,8 @@ class SkillService:
 
     def _validate_context(self, context: OperationContext | None) -> None:
         """Validate that context has required fields."""
-        if not context or not context.tenant_id or not context.user_id:
-            raise ValidationError("Context with tenant_id and user_id required")
+        if not context or not context.zone_id or not context.user_id:
+            raise ValidationError("Context with zone_id and user_id required")
 
     def _get_rebac(self) -> ReBACManager:
         """Get ReBAC manager instance from gateway."""
@@ -589,7 +589,7 @@ class SkillService:
     def _extract_owner_from_path(self, skill_path: str) -> str:
         """Extract owner user_id from skill path.
 
-        Path format: /tenant:{tenant}/user:{user_id}/skill/{skill_name}/
+        Path format: /zone/{zone_id}/user:{user_id}/skill/{skill_name}/
 
         Returns:
             User ID if found, otherwise "unknown"
@@ -616,7 +616,7 @@ class SkillService:
             subject=("user", context.user_id),
             permission="execute",
             object=("file", skill_md_path),
-            tenant_id=context.tenant_id,
+            zone_id=context.zone_id,
         )
         if not has_ownership:
             raise PermissionDeniedError(
@@ -656,20 +656,20 @@ class SkillService:
             subject=("user", context.user_id),
             permission="read",
             object=("file", skill_md_path),
-            tenant_id=context.tenant_id,
+            zone_id=context.zone_id,
         )
         if has_direct_read:
             return True
 
         # Check if skill is public (on directory path where share tuple exists)
-        # For public skills, we check without tenant restriction
+        # For public skills, we check without zone restriction
         # Normalize path to match share() - must strip trailing slash
         normalized_path = skill_path.rstrip("/")
         is_public = rebac.rebac_check(
             subject=("role", "public"),
             permission="read",
             object=("file", normalized_path),
-            tenant_id=None,  # Public skills are tenant-agnostic
+            zone_id=None,  # Public skills are zone-agnostic
         )
         return is_public
 
@@ -682,7 +682,7 @@ class SkillService:
             subject=("role", "public"),
             permission="read",
             object=("file", normalized_path),
-            tenant_id=None,  # Public check is tenant-agnostic
+            zone_id=None,  # Public check is zone-agnostic
         )
         logger.info(
             f"[_is_skill_public] path={skill_path}, normalized={normalized_path}, result={result}"
@@ -695,10 +695,10 @@ class SkillService:
         """Parse share_with string into ReBAC subject tuple."""
         if share_with == "public":
             return ("role", "public")
-        elif share_with == "tenant":
-            # tenant_id is validated by caller via _validate_context
-            assert context.tenant_id is not None
-            return ("tenant", context.tenant_id, "member")
+        elif share_with == "zone":
+            # zone_id is validated by caller via _validate_context
+            assert context.zone_id is not None
+            return ("zone", context.zone_id, "member")
         elif share_with.startswith("group:"):
             group_name = share_with[6:]
             if not group_name:
@@ -717,7 +717,7 @@ class SkillService:
         else:
             raise ValidationError(
                 f"Invalid share_with format: '{share_with}'. "
-                f"Expected: 'public', 'tenant', 'group:<name>', 'user:<id>', or 'agent:<id>'"
+                f"Expected: 'public', 'zone', 'group:<name>', 'user:<id>', or 'agent:<id>'"
             )
 
     # =========================================================================
@@ -726,7 +726,7 @@ class SkillService:
 
     def _get_subscriptions_path(self, context: OperationContext) -> str:
         """Get path to user's subscriptions config file."""
-        return f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/.subscribed.yaml"
+        return f"/zone/{context.zone_id}/user:{context.user_id}/skill/.subscribed.yaml"
 
     def _load_subscriptions(self, context: OperationContext) -> list[str]:
         """Load user's subscribed skills from config file."""
@@ -774,7 +774,7 @@ class SkillService:
         user_id, agent_name = agent_id.split(",", 1)
 
         # Build path to agent's config.yaml
-        config_path = f"/tenant:{context.tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+        config_path = f"/zone/{context.zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
 
         try:
             content = self._gw.read(config_path, context=context)
@@ -867,14 +867,14 @@ class SkillService:
         # System skills
         find_skills_in_dir("/skill/")
 
-        # Tenant skills
-        find_skills_in_dir(f"/tenant:{context.tenant_id}/skill/")
+        # Zone skills
+        find_skills_in_dir(f"/zone/{context.zone_id}/skill/")
 
         # User skills
-        find_skills_in_dir(f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/")
+        find_skills_in_dir(f"/zone/{context.zone_id}/user:{context.user_id}/skill/")
 
-        # Cross-tenant public skills
-        # Find all skills shared with role:public from any tenant
+        # Cross-zone public skills
+        # Find all skills shared with role:public from any zone
         public_skill_paths = self._find_public_skills()
         for path in public_skill_paths:
             if path not in skill_paths:
@@ -889,7 +889,7 @@ class SkillService:
         return skill_paths
 
     def _find_public_skills(self) -> list[str]:
-        """Find all publicly shared skills across all tenants.
+        """Find all publicly shared skills across all zones.
 
         Queries the ReBAC tuples to find all skills that have been
         shared with (role, public) as viewer.
@@ -927,7 +927,7 @@ class SkillService:
         """Find skill directories within a base directory.
 
         Args:
-            base_dir: Base directory to scan (e.g., /tenant:x/user:y/skill/)
+            base_dir: Base directory to scan (e.g., /zone/x/user:y/skill/)
             context: Operation context
 
         Returns:
@@ -1056,7 +1056,7 @@ class SkillService:
                     system_ctx = OpCtx(
                         user="system",
                         groups=[],
-                        tenant_id=context.tenant_id,
+                        zone_id=context.zone_id,
                         user_id="system",
                         is_system=True,
                     )

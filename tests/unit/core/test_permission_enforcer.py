@@ -56,10 +56,10 @@ class TestOperationContext:
         assert ctx.subject_id == "backup_service"
         assert ctx.get_subject() == ("service", "backup_service")
 
-    def test_tenant_id_in_context(self):
-        """Test tenant ID in context for multi-tenant isolation."""
-        ctx = OperationContext(user="alice", groups=["developers"], tenant_id="org_acme")
-        assert ctx.tenant_id == "org_acme"
+    def test_zone_id_in_context(self):
+        """Test zone ID in context for multi-zone isolation."""
+        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org_acme")
+        assert ctx.zone_id == "org_acme"
 
     def test_requires_user(self):
         """Test that user is required."""
@@ -126,13 +126,13 @@ class TestPermissionEnforcer:
             def __init__(self):
                 self.checks = []
 
-            def rebac_check(self, subject, permission, object, tenant_id):
+            def rebac_check(self, subject, permission, object, zone_id):
                 self.checks.append(
                     {
                         "subject": subject,
                         "permission": permission,
                         "object": object,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     }
                 )
                 return subject == ("user", "alice") and permission == "read"
@@ -156,33 +156,33 @@ class TestPermissionEnforcer:
         assert rebac.checks[2]["permission"] == "write"
         assert rebac.checks[2]["object"] == ("file", "/")
 
-    def test_rebac_check_with_tenant_id(self):
-        """Test ReBAC permission checking includes tenant ID."""
+    def test_rebac_check_with_zone_id(self):
+        """Test ReBAC permission checking includes zone ID."""
 
         class MockReBACManager:
             def __init__(self):
-                self.last_tenant_id = None
+                self.last_zone_id = None
 
-            def rebac_check(self, subject, permission, object, tenant_id):
-                self.last_tenant_id = tenant_id
+            def rebac_check(self, subject, permission, object, zone_id):
+                self.last_zone_id = zone_id
                 return True
 
         rebac = MockReBACManager()
         enforcer = PermissionEnforcer(rebac_manager=rebac)
-        ctx = OperationContext(user="alice", groups=["developers"], tenant_id="org_acme")
+        ctx = OperationContext(user="alice", groups=["developers"], zone_id="org_acme")
 
         enforcer.check("/file.txt", Permission.READ, ctx)
-        assert rebac.last_tenant_id == "org_acme"
+        assert rebac.last_zone_id == "org_acme"
 
-    def test_rebac_check_defaults_tenant_id(self):
-        """Test ReBAC permission checking defaults to 'default' tenant."""
+    def test_rebac_check_defaults_zone_id(self):
+        """Test ReBAC permission checking defaults to 'default' zone."""
 
         class MockReBACManager:
             def __init__(self):
-                self.last_tenant_id = None
+                self.last_zone_id = None
 
-            def rebac_check(self, subject, permission, object, tenant_id):
-                self.last_tenant_id = tenant_id
+            def rebac_check(self, subject, permission, object, zone_id):
+                self.last_zone_id = zone_id
                 return True
 
         rebac = MockReBACManager()
@@ -190,7 +190,7 @@ class TestPermissionEnforcer:
         ctx = OperationContext(user="alice", groups=["developers"])
 
         enforcer.check("/file.txt", Permission.READ, ctx)
-        assert rebac.last_tenant_id == "default"
+        assert rebac.last_zone_id == "default"
 
     def test_filter_list_admin_sees_all(self):
         """Test that admins see all files in filter_list."""
@@ -221,7 +221,7 @@ class TestPermissionEnforcer:
         """Test that filter_list removes files user can't read via ReBAC."""
 
         class MockReBACManager:
-            def rebac_check(self, subject, permission, object, tenant_id):
+            def rebac_check(self, subject, permission, object, zone_id):
                 _, path = object
                 if path == "/public.txt" and permission == "read":
                     return True
@@ -244,7 +244,7 @@ class TestPermissionEnforcer:
             def __init__(self):
                 self.permissions_checked = []
 
-            def rebac_check(self, subject, permission, object, tenant_id):
+            def rebac_check(self, subject, permission, object, zone_id):
                 self.permissions_checked.append(permission)
                 return True
 
@@ -270,7 +270,7 @@ class TestPermissionEnforcer:
             def __init__(self):
                 self.last_subject = None
 
-            def rebac_check(self, subject, permission, object, tenant_id):
+            def rebac_check(self, subject, permission, object, zone_id):
                 self.last_subject = subject
                 return True
 
@@ -294,7 +294,7 @@ class TestPermissionEnforcer:
         class MockRouter:
             """Mock router that returns backend_path without leading slash (as the real router does)."""
 
-            def route(self, path, tenant_id=None, is_admin=False, check_write=False):
+            def route(self, path, zone_id=None, is_admin=False, check_write=False):
                 class MockBackend:
                     def get_object_type(self, backend_path):
                         return "file"
@@ -315,7 +315,7 @@ class TestPermissionEnforcer:
             def __init__(self):
                 self.last_object_id = None
 
-            def rebac_check(self, subject, permission, object, tenant_id):
+            def rebac_check(self, subject, permission, object, zone_id):
                 _, object_id = object
                 self.last_object_id = object_id
                 # Check that object_id has leading slash (normalized)

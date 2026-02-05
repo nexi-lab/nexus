@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_tenant_id, get_user_identity
+from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
@@ -508,13 +508,13 @@ class SyncService:
 
             if paths_needing_tuples and self._gw.hierarchy_enabled:
                 try:
-                    tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+                    zone_id = get_zone_id(ctx.context) if ctx.context else None
                     logger.info(
                         f"[SYNC_MOUNT] Flushing batch: creating parent tuples for "
-                        f"{len(paths_needing_tuples)} files (tenant_id={tenant_id})"
+                        f"{len(paths_needing_tuples)} files (zone_id={zone_id})"
                     )
                     created = self._gw.ensure_parent_tuples_batch(
-                        paths_needing_tuples, tenant_id=tenant_id
+                        paths_needing_tuples, zone_id=zone_id
                     )
                     total_tuples_created += created
                     logger.info(
@@ -652,7 +652,7 @@ class SyncService:
             files_found: Set to track found files
             paths_needing_tuples: List to collect paths for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         # Apply pattern filtering
         if not self._matches_patterns(virtual_path, ctx):
@@ -676,12 +676,12 @@ class SyncService:
         if ctx.dry_run:
             return
 
-        # Extract tenant_id early (needed for delta sync and metadata creation)
-        tenant_id = get_tenant_id(ctx.context) if ctx.context else None
-        if not tenant_id and ctx.mount_point:
-            match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+        # Extract zone_id early (needed for delta sync and metadata creation)
+        zone_id = get_zone_id(ctx.context) if ctx.context else None
+        if not zone_id and ctx.mount_point:
+            match = re.match(r"^/zone:([^/]+)/", ctx.mount_point)
             if match:
-                tenant_id = match.group(1)
+                zone_id = match.group(1)
 
         # Issue #1127: Delta sync - check if file has changed
         # Optimization: Only fetch file info if we have a cached entry to compare
@@ -690,7 +690,7 @@ class SyncService:
             try:
                 # First check if we have a cached entry (cheap DB lookup)
                 cached = self._change_log.get_change_log(
-                    virtual_path, backend.name, tenant_id or "default"
+                    virtual_path, backend.name, zone_id or "default"
                 )
 
                 if cached:
@@ -721,9 +721,9 @@ class SyncService:
 
         if not existing_meta:
             try:
-                if not tenant_id:
+                if not zone_id:
                     raise ValueError(
-                        f"Cannot sync file {virtual_path}: tenant_id not found in context or mount point path"
+                        f"Cannot sync file {virtual_path}: zone_id not found in context or mount point path"
                     )
 
                 now = datetime.now(UTC)
@@ -747,7 +747,7 @@ class SyncService:
                     modified_at=now,
                     version=1,
                     created_by=created_by,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
                 self._gw.metadata_put(meta)
@@ -762,7 +762,7 @@ class SyncService:
                     self._change_log.upsert_change_log(
                         path=virtual_path,
                         backend_name=backend.name,
-                        tenant_id=tenant_id or "default",
+                        tenant_id=zone_id or "default",
                         size_bytes=file_info.size,
                         mtime=file_info.mtime,
                         backend_version=file_info.backend_version,
@@ -778,7 +778,7 @@ class SyncService:
                 self._change_log.upsert_change_log(
                     path=virtual_path,
                     backend_name=backend.name,
-                    tenant_id=tenant_id or "default",
+                    tenant_id=zone_id or "default",
                     size_bytes=file_info.size,
                     mtime=file_info.mtime,
                     backend_version=file_info.backend_version,
@@ -852,7 +852,7 @@ class SyncService:
             files_found: Set to track found paths
             paths_needing_tuples: List for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         files_found.add(virtual_path)
 
@@ -864,17 +864,17 @@ class SyncService:
             return
 
         try:
-            tenant_id = get_tenant_id(ctx.context) if ctx.context else None
+            zone_id = get_zone_id(ctx.context) if ctx.context else None
 
-            # Try to extract tenant from mount point path
-            if not tenant_id and ctx.mount_point:
-                match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+            # Try to extract zone from mount point path
+            if not zone_id and ctx.mount_point:
+                match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
                 if match:
-                    tenant_id = match.group(1)
+                    zone_id = match.group(1)
 
-            if not tenant_id:
+            if not zone_id:
                 raise ValueError(
-                    f"Cannot sync directory {virtual_path}: tenant_id not found in context or mount point path"
+                    f"Cannot sync directory {virtual_path}: zone_id not found in context or mount point path"
                 )
 
             now = datetime.now(UTC)
@@ -891,7 +891,7 @@ class SyncService:
                 modified_at=now,
                 version=1,
                 created_by=created_by,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             self._gw.metadata_put(dir_meta)
@@ -1138,7 +1138,7 @@ class SyncService:
         Returns:
             Set of files found
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         assert ctx.mount_point is not None
 
@@ -1156,16 +1156,16 @@ class SyncService:
         existing_meta = self._gw.metadata_get(virtual_path)
         if not existing_meta:
             try:
-                # Extract tenant_id from context or mount point path
-                tenant_id = get_tenant_id(ctx.context) if ctx.context else None
-                if not tenant_id and ctx.mount_point:
-                    match = re.match(r"^/tenant:([^/]+)/", ctx.mount_point)
+                # Extract zone_id from context or mount point path
+                zone_id = get_zone_id(ctx.context) if ctx.context else None
+                if not zone_id and ctx.mount_point:
+                    match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
                     if match:
-                        tenant_id = match.group(1)
+                        zone_id = match.group(1)
 
-                if not tenant_id:
+                if not zone_id:
                     raise ValueError(
-                        f"Cannot sync file {virtual_path}: tenant_id not found in context or mount point path"
+                        f"Cannot sync file {virtual_path}: zone_id not found in context or mount point path"
                     )
 
                 now = datetime.now(UTC)
@@ -1183,7 +1183,7 @@ class SyncService:
                     modified_at=now,
                     version=1,
                     created_by=created_by,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 self._gw.metadata_put(meta)
                 result.files_created = 1
@@ -1276,13 +1276,13 @@ class SyncService:
             if not subject_id:
                 return False
 
-            tenant_id = get_tenant_id(context)
+            zone_id = get_zone_id(context)
 
             return self._gw.rebac_check(
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("file", path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         except Exception as e:
             logger.error(f"Permission check failed for {path}: {e}")

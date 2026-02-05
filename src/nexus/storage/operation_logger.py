@@ -29,7 +29,7 @@ class OperationLogger:
         operation_type: str,
         path: str,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         new_path: str | None = None,
         snapshot_hash: str | None = None,
@@ -42,7 +42,7 @@ class OperationLogger:
         Args:
             operation_type: Type of operation (write, delete, rename, etc.)
             path: Path affected by operation
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
             agent_id: Agent ID performing operation
             new_path: New path for rename operations
             snapshot_hash: CAS hash of previous content
@@ -56,7 +56,7 @@ class OperationLogger:
         operation = OperationLogModel(
             operation_type=operation_type,
             path=path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             new_path=new_path,
             snapshot_hash=snapshot_hash,
@@ -87,7 +87,7 @@ class OperationLogger:
     def list_operations(
         self,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         operation_type: str | None = None,
         path: str | None = None,
@@ -98,7 +98,7 @@ class OperationLogger:
         """List operations with optional filters.
 
         Args:
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             agent_id: Filter by agent ID
             operation_type: Filter by operation type
             path: Filter by path (exact match)
@@ -112,8 +112,8 @@ class OperationLogger:
         stmt = select(OperationLogModel).order_by(desc(OperationLogModel.created_at))
 
         # Apply filters
-        if tenant_id is not None:
-            stmt = stmt.where(OperationLogModel.tenant_id == tenant_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
         if agent_id is not None:
             stmt = stmt.where(OperationLogModel.agent_id == agent_id)
         if operation_type is not None:
@@ -130,7 +130,7 @@ class OperationLogger:
     def list_operations_cursor(
         self,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         operation_type: str | None = None,
         path: str | None = None,
@@ -145,7 +145,7 @@ class OperationLogger:
         Reference: https://supabase.com/docs/guides/database/pagination
 
         Args:
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             agent_id: Filter by agent ID
             operation_type: Filter by operation type
             path: Filter by path (exact match)
@@ -178,8 +178,8 @@ class OperationLogger:
                 )
 
         # Apply filters
-        if tenant_id is not None:
-            stmt = stmt.where(OperationLogModel.tenant_id == tenant_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
         if agent_id is not None:
             stmt = stmt.where(OperationLogModel.agent_id == agent_id)
         if operation_type is not None:
@@ -207,7 +207,7 @@ class OperationLogger:
     def get_last_operation(
         self,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         operation_type: str | None = None,
         status: str = "success",
@@ -215,7 +215,7 @@ class OperationLogger:
         """Get the last successful operation.
 
         Args:
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             agent_id: Filter by agent ID
             operation_type: Filter by operation type
             status: Filter by status (default: success)
@@ -224,7 +224,7 @@ class OperationLogger:
             Most recent operation matching filters or None
         """
         operations = self.list_operations(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             operation_type=operation_type,
             status=status,
@@ -236,14 +236,14 @@ class OperationLogger:
         self,
         path: str,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 50,
     ) -> list[OperationLogModel]:
         """Get operation history for a specific path.
 
         Args:
             path: Virtual path
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             limit: Maximum number of results
 
         Returns:
@@ -251,7 +251,7 @@ class OperationLogger:
         """
         return self.list_operations(
             path=path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             limit=limit,
         )
 

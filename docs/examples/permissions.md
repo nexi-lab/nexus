@@ -408,7 +408,7 @@ Learn fine-grained access control with Google Zanzibar-style ReBAC (Relationship
     )
     assert not acme_to_beta  # False - isolated!
 
-    print("✅ Multi-tenant isolation verified!")
+    print("✅ Multi-zone isolation verified!")
     ```
 
 ## 💡 Best Practices
@@ -462,6 +462,6 @@ The demo covers:
 
 ## 📚 What's Next?
 
-- **[Workspace & Sessions](workspace-session.md)** - Multi-tenant isolation
+- **[Workspace & Sessions](workspace-session.md)** - Multi-zone isolation
 - **[API Reference](../api/permissions.md)** - Complete permissions API
 - **[ReBAC Architecture](../PERMISSIONS.md)** - Deep dive into ReBAC design

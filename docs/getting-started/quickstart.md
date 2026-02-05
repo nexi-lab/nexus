@@ -359,5 +359,5 @@ You've now learned:
 - **Authentication deep dive**: See `examples/auth_demo/CLI_AUTH_GUIDE.md`
 - **Database-backed keys**: See `examples/auth_demo/database_auth_demo.sh`
 - Mount external backends: See `docs/api/mounts.md`
-- Multi-tenant setup: See `docs/SERVER_SETUP_CLI_GUIDE.md`
+- Multi-zone setup: See `docs/SERVER_SETUP_CLI_GUIDE.md`
 - API reference: See `docs/api/permissions.md`

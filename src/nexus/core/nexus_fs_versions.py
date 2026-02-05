@@ -20,7 +20,7 @@ from nexus.core.rpc_decorator import rpc_expose
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 class NexusFSVersionsMixin:
@@ -28,12 +28,12 @@ class NexusFSVersionsMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        metadata: SQLAlchemyMetadataStore
+        metadata: RaftMetadataStore
         router: PathRouter
         is_admin: bool
 
         @property
-        def tenant_id(self) -> str | None: ...
+        def zone_id(self) -> str | None: ...
         @property
         def agent_id(self) -> str | None: ...
 
@@ -101,7 +101,7 @@ class NexusFSVersionsMixin:
         # Read content from CAS using the version's content hash
         route = self.router.route(
             path,
-            tenant_id=ctx.tenant_id,
+            zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=False,
@@ -186,10 +186,10 @@ class NexusFSVersionsMixin:
 
         # Route to backend using context
         logger.info(f"[ROLLBACK] Routing to backend for path={path}")
-        tenant_id, agent_id, is_admin = self._get_routing_params(context)
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
             path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,

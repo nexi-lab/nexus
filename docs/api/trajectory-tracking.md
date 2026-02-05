@@ -26,7 +26,7 @@ A **trajectory** is a complete record of an agent's execution path, including:
 - **Steps:** Sequence of actions, decisions, and observations
 - **Outcome:** Success/failure status and score
 - **Metrics:** Duration, tokens used, cost, etc.
-- **Context:** User, agent, tenant for multi-tenant scenarios
+- **Context:** User, agent, tenant for multi-zone scenarios
 
 ### Trajectory Lifecycle
 
@@ -56,7 +56,7 @@ trajectory_mgr = TrajectoryManager(
     backend=storage_backend,
     user_id="user_123",
     agent_id="agent_456",
-    tenant_id="tenant_789",
+    zone_id="tenant_789",
     context=operation_context  # Optional
 )
 ```
@@ -67,7 +67,7 @@ trajectory_mgr = TrajectoryManager(
 - `backend` (Any): Storage backend for CAS content
 - `user_id` (str): User ID for ownership
 - `agent_id` (str, optional): Agent ID for scoping
-- `tenant_id` (str, optional): Tenant ID for multi-tenancy
+- `zone_id` (str, optional): Zone ID for multi-tenancy
 - `context` (OperationContext, optional): Permission context
 
 ---
@@ -491,7 +491,7 @@ Trajectories respect ReBAC permissions:
 # User can access:
 # 1. Trajectories they created (same user_id)
 # 2. Trajectories from their agents (same agent_id)
-# 3. Tenant-scoped trajectories (same tenant_id)
+# 3. Tenant-scoped trajectories (same zone_id)
 # 4. Admin/system users bypass checks
 
 # Example: Query only returns accessible trajectories

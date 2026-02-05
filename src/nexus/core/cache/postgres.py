@@ -53,7 +53,7 @@ class PostgresPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool | None:
         """Get cached permission result.
 
@@ -74,7 +74,7 @@ class PostgresPermissionCache:
         object_type: str,
         object_id: str,
         result: bool,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Cache permission result.
 
@@ -90,7 +90,7 @@ class PostgresPermissionCache:
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all permissions for a subject.
 
@@ -105,7 +105,7 @@ class PostgresPermissionCache:
         self,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all permissions for an object."""
         raise NotImplementedError(
@@ -118,14 +118,14 @@ class PostgresPermissionCache:
         subject_id: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate permissions for a specific subject-object pair."""
         raise NotImplementedError(
             "PostgresPermissionCache.invalidate_subject_object() not yet implemented."
         )
 
-    async def clear(self, tenant_id: str | None = None) -> int:
+    async def clear(self, zone_id: str | None = None) -> int:
         """Clear all cached permissions."""
         raise NotImplementedError("PostgresPermissionCache.clear() not yet implemented.")
 
@@ -170,7 +170,7 @@ class PostgresTigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject.
 
@@ -188,7 +188,7 @@ class PostgresTigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         bitmap_data: bytes,
         revision: int,
     ) -> None:
@@ -208,7 +208,7 @@ class PostgresTigerCache:
         subject_id: str | None = None,
         permission: str | None = None,
         resource_type: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria.
 
@@ -251,7 +251,7 @@ class PostgresResourceMapCache:
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int | None:
         """Get integer ID for a resource.
 
@@ -280,7 +280,7 @@ class PostgresResourceMapCache:
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
         int_id: int,
     ) -> None:
         """Store integer ID for a resource.

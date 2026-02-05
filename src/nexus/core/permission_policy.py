@@ -5,8 +5,8 @@ based on their location in the filesystem.
 
 Policy Structure:
     - Namespace Pattern: Glob pattern (e.g., /workspace/*, /shared/*)
-    - Default Owner: Owner ID (supports ${agent_id}, ${tenant_id})
-    - Default Group: Group ID (supports ${agent_id}, ${tenant_id})
+    - Default Owner: Owner ID (supports ${agent_id}, ${zone_id})
+    - Default Group: Group ID (supports ${agent_id}, ${zone_id})
     - Default Mode: Permission bits (e.g., 0o644)
     - Priority: Higher priority policies take precedence
 
@@ -18,7 +18,7 @@ Policy Matching:
 
 Variable Substitution:
     - ${agent_id}: Replaced with agent ID from context
-    - ${tenant_id}: Replaced with tenant ID from context
+    - ${zone_id}: Replaced with zone ID from context
     - ${user_id}: Replaced with user ID from context
 """
 
@@ -41,16 +41,16 @@ class PermissionPolicy:
     Attributes:
         policy_id: Unique policy identifier
         namespace_pattern: Path pattern (e.g., /workspace/*, /shared/*)
-        tenant_id: Tenant ID (None = system-wide)
-        default_owner: Default owner (supports ${agent_id}, ${tenant_id})
-        default_group: Default group (supports ${agent_id}, ${tenant_id})
+        zone_id: Zone ID (None = system-wide)
+        default_owner: Default owner (supports ${agent_id}, ${zone_id})
+        default_group: Default group (supports ${agent_id}, ${zone_id})
         default_mode: Default permission bits (e.g., 0o644)
         priority: Priority for pattern matching (higher = more specific)
     """
 
     policy_id: str
     namespace_pattern: str
-    tenant_id: str | None
+    zone_id: str | None
     default_owner: str
     default_group: str
     default_mode: int
@@ -76,7 +76,7 @@ class PermissionPolicy:
         """Apply policy with variable substitution.
 
         Args:
-            context: Variable context (agent_id, tenant_id, user_id)
+            context: Variable context (agent_id, zone_id, user_id)
             is_directory: Whether the file is a directory
 
         Returns:
@@ -86,7 +86,7 @@ class PermissionPolicy:
             >>> policy = PermissionPolicy(
             ...     policy_id="p1",
             ...     namespace_pattern="/workspace/*",
-            ...     tenant_id=None,
+            ...     zone_id=None,
             ...     default_owner="${agent_id}",
             ...     default_group="agents",
             ...     default_mode=0o644
@@ -158,7 +158,7 @@ class PolicyMatcher:
         self.policies.append(policy)
 
     def find_matching_policy(
-        self, path: str, tenant_id: str | None = None
+        self, path: str, zone_id: str | None = None
     ) -> PermissionPolicy | None:
         """Find the best matching policy for a path.
 
@@ -170,7 +170,7 @@ class PolicyMatcher:
 
         Args:
             path: Virtual path
-            tenant_id: Tenant ID (None = system-wide)
+            zone_id: Zone ID (None = system-wide)
 
         Returns:
             Best matching policy, or None if no match
@@ -179,7 +179,7 @@ class PolicyMatcher:
         applicable = [
             p
             for p in self.policies
-            if (p.tenant_id == tenant_id or p.tenant_id is None)  # Tenant or system-wide
+            if (p.zone_id == zone_id or p.zone_id is None)  # Tenant or system-wide
             and p.matches(path)  # Matches pattern
         ]
 
@@ -187,14 +187,14 @@ class PolicyMatcher:
             return None
 
         # Sort by priority (higher first), then prefer tenant-specific
-        applicable.sort(key=lambda p: (p.priority, p.tenant_id is not None), reverse=True)
+        applicable.sort(key=lambda p: (p.priority, p.zone_id is not None), reverse=True)
 
         return applicable[0]
 
     def apply_policy(
         self,
         path: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: dict[str, str] | None = None,
         is_directory: bool = False,
     ) -> tuple[str, str, int] | None:
@@ -202,14 +202,14 @@ class PolicyMatcher:
 
         Args:
             path: Virtual path
-            tenant_id: Tenant ID
-            context: Variable context (agent_id, tenant_id, user_id)
+            zone_id: Zone ID
+            context: Variable context (agent_id, zone_id, user_id)
             is_directory: Whether the file is a directory
 
         Returns:
             Tuple of (owner, group, mode) or None if no policy matches
         """
-        policy = self.find_matching_policy(path, tenant_id)
+        policy = self.find_matching_policy(path, zone_id)
         if policy is None:
             return None
 
@@ -224,8 +224,8 @@ def create_default_policies() -> list[PermissionPolicy]:
 
     Default Policies:
         /workspace/*: owner=${agent_id}, group=agents, mode=0o644
-        /shared/*: owner=root, group=${tenant_id}, mode=0o664
-        /archives/*: owner=root, group=${tenant_id}, mode=0o444
+        /shared/*: owner=root, group=${zone_id}, mode=0o664
+        /archives/*: owner=root, group=${zone_id}, mode=0o444
         /system/*: owner=root, group=root, mode=0o600
     """
     import uuid
@@ -235,7 +235,7 @@ def create_default_policies() -> list[PermissionPolicy]:
         PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/workspace/*",
-            tenant_id=None,  # System-wide
+            zone_id=None,  # System-wide
             default_owner="${agent_id}",
             default_group="agents",
             default_mode=0o644,  # rw-r--r--
@@ -245,9 +245,9 @@ def create_default_policies() -> list[PermissionPolicy]:
         PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/shared/*",
-            tenant_id=None,  # System-wide
+            zone_id=None,  # System-wide
             default_owner="root",
-            default_group="${tenant_id}",
+            default_group="${zone_id}",
             default_mode=0o664,  # rw-rw-r--
             priority=10,
         ),
@@ -255,9 +255,9 @@ def create_default_policies() -> list[PermissionPolicy]:
         PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/archives/*",
-            tenant_id=None,  # System-wide
+            zone_id=None,  # System-wide
             default_owner="root",
-            default_group="${tenant_id}",
+            default_group="${zone_id}",
             default_mode=0o444,  # r--r--r--
             priority=10,
         ),
@@ -265,7 +265,7 @@ def create_default_policies() -> list[PermissionPolicy]:
         PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/system/*",
-            tenant_id=None,  # System-wide
+            zone_id=None,  # System-wide
             default_owner="root",
             default_group="root",
             default_mode=0o600,  # rw-------

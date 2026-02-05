@@ -58,7 +58,7 @@ Your agents (CrewAI, LangGraph, Claude SDK, OpenAI Agents) call simple memory AP
 
 ## Core Concepts
 
-### 1. Identity Triple: (tenant_id, user_id, agent_id)
+### 1. Identity Triple: (zone_id, user_id, agent_id)
 
 Every memory has an **identity triple** that determines ownership and access:
 
@@ -69,7 +69,7 @@ from nexus.remote import RemoteNexusFS
 nx = RemoteNexusFS(server_url="http://localhost:2026")
 
 # Set identity context
-nx.tenant_id = "acme"      # Organization
+nx.zone_id = "acme"      # Organization
 nx.user_id = "alice"       # Real user
 nx.agent_id = "agent1"     # Agent that created it
 
@@ -78,7 +78,7 @@ memory_id = nx.memory.store(content="User prefers Python")
 ```
 
 **Key relationships:**
-- `tenant_id`: Organization/workspace (e.g., "acme", "startup-xyz")
+- `zone_id`: Organization/workspace (e.g., "acme", "startup-xyz")
 - `user_id`: Real user ownership (enables sharing across agent instances)
 - `agent_id`: Which agent created the memory (for filtering/audit)
 
@@ -103,7 +103,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect and set identity
 nx = RemoteNexusFS(server_url="http://localhost:2026")
-nx.tenant_id = "acme"
+nx.zone_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "agent1"
 
@@ -362,7 +362,7 @@ nx = RemoteNexusFS(
 )
 
 # Set identity context (who is using the memory)
-nx.tenant_id = "acme"      # Organization
+nx.zone_id = "acme"      # Organization
 nx.user_id = "alice"       # User
 nx.agent_id = "agent1"     # Agent instance
 
@@ -389,7 +389,7 @@ nx = RemoteNexusFS(
     server_url=os.getenv("NEXUS_SERVER_URL"),
     api_key=os.getenv("NEXUS_API_KEY")
 )
-nx.tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
+nx.zone_id = os.getenv("NEXUS_TENANT_ID", "default")
 nx.agent_id = os.getenv("NEXUS_AGENT_ID", "my-agent")
 
 # Use memory
@@ -406,7 +406,7 @@ from nexus.backends.local import LocalBackend
 backend = LocalBackend(root_path="./nexus-data")
 nx = NexusFS(
     backend=backend,
-    tenant_id="acme",
+    zone_id="acme",
     user_id="alice",
     agent_id="agent1"
 )
@@ -424,7 +424,7 @@ from nexus.core.memory_api import Memory
 memory = Memory(
     session=db_session,          # SQLAlchemy session
     backend=local_backend,       # Content storage backend
-    tenant_id="acme",            # Organization context
+    zone_id="acme",            # Organization context
     user_id="alice",             # Real user
     agent_id="agent1",           # Creating agent
     entity_registry=registry,    # Identity relationships
@@ -487,7 +487,7 @@ memory_id = nx.memory.store(
 memories = nx.memory.query(
     user_id: str | None = None,         # Filter by user
     agent_id: str | None = None,        # Filter by agent
-    tenant_id: str | None = None,       # Filter by tenant
+    zone_id: str | None = None,       # Filter by zone
     scope: str | None = None,           # Filter by scope
     memory_type: str | None = None,     # Filter by type
     state: str | None = "active",       # Filter by state (inactive/active/all)
@@ -503,7 +503,7 @@ memories = nx.memory.query(
         "memory_id": "mem_123",
         "content": "User prefers Python over JavaScript",
         "content_hash": "abc123...",
-        "tenant_id": "acme",
+        "zone_id": "acme",
         "user_id": "alice",
         "agent_id": "agent1",
         "scope": "user",
@@ -795,7 +795,7 @@ from nexus.remote import RemoteNexusFS
 
 # Connect as research agent - stores organizational knowledge
 nx = RemoteNexusFS(server_url="http://localhost:2026")
-nx.tenant_id = "acme"
+nx.zone_id = "acme"
 nx.user_id = "alice"
 nx.agent_id = "research_agent"
 
@@ -810,7 +810,7 @@ nx.memory.store(
 
 # Connect as code assistant (different user, same tenant)
 nx2 = RemoteNexusFS(server_url="http://localhost:2026")
-nx2.tenant_id = "acme"
+nx2.zone_id = "acme"
 nx2.user_id = "bob"
 nx2.agent_id = "code_assistant"
 

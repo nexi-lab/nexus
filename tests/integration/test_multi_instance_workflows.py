@@ -3,19 +3,24 @@
 These tests verify the correct behavior when combining multiple NexusFS primitives
 in real-world usage patterns:
 
-1. Wait + Read patterns
-2. Lock + Write patterns
+1. Wait + Read patterns (event propagation via Redis)
+2. Lock + Write patterns (single-instance Raft locks)
 3. Concurrent access patterns
-4. Race condition handling
-
-These patterns are what AI agents will commonly use, so we need to ensure
-they work correctly together.
+4. Error handling patterns
 
 Requirements:
-- Redis or Dragonfly running at localhost:6379 (or NEXUS_REDIS_URL)
+- Redis or Dragonfly running at localhost:6379 (or NEXUS_REDIS_URL) for events
 - Tests use PassthroughBackend for file operations
 
-Related: Issue #1106 Block 2, Issue #1143 (backlog)
+Architecture Notes (Raft Zone Migration):
+- Metadata is stored in sled (RaftMetadataStore) - each instance has its own database
+- Locks are Raft-based (per-instance RaftLockManager)
+- Events propagate via Redis (shared event bus)
+- For multi-instance lock testing with shared locks, use:
+  - test_raft_locks.py (single-instance Raft locks)
+  - test_raft_distributed.py (Docker-based distributed Raft cluster)
+
+Related: Issue #1106 Block 2, Issue #1159 (Raft Consensus Zones)
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import uuid
 
 import pytest
 
-# Skip entire module if Redis is not available
+# Skip entire module if Redis is not available (needed for event bus)
 pytestmark = [
     pytest.mark.skipif(
         not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
@@ -54,9 +59,15 @@ def temp_nexus_dir(tmp_path):
 
 
 @pytest.fixture
-def shared_db_path(temp_nexus_dir):
-    """Create a shared database path for all NexusFS instances in a test."""
-    return temp_nexus_dir / "shared_nexus.db"
+def db_path_agent1(temp_nexus_dir):
+    """Create a database path for agent 1 (sled uses exclusive file locks)."""
+    return temp_nexus_dir / "agent1.db"
+
+
+@pytest.fixture
+def db_path_agent2(temp_nexus_dir):
+    """Create a database path for agent 2 (sled uses exclusive file locks)."""
+    return temp_nexus_dir / "agent2.db"
 
 
 @pytest.fixture
@@ -68,15 +79,6 @@ async def shared_event_bus(redis_client):
     await bus.start()
     yield bus
     await bus.stop()
-
-
-@pytest.fixture
-async def shared_lock_manager(redis_client):
-    """Create a shared lock manager for all NexusFS instances in a test."""
-    from nexus.core.distributed_lock import RedisLockManager
-
-    manager = RedisLockManager(redis_client)
-    yield manager
 
 
 @pytest.fixture
@@ -101,31 +103,31 @@ async def redis_client():
 
 
 @pytest.fixture
-async def nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shared_lock_manager):
-    """Create a NexusFS instance with both local and distributed capabilities."""
+async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
+    """Create a NexusFS instance with event bus and Raft-based locks."""
     from nexus.backends.passthrough import PassthroughBackend
     from nexus.core.nexus_fs import NexusFS
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
-    # Use shared db_path within test (unique per test via tmp_path)
+    # Each agent gets its own sled database (sled uses exclusive file locks)
     import warnings
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = NexusFS(
             backend=backend,
-            db_path=shared_db_path,
+            db_path=db_path_agent1,
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
-            enforce_tenant_isolation=False,  # Disable tenant isolation for testing
-            tenant_id="test",  # Explicit tenant for consistent event routing
+            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            zone_id="test",  # Explicit zone for consistent event routing
             enable_content_cache=True,  # Enable cache with invalidation
             enable_metadata_cache=True,  # Enable cache with invalidation
+            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
         )
 
-    # Use shared distributed components (same Redis connection = events propagate)
+    # Use shared event bus (same Redis connection = events propagate)
     nexus._event_bus = shared_event_bus
-    nexus._lock_manager = shared_lock_manager
 
     # Start cache invalidation (events from other instances will invalidate local cache)
     nexus._start_cache_invalidation()
@@ -137,31 +139,36 @@ async def nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shared_lock
 
 
 @pytest.fixture
-async def second_nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shared_lock_manager):
-    """Create a second NexusFS instance (simulating another agent/node)."""
+async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
+    """Create a second NexusFS instance (simulating another agent on different machine).
+
+    Note: Each instance has its own Raft-based lock manager, so locks are NOT
+    shared between instances without a Raft cluster. For shared lock tests,
+    see test_raft_distributed.py (Docker-based).
+    """
     from nexus.backends.passthrough import PassthroughBackend
     from nexus.core.nexus_fs import NexusFS
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
-    # Use shared db_path within test (unique per test via tmp_path)
+    # Each agent gets its own sled database (sled uses exclusive file locks)
     import warnings
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = NexusFS(
             backend=backend,
-            db_path=shared_db_path,
+            db_path=db_path_agent2,
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
-            enforce_tenant_isolation=False,  # Disable tenant isolation for testing
-            tenant_id="test",  # Explicit tenant for consistent event routing
+            enforce_zone_isolation=False,  # Disable zone isolation for testing
+            zone_id="test",  # Explicit zone for consistent event routing
             enable_content_cache=True,  # Enable cache with invalidation
             enable_metadata_cache=True,  # Enable cache with invalidation
+            enable_distributed_locks=True,  # Uses Raft-based locks via RaftMetadataStore
         )
 
-    # Use shared distributed components (same Redis connection = events propagate)
+    # Use shared event bus (same Redis connection = events propagate)
     nexus._event_bus = shared_event_bus
-    nexus._lock_manager = shared_lock_manager
 
     # Start cache invalidation (events from other instances will invalidate local cache)
     nexus._start_cache_invalidation()
@@ -173,40 +180,24 @@ async def second_nexus_fs(temp_nexus_dir, shared_db_path, shared_event_bus, shar
 
 
 # =============================================================================
-# Wait + Read Patterns
+# Wait + Read Patterns (Event Propagation)
 # =============================================================================
 
 
 class TestWaitThenRead:
-    """Tests for wait_for_changes() + read() composed pattern."""
+    """Tests for wait_for_changes() + read() composed pattern.
 
-    @pytest.mark.asyncio
-    async def test_wait_then_read_new_file(self, nexus_fs, second_nexus_fs):
-        """Agent A waits, Agent B writes -> Agent A reads successfully."""
-        test_id = uuid.uuid4().hex[:8]
-        test_path = f"/inbox/wait_read_{test_id}.txt"
-        test_content = b"Hello from Agent B"
+    ARCHITECTURE NOTE:
+    These tests use two NexusFS instances with SEPARATE sled databases but
+    SHARED Redis event bus. Events propagate via Redis, but metadata does NOT
+    propagate without Raft cluster replication.
 
-        # Ensure inbox exists
-        nexus_fs.mkdir("/inbox", parents=True)
+    Tests that need to read file content after receiving an event from another
+    instance require shared metadata via Raft. These tests are in:
+    - test_raft_distributed.py::TestDistributedEventNotifications (Docker-based)
 
-        received_content = {"data": None}
-
-        async def agent_a_wait_and_read():
-            """Agent A: Wait for file, then read it."""
-            change = await nexus_fs.wait_for_changes("/inbox/", timeout=5.0)
-            if change and change["path"].endswith(f"wait_read_{test_id}.txt"):
-                received_content["data"] = nexus_fs.read(change["path"])
-
-        async def agent_b_write():
-            """Agent B: Write the file after a delay."""
-            await asyncio.sleep(0.3)
-            second_nexus_fs.write(test_path, test_content)
-
-        # Run both agents concurrently
-        await asyncio.gather(agent_a_wait_and_read(), agent_b_write())
-
-        assert received_content["data"] == test_content
+    Tests in this class only verify event propagation, not content reads.
+    """
 
     @pytest.mark.asyncio
     async def test_wait_then_read_with_glob_pattern(self, nexus_fs, second_nexus_fs):
@@ -247,49 +238,18 @@ class TestWaitThenRead:
 
         assert change is None
 
-    @pytest.mark.asyncio
-    async def test_wait_then_read_file_deleted_before_read(self, nexus_fs, second_nexus_fs):
-        """Agent A waits, Agent B writes then deletes -> Agent A read fails gracefully."""
-        test_id = uuid.uuid4().hex[:8]
-        test_path = f"/volatile/temp_{test_id}.txt"
-
-        nexus_fs.mkdir("/volatile", parents=True)
-
-        read_result = {"success": None, "error": None}
-
-        async def agent_a_wait_and_read():
-            """Agent A: Wait for file, then try to read (may fail if deleted)."""
-            change = await nexus_fs.wait_for_changes("/volatile/", timeout=5.0)
-            if change and change["type"] == "file_write":
-                # Small delay to allow deletion
-                await asyncio.sleep(0.2)
-                try:
-                    nexus_fs.read(change["path"])
-                    read_result["success"] = True
-                except Exception as e:
-                    read_result["success"] = False
-                    read_result["error"] = str(e)
-
-        async def agent_b_write_then_delete():
-            """Agent B: Write file, then immediately delete it."""
-            await asyncio.sleep(0.2)
-            second_nexus_fs.write(test_path, b"temporary content")
-            await asyncio.sleep(0.1)
-            second_nexus_fs.delete(test_path)
-
-        await asyncio.gather(agent_a_wait_and_read(), agent_b_write_then_delete())
-
-        # Read should have failed (file deleted)
-        assert read_result["success"] is False or read_result["error"] is not None
-
 
 # =============================================================================
-# Lock + Write Patterns
+# Lock + Write Patterns (Single-Instance Raft Locks)
 # =============================================================================
 
 
 class TestLockThenWrite:
-    """Tests for lock() + write() + unlock() composed pattern."""
+    """Tests for lock() + write() + unlock() composed pattern.
+
+    NOTE: These tests use single-instance Raft locks. For multi-instance
+    distributed lock tests, see test_raft_distributed.py (Docker-based).
+    """
 
     @pytest.mark.asyncio
     async def test_lock_write_unlock_basic(self, nexus_fs):
@@ -307,96 +267,6 @@ class TestLockThenWrite:
         finally:
             released = await nexus_fs.unlock(lock_id, test_path)
             assert released is True
-
-    @pytest.mark.asyncio
-    async def test_lock_prevents_concurrent_write(self, nexus_fs, second_nexus_fs):
-        """Agent A locks, Agent B cannot write until A unlocks."""
-        test_id = uuid.uuid4().hex[:8]
-        test_path = f"/exclusive/file_{test_id}.txt"
-        nexus_fs.mkdir("/exclusive", parents=True)
-
-        results = {"a_wrote": False, "b_lock_failed": False, "b_wrote_after": False}
-
-        async def agent_a_lock_write_unlock():
-            """Agent A: Lock, write, hold for a bit, unlock."""
-            lock_id = await nexus_fs.lock(test_path, timeout=5.0)
-            if lock_id:
-                nexus_fs.write(test_path, b"Agent A content")
-                results["a_wrote"] = True
-                await asyncio.sleep(0.5)  # Hold lock
-                await nexus_fs.unlock(lock_id, test_path)
-
-        async def agent_b_try_lock_write():
-            """Agent B: Try to lock with short timeout, should fail initially."""
-            await asyncio.sleep(0.1)  # Let A get lock first
-
-            # First attempt should fail (A holds lock)
-            lock_id = await second_nexus_fs.lock(test_path, timeout=0.2)
-            if lock_id is None:
-                results["b_lock_failed"] = True
-
-            # Wait for A to release and try again
-            await asyncio.sleep(0.5)
-            lock_id = await second_nexus_fs.lock(test_path, timeout=2.0)
-            if lock_id:
-                second_nexus_fs.write(test_path, b"Agent B content")
-                results["b_wrote_after"] = True
-                await second_nexus_fs.unlock(lock_id, test_path)
-
-        await asyncio.gather(agent_a_lock_write_unlock(), agent_b_try_lock_write())
-
-        assert results["a_wrote"] is True
-        assert results["b_lock_failed"] is True
-        assert results["b_wrote_after"] is True
-
-        # Wait for cache invalidation event to propagate
-        # (events are published async, cache may have stale data without this)
-        await asyncio.sleep(0.1)
-
-        # Final content should be from Agent B
-        content = nexus_fs.read(test_path)
-        assert content == b"Agent B content"
-
-    @pytest.mark.asyncio
-    async def test_lock_with_heartbeat_pattern(self, nexus_fs, second_nexus_fs):
-        """Agent A uses heartbeat to extend lock during long operation."""
-        test_id = uuid.uuid4().hex[:8]
-        test_path = f"/heartbeat/file_{test_id}.txt"
-        nexus_fs.mkdir("/heartbeat", parents=True)
-
-        results = {"a_completed": False, "b_waited": False}
-
-        async def agent_a_long_operation():
-            """Agent A: Lock with short TTL, extend via heartbeat, complete."""
-            lock_id = await nexus_fs.lock(test_path, timeout=5.0, ttl=1.0)
-            if lock_id:
-                try:
-                    # Simulate long operation with heartbeats
-                    for _ in range(3):
-                        await asyncio.sleep(0.4)
-                        extended = await nexus_fs.extend_lock(lock_id, test_path, ttl=1.0)
-                        assert extended is True
-
-                    nexus_fs.write(test_path, b"Long operation complete")
-                    results["a_completed"] = True
-                finally:
-                    await nexus_fs.unlock(lock_id, test_path)
-
-        async def agent_b_wait_for_lock():
-            """Agent B: Wait for lock (A's heartbeat keeps it alive)."""
-            await asyncio.sleep(0.2)
-            start = asyncio.get_event_loop().time()
-            lock_id = await second_nexus_fs.lock(test_path, timeout=5.0)
-            elapsed = asyncio.get_event_loop().time() - start
-
-            if lock_id:
-                results["b_waited"] = elapsed > 1.0  # Should have waited for A
-                await second_nexus_fs.unlock(lock_id, test_path)
-
-        await asyncio.gather(agent_a_long_operation(), agent_b_wait_for_lock())
-
-        assert results["a_completed"] is True
-        assert results["b_waited"] is True
 
     @pytest.mark.asyncio
     async def test_lock_timeout_in_try_finally(self, nexus_fs):
@@ -423,10 +293,6 @@ class TestLockThenWrite:
         assert lock_acquired is True
         assert operation_failed is True
         assert lock_released is True
-
-        # Lock should be free now
-        is_locked = await nexus_fs._lock_manager.is_locked("default", test_path)
-        assert is_locked is False
 
 
 # =============================================================================
@@ -480,45 +346,6 @@ class TestConcurrentAccess:
         # One of them won - we can't predict which
         content = nexus_fs.read(test_path)
         assert content in (b"Content A", b"Content B")
-
-    @pytest.mark.asyncio
-    async def test_concurrent_writes_with_lock_no_race(self, nexus_fs, second_nexus_fs):
-        """Concurrent writes with lock -> orderly writes, no data corruption."""
-        test_id = uuid.uuid4().hex[:8]
-        test_path = f"/ordered/file_{test_id}.txt"
-        nexus_fs.mkdir("/ordered", parents=True)
-
-        write_order = []
-
-        async def locked_write(nexus, agent_name, content):
-            lock_id = await nexus.lock(test_path, timeout=5.0)
-            if lock_id:
-                try:
-                    # Read-modify-write pattern
-                    try:
-                        existing = nexus.read(test_path)
-                        new_content = existing + content
-                    except Exception:
-                        new_content = content
-                    nexus.write(test_path, new_content)
-                    write_order.append(agent_name)
-                finally:
-                    await nexus.unlock(lock_id, test_path)
-
-        await asyncio.gather(
-            locked_write(nexus_fs, "A", b"[A]"),
-            locked_write(second_nexus_fs, "B", b"[B]"),
-            locked_write(nexus_fs, "C", b"[C]"),
-        )
-
-        # All three wrote
-        assert len(write_order) == 3
-
-        # Content should have all three, in some order
-        content = nexus_fs.read(test_path)
-        assert b"[A]" in content
-        assert b"[B]" in content
-        assert b"[C]" in content
 
     @pytest.mark.asyncio
     async def test_read_while_write_in_progress(self, nexus_fs, second_nexus_fs):
@@ -595,7 +422,6 @@ class TestEventNotification:
         nexus_fs.write(test_path, b"to be deleted")
 
         # Wait for setup write event to propagate and drain
-        # (events are published async, so waiter might catch it otherwise)
         await asyncio.sleep(0.1)
 
         received_event = {"event": None}
@@ -604,7 +430,6 @@ class TestEventNotification:
             # Wait specifically for delete event (ignore any lingering write events)
             event = await nexus_fs.wait_for_changes("/notify_del/", timeout=5.0)
             while event and event.get("type") != "file_delete":
-                # Might have caught a late write event, wait for delete
                 event = await nexus_fs.wait_for_changes("/notify_del/", timeout=3.0)
             received_event["event"] = event
 
@@ -627,7 +452,6 @@ class TestEventNotification:
         nexus_fs.write(old_path, b"to be renamed")
 
         # Wait for setup write event to propagate and drain
-        # (events are published async, so waiter might catch it otherwise)
         await asyncio.sleep(0.1)
 
         received_event = {"event": None}
@@ -636,7 +460,6 @@ class TestEventNotification:
             # Wait specifically for rename event (ignore any lingering write events)
             event = await nexus_fs.wait_for_changes("/notify_ren/", timeout=5.0)
             while event and event.get("type") != "file_rename":
-                # Might have caught a late write event, wait for rename
                 event = await nexus_fs.wait_for_changes("/notify_ren/", timeout=3.0)
             received_event["event"] = event
 
@@ -661,28 +484,10 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_read_nonexistent_file_after_wait(self, nexus_fs):
         """Wait returns event but file doesn't exist -> graceful error."""
-        # This tests the case where wait returns but read fails
         from nexus.core.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/nonexistent/file.txt")
-
-    @pytest.mark.asyncio
-    async def test_lock_already_locked_timeout(self, nexus_fs, second_nexus_fs):
-        """Try to lock already-locked path -> timeout gracefully."""
-        test_path = "/locked/exclusive.txt"
-        nexus_fs.mkdir("/locked", parents=True)
-
-        # Agent A holds lock
-        lock_a = await nexus_fs.lock(test_path, timeout=5.0)
-        assert lock_a is not None
-
-        try:
-            # Agent B times out
-            lock_b = await second_nexus_fs.lock(test_path, timeout=0.3)
-            assert lock_b is None
-        finally:
-            await nexus_fs.unlock(lock_a, test_path)
 
     @pytest.mark.asyncio
     async def test_unlock_after_ttl_expired(self, nexus_fs):
@@ -714,79 +519,3 @@ class TestErrorHandling:
             assert extended is False
         finally:
             await nexus_fs.unlock(lock_id, test_path)
-
-
-# =============================================================================
-# Multi-Agent Coordination Patterns
-# =============================================================================
-
-
-class TestMultiAgentCoordination:
-    """Tests for multi-agent coordination patterns."""
-
-    @pytest.mark.asyncio
-    async def test_producer_consumer_pattern(self, nexus_fs, second_nexus_fs):
-        """Producer writes files, Consumer processes them."""
-        nexus_fs.mkdir("/queue", parents=True)
-
-        produced = []
-        consumed = set()  # Use set to avoid duplicates
-
-        async def producer():
-            """Produce 3 files with enough delay for consumer to catch each."""
-            await asyncio.sleep(0.2)  # Let consumer start subscribing first
-            for i in range(3):
-                path = f"/queue/task_{i}.json"
-                nexus_fs.write(path, f'{{"task": {i}}}'.encode())
-                produced.append(path)
-                await asyncio.sleep(0.2)  # Longer delay to ensure consumer catches each
-
-        async def consumer():
-            """Consume files as they appear."""
-            deadline = asyncio.get_event_loop().time() + 5.0
-            while len(consumed) < 3:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    break
-                change = await second_nexus_fs.wait_for_changes(
-                    "/queue/*.json", timeout=min(remaining, 2.0)
-                )
-                if change and change["type"] == "file_write":
-                    try:
-                        second_nexus_fs.read(change["path"])
-                        consumed.add(change["path"])
-                    except Exception:
-                        pass  # File might have been deleted
-
-        await asyncio.gather(producer(), consumer())
-
-        assert len(produced) == 3
-        assert len(consumed) == 3
-
-    @pytest.mark.asyncio
-    async def test_leader_election_pattern(self, nexus_fs, second_nexus_fs):
-        """Multiple agents try to become leader via lock."""
-        leader_path = "/leader/election"
-        nexus_fs.mkdir("/leader", parents=True)
-
-        results = {"leaders": []}
-
-        async def try_become_leader(nexus, agent_name):
-            lock_id = await nexus.lock(leader_path, timeout=0.5, ttl=2.0)
-            if lock_id:
-                results["leaders"].append(agent_name)
-                # Hold leadership briefly
-                await asyncio.sleep(0.2)
-                await nexus.unlock(lock_id, leader_path)
-                return True
-            return False
-
-        # Both try to become leader simultaneously
-        await asyncio.gather(
-            try_become_leader(nexus_fs, "A"),
-            try_become_leader(second_nexus_fs, "B"),
-        )
-
-        # Exactly one should have become leader (initially)
-        # Both may have become leader if they took turns
-        assert len(results["leaders"]) >= 1

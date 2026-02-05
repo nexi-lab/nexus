@@ -1,10 +1,12 @@
 """Memory REST API endpoints.
 
-Provides 7 endpoints for memory CRUD and search operations:
+Provides 9 endpoints for memory CRUD and search operations:
 - POST   /api/v2/memories              - Store memory
 - GET    /api/v2/memories/{id}         - Get memory by ID
 - PUT    /api/v2/memories/{id}         - Update memory
 - DELETE /api/v2/memories/{id}         - Delete memory
+- POST   /api/v2/memories/{id}/invalidate  - Invalidate memory (#1183)
+- POST   /api/v2/memories/{id}/revalidate  - Revalidate memory (#1183)
 - POST   /api/v2/memories/search       - Semantic search
 - POST   /api/v2/memories/batch        - Batch store
 - GET    /api/v2/memories/{id}/history - Version history
@@ -104,6 +106,7 @@ async def store_memory(
             extract_temporal=request.extract_temporal,
             extract_relationships=request.extract_relationships,
             store_to_graph=request.store_to_graph,
+            valid_at=request.valid_at,  # #1183: Bi-temporal validity
             _metadata=request.metadata,
             context=context,
         )
@@ -269,6 +272,68 @@ async def delete_memory(
     except Exception as e:
         logger.error(f"Memory delete error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory delete error: {e}") from e
+
+
+@router.post("/{memory_id}/invalidate")
+async def invalidate_memory(
+    memory_id: str,
+    invalid_at: str | None = Query(
+        None, description="When fact became invalid (ISO-8601, default: now)"
+    ),
+    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Invalidate a memory (mark as no longer valid) (#1183).
+
+    This is a temporal soft-delete that marks when a fact became false.
+    The memory remains queryable for historical analysis but is excluded
+    from "current facts" queries (include_invalid=False).
+
+    Unlike DELETE, invalidate() preserves the memory for audit trails
+    and point-in-time queries.
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        result = app_state.nexus_fs.memory.invalidate(memory_id, invalid_at=invalid_at)
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+
+        return {"invalidated": True, "memory_id": memory_id, "invalid_at": invalid_at or "now"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory invalidate error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory invalidate error: {e}") from e
+
+
+@router.post("/{memory_id}/revalidate")
+async def revalidate_memory(
+    memory_id: str,
+    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Revalidate a memory (clear invalid_at timestamp) (#1183).
+
+    Use when a previously invalidated fact becomes true again.
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        result = app_state.nexus_fs.memory.revalidate(memory_id)
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+
+        return {"revalidated": True, "memory_id": memory_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory revalidate error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory revalidate error: {e}") from e
 
 
 @router.post("/search", response_model=dict[str, Any])

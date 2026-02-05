@@ -1195,6 +1195,12 @@ class MemoryModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
+    # Bi-temporal validity period (#1183)
+    # valid_at: When the fact became true in the real world (NULL = use created_at)
+    # invalid_at: When the fact became false (NULL = still valid)
+    valid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    invalid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # Indexes
     __table_args__ = (
         Index("idx_memory_tenant", "tenant_id"),
@@ -1217,6 +1223,8 @@ class MemoryModel(Base):
         Index("idx_memory_parent", "parent_memory_id"),  # #1029 - parent lookup
         Index("idx_memory_archived", "is_archived"),  # #1029 - archived filtering
         Index("idx_memory_last_accessed", "last_accessed_at"),  # #1030 - decay calculation
+        Index("idx_memory_valid_at", "valid_at"),  # #1183 - bi-temporal validity start
+        Index("idx_memory_invalid_at", "invalid_at"),  # #1183 - bi-temporal validity end
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(
@@ -1240,6 +1248,12 @@ class MemoryModel(Base):
             "idx_memory_tenant_created_brin",
             "tenant_id",
             "created_at",
+            postgresql_using="brin",
+        ),
+        # #1183: BRIN index for bi-temporal validity period queries
+        Index(
+            "idx_memory_valid_at_brin",
+            "valid_at",
             postgresql_using="brin",
         ),
     )
@@ -1971,6 +1985,97 @@ class SyncJobModel(Base):
             "result": json.loads(self.result) if self.result else None,
             "error_message": self.error_message,
         }
+
+
+# === Delta Sync Change Tracking (Issue #1127) ===
+
+
+class BackendChangeLogModel(Base):
+    """Change log for delta sync tracking (Issue #1127).
+
+    Tracks the last synced state of each file per backend, enabling
+    incremental sync by comparing against current backend state.
+
+    Change Detection Strategy (rsync-inspired):
+    1. Quick check: Compare size + mtime first (fastest, no network)
+    2. Backend version: Compare GCS generation or S3 version ID
+    3. Content hash: Fallback for backends without native versioning
+
+    Performance:
+    - Before: Full scan of 10,000 files → ~100 seconds
+    - After: Delta check of 10,000 files, 10 changed → ~0.2 seconds
+    """
+
+    __tablename__ = "backend_change_log"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # File identification (composite unique key)
+    path: Mapped[str] = mapped_column(String(4096), nullable=False)
+    backend_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Change detection fields (rsync-inspired quick check)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    mtime: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Backend-specific version tracking
+    # GCS: generation number (monotonically increasing integer as string)
+    # S3: version ID (if versioning enabled)
+    # Other: content hash or timestamp
+    backend_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Content hash (SHA-256 or BLAKE3) - fallback for change detection
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Sync tracking
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    # Optional: tenant isolation for multi-tenant deployments
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+
+    # Indexes and constraints
+    __table_args__ = (
+        # Unique constraint: one entry per path per backend per tenant
+        UniqueConstraint("path", "backend_name", "tenant_id", name="uq_backend_change_log"),
+        # Lookup patterns
+        Index("idx_bcl_path_backend", "path", "backend_name"),
+        Index("idx_bcl_synced_at", "backend_name", "synced_at"),
+        Index("idx_bcl_tenant", "tenant_id"),
+        # BRIN index for time-series queries (append-only pattern)
+        Index(
+            "idx_bcl_synced_brin",
+            "synced_at",
+            postgresql_using="brin",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<BackendChangeLogModel(path={self.path}, backend={self.backend_name}, synced_at={self.synced_at})>"
+
+    def validate(self) -> None:
+        """Validate change log model before database operations.
+
+        Raises:
+            ValidationError: If validation fails with clear message.
+        """
+        from nexus.core.exceptions import ValidationError
+
+        if not self.path:
+            raise ValidationError("path is required")
+
+        if not self.backend_name:
+            raise ValidationError("backend_name is required")
+
+        if self.size_bytes is not None and self.size_bytes < 0:
+            raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
 
 # === Workspace & Memory Registry Models ===

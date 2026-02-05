@@ -7,6 +7,7 @@ combining content-addressable storage (CAS) with directory operations.
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.response import HandlerResponse
@@ -14,6 +15,29 @@ from nexus.core.response import HandlerResponse
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.permissions_enhanced import EnhancedOperationContext
+
+
+@dataclass
+class FileInfo:
+    """File metadata for delta sync change detection (Issue #1127).
+
+    Used by get_file_info() to return file metadata for comparison
+    during incremental sync operations.
+
+    Attributes:
+        size: File size in bytes
+        mtime: Last modification time (from backend)
+        backend_version: Backend-specific version identifier
+            - GCS: generation number (monotonically increasing)
+            - S3: version ID (if versioning enabled)
+            - Local: inode + mtime as string
+        content_hash: Optional content hash if already computed
+    """
+
+    size: int
+    mtime: datetime | None = None
+    backend_version: str | None = None
+    content_hash: str | None = None
 
 
 @dataclass
@@ -553,6 +577,48 @@ class Backend(ABC):
             Backends that support efficient directory listing should override this.
         """
         raise NotImplementedError(f"Backend '{self.name}' does not support directory listing")
+
+    # === Delta Sync Support (Issue #1127) ===
+
+    def get_file_info(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> "HandlerResponse[FileInfo]":
+        """
+        Get file metadata for delta sync change detection (Issue #1127).
+
+        Returns file size, modification time, and backend-specific version
+        identifier for efficient change detection during incremental sync.
+
+        Change Detection Strategy (rsync-inspired):
+        1. Quick check: Compare size + mtime first (fastest, no I/O)
+        2. Backend version: Compare GCS generation or S3 version ID
+        3. Content hash: Fallback if above not available
+
+        Args:
+            path: File path relative to backend root
+            context: Operation context for authentication (optional)
+
+        Returns:
+            HandlerResponse with FileInfo containing:
+            - size: File size in bytes
+            - mtime: Last modification time
+            - backend_version: Backend-specific version (GCS generation, S3 version ID)
+            - content_hash: Optional content hash if readily available
+
+        Note:
+            Default implementation raises NotImplementedError.
+            Backends should override to provide efficient metadata retrieval
+            without reading file content.
+
+        Example:
+            >>> info = backend.get_file_info("data/file.txt").unwrap()
+            >>> if info.backend_version != cached_version:
+            ...     # File changed, needs sync
+            ...     sync_file(path)
+        """
+        raise NotImplementedError(
+            f"Backend '{self.name}' does not support get_file_info for delta sync"
+        )
 
     # === ReBAC Object Type Mapping ===
 

@@ -1,15 +1,18 @@
 """Memory REST API endpoints.
 
-Provides 9 endpoints for memory CRUD and search operations:
-- POST   /api/v2/memories              - Store memory
-- GET    /api/v2/memories/{id}         - Get memory by ID
-- PUT    /api/v2/memories/{id}         - Update memory
-- DELETE /api/v2/memories/{id}         - Delete memory
-- POST   /api/v2/memories/{id}/invalidate  - Invalidate memory (#1183)
-- POST   /api/v2/memories/{id}/revalidate  - Revalidate memory (#1183)
-- POST   /api/v2/memories/search       - Semantic search
-- POST   /api/v2/memories/batch        - Batch store
-- GET    /api/v2/memories/{id}/history - Version history
+Provides 12 endpoints for memory CRUD, search, and version operations:
+- POST   /api/v2/memories                      - Store memory
+- GET    /api/v2/memories/{id}                 - Get memory by ID
+- PUT    /api/v2/memories/{id}                 - Update memory
+- DELETE /api/v2/memories/{id}                 - Delete memory
+- POST   /api/v2/memories/{id}/invalidate      - Invalidate memory (#1183)
+- POST   /api/v2/memories/{id}/revalidate      - Revalidate memory (#1183)
+- POST   /api/v2/memories/search               - Semantic search
+- POST   /api/v2/memories/batch                - Batch store
+- GET    /api/v2/memories/{id}/history         - Version history (#1184)
+- GET    /api/v2/memories/{id}/versions/{ver}  - Get specific version (#1184)
+- POST   /api/v2/memories/{id}/rollback        - Rollback to version (#1184)
+- GET    /api/v2/memories/{id}/diff            - Diff between versions (#1184)
 """
 
 from __future__ import annotations
@@ -437,10 +440,10 @@ async def get_memory_history(
     memory_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> MemoryVersionHistoryResponse:
-    """Get version history for a memory.
+    """Get version history for a memory (#1184).
 
-    Returns all versions of a memory with their content hashes
-    and timestamps.
+    Returns all versions of a memory with their content hashes,
+    timestamps, and change tracking metadata.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
@@ -454,37 +457,17 @@ async def get_memory_history(
         if memory is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Query version history
-        from nexus.storage.models import VersionHistoryModel
+        # Use the new list_versions API (#1184)
+        versions = app_state.nexus_fs.memory.list_versions(memory_id)
 
-        session = app_state.nexus_fs.memory.session
-        versions = (
-            session.query(VersionHistoryModel)
-            .filter(
-                VersionHistoryModel.resource_id == memory_id,
-                VersionHistoryModel.resource_type == "memory",
-            )
-            .order_by(VersionHistoryModel.version_number.desc())
-            .all()
-        )
-
-        version_list = [
-            {
-                "version": v.version_number,
-                "content_hash": v.content_hash,
-                "created_at": v.created_at.isoformat() if v.created_at else None,
-                "metadata": getattr(v, "metadata", None),
-            }
-            for v in versions
-        ]
-
-        # Get current version from memory or default to 1
-        current_version = len(version_list) if version_list else 1
+        # Get current version from memory model
+        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
+        current_version = memory_model.current_version if memory_model else 1
 
         return MemoryVersionHistoryResponse(
             memory_id=memory_id,
             current_version=current_version,
-            versions=version_list,
+            versions=versions,
         )
 
     except HTTPException:
@@ -492,3 +475,125 @@ async def get_memory_history(
     except Exception as e:
         logger.error(f"Memory history error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory history error: {e}") from e
+
+
+@router.get("/{memory_id}/versions/{version}", response_model=dict[str, Any])
+async def get_memory_version(
+    memory_id: str,
+    version: int,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Get a specific version of a memory (#1184).
+
+    Retrieves the content and metadata for a specific historical version
+    of a memory using CAS storage.
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+        result = app_state.nexus_fs.memory.get_version(memory_id, version, context=context)
+
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Version {version} not found for memory {memory_id}",
+            )
+
+        return dict(result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory get version error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory get version error: {e}") from e
+
+
+@router.post("/{memory_id}/rollback", response_model=dict[str, Any])
+async def rollback_memory(
+    memory_id: str,
+    version: int = Query(..., description="Version number to rollback to"),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Rollback a memory to a previous version (#1184).
+
+    Restores the memory content to a specific historical version.
+    Creates a new version entry with source_type='rollback' to maintain
+    audit trail.
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+        app_state.nexus_fs.memory.rollback(memory_id, version, context=context)
+
+        # Get the updated memory to return current state
+        memory = app_state.nexus_fs.memory.get(memory_id, track_access=False, context=context)
+        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
+
+        return {
+            "rolled_back": True,
+            "memory_id": memory_id,
+            "rolled_back_to_version": version,
+            "current_version": memory_model.current_version if memory_model else None,
+            "content": memory.get("content") if memory else None,
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory rollback error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory rollback error: {e}") from e
+
+
+@router.get("/{memory_id}/diff", response_model=dict[str, Any])
+async def diff_memory_versions(
+    memory_id: str,
+    v1: int = Query(..., description="First version number"),
+    v2: int = Query(..., description="Second version number"),
+    mode: str = Query("metadata", description="Diff mode: 'metadata' or 'content'"),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Compare two versions of a memory (#1184).
+
+    Args:
+        v1: First version number
+        v2: Second version number
+        mode: Diff mode - "metadata" returns size/hash comparison,
+              "content" returns unified diff format
+
+    Returns:
+        For mode="metadata": Dict with version comparison info
+        For mode="content": Dict with unified diff string
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+        diff_mode = "metadata" if mode == "metadata" else "content"
+        result = app_state.nexus_fs.memory.diff_versions(
+            memory_id, v1, v2, mode=diff_mode, context=context
+        )
+
+        if isinstance(result, str):
+            # Content diff mode returns string
+            return {"diff": result, "mode": "content", "v1": v1, "v2": v2}
+        else:
+            # Metadata diff mode returns dict
+            return dict(result)
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory diff error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory diff error: {e}") from e

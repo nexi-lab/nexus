@@ -1,6 +1,6 @@
-"""Nexus CLI Tenant Commands - Tenant export/import operations.
+"""Nexus CLI Zone Commands - Zone export/import operations.
 
-Commands for exporting and importing tenant data as portable .nexus bundles.
+Commands for exporting and importing zone data as portable .nexus bundles.
 """
 
 from __future__ import annotations
@@ -24,16 +24,16 @@ from nexus.core.nexus_fs import NexusFS
 
 
 @click.group()
-def tenant() -> None:
-    """Tenant data management commands.
+def zone() -> None:
+    """Zone data management commands.
 
-    Export and import tenant data as portable .nexus bundles.
+    Export and import zone data as portable .nexus bundles.
     """
     pass
 
 
-@tenant.command(name="export")
-@click.argument("tenant_id", type=str)
+@zone.command(name="export")
+@click.argument("zone_id", type=str)
 @click.option(
     "-o",
     "--output",
@@ -79,8 +79,8 @@ def tenant() -> None:
     help="Compression level 1-9 (default: 6)",
 )
 @add_backend_options
-def export_tenant(
-    tenant_id: str,
+def export_zone(
+    zone_id: str,
     output: str,
     include_content: bool,
     include_permissions: bool,
@@ -91,23 +91,23 @@ def export_tenant(
     compression: int,
     backend_config: BackendConfig,
 ) -> None:
-    """Export tenant data to a portable .nexus bundle.
+    """Export zone data to a portable .nexus bundle.
 
-    Creates a complete export of tenant data including:
+    Creates a complete export of zone data including:
     - File metadata (paths, timestamps, versions)
     - Content blobs (actual file data)
     - Permissions (ReBAC tuples)
     - Embeddings (optional)
 
     Examples:
-        nexus tenant export acme-corp -o /backup/acme.nexus
+        nexus zone export acme-corp -o /backup/acme.nexus
 
-        nexus tenant export acme-corp -o /backup/acme.nexus --path-prefix /workspace/
+        nexus zone export acme-corp -o /backup/acme.nexus --path-prefix /workspace/
 
-        nexus tenant export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
+        nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
-        from nexus.portability import TenantExportOptions, TenantExportService
+        from nexus.portability import ZoneExportOptions, ZoneExportService
 
         # Parse after time if provided
         after_time = None
@@ -124,7 +124,7 @@ def export_tenant(
         # Get filesystem
         nx = get_filesystem(backend_config)
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Tenant export requires NexusFS instance")
+            console.print("[red]Error:[/red] Zone export requires NexusFS instance")
             nx.close()
             sys.exit(1)
 
@@ -133,7 +133,7 @@ def export_tenant(
         if not str(output_path).endswith(".nexus"):
             output_path = output_path.with_suffix(".nexus")
 
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=output_path,
             include_content=include_content,
             include_permissions=include_permissions,
@@ -145,7 +145,7 @@ def export_tenant(
         )
 
         # Run export with progress
-        console.print(f"[cyan]Exporting tenant:[/cyan] {tenant_id}")
+        console.print(f"[cyan]Exporting zone:[/cyan] {zone_id}")
         console.print(f"[cyan]Output:[/cyan] {output_path}")
 
         with Progress(
@@ -158,8 +158,8 @@ def export_tenant(
             def update_progress(current: int, total: int) -> None:
                 progress.update(task, description=f"Exporting... ({current}/{total} files)")
 
-            service = TenantExportService(nx)
-            manifest = service.export_tenant(tenant_id, options, update_progress)
+            service = ZoneExportService(nx)
+            manifest = service.export_zone(zone_id, options, update_progress)
 
         nx.close()
 
@@ -185,13 +185,13 @@ def export_tenant(
         handle_error(e)
 
 
-@tenant.command(name="import")
+@zone.command(name="import")
 @click.argument("bundle_path", type=click.Path(exists=True))
 @click.option(
     "-t",
-    "--target-tenant",
+    "--target-zone",
     default=None,
-    help="Remap to different tenant ID (default: preserve original)",
+    help="Remap to different zone ID (default: preserve original)",
 )
 @click.option(
     "--conflict",
@@ -221,9 +221,9 @@ def export_tenant(
     help="Path prefix remapping (format: old=new), can be repeated",
 )
 @add_backend_options
-def import_tenant(
+def import_zone(
     bundle_path: str,
-    target_tenant: str | None,
+    target_zone: str | None,
     conflict: str,
     preserve_timestamps: bool,
     dry_run: bool,
@@ -231,26 +231,26 @@ def import_tenant(
     path_remap: tuple[str, ...],
     backend_config: BackendConfig,
 ) -> None:
-    """Import tenant data from a .nexus bundle.
+    """Import zone data from a .nexus bundle.
 
-    Restores tenant data including:
+    Restores zone data including:
     - File metadata (paths, timestamps, versions)
     - Content blobs (actual file data)
     - Permissions (ReBAC tuples)
 
     Examples:
-        nexus tenant import /backup/acme.nexus
+        nexus zone import /backup/acme.nexus
 
-        nexus tenant import /backup/acme.nexus --target-tenant new-acme
+        nexus zone import /backup/acme.nexus --target-zone new-acme
 
-        nexus tenant import /backup/acme.nexus --conflict overwrite
+        nexus zone import /backup/acme.nexus --conflict overwrite
 
-        nexus tenant import /backup/acme.nexus --path-remap /old/=/new/
+        nexus zone import /backup/acme.nexus --path-remap /old/=/new/
 
-        nexus tenant import /backup/acme.nexus --dry-run
+        nexus zone import /backup/acme.nexus --dry-run
     """
     try:
-        from nexus.portability import ConflictMode, TenantImportOptions, TenantImportService
+        from nexus.portability import ConflictMode, ZoneImportOptions, ZoneImportService
 
         # Parse path remappings
         path_prefix_remap: dict[str, str] = {}
@@ -265,15 +265,15 @@ def import_tenant(
         # Get filesystem
         nx = get_filesystem(backend_config)
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Tenant import requires NexusFS instance")
+            console.print("[red]Error:[/red] Zone import requires NexusFS instance")
             nx.close()
             sys.exit(1)
 
         # Configure import options
         conflict_mode = ConflictMode(conflict)
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path(bundle_path),
-            target_tenant_id=target_tenant,
+            target_zone_id=target_zone,
             conflict_mode=conflict_mode,
             preserve_timestamps=preserve_timestamps,
             dry_run=dry_run,
@@ -283,8 +283,8 @@ def import_tenant(
 
         # Show import configuration
         console.print(f"[cyan]Importing from:[/cyan] {bundle_path}")
-        if target_tenant:
-            console.print(f"[cyan]Target tenant:[/cyan] {target_tenant}")
+        if target_zone:
+            console.print(f"[cyan]Target zone:[/cyan] {target_zone}")
         console.print(f"[cyan]Conflict mode:[/cyan] {conflict}")
         if dry_run:
             console.print("[yellow]DRY RUN - no changes will be made[/yellow]")
@@ -300,8 +300,8 @@ def import_tenant(
             def update_progress(current: int, total: int, phase: str) -> None:
                 progress.update(task, description=f"Importing {phase}... ({current}/{total})")
 
-            service = TenantImportService(nx)
-            result = service.import_tenant(options, update_progress)
+            service = ZoneImportService(nx)
+            result = service.import_zone(options, update_progress)
 
         nx.close()
 
@@ -353,13 +353,13 @@ def import_tenant(
         handle_error(e)
 
 
-@tenant.command(name="inspect")
+@zone.command(name="inspect")
 @click.argument("bundle_path", type=click.Path(exists=True))
 def inspect_bundle_cmd(bundle_path: str) -> None:
     """Inspect a .nexus bundle and show its contents.
 
     Examples:
-        nexus tenant inspect /backup/acme.nexus
+        nexus zone inspect /backup/acme.nexus
     """
     try:
         from nexus.portability import inspect_bundle
@@ -373,7 +373,7 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
         table.add_row("Bundle ID", info["bundle_id"][:8] + "...")
         table.add_row("Format Version", info["format_version"])
         table.add_row("Nexus Version", info["nexus_version"])
-        table.add_row("Source Tenant", info["source_tenant_id"])
+        table.add_row("Source Zone", info["source_zone_id"])
         table.add_row("Source Instance", info["source_instance"])
         table.add_row("Export Time", info["export_timestamp"])
         table.add_row("", "")
@@ -394,7 +394,7 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
         handle_error(e)
 
 
-@tenant.command(name="validate")
+@zone.command(name="validate")
 @click.argument("bundle_path", type=click.Path(exists=True))
 def validate_bundle_cmd(bundle_path: str) -> None:
     """Validate a .nexus bundle integrity.
@@ -405,7 +405,7 @@ def validate_bundle_cmd(bundle_path: str) -> None:
     - Checksums match
 
     Examples:
-        nexus tenant validate /backup/acme.nexus
+        nexus zone validate /backup/acme.nexus
     """
     try:
         from nexus.portability import validate_bundle

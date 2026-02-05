@@ -86,7 +86,7 @@ class OperationContext:
         subject_type: Type of subject (user, agent, service, session)
         subject_id: Unique identifier for the subject
         groups: List of group IDs the subject belongs to
-        zone_id: Tenant/organization ID for multi-zone isolation (optional)
+        zone_id: Zone/organization ID for multi-zone isolation (optional)
         is_admin: Whether the subject has admin privileges
         is_system: Whether this is a system operation (bypasses all checks)
         admin_capabilities: Set of granted admin capabilities (P0-4)
@@ -204,7 +204,7 @@ class OperationContext:
 
         Example:
             >>> ctx = OperationContext(user="alice", groups=[], track_reads=True)
-            >>> ctx.enable_read_tracking("tenant1")
+            >>> ctx.enable_read_tracking("zone1")
             >>> ctx.record_read("file", "/inbox/a.txt", revision=10)
             >>> len(ctx.read_set)
             1
@@ -219,7 +219,7 @@ class OperationContext:
             access_type=access_type,
         )
 
-    def enable_read_tracking(self, tenant_id: str | None = None) -> None:
+    def enable_read_tracking(self, zone_id: str | None = None) -> None:
         """Enable read tracking and initialize read set (Issue #1166).
 
         Call this before operations to track what resources are accessed.
@@ -227,10 +227,10 @@ class OperationContext:
         with the ReadSetRegistry for subscription updates.
 
         Args:
-            tenant_id: Tenant ID for the read set (defaults to self.tenant_id)
+            zone_id: Zone ID for the read set (defaults to self.zone_id)
 
         Example:
-            >>> ctx = OperationContext(user="alice", groups=[], tenant_id="org1")
+            >>> ctx = OperationContext(user="alice", groups=[], zone_id="org1")
             >>> ctx.enable_read_tracking()
             >>> # ... perform operations ...
             >>> registry.register(ctx.read_set)
@@ -238,7 +238,7 @@ class OperationContext:
         from nexus.core.read_set import ReadSet
 
         self.track_reads = True
-        self.read_set = ReadSet.create(tenant_id=tenant_id or self.tenant_id or "default")
+        self.read_set = ReadSet.create(zone_id=zone_id or self.zone_id or "default")
 
     def disable_read_tracking(self) -> None:
         """Disable read tracking.

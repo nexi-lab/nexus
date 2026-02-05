@@ -70,7 +70,7 @@ class FileEvent:
     Attributes:
         type: Type of event (file_write, file_delete, file_rename, etc.)
         path: Virtual path that changed
-        zone_id: Tenant that owns the file (None for Layer 1 local events)
+        zone_id: Zone that owns the file (None for Layer 1 local events)
         timestamp: When the event occurred (ISO format)
         event_id: Unique event ID for deduplication
         old_path: Previous path (for rename events only)
@@ -294,7 +294,7 @@ class EventBusProtocol(Protocol):
         ...
 
     def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
-        """Subscribe to all events for a tenant (async generator)."""
+        """Subscribe to all events for a zone (async generator)."""
         ...
 
 
@@ -331,7 +331,7 @@ class EventBusBase(ABC):
         """Wait for an event matching the path pattern.
 
         Args:
-            tenant_id: Tenant ID to subscribe to
+            zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
             since_revision: Only return events with revision > this value (Issue #1187)
@@ -348,7 +348,7 @@ class EventBusBase(ABC):
 
     @abstractmethod
     def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
-        """Subscribe to all events for a tenant (async generator).
+        """Subscribe to all events for a zone (async generator).
 
         Use this for background listeners like cache invalidation.
 
@@ -376,7 +376,7 @@ class EventBusBase(ABC):
 class RedisEventBus(EventBusBase):
     """Redis Pub/Sub implementation of the event bus with PG SSOT.
 
-    Uses per-tenant channels for efficient event routing.
+    Uses per-zone channels for efficient event routing.
     Channel format: nexus:events:{zone_id}
 
     SSOT Architecture:
@@ -432,7 +432,7 @@ class RedisEventBus(EventBusBase):
         return f"{hostname}-{pid}"
 
     def _channel_name(self, zone_id: str) -> str:
-        """Get Redis channel name for a tenant."""
+        """Get Redis channel name for a zone."""
         return f"{self.CHANNEL_PREFIX}:{zone_id}"
 
     async def start(self) -> None:
@@ -465,7 +465,7 @@ class RedisEventBus(EventBusBase):
             logger.info("RedisEventBus stopped")
 
     async def publish(self, event: FileEvent) -> int:
-        """Publish an event to the tenant's channel."""
+        """Publish an event to the zone's channel."""
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
@@ -494,7 +494,7 @@ class RedisEventBus(EventBusBase):
         """Wait for an event matching the path pattern.
 
         Args:
-            tenant_id: Tenant ID to subscribe to
+            zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
             since_revision: Only return events with revision > this value (Issue #1187).
@@ -565,7 +565,7 @@ class RedisEventBus(EventBusBase):
         self,
         zone_id: str,
     ) -> AsyncIterator[FileEvent]:
-        """Subscribe to all events for a tenant.
+        """Subscribe to all events for a zone.
 
         This is an async generator that yields FileEvent objects as they are received.
         Use this for background listeners like cache invalidation.
@@ -577,7 +577,7 @@ class RedisEventBus(EventBusBase):
             FileEvent objects as they are received
 
         Example:
-            >>> async for event in bus.subscribe("tenant1"):
+            >>> async for event in bus.subscribe("zone1"):
             ...     print(f"Received {event.type} on {event.path}")
             ...     # Handle event (e.g., invalidate cache)
         """

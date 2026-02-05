@@ -97,14 +97,14 @@ class TestAcquireLockEndpoint:
 
         # Simulate endpoint call
         request = LockAcquireRequest(path="/test/file.txt", timeout=10, ttl=30)
-        auth_result = {"tenant_id": "default", "subject_id": "user1"}
+        auth_result = {"zone_id": "default", "subject_id": "user1"}
 
         # Get lock manager (this tests _get_lock_manager)
         manager = fas._app_state.nexus_fs._lock_manager
 
         # Call acquire
         lock_id = await manager.acquire(
-            tenant_id=auth_result["tenant_id"],
+            zone_id=auth_result["zone_id"],
             path=request.path,
             timeout=request.timeout,
             ttl=request.ttl,
@@ -113,7 +113,7 @@ class TestAcquireLockEndpoint:
 
         assert lock_id == "lock-id-12345"
         lock_manager.acquire.assert_called_once_with(
-            tenant_id="default",
+            zone_id="default",
             path="/test/file.txt",
             timeout=10,
             ttl=30,
@@ -127,10 +127,10 @@ class TestAcquireLockEndpoint:
         lock_manager.acquire.return_value = "sem-lock-id"
 
         request = LockAcquireRequest(path="/shared/room", timeout=5, ttl=60, max_holders=5)
-        auth_result = {"tenant_id": "tenant1"}
+        auth_result = {"zone_id": "zone1"}
 
         lock_id = await lock_manager.acquire(
-            tenant_id=auth_result["tenant_id"],
+            zone_id=auth_result["zone_id"],
             path=request.path,
             timeout=request.timeout,
             ttl=request.ttl,
@@ -139,7 +139,7 @@ class TestAcquireLockEndpoint:
 
         assert lock_id == "sem-lock-id"
         lock_manager.acquire.assert_called_with(
-            tenant_id="tenant1",
+            zone_id="zone1",
             path="/shared/room",
             timeout=5,
             ttl=60,
@@ -153,7 +153,7 @@ class TestAcquireLockEndpoint:
         lock_manager.acquire.return_value = None  # Timeout
 
         lock_id = await lock_manager.acquire(
-            tenant_id="default",
+            zone_id="default",
             path="/busy/file.txt",
             timeout=1,
             ttl=30,
@@ -170,7 +170,7 @@ class TestAcquireLockEndpoint:
 
         # Non-blocking uses timeout=0
         lock_id = await lock_manager.acquire(
-            tenant_id="default",
+            zone_id="default",
             path="/busy/file.txt",
             timeout=0,  # Non-blocking
             ttl=30,
@@ -179,7 +179,7 @@ class TestAcquireLockEndpoint:
 
         assert lock_id is None
         lock_manager.acquire.assert_called_with(
-            tenant_id="default",
+            zone_id="default",
             path="/busy/file.txt",
             timeout=0,
             ttl=30,
@@ -212,7 +212,7 @@ class TestGetLockStatusEndpoint:
         lock_manager.get_lock_info.return_value = {
             "lock_id": "abc-123",
             "ttl": 25,
-            "tenant_id": "default",
+            "zone_id": "default",
             "path": "/test/file.txt",
         }
 

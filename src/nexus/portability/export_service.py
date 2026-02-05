@@ -1,6 +1,6 @@
-"""Tenant export service for creating .nexus bundles.
+"""Zone export service for creating .nexus bundles.
 
-This module provides the TenantExportService class for exporting tenant data
+This module provides the TenantExportService class for exporting zone data
 to portable .nexus bundles including:
 - File metadata (JSONL streaming)
 - Content blobs (CAS structure)
@@ -9,7 +9,7 @@ to portable .nexus bundles including:
 
 References:
 - Issue #1162: Define .nexus bundle format
-- Epic #1161: Tenant Data Portability
+- Epic #1161: Zone Data Portability
 """
 
 from __future__ import annotations
@@ -43,18 +43,18 @@ ProgressCallback = Callable[[int, int], None]
 
 
 class TenantExportService:
-    """Service for exporting tenant data to .nexus bundles.
+    """Service for exporting zone data to .nexus bundles.
 
     Example usage:
         from nexus.portability import TenantExportService, TenantExportOptions
 
         service = TenantExportService(nexus_fs)
         options = TenantExportOptions(
-            output_path=Path("/backup/tenant.nexus"),
+            output_path=Path("/backup/zone.nexus"),
             include_content=True,
             include_permissions=True,
         )
-        manifest = await service.export_tenant("tenant-123", options)
+        manifest = await service.export_zone("zone-123", options)
         print(f"Exported {manifest.file_count} files")
     """
 
@@ -71,13 +71,13 @@ class TenantExportService:
         self.metadata_store: MetadataStore = nexus_fs.metadata
         self.backend: Backend = nexus_fs.backend
 
-    def export_tenant(
+    def export_zone(
         self,
-        tenant_id: str,
+        zone_id: str,
         options: TenantExportOptions,
         progress_callback: ProgressCallback | None = None,
     ) -> ExportManifest:
-        """Export tenant data to .nexus bundle.
+        """Export zone data to .nexus bundle.
 
         Creates a tar.gz bundle with the following structure:
         - manifest.json: Bundle metadata and checksums
@@ -87,7 +87,7 @@ class TenantExportService:
         - content/cas/: Content-addressable blobs
 
         Args:
-            tenant_id: Tenant ID to export
+            zone_id: Zone ID to export
             options: Export options (filters, content selection, etc.)
             progress_callback: Optional callback for progress updates (current, total)
 
@@ -96,7 +96,7 @@ class TenantExportService:
         """
         import nexus
 
-        logger.info(f"Starting export for tenant {tenant_id} to {options.output_path}")
+        logger.info(f"Starting export for zone {zone_id} to {options.output_path}")
 
         # Create temporary directory for building bundle
         with tempfile.TemporaryDirectory(prefix="nexus_export_") as temp_dir:
@@ -106,7 +106,7 @@ class TenantExportService:
             manifest = ExportManifest(
                 nexus_version=nexus.__version__,
                 source_instance=os.environ.get("NEXUS_INSTANCE_ID", "local"),
-                source_tenant_id=tenant_id,
+                source_zone_id=zone_id,
                 export_timestamp=datetime.now(UTC),
                 include_content=options.include_content,
                 include_permissions=options.include_permissions,
@@ -132,7 +132,7 @@ class TenantExportService:
             files_path = temp_path / BUNDLE_PATHS["files"]
 
             file_count, total_size = self._export_metadata_to_jsonl(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 output_path=files_path,
                 options=options,
                 content_hashes=content_hashes,
@@ -159,7 +159,7 @@ class TenantExportService:
             if options.include_permissions:
                 perms_path = temp_path / BUNDLE_PATHS["permissions"]
                 perm_count = self._export_permissions(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     output_path=perms_path,
                 )
                 manifest.permission_count = perm_count
@@ -190,7 +190,7 @@ class TenantExportService:
 
     def _export_metadata_to_jsonl(
         self,
-        tenant_id: str,
+        zone_id: str,
         output_path: Path,
         options: TenantExportOptions,
         content_hashes: set[str],
@@ -199,7 +199,7 @@ class TenantExportService:
         """Export file metadata to JSONL format.
 
         Args:
-            tenant_id: Tenant to export
+            zone_id: Zone to export
             output_path: Path for JSONL output
             options: Export options
             content_hashes: Set to collect content hashes for blob export
@@ -216,7 +216,7 @@ class TenantExportService:
         prefix = options.path_prefix or ""
         all_files = list(self.metadata_store.list(prefix))
 
-        # Apply tenant filter if metadata store doesn't do it
+        # Apply zone filter if metadata store doesn't do it
         # (In a real implementation, this would be done at the database level)
 
         total_files = len(all_files)
@@ -241,7 +241,7 @@ class TenantExportService:
                 # Build FileRecord
                 record = FileRecord(
                     path_id=getattr(file_meta, "path_id", str(idx)),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     virtual_path=file_meta.path,
                     backend_id=file_meta.backend_name,
                     physical_path=file_meta.physical_path,
@@ -325,13 +325,13 @@ class TenantExportService:
 
     def _export_permissions(
         self,
-        tenant_id: str,  # noqa: ARG002
+        zone_id: str,  # noqa: ARG002
         output_path: Path,
     ) -> int:
         """Export ReBAC permission tuples to JSONL.
 
         Args:
-            tenant_id: Tenant ID to export permissions for
+            zone_id: Zone ID to export permissions for
             output_path: Path for JSONL output
 
         Returns:
@@ -347,7 +347,7 @@ class TenantExportService:
 
         try:
             # Export permissions - implementation depends on ReBAC manager API
-            # TODO: Query ReBAC for all tuples related to this tenant
+            # TODO: Query ReBAC for all tuples related to this zone
             # For now, create an empty permissions file
             with output_path.open("w", encoding="utf-8"):
                 # Placeholder - real implementation would iterate ReBAC tuples
@@ -393,9 +393,9 @@ class TenantExportService:
 
 
 # Convenience function for CLI usage
-def export_tenant_bundle(
+def export_zone_bundle(
     nexus_fs: NexusFS,
-    tenant_id: str,
+    zone_id: str,
     output_path: Path,
     include_content: bool = True,
     include_permissions: bool = True,
@@ -404,11 +404,11 @@ def export_tenant_bundle(
     compression_level: int = 6,
     progress_callback: ProgressCallback | None = None,
 ) -> ExportManifest:
-    """Convenience function to export a tenant to a .nexus bundle.
+    """Convenience function to export a zone to a .nexus bundle.
 
     Args:
         nexus_fs: NexusFS instance
-        tenant_id: Tenant ID to export
+        zone_id: Zone ID to export
         output_path: Output path for bundle
         include_content: Include content blobs
         include_permissions: Include permissions
@@ -430,4 +430,4 @@ def export_tenant_bundle(
     )
 
     service = TenantExportService(nexus_fs)
-    return service.export_tenant(tenant_id, options, progress_callback)
+    return service.export_zone(zone_id, options, progress_callback)

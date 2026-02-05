@@ -251,9 +251,9 @@ class TestZookieDecodeParsing:
             assert zookie.created_at_ms > 0, "Created timestamp should be positive"
 
             # Re-encode should produce same format
-            re_encoded = Zookie.encode(zookie.tenant_id, zookie.revision)
+            re_encoded = Zookie.encode(zookie.zone_id, zookie.revision)
             re_decoded = Zookie.decode(re_encoded)
-            assert re_decoded.tenant_id == zookie.tenant_id
+            assert re_decoded.zone_id == zookie.zone_id
             assert re_decoded.revision == zookie.revision
 
 
@@ -278,11 +278,11 @@ class TestWatchAPIWithRevision:
             assert response.status_code in (200, 422, 501)
 
 
-class TestZookieTenantScoping:
-    """Tests for zookie tenant scoping."""
+class TestZookieZoneScoping:
+    """Tests for zookie zone scoping."""
 
-    def test_zookie_contains_tenant_id(self, nexus_fs: NexusFS) -> None:
-        """Zookie should contain the tenant ID."""
+    def test_zookie_contains_zone_id(self, nexus_fs: NexusFS) -> None:
+        """Zookie should contain the zone ID."""
         from nexus.core.zookie import Zookie
         from nexus.server.fastapi_server import create_app
 
@@ -291,9 +291,7 @@ class TestZookieTenantScoping:
         with TestClient(app) as client:
             response = client.post(
                 "/api/nfs/write",
-                json={
-                    "params": {"path": "/tenant_test.txt", "content": _make_bytes_content("test")}
-                },
+                json={"params": {"path": "/zone_test.txt", "content": _make_bytes_content("test")}},
             )
 
             assert response.status_code == 200
@@ -301,11 +299,11 @@ class TestZookieTenantScoping:
             assert "result" in data, f"Expected result, got: {data}"
             token = _extract_zookie_from_write_result(data["result"])
 
-            # Decode and check tenant
+            # Decode and check zone
             zookie = Zookie.decode(token)
-            assert zookie.tenant_id is not None, "Zookie should have tenant_id"
-            # Default tenant is "default"
-            assert len(zookie.tenant_id) > 0
+            assert zookie.zone_id is not None, "Zookie should have zone_id"
+            # Default zone is "default"
+            assert len(zookie.zone_id) > 0
 
 
 class TestZookieChecksumValidation:

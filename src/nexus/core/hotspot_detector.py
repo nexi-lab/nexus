@@ -128,7 +128,7 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource (e.g., "file")
             permission: Permission being checked (e.g., "read", "write")
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
         """
         if not self._config.enabled:
             return
@@ -229,7 +229,7 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource
             permission: Permission
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
 
         Returns:
             Number of accesses in current window
@@ -258,7 +258,7 @@ class HotspotDetector:
             subject_id: Subject identifier
             resource_type: Type of resource
             permission: Permission
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
 
         Returns:
             True if access count exceeds hot threshold

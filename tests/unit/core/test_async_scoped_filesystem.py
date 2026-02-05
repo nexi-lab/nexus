@@ -25,7 +25,7 @@ def mock_async_fs() -> MagicMock:
 @pytest.fixture
 def scoped_fs(mock_async_fs: MagicMock) -> AsyncScopedFilesystem:
     """Create an AsyncScopedFilesystem with a test root."""
-    return AsyncScopedFilesystem(mock_async_fs, root="/tenants/team_12/users/user_1")
+    return AsyncScopedFilesystem(mock_async_fs, root="/zones/team_12/users/user_1")
 
 
 class TestPathScoping:
@@ -34,23 +34,23 @@ class TestPathScoping:
     def test_scope_path_basic(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test basic path scoping."""
         assert scoped_fs._scope_path("/workspace/file.txt") == (
-            "/tenants/team_12/users/user_1/workspace/file.txt"
+            "/zones/team_12/users/user_1/workspace/file.txt"
         )
 
     def test_scope_path_root(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test scoping root path."""
-        assert scoped_fs._scope_path("/") == "/tenants/team_12/users/user_1/"
+        assert scoped_fs._scope_path("/") == "/zones/team_12/users/user_1/"
 
     def test_unscope_path_basic(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test basic path unscoping."""
         assert (
-            scoped_fs._unscope_path("/tenants/team_12/users/user_1/workspace/file.txt")
+            scoped_fs._unscope_path("/zones/team_12/users/user_1/workspace/file.txt")
             == "/workspace/file.txt"
         )
 
     def test_unscope_path_root(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test unscoping to root."""
-        assert scoped_fs._unscope_path("/tenants/team_12/users/user_1") == "/"
+        assert scoped_fs._unscope_path("/zones/team_12/users/user_1") == "/"
 
 
 class TestRootNormalization:
@@ -58,8 +58,8 @@ class TestRootNormalization:
 
     def test_trailing_slash_removed(self, mock_async_fs: MagicMock) -> None:
         """Test that trailing slash is removed from root."""
-        fs = AsyncScopedFilesystem(mock_async_fs, root="/tenants/team_12/")
-        assert fs.root == "/tenants/team_12"
+        fs = AsyncScopedFilesystem(mock_async_fs, root="/zones/team_12/")
+        assert fs.root == "/zones/team_12"
 
     def test_empty_root(self, mock_async_fs: MagicMock) -> None:
         """Test empty root (no scoping)."""
@@ -81,7 +81,7 @@ class TestProperties:
 
     def test_root_property(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test root property."""
-        assert scoped_fs.root == "/tenants/team_12/users/user_1"
+        assert scoped_fs.root == "/zones/team_12/users/user_1"
 
 
 class TestCoreFileOperations:
@@ -93,7 +93,7 @@ class TestCoreFileOperations:
         mock_async_fs.read = AsyncMock(return_value=b"content")
         result = await scoped_fs.read("/workspace/file.txt")
         mock_async_fs.read.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt", None, False
+            "/zones/team_12/users/user_1/workspace/file.txt", None, False
         )
         assert result == b"content"
 
@@ -105,7 +105,7 @@ class TestCoreFileOperations:
         mock_async_fs.read = AsyncMock(
             return_value={
                 "content": b"data",
-                "path": "/tenants/team_12/users/user_1/workspace/file.txt",
+                "path": "/zones/team_12/users/user_1/workspace/file.txt",
                 "etag": "abc",
             }
         )
@@ -119,8 +119,8 @@ class TestCoreFileOperations:
         """Test read_bulk with path scoping."""
         mock_async_fs.read_bulk = AsyncMock(
             return_value={
-                "/tenants/team_12/users/user_1/workspace/a.txt": b"content_a",
-                "/tenants/team_12/users/user_1/workspace/b.txt": b"content_b",
+                "/zones/team_12/users/user_1/workspace/a.txt": b"content_a",
+                "/zones/team_12/users/user_1/workspace/b.txt": b"content_b",
             }
         )
         result = await scoped_fs.read_bulk(["/workspace/a.txt", "/workspace/b.txt"])
@@ -133,13 +133,13 @@ class TestCoreFileOperations:
         """Test write with path scoping."""
         mock_async_fs.write = AsyncMock(
             return_value={
-                "path": "/tenants/team_12/users/user_1/workspace/file.txt",
+                "path": "/zones/team_12/users/user_1/workspace/file.txt",
                 "etag": "abc",
             }
         )
         result = await scoped_fs.write("/workspace/file.txt", b"content")
         mock_async_fs.write.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt",
+            "/zones/team_12/users/user_1/workspace/file.txt",
             b"content",
             None,
             None,
@@ -155,8 +155,8 @@ class TestCoreFileOperations:
         """Test write_batch with path scoping."""
         mock_async_fs.write_batch = AsyncMock(
             return_value=[
-                {"path": "/tenants/team_12/users/user_1/workspace/a.txt"},
-                {"path": "/tenants/team_12/users/user_1/workspace/b.txt"},
+                {"path": "/zones/team_12/users/user_1/workspace/a.txt"},
+                {"path": "/zones/team_12/users/user_1/workspace/b.txt"},
             ]
         )
         files = [("/workspace/a.txt", b"a"), ("/workspace/b.txt", b"b")]
@@ -170,19 +170,19 @@ class TestCoreFileOperations:
         mock_async_fs.delete = AsyncMock(return_value=True)
         await scoped_fs.delete("/workspace/file.txt")
         mock_async_fs.delete.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt", None
+            "/zones/team_12/users/user_1/workspace/file.txt", None
         )
 
     @pytest.mark.asyncio
     async def test_rename(self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock) -> None:
         """Test rename with path scoping for both paths."""
         mock_async_fs.rename = AsyncMock(
-            return_value={"path": "/tenants/team_12/users/user_1/workspace/new.txt"}
+            return_value={"path": "/zones/team_12/users/user_1/workspace/new.txt"}
         )
         await scoped_fs.rename("/workspace/old.txt", "/workspace/new.txt")
         mock_async_fs.rename.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/old.txt",
-            "/tenants/team_12/users/user_1/workspace/new.txt",
+            "/zones/team_12/users/user_1/workspace/old.txt",
+            "/zones/team_12/users/user_1/workspace/new.txt",
             None,
         )
 
@@ -192,7 +192,7 @@ class TestCoreFileOperations:
         mock_async_fs.exists = AsyncMock(return_value=True)
         result = await scoped_fs.exists("/workspace/file.txt")
         mock_async_fs.exists.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt", None
+            "/zones/team_12/users/user_1/workspace/file.txt", None
         )
         assert result is True
 
@@ -207,8 +207,8 @@ class TestFileDiscoveryOperations:
         """Test list returns unscoped paths."""
         mock_async_fs.list = AsyncMock(
             return_value=[
-                "/tenants/team_12/users/user_1/workspace/a.txt",
-                "/tenants/team_12/users/user_1/workspace/b.txt",
+                "/zones/team_12/users/user_1/workspace/a.txt",
+                "/zones/team_12/users/user_1/workspace/b.txt",
             ]
         )
         result = await scoped_fs.list("/workspace")
@@ -221,7 +221,7 @@ class TestFileDiscoveryOperations:
         """Test list with details unscopes paths."""
         mock_async_fs.list = AsyncMock(
             return_value=[
-                {"path": "/tenants/team_12/users/user_1/workspace/a.txt", "size": 100},
+                {"path": "/zones/team_12/users/user_1/workspace/a.txt", "size": 100},
             ]
         )
         result = await scoped_fs.list("/workspace", details=True)
@@ -232,13 +232,13 @@ class TestFileDiscoveryOperations:
         """Test glob returns unscoped paths."""
         mock_async_fs.glob = AsyncMock(
             return_value=[
-                "/tenants/team_12/users/user_1/workspace/test_a.py",
-                "/tenants/team_12/users/user_1/workspace/test_b.py",
+                "/zones/team_12/users/user_1/workspace/test_a.py",
+                "/zones/team_12/users/user_1/workspace/test_b.py",
             ]
         )
         result = await scoped_fs.glob("test_*.py", "/workspace")
         mock_async_fs.glob.assert_called_once_with(
-            "test_*.py", "/tenants/team_12/users/user_1/workspace", None
+            "test_*.py", "/zones/team_12/users/user_1/workspace", None
         )
         assert result == ["/workspace/test_a.py", "/workspace/test_b.py"]
 
@@ -248,7 +248,7 @@ class TestFileDiscoveryOperations:
         mock_async_fs.grep = AsyncMock(
             return_value=[
                 {
-                    "file": "/tenants/team_12/users/user_1/workspace/app.py",
+                    "file": "/zones/team_12/users/user_1/workspace/app.py",
                     "line": 10,
                     "content": "TODO: fix",
                 }
@@ -265,11 +265,11 @@ class TestDirectoryOperations:
     async def test_mkdir(self, scoped_fs: AsyncScopedFilesystem, mock_async_fs: MagicMock) -> None:
         """Test mkdir with path scoping."""
         mock_async_fs.mkdir = AsyncMock(
-            return_value={"path": "/tenants/team_12/users/user_1/workspace/new_dir"}
+            return_value={"path": "/zones/team_12/users/user_1/workspace/new_dir"}
         )
         await scoped_fs.mkdir("/workspace/new_dir", parents=True, exist_ok=True)
         mock_async_fs.mkdir.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/new_dir", True, True, None
+            "/zones/team_12/users/user_1/workspace/new_dir", True, True, None
         )
 
     @pytest.mark.asyncio
@@ -278,7 +278,7 @@ class TestDirectoryOperations:
         mock_async_fs.rmdir = AsyncMock()
         await scoped_fs.rmdir("/workspace/old_dir", recursive=True)
         mock_async_fs.rmdir.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/old_dir", True, None
+            "/zones/team_12/users/user_1/workspace/old_dir", True, None
         )
 
     @pytest.mark.asyncio
@@ -289,7 +289,7 @@ class TestDirectoryOperations:
         mock_async_fs.is_directory = AsyncMock(return_value=True)
         result = await scoped_fs.is_directory("/workspace/dir")
         mock_async_fs.is_directory.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/dir", None
+            "/zones/team_12/users/user_1/workspace/dir", None
         )
         assert result is True
 
@@ -305,7 +305,7 @@ class TestVersionOperations:
         mock_async_fs.get_version = AsyncMock(return_value=b"old content")
         result = await scoped_fs.get_version("/workspace/file.txt", 1)
         mock_async_fs.get_version.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt", 1, None
+            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
         )
         assert result == b"old content"
 
@@ -315,9 +315,7 @@ class TestVersionOperations:
     ) -> None:
         """Test list_versions with path scoping."""
         mock_async_fs.list_versions = AsyncMock(
-            return_value=[
-                {"version": 1, "path": "/tenants/team_12/users/user_1/workspace/file.txt"}
-            ]
+            return_value=[{"version": 1, "path": "/zones/team_12/users/user_1/workspace/file.txt"}]
         )
         result = await scoped_fs.list_versions("/workspace/file.txt")
         assert result[0]["path"] == "/workspace/file.txt"
@@ -330,7 +328,7 @@ class TestVersionOperations:
         mock_async_fs.rollback = AsyncMock()
         await scoped_fs.rollback("/workspace/file.txt", 1)
         mock_async_fs.rollback.assert_called_once_with(
-            "/tenants/team_12/users/user_1/workspace/file.txt", 1, None
+            "/zones/team_12/users/user_1/workspace/file.txt", 1, None
         )
 
 
@@ -345,7 +343,7 @@ class TestMountOperations:
         mock_async_fs.add_mount = AsyncMock(return_value="mount-123")
         result = await scoped_fs.add_mount("/external/gcs", "gcs", {"bucket": "my-bucket"})
         mock_async_fs.add_mount.assert_called_once_with(
-            "/tenants/team_12/users/user_1/external/gcs",
+            "/zones/team_12/users/user_1/external/gcs",
             "gcs",
             {"bucket": "my-bucket"},
             0,
@@ -360,7 +358,7 @@ class TestMountOperations:
     ) -> None:
         """Test list_mounts unscopes paths."""
         mock_async_fs.list_mounts = AsyncMock(
-            return_value=[{"mount_point": "/tenants/team_12/users/user_1/external/gcs"}]
+            return_value=[{"mount_point": "/zones/team_12/users/user_1/external/gcs"}]
         )
         result = await scoped_fs.list_mounts()
         assert result[0]["mount_point"] == "/external/gcs"
@@ -375,7 +373,7 @@ class TestMemoryOperations:
     ) -> None:
         """Test register_memory with path scoping."""
         mock_async_fs.register_memory = AsyncMock(
-            return_value={"path": "/tenants/team_12/users/user_1/workspace/memory"}
+            return_value={"path": "/zones/team_12/users/user_1/workspace/memory"}
         )
         result = await scoped_fs.register_memory("/workspace/memory", name="test-memory")
         mock_async_fs.register_memory.assert_called_once()
@@ -387,7 +385,7 @@ class TestMemoryOperations:
     ) -> None:
         """Test list_registered_memories unscopes paths."""
         mock_async_fs.list_registered_memories = AsyncMock(
-            return_value=[{"path": "/tenants/team_12/users/user_1/workspace/memory"}]
+            return_value=[{"path": "/zones/team_12/users/user_1/workspace/memory"}]
         )
         result = await scoped_fs.list_registered_memories()
         assert result[0]["path"] == "/workspace/memory"

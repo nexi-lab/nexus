@@ -124,7 +124,7 @@ def rebac_create(
                 sys.exit(1)
 
         # Get zone_id from operation_context (set by @add_context_options)
-        tenant = operation_context.get("zone")
+        zone = operation_context.get("zone")
 
         # Parse column_config JSON if provided
         column_config_dict = None
@@ -161,7 +161,7 @@ def rebac_create(
             relation=relation,
             object=(object_type, object_id),
             expires_at=expires_at,
-            zone_id=tenant,
+            zone_id=zone,
             column_config=column_config_dict,
             context=operation_context,
         )
@@ -179,8 +179,8 @@ def rebac_create(
             )
         console.print(f"  Relation: [magenta]{relation}[/magenta]")
         console.print(f"  Object: [yellow]{object_type}:{object_id}[/yellow]")
-        if tenant:
-            console.print(f"  Zone: [blue]{tenant}[/blue]")
+        if zone:
+            console.print(f"  Zone: [blue]{zone}[/blue]")
         if expires_at:
             console.print(f"  Expires: [dim]{expires_at.isoformat()}[/dim]")
         if column_config_dict:

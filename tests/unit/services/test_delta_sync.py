@@ -354,7 +354,7 @@ class TestSyncFileDeltaSync:
         # Setup context
         ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
         ctx.context = MagicMock()
-        ctx.context.tenant_id = "test-tenant"
+        ctx.context.zone_id = "test-zone"
 
         result = SyncResult()
         files_found: set[str] = set()
@@ -408,7 +408,7 @@ class TestSyncFileDeltaSync:
         # Setup context
         ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
         ctx.context = MagicMock()
-        ctx.context.tenant_id = "test-tenant"
+        ctx.context.zone_id = "test-zone"
 
         result = SyncResult()
         files_found: set[str] = set()
@@ -443,7 +443,7 @@ class TestSyncFileDeltaSync:
         # Setup context with full_sync=True
         ctx = SyncContext(mount_point="/mnt/test", full_sync=True)
         ctx.context = MagicMock()
-        ctx.context.tenant_id = "test-tenant"
+        ctx.context.zone_id = "test-zone"
 
         result = SyncResult()
         files_found: set[str] = set()

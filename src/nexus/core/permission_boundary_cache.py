@@ -59,10 +59,10 @@ class PermissionBoundaryCache:
     Example:
         >>> cache = PermissionBoundaryCache()
         >>> # User alice has READ on /workspace/
-        >>> cache.set_boundary("tenant1", "user", "alice", "read",
+        >>> cache.set_boundary("zone1", "user", "alice", "read",
         ...     "/workspace/project/file.py", "/workspace/")
         >>> # Later lookup
-        >>> boundary = cache.get_boundary("tenant1", "user", "alice", "read",
+        >>> boundary = cache.get_boundary("zone1", "user", "alice", "read",
         ...     "/workspace/project/other.py")
         >>> # Returns "/workspace/" because it's an ancestor
     """
@@ -86,7 +86,7 @@ class PermissionBoundaryCache:
         self._enable_metrics = enable_metrics
         self._lock = threading.RLock()
 
-        # Primary cache: (tenant, subject_type, subject_id, permission) → {path: boundary}
+        # Primary cache: (zone, subject_type, subject_id, permission) → {path: boundary}
         # Using TTLCache for automatic expiration
         self._boundaries: TTLCache[tuple[str, str, str, str], dict[str, str]] = TTLCache(
             maxsize=max_size, ttl=ttl_seconds
@@ -244,7 +244,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = zone_id or "default"
+        effective_zone = zone_id or "default"
         count = 0
 
         with self._lock:
@@ -252,7 +252,7 @@ class PermissionBoundaryCache:
             keys_to_remove = [
                 k
                 for k in list(self._boundaries.keys())
-                if k[0] == effective_tenant and k[1] == subject_type and k[2] == subject_id
+                if k[0] == effective_zone and k[1] == subject_type and k[2] == subject_id
             ]
 
             for key in keys_to_remove:
@@ -290,7 +290,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = zone_id or "default"
+        effective_zone = zone_id or "default"
         # Normalize path prefix for consistent matching
         normalized_prefix = path_prefix.rstrip("/")
         if not normalized_prefix:
@@ -299,7 +299,7 @@ class PermissionBoundaryCache:
 
         with self._lock:
             for key, boundaries in list(self._boundaries.items()):
-                if key[0] != effective_tenant:
+                if key[0] != effective_zone:
                     continue
 
                 # Find paths to remove from this subject's boundaries
@@ -360,8 +360,8 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = zone_id or "default"
-        key = (effective_tenant, subject_type, subject_id, permission)
+        effective_zone = zone_id or "default"
+        key = (effective_zone, subject_type, subject_id, permission)
         normalized_path = object_path.rstrip("/") or "/"
         count = 0
 

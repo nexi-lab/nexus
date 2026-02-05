@@ -9,14 +9,14 @@ Usage:
     from nexus.core.zookie import Zookie, InvalidZookieError, ConsistencyTimeoutError
 
     # On write operations, encode and return a zookie
-    revision = increment_revision(tenant_id)
-    token = Zookie.encode(tenant_id, revision)
+    revision = increment_revision(zone_id)
+    token = Zookie.encode(zone_id, revision)
     return {"etag": etag, "zookie": token}
 
     # On read operations, decode and validate the zookie
     try:
         zookie = Zookie.decode(token)
-        if not wait_for_revision(zookie.tenant_id, zookie.revision):
+        if not wait_for_revision(zookie.zone_id, zookie.revision):
             raise ConsistencyTimeoutError(...)
     except InvalidZookieError as e:
         # Handle invalid token
@@ -61,13 +61,13 @@ class ConsistencyTimeoutError(Exception):
     def __init__(
         self,
         message: str,
-        tenant_id: str,
+        zone_id: str,
         requested_revision: int,
         current_revision: int,
         timeout_ms: float,
     ):
         super().__init__(message)
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.requested_revision = requested_revision
         self.current_revision = current_revision
         self.timeout_ms = timeout_ms
@@ -77,43 +77,43 @@ class ConsistencyTimeoutError(Exception):
 class Zookie:
     """Filesystem consistency token (Zanzibar zookie pattern).
 
-    A zookie encodes a point-in-time snapshot of the filesystem state for a tenant.
+    A zookie encodes a point-in-time snapshot of the filesystem state for a zone.
     It can be used to ensure read-after-write consistency by passing the zookie
     from a write operation to subsequent read operations.
 
     Attributes:
-        tenant_id: The tenant this zookie applies to
+        zone_id: The zone this zookie applies to
         revision: The monotonic revision number at the time of the write
         created_at_ms: Epoch milliseconds when the zookie was created (for debugging)
 
     Token Format:
-        nz1.{base64(tenant_id)}.{revision}.{checksum}
+        nz1.{base64(zone_id)}.{revision}.{checksum}
 
         - nz1: Version prefix (Nexus Zookie v1)
-        - base64(tenant_id): URL-safe base64 encoded tenant ID
+        - base64(zone_id): URL-safe base64 encoded zone ID
         - revision: Monotonic revision number
         - checksum: First 8 chars of HMAC-SHA256 for tamper detection
 
     Example:
-        >>> token = Zookie.encode("tenant_123", 42)
+        >>> token = Zookie.encode("zone_123", 42)
         >>> print(token)
         'nz1.dGVuYW50XzEyMw.42.a1b2c3d4'
 
         >>> zookie = Zookie.decode(token)
-        >>> print(zookie.tenant_id, zookie.revision)
-        'tenant_123' 42
+        >>> print(zookie.zone_id, zookie.revision)
+        'zone_123' 42
     """
 
-    tenant_id: str
+    zone_id: str
     revision: int
     created_at_ms: float
 
     @classmethod
-    def encode(cls, tenant_id: str, revision: int) -> str:
+    def encode(cls, zone_id: str, revision: int) -> str:
         """Encode a zookie to an opaque string token.
 
         Args:
-            tenant_id: The tenant ID to encode
+            zone_id: The zone ID to encode
             revision: The revision number to encode
 
         Returns:
@@ -126,11 +126,11 @@ class Zookie:
         """
         created_at_ms = time.time() * 1000
 
-        # Base64 encode tenant_id for URL safety
-        tenant_b64 = base64.urlsafe_b64encode(tenant_id.encode()).decode().rstrip("=")
+        # Base64 encode zone_id for URL safety
+        zone_b64 = base64.urlsafe_b64encode(zone_id.encode()).decode().rstrip("=")
 
         # Create the payload (without checksum)
-        payload = f"{_ZOOKIE_VERSION}.{tenant_b64}.{revision}.{int(created_at_ms)}"
+        payload = f"{_ZOOKIE_VERSION}.{zone_b64}.{revision}.{int(created_at_ms)}"
 
         # Compute HMAC checksum (first 8 chars)
         checksum = _compute_checksum(payload)
@@ -160,7 +160,7 @@ class Zookie:
                 f"Invalid token format: expected 5 parts, got {len(parts)}", token
             )
 
-        version, tenant_b64, revision_str, created_at_str, checksum = parts
+        version, zone_b64, revision_str, created_at_str, checksum = parts
 
         # Validate version
         if version != _ZOOKIE_VERSION:
@@ -170,19 +170,19 @@ class Zookie:
             )
 
         # Validate checksum
-        payload = f"{version}.{tenant_b64}.{revision_str}.{created_at_str}"
+        payload = f"{version}.{zone_b64}.{revision_str}.{created_at_str}"
         expected_checksum = _compute_checksum(payload)
         if not hmac.compare_digest(checksum, expected_checksum):
             raise InvalidZookieError("Invalid zookie checksum (token may be corrupted)", token)
 
-        # Decode tenant_id (add padding if needed)
+        # Decode zone_id (add padding if needed)
         try:
-            padding = 4 - (len(tenant_b64) % 4)
+            padding = 4 - (len(zone_b64) % 4)
             if padding != 4:
-                tenant_b64 += "=" * padding
-            tenant_id = base64.urlsafe_b64decode(tenant_b64).decode()
+                zone_b64 += "=" * padding
+            zone_id = base64.urlsafe_b64decode(zone_b64).decode()
         except Exception as e:
-            raise InvalidZookieError(f"Invalid tenant encoding: {e}", token) from e
+            raise InvalidZookieError(f"Invalid zone encoding: {e}", token) from e
 
         # Parse revision
         try:
@@ -198,7 +198,7 @@ class Zookie:
         except ValueError as e:
             raise InvalidZookieError(f"Invalid timestamp: {e}", token) from e
 
-        return cls(tenant_id=tenant_id, revision=revision, created_at_ms=created_at_ms)
+        return cls(zone_id=zone_id, revision=revision, created_at_ms=created_at_ms)
 
     def is_at_least(self, min_revision: int) -> bool:
         """Check if this zookie satisfies a minimum revision requirement.
@@ -221,7 +221,7 @@ class Zookie:
 
     def __str__(self) -> str:
         """Return a human-readable representation (not the encoded token)."""
-        return f"Zookie(tenant={self.tenant_id}, rev={self.revision}, age={self.age_ms():.0f}ms)"
+        return f"Zookie(zone={self.zone_id}, rev={self.revision}, age={self.age_ms():.0f}ms)"
 
 
 def _compute_checksum(payload: str) -> str:

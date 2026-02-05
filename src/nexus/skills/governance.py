@@ -140,7 +140,7 @@ class SkillGovernance:
         reviewers: list[str] | None = None,
         comments: str | None = None,
     ) -> str:
-        """Submit a skill for approval to publish to tenant library.
+        """Submit a skill for approval to publish to zone library.
 
         Args:
             skill_name: Name of the skill

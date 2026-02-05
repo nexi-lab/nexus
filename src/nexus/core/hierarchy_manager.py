@@ -170,7 +170,7 @@ class HierarchyManager:
         # (EnhancedReBACManager does, basic ReBACManager doesn't)
         if hasattr(self.rebac_manager, "rebac_write") and zone_id:
             try:
-                # Try tenant-aware write
+                # Try zone-aware write
                 # IMPORTANT: child is SUBJECT, parent is OBJECT (child -> parent direction)
                 # Semantic: "child_path's parent is parent_path"
                 self.rebac_manager.rebac_write(
@@ -335,7 +335,7 @@ class HierarchyManager:
             cursor = self.rebac_manager._create_cursor(conn)
 
             if zone_id:
-                # Tenant-aware query
+                # Zone-aware query
                 cursor.execute(
                     self.rebac_manager._fix_sql_placeholders(
                         """
@@ -349,7 +349,7 @@ class HierarchyManager:
                     ("file", path, "parent", zone_id),
                 )
             else:
-                # Non-tenant query
+                # Non-zone query
                 cursor.execute(
                     self.rebac_manager._fix_sql_placeholders(
                         """

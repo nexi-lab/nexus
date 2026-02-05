@@ -92,7 +92,7 @@ class IdentityMemoryMigration:
                 if "workspace" in parts:
                     idx = parts.index("workspace")
                     if len(parts) > idx + 2:
-                        # Assume /workspace/{tenant}/{agent}/ pattern
+                        # Assume /workspace/{zone}/{agent}/ pattern
                         agent_id = parts[idx + 2]
                         # For backward compatibility, use agent_id as user_id initially
                         user_id = owner or agent_id
@@ -192,7 +192,7 @@ class IdentityMemoryMigration:
             for virtual_path, _zone_id in result:
                 parts = virtual_path.split("/")
                 if len(parts) >= 4 and parts[1] == "workspace":
-                    # /workspace/{tenant}/{agent}/...
+                    # /workspace/{zone}/{agent}/...
                     # parts[2] might be agent_id
                     potential_agent = parts[3] if len(parts) > 3 else None
 

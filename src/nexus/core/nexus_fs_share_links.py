@@ -102,7 +102,7 @@ class NexusFSShareLinksMixin:
             expires_in_hours: Optional hours until link expires (None = never)
             max_access_count: Optional max number of accesses (None = unlimited)
             password: Optional password protection
-            context: Operation context with user/tenant info
+            context: Operation context with user/zone info
 
         Returns:
             HandlerResponse with link_id and share URL on success
@@ -299,7 +299,7 @@ class NexusFSShareLinksMixin:
             path: Optional - filter by resource path
             include_revoked: Include revoked links
             include_expired: Include expired links
-            context: Operation context with user/tenant info
+            context: Operation context with user/zone info
 
         Returns:
             HandlerResponse with list of share links
@@ -386,7 +386,7 @@ class NexusFSShareLinksMixin:
 
         Args:
             link_id: The share link ID to revoke
-            context: Operation context with user/tenant info
+            context: Operation context with user/zone info
 
         Returns:
             HandlerResponse indicating success/failure

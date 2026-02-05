@@ -31,7 +31,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
 
     Enhances the base PermissionEnforcer with:
     - Identity-based ReBAC checks (user ownership, agent relationships)
-    - Tenant-scoped memory sharing
+    - Zone-scoped memory sharing
     - User ownership inheritance (agents owned by same user can access)
     """
 
@@ -95,7 +95,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         1. Legacy/system memories without owner (empty user_id and agent_id) - read-only access
         2. Direct creator access (agent created the memory)
         3. User ownership inheritance (agent owned by memory owner)
-        4. Tenant-scoped sharing (same tenant, scope='tenant')
+        4. Zone-scoped sharing (same zone, scope='zone')
         5. Explicit ReBAC relations (if rebac_manager available)
 
         Args:

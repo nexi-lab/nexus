@@ -197,7 +197,7 @@ class FileAccessTracker:
 
         Args:
             path: File path accessed
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             user_id: User who accessed (optional)
             size_bytes: File size in bytes (optional, for prioritization)
         """
@@ -253,7 +253,7 @@ class FileAccessTracker:
         """Get frequently accessed files.
 
         Args:
-            zone_id: Filter by tenant (None = all tenants)
+            zone_id: Filter by zone (None = all zones)
             user_id: Filter by user (None = all users)
             limit: Maximum entries to return
 
@@ -266,10 +266,10 @@ class FileAccessTracker:
 
         with self._lock:
             for key, timestamps in self._access_log.items():
-                key_tenant, path = key
+                key_zone, path = key
 
-                # Filter by tenant
-                if zone_id and key_tenant != zone_id:
+                # Filter by zone
+                if zone_id and key_zone != zone_id:
                     continue
 
                 # Filter by user
@@ -284,7 +284,7 @@ class FileAccessTracker:
                     hot.append(
                         FileAccessEntry(
                             path=path,
-                            zone_id=key_tenant,
+                            zone_id=key_zone,
                             user_id=user_id,
                             access_count=len(recent),
                             last_access=max(recent) if recent else 0,
@@ -310,7 +310,7 @@ class FileAccessTracker:
 
         Args:
             user_id: User to get files for
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             hours: Look back N hours
             limit: Maximum files to return
 
@@ -323,9 +323,9 @@ class FileAccessTracker:
 
         with self._lock:
             for key, timestamps in self._access_log.items():
-                key_tenant, path = key
+                key_zone, path = key
 
-                if key_tenant != zone_id:
+                if key_zone != zone_id:
                     continue
 
                 users = self._user_access.get(key, set())
@@ -338,7 +338,7 @@ class FileAccessTracker:
                     recent.append(
                         FileAccessEntry(
                             path=path,
-                            zone_id=key_tenant,
+                            zone_id=key_zone,
                             user_id=user_id,
                             access_count=len(in_range),
                             last_access=max(in_range),
@@ -472,7 +472,7 @@ class CacheWarmer:
             depth: Maximum depth to traverse (default: config.depth)
             include_content: Warm file content too (default: config.include_content)
             max_files: Maximum files to warm (default: config.max_files)
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             context: Operation context for permission checks
 
         Returns:
@@ -547,7 +547,7 @@ class CacheWarmer:
             user: User to warm cache for (None = all users)
             hours: Look back N hours
             max_files: Maximum files to warm (default: config.max_files)
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             context: Operation context
 
         Returns:
@@ -614,7 +614,7 @@ class CacheWarmer:
 
         Args:
             user: User to warm permissions for
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             paths: Specific paths to warm (None = common paths)
 
         Returns:
@@ -677,7 +677,7 @@ class CacheWarmer:
         Args:
             paths: List of paths to warm
             include_content: Warm content too (not just metadata)
-            zone_id: Tenant identifier
+            zone_id: Zone identifier
             context: Operation context
 
         Returns:
@@ -996,7 +996,7 @@ async def warmup_on_mount(
         depth: Directory depth to warm
         include_content: Warm content too
         max_files: Maximum files
-        zone_id: Tenant identifier
+        zone_id: Zone identifier
 
     Returns:
         WarmupStats

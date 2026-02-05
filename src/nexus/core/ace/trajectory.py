@@ -56,7 +56,7 @@ class TrajectoryManager:
         1. Admin/system bypass
         2. Direct creator (agent matches)
         3. User ownership (same user_id)
-        4. Tenant-scoped sharing (same zone_id and scope='tenant')
+        4. Zone-scoped sharing (same zone_id and scope='zone')
 
         Args:
             trajectory: Trajectory model
@@ -74,7 +74,7 @@ class TrajectoryManager:
             return True
 
         # 3. User ownership (same user created it)
-        # 4. Tenant-scoped sharing (TODO: requires scope attribute in TrajectoryModel)
+        # 4. Zone-scoped sharing (TODO: requires scope attribute in TrajectoryModel)
         # 5. Global scope (TODO: requires scope attribute in TrajectoryModel)
         return self.context.user == trajectory.user_id
 

@@ -33,7 +33,7 @@ class SkillManager:
     Features:
     - Create skills from templates
     - Fork existing skills with lineage tracking
-    - Publish skills to tenant library
+    - Publish skills to zone library
     - Version control via CAS (Content Addressable Storage)
 
     Example:
@@ -59,7 +59,7 @@ class SkillManager:
         ...     tier="agent"
         ... )
         >>>
-        >>> # Publish to tenant library
+        >>> # Publish to zone library
         >>> await manager.publish_skill("my-skill")
     """
 
@@ -133,7 +133,7 @@ class SkillManager:
 
         Permission model:
         - user tier: Owner (user) gets direct_owner on the skill directory
-        - tenant tier: All tenant members get viewer access (via tenant#member)
+        - zone tier: All zone members get viewer access (via zone#member)
         - system tier: Everyone gets viewer access (via role#public)
 
         Args:
@@ -141,7 +141,7 @@ class SkillManager:
             skill_dir: Path to skill directory
             owner_type: Type of owner (agent, user)
             owner_id: ID of owner
-            tier: Skill tier (agent, user, tenant, system)
+            tier: Skill tier (agent, user, zone, system)
             zone_id: Optional zone ID
             context: Operation context for additional info
         """
@@ -184,7 +184,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    zone_id="default",  # System skills use default tenant
+                    zone_id="default",  # System skills use default zone
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 
@@ -215,7 +215,7 @@ class SkillManager:
             name: Skill name (alphanumeric with - or _)
             description: Skill description
             template: Template name (basic, data-analysis, code-generation, etc.)
-            tier: Target tier (agent, user, tenant, system)
+            tier: Target tier (agent, user, zone, system)
             author: Optional author name
             version: Initial version (default: 1.0.0)
             creator_id: ID of the creating agent/user (for ReBAC)
@@ -326,7 +326,7 @@ class SkillManager:
             Path(skill_file).write_text(skill_md, encoding="utf-8")
 
         # Create ReBAC permissions for the skill based on tier
-        # Even without creator_id, we need to set permissions for tenant/system skills
+        # Even without creator_id, we need to set permissions for zone/system skills
         owner_type = creator_type
         owner_id = (
             creator_id
@@ -365,7 +365,7 @@ class SkillManager:
             name: Skill name (alphanumeric with - or _)
             description: Skill description
             content: Skill content (markdown)
-            tier: Target tier (agent, user, tenant, system)
+            tier: Target tier (agent, user, zone, system)
             author: Optional author name
             version: Initial version (default: 1.0.0)
             source_url: Optional source URL (for tracking origin)
@@ -651,14 +651,14 @@ class SkillManager:
         publisher_type: str = "agent",
         zone_id: str | None = None,
     ) -> str:
-        """Publish a skill to a wider audience (e.g., agent -> tenant).
+        """Publish a skill to a wider audience (e.g., agent -> zone).
 
         Copies the skill from source tier to target tier with updated metadata.
 
         Args:
             name: Skill name to publish
             source_tier: Source tier (default: agent)
-            target_tier: Target tier (default: tenant)
+            target_tier: Target tier (default: zone)
             publisher_id: ID of the publishing agent/user (for ReBAC)
             publisher_type: Type of publisher (agent, user) - default: agent
             zone_id: Zone ID for scoping (for ReBAC)
@@ -780,7 +780,7 @@ class SkillManager:
             Path(target_file).write_text(skill_md, encoding="utf-8")
 
         # Update ReBAC permissions for the published skill
-        # When publishing to a different tier, update the tenant association
+        # When publishing to a different tier, update the zone association
         if self._rebac and zone_id:
             try:
                 # For system tier, add public access
@@ -827,7 +827,7 @@ class SkillManager:
 
         Args:
             query: Search query string
-            tier: Optional tier to filter by (agent, tenant, system)
+            tier: Optional tier to filter by (agent, zone, system)
             limit: Maximum number of results (default: 10)
 
         Returns:

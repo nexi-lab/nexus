@@ -50,8 +50,8 @@ def backend(tmp_path):
 def entity_registry(session):
     """Create and populate entity registry."""
     registry = EntityRegistry(session)
-    registry.register_entity("tenant", "acme")
-    registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
+    registry.register_entity("zone", "acme")
+    registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     return registry
 
@@ -62,7 +62,7 @@ def memory_api(session, backend, entity_registry):
     return Memory(
         session=session,
         backend=backend,
-        tenant_id="acme",
+        zone_id="acme",
         user_id="alice",
         agent_id="agent1",
         entity_registry=entity_registry,

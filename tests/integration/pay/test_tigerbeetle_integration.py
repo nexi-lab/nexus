@@ -94,10 +94,10 @@ class TestWalletProvisioning:
         )
 
         agent_id = unique_agent_id()
-        await service.provision_wallet(agent_id, "test-tenant")
+        await service.provision_wallet(agent_id, "test-zone")
 
         # Verify account exists by checking balance
-        balance = await service.get_balance(agent_id, "test-tenant")
+        balance = await service.get_balance(agent_id, "test-zone")
         assert balance == Decimal("0")
 
     @pytest.mark.asyncio
@@ -113,10 +113,10 @@ class TestWalletProvisioning:
         agent_id = unique_agent_id()
 
         # First provision
-        await service.provision_wallet(agent_id, "test-tenant")
+        await service.provision_wallet(agent_id, "test-zone")
 
         # Second provision should not raise
-        await service.provision_wallet(agent_id, "test-tenant")
+        await service.provision_wallet(agent_id, "test-zone")
 
 
 class TestTransferOperations:

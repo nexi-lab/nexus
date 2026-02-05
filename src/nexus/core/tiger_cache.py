@@ -41,11 +41,11 @@ class CacheKey:
     """Key for Tiger Cache lookup.
 
     Note: zone_id is intentionally excluded from the cache key.
-    Tenant isolation is enforced during permission computation, not caching.
-    This allows shared resources (e.g., /skills in 'default' tenant) to be
-    accessible across tenants without cache misses.
+    Zone isolation is enforced during permission computation, not caching.
+    This allows shared resources (e.g., /skills in 'default' zone) to be
+    accessible across zones without cache misses.
 
-    See: Issue #979 - Tiger Cache persistence and cross-tenant optimization
+    See: Issue #979 - Tiger Cache persistence and cross-zone optimization
     """
 
     subject_type: str
@@ -72,10 +72,10 @@ class TigerResourceMap:
 
     Note: zone_id is intentionally excluded from resource mapping.
     Resource paths are globally unique (e.g., /skills/system/docs is the same
-    file regardless of who queries it). Tenant isolation is enforced at the
+    file regardless of who queries it). Zone isolation is enforced at the
     bitmap/permission level, not the resource ID mapping.
 
-    See: Issue #979 - Cross-tenant resource map optimization
+    See: Issue #979 - Cross-zone resource map optimization
     """
 
     def __init__(self, engine: Engine):
@@ -83,7 +83,7 @@ class TigerResourceMap:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # In-memory cache for frequently accessed mappings
-        # Key is (type, id) - tenant excluded for cross-tenant compatibility
+        # Key is (type, id) - zone excluded for cross-zone compatibility
         self._uuid_to_int: dict[tuple[str, str], int] = {}  # (type, id) -> int
         self._int_to_uuid: dict[int, tuple[str, str]] = {}  # int -> (type, id)
         self._lock = threading.RLock()
@@ -106,7 +106,7 @@ class TigerResourceMap:
         Returns:
             Integer ID for use in bitmaps
         """
-        # Key excludes tenant - resource paths are globally unique
+        # Key excludes zone - resource paths are globally unique
         key = (resource_type, resource_id)
 
         # Check memory cache first
@@ -118,7 +118,7 @@ class TigerResourceMap:
         from sqlalchemy import text
 
         def do_get_or_create(connection: Connection) -> int:
-            # Try to get existing (no tenant filter)
+            # Try to get existing (no zone filter)
             query = text("""
                 SELECT resource_int_id FROM tiger_resource_map
                 WHERE resource_type = :resource_type
@@ -286,7 +286,7 @@ class TigerResourceMap:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database (no tenant filter)
+        # Bulk fetch from database (no zone filter)
         if self._is_postgresql:
             # PostgreSQL: Use UNNEST for efficient bulk lookup
             query = text("""
@@ -356,7 +356,7 @@ class TigerResourceMap:
         if not missing:
             return result
 
-        # Query database for missing (no tenant filter)
+        # Query database for missing (no zone filter)
         from sqlalchemy import text
 
         if self._is_postgresql:
@@ -506,7 +506,7 @@ class TigerCache:
         event loop conflicts with FastAPI's async context.
 
         Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}
-        Note: zone_id excluded per Issue #979 for cross-tenant resource sharing.
+        Note: zone_id excluded per Issue #979 for cross-zone resource sharing.
 
         Args:
             operation: One of "get", "set", "invalidate"
@@ -668,7 +668,7 @@ class TigerCache:
         """
         key = CacheKey(subject_type, subject_id, permission, resource_type)
 
-        # Get resource int ID (no tenant - paths are globally unique)
+        # Get resource int ID (no zone - paths are globally unique)
         resource_key = (resource_type, resource_id)
         with self._lock:
             int_id = self._resource_map._uuid_to_int.get(resource_key)
@@ -1104,11 +1104,11 @@ class TigerCache:
         results: dict[tuple[str, str, str, str, str, str], bool | None] = {}
 
         # Step 1: Collect unique resources and cache keys
-        # Note: resource key excludes tenant - paths are globally unique
+        # Note: resource key excludes zone - paths are globally unique
         unique_resources: set[tuple[str, str]] = set()  # (res_type, res_id)
         unique_keys: set[CacheKey] = set()
 
-        for subj_type, subj_id, perm, res_type, res_id, _tenant in checks:
+        for subj_type, subj_id, perm, res_type, res_id, _zone in checks:
             unique_resources.add((res_type, res_id))
             unique_keys.add(CacheKey(subj_type, subj_id, perm, res_type))
 
@@ -1121,9 +1121,9 @@ class TigerCache:
 
         # Step 4: Check each item against in-memory data
         for check in checks:
-            subj_type, subj_id, perm, res_type, res_id, tenant = check
+            subj_type, subj_id, perm, res_type, res_id, zone = check
             key = CacheKey(subj_type, subj_id, perm, res_type)
-            resource_key = (res_type, res_id)  # No tenant
+            resource_key = (res_type, res_id)  # No zone
 
             # Get bitmap for this subject/permission/resource_type
             bitmap = bitmaps.get(key)
@@ -1169,7 +1169,7 @@ class TigerCache:
 
         logger.info(
             f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
-            f"(tenant={zone_id}, {len(resource_int_ids)} resources, rev={revision}, "
+            f"(zone={zone_id}, {len(resource_int_ids)} resources, rev={revision}, "
             f"db={self._engine.url.database}, dialect={self._engine.dialect.name})"
         )
 
@@ -1281,7 +1281,7 @@ class TigerCache:
             subject_id: Filter by subject ID (None = all)
             permission: Filter by permission (None = all)
             resource_type: Filter by resource type (None = all)
-            zone_id: Filter by tenant (None = all)
+            zone_id: Filter by zone (None = all)
             conn: Optional database connection
 
         Returns:
@@ -1291,7 +1291,7 @@ class TigerCache:
 
         logger.info(
             f"Tiger Cache INVALIDATE: subject={subject_type}:{subject_id}, "
-            f"permission={permission}, resource_type={resource_type}, tenant={zone_id}"
+            f"permission={permission}, resource_type={resource_type}, zone={zone_id}"
         )
 
         # Build WHERE clause
@@ -1361,7 +1361,7 @@ class TigerCache:
                 if resource_type and key.resource_type != resource_type:
                     match = False
                 # Note: zone_id removed from CacheKey per Issue #979
-                # Tenant isolation is enforced during permission computation
+                # Zone isolation is enforced during permission computation
                 if match:
                     keys_to_remove.append(key)
 
@@ -1610,13 +1610,13 @@ class TigerCache:
         try:
             with self._engine.begin() as conn:
                 # Step 1: Get resource int ID (don't create if doesn't exist)
-                # Note: resource key excludes tenant - paths are globally unique
+                # Note: resource key excludes zone - paths are globally unique
                 resource_key = (resource_type, resource_id)
                 with self._lock:
                     resource_int_id = self._resource_map._uuid_to_int.get(resource_key)
 
                 if resource_int_id is None:
-                    # Try to get from DB (no tenant filter)
+                    # Try to get from DB (no zone filter)
                     query = text("""
                         SELECT resource_int_id FROM tiger_resource_map
                         WHERE resource_type = :resource_type
@@ -2467,7 +2467,7 @@ class TigerCache:
         if added_count > 0:
             logger.info(f"[TIGER] New file {file_path} added to {added_count} ancestor grants")
 
-            # Issue #1147: Increment tenant revision when bitmap changes
+            # Issue #1147: Increment zone revision when bitmap changes
             # This enables revision-based consistency checks in list() to detect
             # concurrent writes and avoid returning stale results
             try:
@@ -2496,10 +2496,10 @@ class TigerCache:
                 with self._engine.begin() as conn:
                     conn.execute(query, {"zone_id": zone_id})
                     logger.debug(
-                        f"[TIGER] Incremented tenant revision for {zone_id} after adding file to grants"
+                        f"[TIGER] Incremented zone revision for {zone_id} after adding file to grants"
                     )
             except Exception as e:
-                logger.warning(f"[TIGER] Failed to increment tenant revision: {e}")
+                logger.warning(f"[TIGER] Failed to increment zone revision: {e}")
 
         return added_count
 
@@ -2878,7 +2878,7 @@ class TigerCacheUpdater:
         if self._rebac_manager is None:
             return set()
 
-        # Get all resources of this type in tenant
+        # Get all resources of this type in zone
         # (In practice, you might want to limit this or paginate)
         resources_query = text("""
             SELECT resource_int_id, resource_id

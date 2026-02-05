@@ -2,6 +2,7 @@
 
 from nexus.storage import views
 from nexus.storage.file_cache import FileContentCache, get_file_cache
+from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.models import (
     ContentChunkModel,
     ExternalUserServiceModel,
@@ -11,7 +12,6 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
     ZoneModel,
 )
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 __all__ = [
     "FilePathModel",
@@ -21,7 +21,7 @@ __all__ = [
     "UserOAuthAccountModel",
     "ZoneModel",
     "ExternalUserServiceModel",
-    "RaftMetadataStore",
+    "SQLAlchemyMetadataStore",
     "FileContentCache",
     "get_file_cache",
     "views",

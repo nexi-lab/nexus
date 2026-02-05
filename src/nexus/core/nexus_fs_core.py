@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
-    from nexus.storage import RaftMetadataStore
+    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSCoreMixin:
@@ -45,7 +45,7 @@ class NexusFSCoreMixin:
     if TYPE_CHECKING:
         from nexus.core.permissions import PermissionEnforcer
 
-        metadata: RaftMetadataStore
+        metadata: SQLAlchemyMetadataStore
         backend: Backend
         router: PathRouter
         is_admin: bool

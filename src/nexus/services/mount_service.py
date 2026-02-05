@@ -468,7 +468,7 @@ class MountService:
                 subject_type, subject_id = get_user_identity(_context)
                 zone_id = get_zone_id(_context)
                 logger.info(
-                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, tenant={zone_id}"
+                    f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, zone={zone_id}"
                 )
 
             router_mounts = list(self.router.list_mounts())
@@ -488,7 +488,7 @@ class MountService:
 
                         logger.info(
                             f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
-                            f"on {mount_point} (tenant={zone_id})"
+                            f"on {mount_point} (zone={zone_id})"
                         )
 
                         # Admin users can see all mounts
@@ -700,15 +700,15 @@ class MountService:
 
         Automatically filters by the current user's context (subject_id and zone_id)
         unless explicit filter parameters are provided. This ensures users can only
-        see their own mounts and mounts from their tenant.
+        see their own mounts and mounts from their zone.
 
         Args:
             owner_user_id: Filter by owner user ID (optional, defaults to current user)
-            zone_id: Filter by zone ID (optional, defaults to current tenant)
+            zone_id: Filter by zone ID (optional, defaults to current zone)
             context: Operation context (automatically provided by RPC server)
 
         Returns:
-            List of saved mount configurations owned by the user or in their tenant
+            List of saved mount configurations owned by the user or in their zone
 
         Raises:
             RuntimeError: If mount manager is not available
@@ -717,8 +717,8 @@ class MountService:
             # List my saved mounts (automatically filtered)
             mounts = await service.list_saved_mounts()
 
-            # List all mounts in my tenant
-            tenant_mounts = await service.list_saved_mounts(owner_user_id=None)
+            # List all mounts in my zone
+            zone_mounts = await service.list_saved_mounts(owner_user_id=None)
         """
         if not self.mount_manager:
             raise RuntimeError(
@@ -738,7 +738,7 @@ class MountService:
             if zone_id is None and context:
                 zone_id = get_zone_id(context)
                 if zone_id:
-                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {zone_id}")
+                    logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by zone: {zone_id}")
 
             assert self.mount_manager is not None
             return self.mount_manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)

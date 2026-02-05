@@ -130,11 +130,11 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
 
 def resolve_skill_base_path(context: Any) -> str:
     """
-    Determine skill base path based on context (user vs tenant vs system).
+    Determine skill base path based on context (user vs zone vs system).
 
     Priority order:
     1. User-specific path: /skills/users/{user_id}/
-    2. Tenant-specific path: /skills/tenants/{zone_id}/
+    2. Zone-specific path: /skills/zones/{zone_id}/
     3. System default path: /skills/system/
 
     Args:
@@ -155,6 +155,6 @@ def resolve_skill_base_path(context: Any) -> str:
 
         zone_id = getattr(context, "zone_id", None)
         if zone_id:
-            return f"/skills/tenants/{zone_id}/"
+            return f"/skills/zones/{zone_id}/"
 
     return "/skills/system/"

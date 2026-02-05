@@ -258,10 +258,10 @@ class DirectoryVisibilityCache:
             keys_to_remove = []
 
             for key in self._cache:
-                k_tenant, k_subject_type, k_subject_id, k_path = key
+                k_zone, k_subject_type, k_subject_id, k_path = key
 
                 # Match criteria
-                if zone_id is not None and k_tenant != zone_id:
+                if zone_id is not None and k_zone != zone_id:
                     continue
                 if subject_type is not None and k_subject_type != subject_type:
                     continue
@@ -296,7 +296,7 @@ class DirectoryVisibilityCache:
             if invalidated > 0:
                 logger.debug(
                     f"[DirVisCache] INVALIDATE: {invalidated} entries "
-                    f"(tenant={zone_id}, subject={subject_type}:{subject_id}, path={dir_path})"
+                    f"(zone={zone_id}, subject={subject_type}:{subject_id}, path={dir_path})"
                 )
 
         return invalidated

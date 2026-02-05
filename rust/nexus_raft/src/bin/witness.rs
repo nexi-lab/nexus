@@ -51,7 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .expect("NEXUS_BIND_ADDR must be a valid socket address");
 
-    let data_dir = env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| "./nexus_witness_data".to_string());
+    let data_dir =
+        env::var("NEXUS_DATA_DIR").unwrap_or_else(|_| "./nexus_witness_data".to_string());
 
     let data_path = PathBuf::from(&data_dir);
 

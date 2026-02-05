@@ -89,7 +89,7 @@ class SubscriptionManager:
 
             logger.info(
                 f"Created subscription {model.subscription_id} for {data.url} "
-                f"(tenant={zone_id}, events={data.event_types})"
+                f"(zone={zone_id}, events={data.event_types})"
             )
 
             return self._to_subscription(model)
@@ -126,7 +126,7 @@ class SubscriptionManager:
         limit: int = 100,
         offset: int = 0,
     ) -> list[Subscription]:
-        """List subscriptions for a tenant.
+        """List subscriptions for a zone.
 
         Args:
             zone_id: Zone ID for isolation
@@ -255,7 +255,7 @@ class SubscriptionManager:
             Number of webhooks triggered
         """
         logger.debug(
-            f"broadcast() called: event={event_type}, tenant={zone_id}, path={data.get('file_path', 'N/A')}"
+            f"broadcast() called: event={event_type}, zone={zone_id}, path={data.get('file_path', 'N/A')}"
         )
 
         # Get matching subscriptions (async to avoid blocking event loop)
@@ -266,7 +266,7 @@ class SubscriptionManager:
             return 0
 
         if not subscriptions:
-            logger.debug(f"No matching subscriptions for {event_type} tenant={zone_id}")
+            logger.debug(f"No matching subscriptions for {event_type} zone={zone_id}")
             return 0
 
         # Deliver webhooks concurrently (fire and forget for performance)
@@ -283,7 +283,7 @@ class SubscriptionManager:
 
         logger.info(
             f"Broadcast {event_type} to {len(subscriptions)} subscriptions "
-            f"(tenant={zone_id}, path={data.get('file_path', 'N/A')})"
+            f"(zone={zone_id}, path={data.get('file_path', 'N/A')})"
         )
         return len(subscriptions)
 
@@ -317,7 +317,7 @@ class SubscriptionManager:
         from nexus.storage.models import SubscriptionModel
 
         with self._session_factory() as session:
-            # Get enabled subscriptions for tenant
+            # Get enabled subscriptions for zone
             models = (
                 session.query(SubscriptionModel)
                 .filter(

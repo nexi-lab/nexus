@@ -69,7 +69,9 @@ pub use client::{
     VoteResponseLocal,
 };
 #[cfg(feature = "grpc")]
-pub use server::{RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState};
+pub use server::{
+    RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState,
+};
 
 // Re-export generated types when grpc feature is enabled
 #[cfg(feature = "grpc")]

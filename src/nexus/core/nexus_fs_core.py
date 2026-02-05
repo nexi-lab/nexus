@@ -190,15 +190,15 @@ class NexusFSCoreMixin:
     # Zookie Consistency Token Support - Issue #1187
     # =========================================================================
 
-    def _increment_and_get_revision(self, tenant_id: str) -> int:
-        """Atomically increment and return the new revision for a tenant.
+    def _increment_and_get_revision(self, zone_id: str) -> int:
+        """Atomically increment and return the new revision for a zone.
 
         Issue #1187: This provides monotonic revision counters for filesystem
         consistency tokens (zookies). Each write operation increments the counter
         and includes the new revision in the returned zookie.
 
         Args:
-            tenant_id: The tenant to increment revision for
+            zone_id: The zone to increment revision for
 
         Returns:
             The new revision number after incrementing
@@ -220,10 +220,10 @@ class NexusFSCoreMixin:
                         UPDATE filesystem_version_sequences
                         SET current_revision = current_revision + 1,
                             updated_at = :now
-                        WHERE tenant_id = :tenant_id
+                        WHERE zone_id = :zone_id
                         RETURNING current_revision
                     """),
-                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                    {"zone_id": zone_id, "now": datetime.now(UTC)},
                 )
                 row = result.fetchone()
 
@@ -234,26 +234,26 @@ class NexusFSCoreMixin:
                 conn.execute(
                     text("""
                         INSERT INTO filesystem_version_sequences
-                            (tenant_id, current_revision, updated_at)
-                        VALUES (:tenant_id, 1, :now)
-                        ON CONFLICT (tenant_id) DO UPDATE
+                            (zone_id, current_revision, updated_at)
+                        VALUES (:zone_id, 1, :now)
+                        ON CONFLICT (zone_id) DO UPDATE
                         SET current_revision = filesystem_version_sequences.current_revision + 1,
                             updated_at = :now
                     """),
-                    {"tenant_id": tenant_id, "now": datetime.now(UTC)},
+                    {"zone_id": zone_id, "now": datetime.now(UTC)},
                 )
                 return 1
 
         except Exception as e:
-            logger.warning(f"Failed to increment revision for tenant {tenant_id}: {e}")
+            logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
             # Fallback: return timestamp-based pseudo-revision
             return int(time.time() * 1000)
 
-    def _get_current_revision(self, tenant_id: str) -> int:
-        """Get the current revision for a tenant.
+    def _get_current_revision(self, zone_id: str) -> int:
+        """Get the current revision for a zone.
 
         Args:
-            tenant_id: The tenant to get revision for
+            zone_id: The zone to get revision for
 
         Returns:
             The current revision number (0 if not found)
@@ -265,29 +265,29 @@ class NexusFSCoreMixin:
                 result = conn.execute(
                     text("""
                         SELECT current_revision FROM filesystem_version_sequences
-                        WHERE tenant_id = :tenant_id
+                        WHERE zone_id = :zone_id
                     """),
-                    {"tenant_id": tenant_id},
+                    {"zone_id": zone_id},
                 )
                 row = result.fetchone()
                 return int(row[0]) if row else 0
         except Exception as e:
-            logger.warning(f"Failed to get revision for tenant {tenant_id}: {e}")
+            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
             return 0
 
     def _wait_for_revision(
         self,
-        tenant_id: str,
+        zone_id: str,
         min_revision: int,
         timeout_ms: float = 5000,
     ) -> bool:
-        """Wait until tenant revision >= min_revision.
+        """Wait until zone revision >= min_revision.
 
         Issue #1187: Implements AT_LEAST_AS_FRESH consistency mode for reads.
         Uses exponential backoff to minimize DB polling.
 
         Args:
-            tenant_id: The tenant to check revision for
+            zone_id: The zone to check revision for
             min_revision: The minimum acceptable revision
             timeout_ms: Maximum time to wait in milliseconds (default: 5000)
 
@@ -301,7 +301,7 @@ class NexusFSCoreMixin:
         sleep_ms = 1.0  # Start with 1ms
 
         while time.monotonic() < deadline:
-            current = self._get_current_revision(tenant_id)
+            current = self._get_current_revision(zone_id)
             if current >= min_revision:
                 return True
             time.sleep(sleep_ms / 1000)
@@ -337,9 +337,9 @@ class NexusFSCoreMixin:
         if context.read_set is None:
             return
 
-        # Get current revision for this tenant
-        tenant_id = context.tenant_id or "default"
-        revision = self._get_current_revision(tenant_id)
+        # Get current revision for this zone
+        zone_id = context.zone_id or "default"
+        revision = self._get_current_revision(zone_id)
 
         # Record the read
         context.record_read(
@@ -685,7 +685,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If file doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If read operation fails
-            AccessDeniedError: If access is denied based on tenant isolation
+            AccessDeniedError: If access is denied based on zone isolation
             PermissionError: If user doesn't have read permission
 
         Examples:
@@ -1538,7 +1538,7 @@ class NexusFSCoreMixin:
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If write operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
             ConflictError: If if_match is provided and doesn't match current etag
             FileExistsError: If if_none_match=True and file already exists
@@ -1611,7 +1611,7 @@ class NexusFSCoreMixin:
         This method contains the actual write logic, extracted to support
         both locked and non-locked write paths without code duplication.
         """
-        # Route to backend with write access check FIRST (to check tenant/agent isolation)
+        # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
@@ -2108,7 +2108,7 @@ class NexusFSCoreMixin:
         Raises:
             InvalidPathError: If path is invalid
             BackendError: If append operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
             ConflictError: If if_match is provided and doesn't match current etag
             NexusFileNotFoundError: If file doesn't exist during read (should not happen in normal flow)
@@ -2420,7 +2420,7 @@ class NexusFSCoreMixin:
         Raises:
             InvalidPathError: If any path is invalid
             BackendError: If write operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If any path is read-only or user doesn't have write permission
 
         Examples:
@@ -2735,7 +2735,7 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If file doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If delete operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission
         """
         path = self._validate_path(path)
@@ -2754,7 +2754,7 @@ class NexusFSCoreMixin:
                 "revision": revision,
             }
 
-        # Route to backend with write access check FIRST (to check tenant/agent isolation)
+        # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
         route = self.router.route(
@@ -2784,7 +2784,7 @@ class NexusFSCoreMixin:
             "physical_path": meta.physical_path,
         }
 
-        # Check write permission for delete        # This comes AFTER tenant isolation check so AccessDeniedError takes precedence
+        # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
         # Log operation BEFORE deleting CAS content        # This ensures the snapshot is recorded while content still exists
@@ -2928,7 +2928,7 @@ class NexusFSCoreMixin:
             FileExistsError: If destination path already exists
             InvalidPathError: If either path is invalid
             PermissionError: If either path is read-only
-            AccessDeniedError: If access is denied (tenant isolation)
+            AccessDeniedError: If access is denied (zone isolation)
 
         Example:
             >>> nx.rename('/workspace/old.txt', '/workspace/new.txt')
@@ -3626,7 +3626,7 @@ class NexusFSCoreMixin:
             access to /workspace/joe/file.txt).
 
         Performance:
-            For implicit directories (directories without explicit files, like /tenants),
+            For implicit directories (directories without explicit files, like /zones),
             uses TRAVERSE permission check (O(1)) instead of descendant access check (O(n)).
             This is a major optimization for FUSE path resolution operations.
         """
@@ -3642,13 +3642,13 @@ class NexusFSCoreMixin:
 
                 # OPTIMIZATION: For implicit directories, use TRAVERSE permission (O(1))
                 # instead of expensive descendant access check (O(n))
-                # TRAVERSE is granted on root-level implicit directories like /tenants, /sessions, /skills
+                # TRAVERSE is granted on root-level implicit directories like /zones, /sessions, /skills
                 if is_implicit_dir:
                     # Try TRAVERSE permission first (O(1) check)
                     if self._permission_enforcer.check(path, Permission.TRAVERSE, ctx):
                         return True
                     # Fall back to descendant access check for non-root implicit dirs
-                    # (e.g., /tenants/tenant_1 where user may have access to children)
+                    # (e.g., /zones/zone_1 where user may have access to children)
                     if not self._has_descendant_access(path, Permission.READ, ctx):  # type: ignore[attr-defined]
                         return False
                 else:

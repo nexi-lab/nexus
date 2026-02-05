@@ -40,9 +40,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .compile_protos(raft_protos, includes)?;
 
         // Tell cargo to recompile if protos change
-        println!("cargo:rerun-if-changed={}/nexus/raft/transport.proto", proto_root);
-        println!("cargo:rerun-if-changed={}/nexus/raft/commands.proto", proto_root);
-        println!("cargo:rerun-if-changed={}/nexus/core/metadata.proto", proto_root);
+        println!(
+            "cargo:rerun-if-changed={}/nexus/raft/transport.proto",
+            proto_root
+        );
+        println!(
+            "cargo:rerun-if-changed={}/nexus/raft/commands.proto",
+            proto_root
+        );
+        println!(
+            "cargo:rerun-if-changed={}/nexus/core/metadata.proto",
+            proto_root
+        );
     }
 
     Ok(())

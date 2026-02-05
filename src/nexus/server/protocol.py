@@ -659,7 +659,7 @@ class RebacListTuplesParams:
     object: tuple[str, str] | None = None
 
 
-# Cross-tenant sharing params
+# Cross-zone sharing params
 @dataclass
 class ShareWithUserParams:
     """Parameters for share_with_user() method."""
@@ -2012,7 +2012,7 @@ METHOD_PARAMS = {
     "rebac_explain": RebacExplainParams,
     "rebac_delete": RebacDeleteParams,
     "rebac_list_tuples": RebacListTuplesParams,
-    # Cross-tenant sharing methods
+    # Cross-zone sharing methods
     "share_with_user": ShareWithUserParams,
     "revoke_share": RevokeShareParams,
     "revoke_share_by_id": RevokeShareByIdParams,
@@ -2196,7 +2196,7 @@ def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:
         "rebac_expand",
         "rebac_list_tuples",
         "rebac_explain",
-        # Cross-tenant sharing methods
+        # Cross-zone sharing methods
         "share_with_user",
         "revoke_share",
         "list_outgoing_shares",

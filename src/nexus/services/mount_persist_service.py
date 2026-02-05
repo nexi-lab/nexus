@@ -297,7 +297,7 @@ class MountPersistService:
 
         Args:
             owner_user_id: Filter by owner (auto-populated from context)
-            zone_id: Filter by tenant (auto-populated from context)
+            zone_id: Filter by zone (auto-populated from context)
             context: Operation context
 
         Returns:
@@ -315,7 +315,7 @@ class MountPersistService:
         if zone_id is None and context:
             zone_id = get_zone_id(context)
             if zone_id:
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {zone_id}")
+                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by zone: {zone_id}")
 
         assert self._manager is not None
         return self._manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)

@@ -3,15 +3,12 @@
 //! Provides a client to communicate with other Raft nodes using tonic gRPC.
 
 use super::proto::nexus::raft::{
-    raft_service_client::RaftServiceClient,
     raft_client_service_client::RaftClientServiceClient,
-    AppendEntriesRequest, LogEntry as ProtoLogEntry,
-    VoteRequest, ProposeRequest, QueryRequest, GetClusterInfoRequest,
-    RaftCommand, RaftQuery,
-    raft_command::Command as ProtoCommandVariant,
-    raft_query::Query as ProtoQueryVariant,
-    PutMetadata, DeleteMetadata, AcquireLock, ReleaseLock, ExtendLock,
-    GetMetadata, ListMetadata, GetLockInfo,
+    raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
+    raft_service_client::RaftServiceClient, AcquireLock, AppendEntriesRequest, DeleteMetadata,
+    ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
+    LogEntry as ProtoLogEntry, ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery,
+    ReleaseLock, VoteRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -386,7 +383,11 @@ impl RaftApiClient {
     }
 
     /// Generic propose method.
-    async fn propose(&mut self, command: RaftCommand, request_id: Option<String>) -> Result<ProposeResult> {
+    async fn propose(
+        &mut self,
+        command: RaftCommand,
+        request_id: Option<String>,
+    ) -> Result<ProposeResult> {
         let request = tonic::Request::new(ProposeRequest {
             command: Some(command),
             request_id: request_id.unwrap_or_default(),

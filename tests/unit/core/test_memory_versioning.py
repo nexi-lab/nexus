@@ -425,12 +425,12 @@ class TestMemoryRollback:
         """rollback to non-existent version should raise error."""
         memory_id = memory_api.store(content="Test", scope="user")
 
-        with pytest.raises(Exception):  # More specific exception type TBD
+        with pytest.raises(ValueError):
             memory_api.rollback(memory_id, version=999)
 
     def test_rollback_invalid_memory_raises_error(self, memory_api):
         """rollback on non-existent memory should raise error."""
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             memory_api.rollback("non-existent-id", version=1)
 
 
@@ -507,7 +507,7 @@ class TestMemoryVersionDiff:
         """diff_versions with invalid version numbers should raise error."""
         memory_id = memory_api.store(content="Test", scope="user")
 
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             memory_api.diff_versions(memory_id, v1=1, v2=999)
 
 

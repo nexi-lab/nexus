@@ -101,7 +101,7 @@ class TestListRaceConditionE2E:
         """
         # Create a unique test directory
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/test_race_{unique_id}"
+        test_dir = f"/zone:system/test_race_{unique_id}"
         test_file = f"{test_dir}/test_file.txt"
 
         # Step 1: Create the file
@@ -170,7 +170,7 @@ class TestListRaceConditionE2E:
         agent_names = ["ImpersonatedUser", "UntrustedAgent", "SkillBuilder"]
 
         for agent_name in agent_names:
-            agent_dir = f"/zone/system/user:{test_user_id}/agent/{agent_name}"
+            agent_dir = f"/zone:system/user:{test_user_id}/agent/{agent_name}"
 
             list_result = make_rpc_request(
                 test_app,
@@ -220,7 +220,7 @@ class TestListRaceConditionE2E:
         This stress-tests the cache update mechanism.
         """
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/rapid_test_{unique_id}"
+        test_dir = f"/zone:system/rapid_test_{unique_id}"
         num_files = 5
 
         created_files = []
@@ -270,7 +270,7 @@ class TestListRaceConditionE2E:
         might have different cache states.
         """
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/cross_client_{unique_id}"
+        test_dir = f"/zone:system/cross_client_{unique_id}"
         test_file = f"{test_dir}/new_file.txt"
 
         base_url = nexus_server["base_url"]
@@ -330,7 +330,7 @@ class TestPushdownFallbackBehavior:
         Verifies the fallback to full scan when no cached bitmap exists.
         """
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/no_cache_{unique_id}"
+        test_dir = f"/zone:system/no_cache_{unique_id}"
         test_file = f"{test_dir}/file.txt"
 
         # Create file
@@ -364,7 +364,7 @@ class TestPushdownFallbackBehavior:
         If there's a cache staleness issue, results might vary between calls.
         """
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/consistency_{unique_id}"
+        test_dir = f"/zone:system/consistency_{unique_id}"
 
         # Create files
         for i in range(3):
@@ -406,7 +406,7 @@ class TestReadYourWritesConsistency:
     def test_write_then_read_same_request(self, test_app: httpx.Client):
         """Test that a write is immediately readable in the same logical request."""
         unique_id = str(uuid.uuid4())[:8]
-        test_file = f"/zone/system/ryw_{unique_id}/doc.txt"
+        test_file = f"/zone:system/ryw_{unique_id}/doc.txt"
         content = f"content_{unique_id}"
 
         # Write
@@ -433,7 +433,7 @@ class TestReadYourWritesConsistency:
     def test_write_then_list_then_read(self, test_app: httpx.Client):
         """Test the full cycle: write -> list (should show file) -> read."""
         unique_id = str(uuid.uuid4())[:8]
-        test_dir = f"/zone/system/full_cycle_{unique_id}"
+        test_dir = f"/zone:system/full_cycle_{unique_id}"
         test_file = f"{test_dir}/document.txt"
 
         # Write

@@ -927,7 +927,7 @@ class SkillService:
         """Find skill directories within a base directory.
 
         Args:
-            base_dir: Base directory to scan (e.g., /zone/x/user:y/skill/)
+            base_dir: Base directory to scan (e.g., /zone:x/user:y/skill/)
             context: Operation context
 
         Returns:

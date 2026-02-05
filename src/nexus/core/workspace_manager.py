@@ -391,7 +391,7 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.core._metadata_generated import FileMetadata
+            from nexus.core.metadata import FileMetadata
 
             for rel_path, file_info in manifest.items():
                 full_path = workspace_prefix + rel_path

@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission

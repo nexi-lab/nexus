@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.core.entity_registry import EntityRegistry
     from nexus.core.memory_api import Memory
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,

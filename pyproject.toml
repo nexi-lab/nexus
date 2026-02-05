@@ -550,6 +550,7 @@ module = [
     "nexus.server.fastapi_server",
     "nexus.search.semantic",
     "nexus.storage.database",
+    "nexus.core.distributed_lock",
 ]
 # RaftMetadataStore (PyO3) - Rust methods not visible to mypy (Issue #1159)
 disable_error_code = ["attr-defined", "union-attr", "no-any-return"]

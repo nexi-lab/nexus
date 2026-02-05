@@ -72,7 +72,7 @@ class IdentityMemoryMigration:
         try:
             result = self.session.execute(
                 text("""
-                    SELECT path_id, tenant_id, virtual_path, content_hash, owner, "group", mode, created_at
+                    SELECT path_id, zone_id, virtual_path, content_hash, owner, "group", mode, created_at
                     FROM file_paths
                     WHERE virtual_path LIKE '%/memory/%' OR virtual_path LIKE '%/.nexus/memory/%'
                 """)
@@ -81,7 +81,7 @@ class IdentityMemoryMigration:
             migrated = 0
             for row in result:
                 # Extract IDs from path (best effort)
-                path_id, tenant_id, virtual_path, content_hash, owner, group, mode, created_at = row
+                path_id, zone_id, virtual_path, content_hash, owner, group, mode, created_at = row
 
                 # Parse agent_id from path
                 parts = virtual_path.split("/")
@@ -105,7 +105,7 @@ class IdentityMemoryMigration:
                 try:
                     memory = MemoryModel(
                         content_hash=content_hash,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         user_id=user_id,
                         agent_id=agent_id,
                         scope="agent",  # Default to agent scope
@@ -134,12 +134,12 @@ class IdentityMemoryMigration:
             return 0
 
     def register_entities_from_config(
-        self, tenant_id: str | None = None, user_id: str | None = None, agent_id: str | None = None
+        self, zone_id: str | None = None, user_id: str | None = None, agent_id: str | None = None
     ) -> None:
         """Register entities from configuration.
 
         Args:
-            tenant_id: Tenant ID to register.
+            zone_id: Zone ID to register.
             user_id: User ID to register.
             agent_id: Agent ID to register.
         """
@@ -147,13 +147,13 @@ class IdentityMemoryMigration:
 
         registry = EntityRegistry(self.session)
 
-        if tenant_id:
-            registry.register_entity("tenant", tenant_id)
-            logger.info(f"Registered tenant: {tenant_id}")
+        if zone_id:
+            registry.register_entity("zone", zone_id)
+            logger.info(f"Registered zone: {zone_id}")
 
         if user_id:
             registry.register_entity(
-                "user", user_id, parent_type="tenant" if tenant_id else None, parent_id=tenant_id
+                "user", user_id, parent_type="zone" if zone_id else None, parent_id=zone_id
             )
             logger.info(f"Registered user: {user_id}")
 
@@ -173,23 +173,23 @@ class IdentityMemoryMigration:
         registry = EntityRegistry(self.session)
 
         try:
-            # Extract tenant IDs
+            # Extract zone IDs
             result = self.session.execute(
-                text("SELECT DISTINCT tenant_id FROM file_paths WHERE tenant_id IS NOT NULL")
+                text("SELECT DISTINCT zone_id FROM file_paths WHERE zone_id IS NOT NULL")
             )
-            for (tenant_id,) in result:
-                registry.register_entity("tenant", tenant_id)
+            for (zone_id,) in result:
+                registry.register_entity("zone", zone_id)
 
             # Extract agent IDs from workspace paths
             result = self.session.execute(
                 text("""
-                    SELECT DISTINCT virtual_path, tenant_id
+                    SELECT DISTINCT virtual_path, zone_id
                     FROM file_paths
                     WHERE virtual_path LIKE '/workspace/%'
                 """)
             )
 
-            for virtual_path, _tenant_id in result:
+            for virtual_path, _zone_id in result:
                 parts = virtual_path.split("/")
                 if len(parts) >= 4 and parts[1] == "workspace":
                     # /workspace/{tenant}/{agent}/...
@@ -208,7 +208,7 @@ class IdentityMemoryMigration:
 
     def run_migration(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         migrate_files: bool = False,
@@ -216,7 +216,7 @@ class IdentityMemoryMigration:
         """Run complete migration.
 
         Args:
-            tenant_id: Optional tenant ID to register.
+            zone_id: Optional zone ID to register.
             user_id: Optional user ID to register.
             agent_id: Optional agent ID to register.
             migrate_files: Whether to migrate existing files to memories.
@@ -238,8 +238,8 @@ class IdentityMemoryMigration:
                 results["tables_created"] = True
 
             # Step 2: Register entities from config
-            if tenant_id or user_id or agent_id:
-                self.register_entities_from_config(tenant_id, user_id, agent_id)
+            if zone_id or user_id or agent_id:
+                self.register_entities_from_config(zone_id, user_id, agent_id)
                 results["entities_registered"] += 1
 
             # Step 3: Extract entities from existing data
@@ -275,7 +275,7 @@ def run_migration_from_config(session: Session, config: dict) -> dict:
     migration = IdentityMemoryMigration(session)
 
     return migration.run_migration(
-        tenant_id=config.get("tenant_id"),
+        zone_id=config.get("zone_id"),
         user_id=config.get("user_id"),
         agent_id=config.get("agent_id"),
         migrate_files=config.get("migrate_files", False),

@@ -100,7 +100,7 @@ def run_benchmark(enable_deferred: bool = False):
             backend=backend,
             db_path=str(db_path),
             is_admin=False,
-            tenant_id="benchmark_tenant",
+            zone_id="benchmark_zone",
             enforce_permissions=True,
             auto_parse=False,
             enable_metadata_cache=True,
@@ -112,7 +112,7 @@ def run_benchmark(enable_deferred: bool = False):
         ctx = OperationContext(
             user="benchmark_user",
             groups=[],
-            tenant_id="benchmark_tenant",
+            zone_id="benchmark_zone",
             is_admin=False,
         )
 
@@ -122,7 +122,7 @@ def run_benchmark(enable_deferred: bool = False):
                 subject=("user", "benchmark_user"),
                 relation="direct_editor",
                 object=("file", "/"),
-                tenant_id="benchmark_tenant",
+                zone_id="benchmark_zone",
             )
 
         content_1kb = b"x" * 1024

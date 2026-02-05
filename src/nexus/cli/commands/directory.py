@@ -74,12 +74,12 @@ def list_files(
                 return
 
             # Create time-travel reader with a session
-            with nx.metadata.SessionLocal() as session:
+            with nx.SessionLocal() as session:
                 time_travel = TimeTravelReader(session, nx.backend)
 
                 # Get directory listing at operation
                 files = time_travel.list_files_at_operation(
-                    path, at_operation, tenant_id=nx.tenant_id, recursive=recursive
+                    path, at_operation, zone_id=nx.zone_id, recursive=recursive
                 )
 
             nx.close()

@@ -58,7 +58,7 @@ consolidation_engine = ConsolidationEngine(
     llm_provider=llm_provider,
     user_id="user_123",
     agent_id="agent_456",
-    tenant_id="tenant_789"
+    zone_id="tenant_789"
 )
 ```
 
@@ -69,7 +69,7 @@ consolidation_engine = ConsolidationEngine(
 - `llm_provider` (LLMProvider): LLM provider for semantic merging
 - `user_id` (str): User ID for ownership
 - `agent_id` (str, optional): Agent ID for scoping
-- `tenant_id` (str, optional): Tenant ID for multi-tenancy
+- `zone_id` (str, optional): Zone ID for multi-tenancy
 
 ---
 

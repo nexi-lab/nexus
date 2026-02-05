@@ -183,7 +183,7 @@ class MCPMount:
     tools: list[str] = field(default_factory=list)  # List of tool names
 
     # Tier info (set during discovery)
-    tier: str | None = None  # "user" | "tenant" | "system"
+    tier: str | None = None  # "user" | "zone" | "system"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""

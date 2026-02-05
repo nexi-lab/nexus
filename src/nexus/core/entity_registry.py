@@ -348,20 +348,20 @@ class EntityRegistry:
         """Auto-register entities from Nexus config.
 
         Args:
-            config: Nexus configuration dictionary containing tenant_id, user_id, agent_id.
+            config: Nexus configuration dictionary containing zone_id, user_id, agent_id.
         """
-        tenant_id = config.get("tenant_id")
+        zone_id = config.get("zone_id")
         user_id = config.get("user_id")
         agent_id = config.get("agent_id")
 
-        # Register tenant (top-level)
-        if tenant_id:
-            self.register_entity("tenant", tenant_id)
+        # Register zone (top-level)
+        if zone_id:
+            self.register_entity("zone", zone_id)
 
-        # Register user (child of tenant)
+        # Register user (child of zone)
         if user_id:
             self.register_entity(
-                "user", user_id, parent_type="tenant" if tenant_id else None, parent_id=tenant_id
+                "user", user_id, parent_type="zone" if zone_id else None, parent_id=zone_id
             )
 
         # Register agent (child of user)

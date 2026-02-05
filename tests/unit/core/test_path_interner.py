@@ -188,7 +188,7 @@ class TestSegmentedPathInterner:
         interner = SegmentedPathInterner()
 
         # Intern 100 files under same deep prefix
-        prefix = "/workspace/tenant1/user1/projects/myproject/src/components"
+        prefix = "/workspace/zone1/user1/projects/myproject/src/components"
         for i in range(100):
             interner.intern(f"{prefix}/file{i}.tsx")
 
@@ -283,7 +283,7 @@ class TestCompactFileMetadata:
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
             modified_at=datetime(2024, 1, 2, tzinfo=UTC),
             version=1,
-            tenant_id="tenant1",
+            zone_id="zone1",
             created_by="user1",
             is_directory=False,
         )
@@ -296,7 +296,7 @@ class TestCompactFileMetadata:
         assert compact.etag == "hash123"
         assert compact.mime_type == "text/plain"
         assert compact.version == 1
-        assert compact.tenant_id == "tenant1"
+        assert compact.zone_id == "zone1"
         assert compact.created_by == "user1"
         assert compact.is_directory is False
 
@@ -316,7 +316,7 @@ class TestCompactFileMetadata:
             created_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             modified_at=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
             version=2,
-            tenant_id="tenant1",
+            zone_id="zone1",
             created_by="user1",
             is_directory=False,
         )
@@ -331,7 +331,7 @@ class TestCompactFileMetadata:
         assert restored.etag == original.etag
         assert restored.mime_type == original.mime_type
         assert restored.version == original.version
-        assert restored.tenant_id == original.tenant_id
+        assert restored.zone_id == original.zone_id
         assert restored.created_by == original.created_by
         assert restored.is_directory == original.is_directory
 
@@ -413,7 +413,7 @@ class TestMemorySavings:
         interner = PathInterner()
 
         # Simulate 1000 paths with common prefix
-        prefix = "/workspace/tenant/user/project/src"
+        prefix = "/workspace/zone/user/project/src"
         for i in range(1000):
             interner.intern(f"{prefix}/file{i}.py")
 
@@ -432,7 +432,7 @@ class TestMemorySavings:
         segmented = SegmentedPathInterner()
 
         # Same paths in both
-        prefix = "/workspace/tenant/user/project/src/components"
+        prefix = "/workspace/zone/user/project/src/components"
         for i in range(100):
             path = f"{prefix}/Component{i}.tsx"
             simple.intern(path)

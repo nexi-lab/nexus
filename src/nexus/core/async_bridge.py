@@ -15,7 +15,7 @@ Usage:
     bridge.start()
 
     # Use in sync request handlers
-    result = bridge.rebac_check(subject, permission, object, tenant_id)
+    result = bridge.rebac_check(subject, permission, object, zone_id)
 
     # Shutdown when done
     bridge.stop()
@@ -164,7 +164,7 @@ class AsyncReBACBridge:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         timeout: float = 5.0,
     ) -> bool:
         """Check permission synchronously (bridges to async).
@@ -173,7 +173,7 @@ class AsyncReBACBridge:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             timeout: Max wait time in seconds
 
         Returns:
@@ -182,21 +182,21 @@ class AsyncReBACBridge:
         if not self._manager:
             raise RuntimeError("AsyncReBACBridge not started")
 
-        future = self._run_coro(self._manager.rebac_check(subject, permission, object, tenant_id))
+        future = self._run_coro(self._manager.rebac_check(subject, permission, object, zone_id))
         result: bool = future.result(timeout=timeout)
         return result
 
     def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str,
+        zone_id: str,
         timeout: float = 30.0,
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Check multiple permissions synchronously (bridges to async).
 
         Args:
             checks: List of (subject, permission, object) tuples
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             timeout: Max wait time in seconds
 
         Returns:
@@ -205,7 +205,7 @@ class AsyncReBACBridge:
         if not self._manager:
             raise RuntimeError("AsyncReBACBridge not started")
 
-        future = self._run_coro(self._manager.rebac_check_bulk(checks, tenant_id))
+        future = self._run_coro(self._manager.rebac_check_bulk(checks, zone_id))
         result: dict[tuple[tuple[str, str], str, tuple[str, str]], bool] = future.result(
             timeout=timeout
         )
@@ -216,7 +216,7 @@ class AsyncReBACBridge:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         subject_relation: str | None = None,
         timeout: float = 5.0,
     ) -> str:
@@ -226,7 +226,7 @@ class AsyncReBACBridge:
             subject: (subject_type, subject_id) tuple
             relation: Relation name
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_relation: For userset subjects
             timeout: Max wait time
 
@@ -237,7 +237,7 @@ class AsyncReBACBridge:
             raise RuntimeError("AsyncReBACBridge not started")
 
         future = self._run_coro(
-            self._manager.write_tuple(subject, relation, object, tenant_id, subject_relation)
+            self._manager.write_tuple(subject, relation, object, zone_id, subject_relation)
         )
         result: str = future.result(timeout=timeout)
         return result
@@ -247,7 +247,7 @@ class AsyncReBACBridge:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         timeout: float = 5.0,
     ) -> bool:
         """Delete a relationship tuple synchronously.
@@ -256,7 +256,7 @@ class AsyncReBACBridge:
             subject: (subject_type, subject_id) tuple
             relation: Relation name
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             timeout: Max wait time
 
         Returns:
@@ -265,7 +265,7 @@ class AsyncReBACBridge:
         if not self._manager:
             raise RuntimeError("AsyncReBACBridge not started")
 
-        future = self._run_coro(self._manager.delete_tuple(subject, relation, object, tenant_id))
+        future = self._run_coro(self._manager.delete_tuple(subject, relation, object, zone_id))
         result: bool = future.result(timeout=timeout)
         return result
 

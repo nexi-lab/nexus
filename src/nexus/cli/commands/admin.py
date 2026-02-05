@@ -87,7 +87,7 @@ def admin() -> None:
 @click.option("--email", help="User email (for documentation purposes)")
 @click.option("--is-admin", is_flag=True, help="Grant admin privileges")
 @click.option("--expires-days", type=int, help="API key expiry in days")
-@click.option("--tenant-id", default="default", help="Tenant ID (default: 'default')")
+@click.option("--zone-id", default="default", help="Zone ID (default: 'default')")
 @click.option("--subject-type", default="user", help="Subject type: user or agent")
 @click.option("--json-output", is_flag=True, help="Output as JSON")
 @REMOTE_API_KEY_OPTION
@@ -98,7 +98,7 @@ def create_user(
     email: str | None,
     is_admin: bool,
     expires_days: int | None,
-    tenant_id: str,
+    zone_id: str,
     subject_type: str,
     json_output: bool,
     remote_url: str | None,
@@ -127,7 +127,7 @@ def create_user(
             "user_id": user_id,
             "name": name,
             "is_admin": is_admin,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "subject_type": subject_type,
         }
 
@@ -145,7 +145,7 @@ def create_user(
             console.print(f"User ID:     {result['user_id']}")
             console.print(f"Key ID:      {result['key_id']}")
             console.print(f"[bold]API Key:[/bold]     {result['api_key']}")
-            console.print(f"Tenant:      {result['tenant_id']}")
+            console.print(f"Zone:        {result['zone_id']}")
             console.print(f"Admin:       {result['is_admin']}")
             if result.get("expires_at"):
                 console.print(f"Expires:     {result['expires_at']}")
@@ -160,7 +160,7 @@ def create_user(
 
 @admin.command("list-users")
 @click.option("--user-id", help="Filter by user ID")
-@click.option("--tenant-id", help="Filter by tenant ID")
+@click.option("--zone-id", help="Filter by zone ID")
 @click.option("--is-admin", is_flag=True, help="Filter for admin keys only")
 @click.option("--include-revoked", is_flag=True, help="Include revoked keys")
 @click.option("--include-expired", is_flag=True, help="Include expired keys")
@@ -170,7 +170,7 @@ def create_user(
 @REMOTE_URL_OPTION
 def list_users(
     user_id: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
     is_admin: bool,
     include_revoked: bool,
     include_expired: bool,
@@ -207,8 +207,8 @@ def list_users(
 
         if user_id:
             params["user_id"] = user_id
-        if tenant_id:
-            params["tenant_id"] = tenant_id
+        if zone_id:
+            params["zone_id"] = zone_id
         if is_admin:
             params["is_admin"] = True
 
@@ -401,7 +401,7 @@ def get_user(
             console.print(f"User ID:      {result['user_id']}")
             console.print(f"Key ID:       {result['key_id']}")
             console.print(f"Name:         {result['name']}")
-            console.print(f"Tenant:       {result['tenant_id']}")
+            console.print(f"Zone:         {result['zone_id']}")
             console.print(f"Admin:        {result['is_admin']}")
             console.print(f"Created:      {result['created_at']}")
 

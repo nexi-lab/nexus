@@ -384,7 +384,7 @@ class TestEventBusIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/test/event_bus_test.txt",
-                tenant_id="default",
+                zone_id="default",
                 size=100,
             )
 
@@ -430,7 +430,7 @@ class TestEventBusIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_DELETE,
                 path="/test/to_delete.txt",
-                tenant_id="test_tenant",
+                zone_id="test_zone",
             )
 
             # Start waiting for event in background
@@ -445,7 +445,7 @@ class TestEventBusIntegration:
 
             # Wait for event
             received = await bus.wait_for_event(
-                tenant_id="test_tenant",
+                zone_id="test_zone",
                 path_pattern="/test/",
                 timeout=5.0,
             )

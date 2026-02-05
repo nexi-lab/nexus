@@ -30,7 +30,7 @@ class PlaybookManager:
         backend: Any,
         user_id: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ):
         """Initialize playbook manager.
@@ -40,14 +40,14 @@ class PlaybookManager:
             backend: Storage backend for CAS content
             user_id: User ID for ownership
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             context: Optional operation context for permission checks
         """
         self.session = session
         self.backend = backend
         self.user_id = user_id
         self.agent_id = agent_id
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.context = context or OperationContext(
             user=user_id, groups=[], is_admin=False, is_system=False
         )
@@ -59,7 +59,7 @@ class PlaybookManager:
         1. Admin/system bypass
         2. Direct creator (agent matches)
         3. User ownership (same user_id)
-        4. Tenant-scoped sharing (same tenant_id and scope='tenant')
+        4. Tenant-scoped sharing (same zone_id and scope='tenant')
         5. Public visibility for read operations
 
         Args:
@@ -81,16 +81,16 @@ class PlaybookManager:
         if self.context.user == playbook.user_id:
             return True
 
-        # 4. Tenant-scoped sharing
-        if playbook.scope == "tenant" and playbook.tenant_id == self.tenant_id:
+        # 4. Zone-scoped sharing
+        if playbook.scope == "zone" and playbook.zone_id == self.zone_id:
             return True
 
         # 5. Global scope or public visibility (read-only)
         if permission == Permission.READ:
             if playbook.scope == "global" or playbook.visibility == "public":
                 return True
-            # Shared visibility within tenant
-            if playbook.visibility == "shared" and playbook.tenant_id == self.tenant_id:
+            # Shared visibility within zone
+            if playbook.visibility == "shared" and playbook.zone_id == self.zone_id:
                 return True
 
         return False
@@ -99,7 +99,7 @@ class PlaybookManager:
         self,
         name: str,
         description: str | None = None,
-        scope: Literal["agent", "user", "tenant", "global"] = "agent",
+        scope: Literal["agent", "user", "zone", "global"] = "agent",
         visibility: Literal["private", "shared", "public"] = "private",
         initial_strategies: list[dict[str, Any]] | None = None,
     ) -> str:
@@ -147,7 +147,7 @@ class PlaybookManager:
             playbook_id=playbook_id,
             user_id=self.user_id,
             agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             name=name,
             description=description,
             version=1,

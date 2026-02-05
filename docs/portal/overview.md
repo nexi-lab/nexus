@@ -16,7 +16,7 @@ The Nexus Control Panel is a web-based interface for managing your Nexus server,
 - Configure ReBAC (Relationship-Based Access Control) policies
 - Grant and revoke access to files, workspaces, and resources
 - Define permission inheritance hierarchies
-- Manage multi-tenant isolation
+- Manage multi-zone isolation
 
 ### Integration Management
 - Configure connectors (S3, GCS, Gmail, Google Drive, X/Twitter)

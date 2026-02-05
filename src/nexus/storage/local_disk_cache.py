@@ -185,21 +185,21 @@ class LocalDiskCache:
             logger.warning("nexus_fast not available, Bloom filter disabled")
             self._bloom = None
 
-    def _make_cache_key(self, content_hash: str, tenant_id: str | None = None) -> str:
+    def _make_cache_key(self, content_hash: str, zone_id: str | None = None) -> str:
         """Create tenant-isolated cache key.
 
-        For multi-tenant security, cache entries are isolated by tenant_id.
+        For multi-zone security, cache entries are isolated by zone_id.
         This prevents content leakage across tenant boundaries.
 
         Args:
             content_hash: SHA-256 hash of content
-            tenant_id: Tenant ID for isolation (None = default tenant)
+            zone_id: Zone ID for isolation (None = default tenant)
 
         Returns:
-            Cache key in format "{tenant_id}:{content_hash}" or just "{content_hash}"
+            Cache key in format "{zone_id}:{content_hash}" or just "{content_hash}"
         """
-        if tenant_id:
-            return f"{tenant_id}:{content_hash}"
+        if zone_id:
+            return f"{zone_id}:{content_hash}"
         return content_hash
 
     def _get_content_path(self, cache_key: str) -> Path:
@@ -217,7 +217,7 @@ class LocalDiskCache:
         hash_part = cache_key[-64:] if len(cache_key) > 64 else cache_key
         return self.blocks_dir / hash_part[:2] / hash_part[2:4] / f"{cache_key}.{block_idx:04d}.bin"
 
-    def get(self, content_hash: str, tenant_id: str | None = None) -> bytes | None:
+    def get(self, content_hash: str, zone_id: str | None = None) -> bytes | None:
         """Get content from cache by hash.
 
         Uses Bloom filter for fast miss detection, avoiding disk I/O
@@ -225,12 +225,12 @@ class LocalDiskCache:
 
         Args:
             content_hash: SHA-256 hash of content to retrieve
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             Content bytes if cached, None otherwise
         """
-        cache_key = self._make_cache_key(content_hash, tenant_id)
+        cache_key = self._make_cache_key(content_hash, zone_id)
 
         # Fast path: Bloom filter says definitely not cached
         if self._bloom is not None and not self._bloom.might_exist(cache_key):
@@ -262,7 +262,7 @@ class LocalDiskCache:
                 return None
 
     def get_block(
-        self, content_hash: str, block_idx: int, tenant_id: str | None = None
+        self, content_hash: str, block_idx: int, zone_id: str | None = None
     ) -> bytes | None:
         """Get a specific block of large content.
 
@@ -272,12 +272,12 @@ class LocalDiskCache:
         Args:
             content_hash: SHA-256 hash of full content
             block_idx: Block index (0-based)
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             Block bytes if cached, None otherwise
         """
-        cache_key = self._make_cache_key(content_hash, tenant_id)
+        cache_key = self._make_cache_key(content_hash, zone_id)
 
         # Fast path: Bloom filter says definitely not cached
         if self._bloom is not None and not self._bloom.might_exist(cache_key):
@@ -311,7 +311,7 @@ class LocalDiskCache:
         content_hash: str,
         content: bytes,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         priority: int = 0,
         store_blocks: bool = False,
     ) -> bool:
@@ -322,14 +322,14 @@ class LocalDiskCache:
         Args:
             content_hash: SHA-256 hash of content
             content: Content bytes to cache
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             priority: Higher priority = less likely to evict (0=normal)
             store_blocks: If True, also store as blocks for partial reads
 
         Returns:
             True if stored successfully, False otherwise
         """
-        cache_key = self._make_cache_key(content_hash, tenant_id)
+        cache_key = self._make_cache_key(content_hash, zone_id)
         content_size = len(content)
 
         # Don't cache content larger than entire cache
@@ -400,17 +400,17 @@ class LocalDiskCache:
             except Exception as e:
                 logger.warning(f"Failed to write block {cache_key}:{block_idx}: {e}")
 
-    def remove(self, content_hash: str, tenant_id: str | None = None) -> bool:
+    def remove(self, content_hash: str, zone_id: str | None = None) -> bool:
         """Remove content from cache.
 
         Args:
             content_hash: SHA-256 hash of content to remove
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             True if removed, False if not found
         """
-        cache_key = self._make_cache_key(content_hash, tenant_id)
+        cache_key = self._make_cache_key(content_hash, zone_id)
         with self._lock:
             return self._remove_entry(cache_key)
 
@@ -536,19 +536,19 @@ class LocalDiskCache:
             logger.info(f"LocalDiskCache cleared: {count} entries removed")
             return count
 
-    def exists(self, content_hash: str, tenant_id: str | None = None) -> bool:
+    def exists(self, content_hash: str, zone_id: str | None = None) -> bool:
         """Check if content is cached (without reading).
 
         Uses Bloom filter for fast negative lookups.
 
         Args:
             content_hash: SHA-256 hash to check
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             True if cached, False otherwise
         """
-        cache_key = self._make_cache_key(content_hash, tenant_id)
+        cache_key = self._make_cache_key(content_hash, zone_id)
 
         # Fast path: Bloom filter says definitely not cached
         if self._bloom is not None and not self._bloom.might_exist(cache_key):

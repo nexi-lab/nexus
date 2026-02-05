@@ -133,7 +133,7 @@ class TokenManager:
         provider: str,
         user_email: str,
         credential: OAuthCredential,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         created_by: str | None = None,
         user_id: str | None = None,
     ) -> str:
@@ -143,7 +143,7 @@ class TokenManager:
             provider: Provider name (e.g., "google")
             user_email: User's email address (from OAuth provider)
             credential: OAuthCredential to store
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
             created_by: Optional creator user ID
             user_id: Optional Nexus user ID (for permission checks, preferred over created_by)
 
@@ -158,7 +158,7 @@ class TokenManager:
             ...     provider="google",
             ...     user_email="alice@example.com",
             ...     credential=credential,
-            ...     tenant_id="org_acme",
+            ...     zone_id="org_acme",
             ...     user_id="alice"
             ... )
         """
@@ -181,7 +181,7 @@ class TokenManager:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
                 OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.tenant_id == tenant_id,
+                OAuthCredentialModel.zone_id == zone_id,
             )
             existing = session.execute(stmt).scalar_one_or_none()
 
@@ -207,7 +207,7 @@ class TokenManager:
                 logger.info(
                     f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
                 )
-                self._log_audit("credential_updated", provider, user_email, tenant_id)
+                self._log_audit("credential_updated", provider, user_email, zone_id)
                 return existing.credential_id
             else:
                 # Create new credential
@@ -215,7 +215,7 @@ class TokenManager:
                     provider=provider,
                     user_email=user_email,
                     user_id=user_id,  # Link to Nexus user_id for permission checks
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     encrypted_access_token=encrypted_access_token,
                     encrypted_refresh_token=encrypted_refresh_token,
                     token_type=credential.token_type,
@@ -231,11 +231,11 @@ class TokenManager:
                 session.refresh(model)
 
                 logger.info(f"Stored OAuth credential: {provider}:{user_email}")
-                self._log_audit("credential_created", provider, user_email, tenant_id)
+                self._log_audit("credential_created", provider, user_email, zone_id)
                 return model.credential_id
 
     async def get_valid_token(
-        self, provider: str, user_email: str, tenant_id: str = "default"
+        self, provider: str, user_email: str, zone_id: str = "default"
     ) -> str:
         """Get a valid access token (with automatic refresh if expired).
 
@@ -250,7 +250,7 @@ class TokenManager:
         Args:
             provider: Provider name (e.g., "google")
             user_email: User's email address
-            tenant_id: Optional tenant ID (defaults to 'default')
+            zone_id: Optional zone ID (defaults to 'default')
 
         Returns:
             Valid access token (decrypted)
@@ -262,16 +262,16 @@ class TokenManager:
             >>> token = await manager.get_valid_token("google", "alice@example.com")
             >>> # Token is guaranteed to be valid (refreshed if needed)
         """
-        # Default tenant_id to 'default' if not provided
-        if tenant_id is None:
-            tenant_id = "default"
+        # Default zone_id to 'default' if not provided
+        if zone_id is None:
+            zone_id = "default"
 
         with self.SessionLocal() as session:
             # Retrieve credential from database
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
                 OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.tenant_id == tenant_id,
+                OAuthCredentialModel.zone_id == zone_id,
                 OAuthCredentialModel.revoked == 0,
             )
             model = session.execute(stmt).scalar_one_or_none()
@@ -314,7 +314,7 @@ class TokenManager:
                     session.commit()
 
                     logger.info(f"Token refreshed successfully for {provider}:{user_email}")
-                    self._log_audit("token_refreshed", provider, user_email, tenant_id)
+                    self._log_audit("token_refreshed", provider, user_email, zone_id)
 
                     # Use new credential
                     credential = new_credential
@@ -330,14 +330,14 @@ class TokenManager:
             return credential.access_token
 
     async def get_credential(
-        self, provider: str, user_email: str, tenant_id: str = "default"
+        self, provider: str, user_email: str, zone_id: str = "default"
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh.
 
         Args:
             provider: Provider name
             user_email: User's email
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
 
         Returns:
             OAuthCredential or None if not found
@@ -346,7 +346,7 @@ class TokenManager:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
                 OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.tenant_id == tenant_id,
+                OAuthCredentialModel.zone_id == zone_id,
                 OAuthCredentialModel.revoked == 0,
             )
             model = session.execute(stmt).scalar_one_or_none()
@@ -357,14 +357,14 @@ class TokenManager:
             return self._model_to_credential(model)
 
     async def revoke_credential(
-        self, provider: str, user_email: str, tenant_id: str = "default"
+        self, provider: str, user_email: str, zone_id: str = "default"
     ) -> bool:
         """Revoke an OAuth credential.
 
         Args:
             provider: Provider name
             user_email: User's email
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
 
         Returns:
             True if revoked successfully
@@ -376,7 +376,7 @@ class TokenManager:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
                 OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.tenant_id == tenant_id,
+                OAuthCredentialModel.zone_id == zone_id,
             )
             model = session.execute(stmt).scalar_one_or_none()
 
@@ -398,19 +398,19 @@ class TokenManager:
             session.commit()
 
             logger.info(f"Revoked OAuth credential: {provider}:{user_email}")
-            self._log_audit("credential_revoked", provider, user_email, tenant_id)
+            self._log_audit("credential_revoked", provider, user_email, zone_id)
             return True
 
     async def list_credentials(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_email: str | None = None,
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List all credentials (metadata only, no tokens).
 
         Args:
-            tenant_id: Optional tenant ID to filter by
+            zone_id: Optional zone ID to filter by
             user_email: Optional user email to filter by (OAuth provider email)
             user_id: Optional user ID to filter by (Nexus user identity, preferred)
 
@@ -419,23 +419,23 @@ class TokenManager:
 
         Example:
             >>> # List all credentials for a tenant
-            >>> credentials = await manager.list_credentials(tenant_id="org_acme")
+            >>> credentials = await manager.list_credentials(zone_id="org_acme")
             >>> # List credentials for a specific user (by user_id, preferred)
             >>> credentials = await manager.list_credentials(
-            ...     tenant_id="org_acme",
+            ...     zone_id="org_acme",
             ...     user_id="alice"
             ... )
             >>> # List credentials for a specific user (by email, fallback)
             >>> credentials = await manager.list_credentials(
-            ...     tenant_id="org_acme",
+            ...     zone_id="org_acme",
             ...     user_email="alice@example.com"
             ... )
         """
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(OAuthCredentialModel.revoked == 0)
 
-            if tenant_id is not None:
-                stmt = stmt.where(OAuthCredentialModel.tenant_id == tenant_id)
+            if zone_id is not None:
+                stmt = stmt.where(OAuthCredentialModel.zone_id == zone_id)
 
             # Prefer user_id over user_email for filtering (more reliable)
             if user_id is not None:
@@ -451,7 +451,7 @@ class TokenManager:
                     "provider": model.provider,
                     "user_email": model.user_email,
                     "user_id": model.user_id,  # Nexus user identity (may differ from email)
-                    "tenant_id": model.tenant_id,
+                    "zone_id": model.zone_id,
                     "expires_at": model.expires_at.isoformat() if model.expires_at else None,
                     "is_expired": model.is_expired(),
                     "created_at": model.created_at.isoformat(),
@@ -506,7 +506,7 @@ class TokenManager:
         return cred
 
     def _log_audit(
-        self, operation: str, provider: str, user_email: str, tenant_id: str | None
+        self, operation: str, provider: str, user_email: str, zone_id: str | None
     ) -> None:
         """Log audit trail for token operations.
 
@@ -514,12 +514,12 @@ class TokenManager:
             operation: Operation type (e.g., "token_refreshed")
             provider: Provider name
             user_email: User's email
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
         """
         # TODO: Implement proper audit logging to database
         # For now, just log to application logger
         logger.info(
-            f"AUDIT: {operation} | provider={provider} | user={user_email} | tenant={tenant_id}"
+            f"AUDIT: {operation} | provider={provider} | user={user_email} | tenant={zone_id}"
         )
 
     def close(self) -> None:

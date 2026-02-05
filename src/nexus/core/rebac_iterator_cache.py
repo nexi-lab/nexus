@@ -6,7 +6,7 @@ recomputation of full result sets on each page request.
 Architecture:
 - Cache stores full computed results keyed by query hash
 - Subsequent page requests fetch from cache instead of recomputing
-- TTL-based expiration (default: 5 minutes, matching tenant graph cache)
+- TTL-based expiration (default: 5 minutes, matching zone graph cache)
 - Thread-safe with RLock
 - Automatic invalidation when permissions change
 
@@ -37,7 +37,7 @@ class CachedResult:
     results: list[Any]  # Full computed results
     total_count: int  # Total number of results
     created_at: float  # Timestamp for TTL tracking
-    tenant_id: str  # For tenant-based invalidation
+    zone_id: str  # For zone-based invalidation
 
 
 class CursorExpiredError(Exception):
@@ -58,7 +58,7 @@ class IteratorCache:
         >>> # First request - compute and cache
         >>> cursor_id, results, total = cache.get_or_create(
         ...     query_hash="incoming:user123",
-        ...     tenant_id="default",
+        ...     zone_id="default",
         ...     compute_fn=lambda: fetch_all_shares("user123")
         ... )
         >>> # Subsequent page - fetch from cache
@@ -101,7 +101,7 @@ class IteratorCache:
     def get_or_create(
         self,
         query_hash: str,
-        tenant_id: str,
+        zone_id: str,
         compute_fn: Callable[[], list[Any]],
     ) -> tuple[str, list[Any], int]:
         """
@@ -112,7 +112,7 @@ class IteratorCache:
 
         Args:
             query_hash: Unique hash identifying the query parameters
-            tenant_id: Tenant ID for isolation and invalidation
+            zone_id: Zone ID for isolation and invalidation
             compute_fn: Function to compute results if not cached
 
         Returns:
@@ -156,7 +156,7 @@ class IteratorCache:
                 results=results,
                 total_count=len(results),
                 created_at=time.time(),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             # Store in cache
@@ -209,14 +209,14 @@ class IteratorCache:
 
             return items, next_cursor, cached.total_count
 
-    def invalidate_tenant(self, tenant_id: str) -> int:
+    def invalidate_zone(self, zone_id: str) -> int:
         """
-        Invalidate all cached results for a tenant.
+        Invalidate all cached results for a zone.
 
-        Called when permissions change for a tenant.
+        Called when permissions change for a zone.
 
         Args:
-            tenant_id: Tenant ID to invalidate
+            zone_id: Zone ID to invalidate
 
         Returns:
             Number of entries invalidated
@@ -226,7 +226,7 @@ class IteratorCache:
             query_hashes_to_delete = []
 
             for cursor_id, cached in list(self._cache.items()):
-                if cached.tenant_id == tenant_id:
+                if cached.zone_id == zone_id:
                     cursors_to_delete.append(cursor_id)
                     query_hashes_to_delete.append(cached.query_hash)
 
@@ -243,7 +243,7 @@ class IteratorCache:
             if cursors_to_delete:
                 logger.debug(
                     f"Iterator cache: Invalidated {len(cursors_to_delete)} entries "
-                    f"for tenant {tenant_id}"
+                    f"for zone {zone_id}"
                 )
 
             return len(cursors_to_delete)

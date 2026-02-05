@@ -40,7 +40,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
             variables={"name": "world"},
         )
@@ -54,7 +54,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
         )
@@ -69,7 +69,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
             file_metadata={"author": "test_user", "size": 1024},
@@ -84,7 +84,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
             variables={},
         )
@@ -99,7 +99,7 @@ class TestBaseAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -139,7 +139,7 @@ class TestMoveAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.FILE_WRITE,
             file_path="/docs/readme.md",
         )
@@ -181,7 +181,7 @@ class TestPythonAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
             variables={"x": 10, "y": 20},
         )
@@ -198,7 +198,7 @@ class TestPythonAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -223,7 +223,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -238,7 +238,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -252,7 +252,7 @@ class TestBashAction:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
             variables={"greeting": "hello"},
         )

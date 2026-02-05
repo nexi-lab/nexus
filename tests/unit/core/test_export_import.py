@@ -38,7 +38,7 @@ def nx(temp_dir):
 def test_export_filter_defaults():
     """Test ExportFilter default values."""
     filter = ExportFilter()
-    assert filter.tenant_id is None
+    assert filter.zone_id is None
     assert filter.path_prefix == ""
     assert filter.after_time is None
     assert filter.include_deleted is False
@@ -48,12 +48,12 @@ def test_export_filter_custom_values():
     """Test ExportFilter with custom values."""
     after_time = datetime(2024, 1, 1, tzinfo=UTC)
     filter = ExportFilter(
-        tenant_id="test-tenant",
+        zone_id="test-zone",
         path_prefix="/workspace",
         after_time=after_time,
         include_deleted=True,
     )
-    assert filter.tenant_id == "test-tenant"
+    assert filter.zone_id == "test-zone"
     assert filter.path_prefix == "/workspace"
     assert filter.after_time == after_time
     assert filter.include_deleted is True

@@ -165,7 +165,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -194,7 +194,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -218,7 +218,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 
@@ -300,7 +300,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
             variables={"x": 10},
         )
@@ -331,7 +331,7 @@ class TestWorkflowEngine:
         context = WorkflowContext(
             workflow_id=uuid.uuid4(),
             execution_id=uuid.uuid4(),
-            tenant_id=uuid.uuid4(),
+            zone_id=uuid.uuid4(),
             trigger_type=TriggerType.MANUAL,
         )
 

@@ -211,15 +211,15 @@ class XConnectorBackend(Backend):
             )
 
         # Get OAuth token
-        tenant_id: str = (
-            context.tenant_id if context and hasattr(context, "tenant_id") else "default"
+        zone_id: str = (
+            context.zone_id if context and hasattr(context, "zone_id") else "default"
         ) or "default"
 
         try:
             access_token = await self.token_manager.get_valid_token(
                 provider=self.provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         except Exception as e:
             raise BackendError(

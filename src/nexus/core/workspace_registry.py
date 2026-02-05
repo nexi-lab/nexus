@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 
 @dataclass
@@ -121,17 +121,26 @@ class WorkspaceRegistry:
 
     def __init__(
         self,
-        metadata: SQLAlchemyMetadataStore,
+        metadata: RaftMetadataStore,
         rebac_manager: Any | None = None,  # v0.5.0: For auto-granting ownership
+        session_factory: Any | None = None,  # SQLAlchemy session factory
     ):
         """Initialize workspace registry.
 
         Args:
             metadata: Metadata store for database persistence
             rebac_manager: ReBAC manager for auto-granting ownership (v0.5.0)
+            session_factory: SQLAlchemy session factory for database operations
         """
         self.metadata = metadata
         self.rebac_manager = rebac_manager  # v0.5.0
+        # Use provided session_factory or import from database module
+        if session_factory is not None:
+            self.metadata_session_factory = session_factory
+        else:
+            from nexus.storage.database import get_session_factory
+
+            self.metadata_session_factory = get_session_factory()
         self._workspaces: dict[str, WorkspaceConfig] = {}
         self._memories: dict[str, MemoryConfig] = {}
         self._load_from_db()
@@ -140,7 +149,7 @@ class WorkspaceRegistry:
         """Load workspace/memory configs from database."""
         from nexus.storage.models import MemoryConfigModel, WorkspaceConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             # Load workspaces - merge with existing cache (don't clear it)
             workspaces = session.query(WorkspaceConfigModel).all()
             for ws in workspaces:
@@ -230,8 +239,8 @@ class WorkspaceRegistry:
         user_id = None
         agent_id = None
 
-        # v0.5.0: Extract tenant_id from context (for auto-grant)
-        tenant_id = None
+        # v0.5.0: Extract zone_id from context (for auto-grant)
+        zone_id = None
 
         if context:
             # Handle both dict (from RPC) and OperationContext (direct calls)
@@ -241,16 +250,16 @@ class WorkspaceRegistry:
             if isinstance(context, dict):
                 user_id = context.get("user_id") or context.get("user")
                 agent_id = context.get("agent_id")
-                tenant_id = context.get("tenant_id") or context.get("tenant")
+                zone_id = context.get("zone_id") or context.get("zone")
                 logger.warning(
-                    f"[CONTEXT-DEBUG] Extracted from dict: user_id={user_id}, agent_id={agent_id}, tenant_id={tenant_id}"
+                    f"[CONTEXT-DEBUG] Extracted from dict: user_id={user_id}, agent_id={agent_id}, zone_id={zone_id}"
                 )
             else:
                 user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
                 agent_id = getattr(context, "agent_id", None)
-                tenant_id = getattr(context, "tenant_id", None)
+                zone_id = getattr(context, "zone_id", None)
                 logger.warning(
-                    f"[CONTEXT-DEBUG] Extracted from object: user_id={user_id}, agent_id={agent_id}, tenant_id={tenant_id}"
+                    f"[CONTEXT-DEBUG] Extracted from object: user_id={user_id}, agent_id={agent_id}, zone_id={zone_id}"
                 )
 
             # Validate agent ownership
@@ -297,7 +306,7 @@ class WorkspaceRegistry:
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
                     object=("file", path),
-                    tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
+                    zone_id=zone_id,  # v0.5.0: Pass zone_id from context
                 )
                 logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
             except Exception as e:
@@ -352,7 +361,7 @@ class WorkspaceRegistry:
         # Update in database
         from nexus.storage.models import WorkspaceConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             ws_model = session.query(WorkspaceConfigModel).filter_by(path=path).first()
             if ws_model:
                 if name is not None:
@@ -494,18 +503,18 @@ class WorkspaceRegistry:
         # v0.5.0: Extract identity from context
         user_id = None
         agent_id = None
-        tenant_id = None  # v0.5.0: For auto-grant
+        zone_id = None  # v0.5.0: For auto-grant
 
         if context:
             # Handle both dict (from RPC) and OperationContext (direct calls)
             if isinstance(context, dict):
                 user_id = context.get("user_id") or context.get("user")
                 agent_id = context.get("agent_id")
-                tenant_id = context.get("tenant_id") or context.get("tenant")
+                zone_id = context.get("zone_id") or context.get("zone")
             else:
                 user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
                 agent_id = getattr(context, "agent_id", None)
-                tenant_id = getattr(context, "tenant_id", None)
+                zone_id = getattr(context, "zone_id", None)
 
             # Validate agent ownership
             if agent_id and user_id and hasattr(self, "entity_registry") and self.entity_registry:
@@ -548,7 +557,7 @@ class WorkspaceRegistry:
                     subject=("user", user_id),
                     relation="direct_owner",  # Use concrete relation, not computed union
                     object=("file", path),
-                    tenant_id=tenant_id,  # v0.5.0: Pass tenant_id from context
+                    zone_id=zone_id,  # v0.5.0: Pass zone_id from context
                 )
                 logger.warning(f"[AUTO-GRANT] ✓ SUCCESS: user:{user_id} → owner → file:{path}")
             except Exception as e:
@@ -634,7 +643,7 @@ class WorkspaceRegistry:
         """Persist workspace config to database."""
         from nexus.storage.models import WorkspaceConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             model = WorkspaceConfigModel(
                 path=config.path,
                 name=config.name,
@@ -655,7 +664,7 @@ class WorkspaceRegistry:
         """Delete workspace config from database."""
         from nexus.storage.models import WorkspaceConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             workspace = session.query(WorkspaceConfigModel).filter_by(path=path).first()
             if workspace:
                 session.delete(workspace)
@@ -673,7 +682,7 @@ class WorkspaceRegistry:
         """Persist memory config to database."""
         from nexus.storage.models import MemoryConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             model = MemoryConfigModel(
                 path=config.path,
                 name=config.name,
@@ -694,7 +703,7 @@ class WorkspaceRegistry:
         """Delete memory config from database."""
         from nexus.storage.models import MemoryConfigModel
 
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             memory = session.query(MemoryConfigModel).filter_by(path=path).first()
             if memory:
                 session.delete(memory)

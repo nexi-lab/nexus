@@ -27,7 +27,7 @@ class TestEntity:
         """Test creating Entity from SQLAlchemy model."""
         model = MagicMock(spec=EntityModel)
         model.entity_id = "test-entity-id"
-        model.tenant_id = "tenant1"
+        model.zone_id = "zone1"
         model.canonical_name = "John Smith"
         model.entity_type = "PERSON"
         model.embedding = None
@@ -40,7 +40,7 @@ class TestEntity:
         entity = Entity.from_model(model)
 
         assert entity.entity_id == "test-entity-id"
-        assert entity.tenant_id == "tenant1"
+        assert entity.zone_id == "zone1"
         assert entity.canonical_name == "John Smith"
         assert entity.entity_type == "PERSON"
         assert entity.aliases == []
@@ -51,7 +51,7 @@ class TestEntity:
         """Test creating Entity with JSON fields populated."""
         model = MagicMock(spec=EntityModel)
         model.entity_id = "test-entity-id"
-        model.tenant_id = "tenant1"
+        model.zone_id = "zone1"
         model.canonical_name = "Acme Corp"
         model.entity_type = "ORG"
         model.embedding = json.dumps([0.1, 0.2, 0.3])
@@ -73,7 +73,7 @@ class TestEntity:
         """Test handling of invalid JSON in fields."""
         model = MagicMock(spec=EntityModel)
         model.entity_id = "test-entity-id"
-        model.tenant_id = "tenant1"
+        model.zone_id = "zone1"
         model.canonical_name = "Test Entity"
         model.entity_type = None
         model.embedding = "not valid json"
@@ -98,7 +98,7 @@ class TestRelationship:
         """Test creating Relationship from SQLAlchemy model."""
         model = MagicMock(spec=RelationshipModel)
         model.relationship_id = "rel-id-1"
-        model.tenant_id = "tenant1"
+        model.zone_id = "zone1"
         model.source_entity_id = "entity-1"
         model.target_entity_id = "entity-2"
         model.relationship_type = "MANAGES"
@@ -120,7 +120,7 @@ class TestRelationship:
         """Test creating Relationship with entity details."""
         rel_model = MagicMock(spec=RelationshipModel)
         rel_model.relationship_id = "rel-id-1"
-        rel_model.tenant_id = "tenant1"
+        rel_model.zone_id = "zone1"
         rel_model.source_entity_id = "entity-1"
         rel_model.target_entity_id = "entity-2"
         rel_model.relationship_type = "WORKS_WITH"
@@ -131,7 +131,7 @@ class TestRelationship:
 
         source_model = MagicMock(spec=EntityModel)
         source_model.entity_id = "entity-1"
-        source_model.tenant_id = "tenant1"
+        source_model.zone_id = "zone1"
         source_model.canonical_name = "Alice"
         source_model.entity_type = "PERSON"
         source_model.embedding = None
@@ -143,7 +143,7 @@ class TestRelationship:
 
         target_model = MagicMock(spec=EntityModel)
         target_model.entity_id = "entity-2"
-        target_model.tenant_id = "tenant1"
+        target_model.zone_id = "zone1"
         target_model.canonical_name = "Bob"
         target_model.entity_type = "PERSON"
         target_model.embedding = None
@@ -204,7 +204,7 @@ class TestGraph:
         entities = [
             Entity(
                 entity_id="e1",
-                tenant_id="t1",
+                zone_id="t1",
                 canonical_name="Alice",
                 entity_type="PERSON",
                 aliases=["A"],
@@ -212,7 +212,7 @@ class TestGraph:
             ),
             Entity(
                 entity_id="e2",
-                tenant_id="t1",
+                zone_id="t1",
                 canonical_name="Bob",
                 entity_type="PERSON",
                 aliases=[],
@@ -222,7 +222,7 @@ class TestGraph:
         relationships = [
             Relationship(
                 relationship_id="r1",
-                tenant_id="t1",
+                zone_id="t1",
                 source_entity_id="e1",
                 target_entity_id="e2",
                 relationship_type="WORKS_WITH",
@@ -247,7 +247,7 @@ class TestNeighborResult:
         """Test creating NeighborResult."""
         entity = Entity(
             entity_id="e1",
-            tenant_id="t1",
+            zone_id="t1",
             canonical_name="Alice",
         )
         result = NeighborResult(entity=entity, depth=2, path=["e0", "e1"])
@@ -267,7 +267,7 @@ class TestGraphStoreInit:
         store = GraphStore(mock_session)
 
         assert store.session == mock_session
-        assert store.tenant_id == "default"
+        assert store.zone_id == "default"
         assert store.embedding_provider is None
         assert store.merge_threshold == 0.85
         assert store.confidence_threshold == 0.75
@@ -279,13 +279,13 @@ class TestGraphStoreInit:
 
         store = GraphStore(
             mock_session,
-            tenant_id="custom-tenant",
+            zone_id="custom-zone",
             embedding_provider=mock_provider,
             merge_threshold=0.9,
             confidence_threshold=0.8,
         )
 
-        assert store.tenant_id == "custom-tenant"
+        assert store.zone_id == "custom-zone"
         assert store.embedding_provider == mock_provider
         assert store.merge_threshold == 0.9
         assert store.confidence_threshold == 0.8
@@ -303,7 +303,7 @@ class TestGraphStoreEntityCRUD:
     @pytest.fixture
     def store(self, mock_session):
         """Create GraphStore with mock session."""
-        return GraphStore(mock_session, tenant_id="test-tenant")
+        return GraphStore(mock_session, zone_id="test-zone")
 
     @pytest.mark.asyncio
     async def test_add_entity_new(self, store, mock_session):
@@ -335,7 +335,7 @@ class TestGraphStoreEntityCRUD:
         # Mock existing entity found
         existing_model = MagicMock(spec=EntityModel)
         existing_model.entity_id = "existing-id"
-        existing_model.tenant_id = "test-tenant"
+        existing_model.zone_id = "test-zone"
         existing_model.canonical_name = "John Smith"
         existing_model.entity_type = "PERSON"
         existing_model.embedding = None
@@ -368,7 +368,7 @@ class TestGraphStoreEntityCRUD:
         """Test getting an entity by ID."""
         mock_model = MagicMock(spec=EntityModel)
         mock_model.entity_id = "test-id"
-        mock_model.tenant_id = "test-tenant"
+        mock_model.zone_id = "test-zone"
         mock_model.canonical_name = "Test Entity"
         mock_model.entity_type = "CONCEPT"
         mock_model.embedding = None
@@ -449,7 +449,7 @@ class TestGraphStoreRelationshipCRUD:
     @pytest.fixture
     def store(self, mock_session):
         """Create GraphStore with mock session."""
-        return GraphStore(mock_session, tenant_id="test-tenant")
+        return GraphStore(mock_session, zone_id="test-zone")
 
     @pytest.mark.asyncio
     async def test_add_relationship_new(self, store, mock_session):
@@ -481,7 +481,7 @@ class TestGraphStoreRelationshipCRUD:
         """Test getting outgoing relationships."""
         mock_rel = MagicMock(spec=RelationshipModel)
         mock_rel.relationship_id = "rel-1"
-        mock_rel.tenant_id = "test-tenant"
+        mock_rel.zone_id = "test-zone"
         mock_rel.source_entity_id = "entity-1"
         mock_rel.target_entity_id = "entity-2"
         mock_rel.relationship_type = "MANAGES"
@@ -517,7 +517,7 @@ class TestGraphStoreSimilaritySearch:
     @pytest.fixture
     def store(self, mock_session):
         """Create GraphStore with mock session."""
-        return GraphStore(mock_session, tenant_id="test-tenant")
+        return GraphStore(mock_session, zone_id="test-zone")
 
     @pytest.mark.asyncio
     async def test_find_similar_brute_force(self, store, mock_session):
@@ -525,7 +525,7 @@ class TestGraphStoreSimilaritySearch:
         # Create mock entity with embedding
         mock_model = MagicMock(spec=EntityModel)
         mock_model.entity_id = "entity-1"
-        mock_model.tenant_id = "test-tenant"
+        mock_model.zone_id = "test-zone"
         mock_model.canonical_name = "Similar Entity"
         mock_model.entity_type = "CONCEPT"
         mock_model.embedding = json.dumps([1.0, 0.0, 0.0])  # Normalized vector
@@ -570,7 +570,7 @@ class TestGraphStoreEntityMentions:
     @pytest.fixture
     def store(self, mock_session):
         """Create GraphStore with mock session."""
-        return GraphStore(mock_session, tenant_id="test-tenant")
+        return GraphStore(mock_session, zone_id="test-zone")
 
     @pytest.mark.asyncio
     async def test_add_mention(self, store, mock_session):
@@ -631,7 +631,7 @@ class TestGraphStoreBulkOperations:
     @pytest.fixture
     def store(self, mock_session):
         """Create GraphStore with mock session."""
-        return GraphStore(mock_session, tenant_id="test-tenant")
+        return GraphStore(mock_session, zone_id="test-zone")
 
     @pytest.mark.asyncio
     async def test_add_entities_bulk(self, store, mock_session):

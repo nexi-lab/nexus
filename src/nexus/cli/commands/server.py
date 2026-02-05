@@ -550,7 +550,7 @@ def serve(
                     f"[dim]  enforce_permissions={getattr(cfg, 'enforce_permissions', 'NOT SET')}[/dim]"
                 )
                 console.print(
-                    f"[dim]  enforce_tenant_isolation={getattr(cfg, 'enforce_tenant_isolation', 'NOT SET')}[/dim]"
+                    f"[dim]  enforce_zone_isolation={getattr(cfg, 'enforce_zone_isolation', 'NOT SET')}[/dim]"
                 )
             except Exception as e:
                 console.print(f"[yellow]⚠️  Warning: Failed to load config file: {e}[/yellow]")
@@ -595,35 +595,33 @@ def serve(
                 "[yellow]⚠️  Admin bypass DISABLED by NEXUS_ALLOW_ADMIN_BYPASS=false[/yellow]"
             )
 
-        # Check NEXUS_ENFORCE_TENANT_ISOLATION environment variable
+        # Check NEXUS_ENFORCE_ZONE_ISOLATION environment variable
         # Priority: 1. Environment variable, 2. Config file, 3. Default (True)
-        enforce_tenant_isolation_env = os.getenv("NEXUS_ENFORCE_TENANT_ISOLATION", "").lower()
-        if enforce_tenant_isolation_env in ("false", "0", "no", "off"):
-            enforce_tenant_isolation = False
+        enforce_zone_isolation_env = os.getenv("NEXUS_ENFORCE_ZONE_ISOLATION", "").lower()
+        if enforce_zone_isolation_env in ("false", "0", "no", "off"):
+            enforce_zone_isolation = False
             console.print(
-                "[yellow]⚠️  Tenant isolation DISABLED by NEXUS_ENFORCE_TENANT_ISOLATION=false[/yellow]"
+                "[yellow]⚠️  Zone isolation DISABLED by NEXUS_ENFORCE_ZONE_ISOLATION=false[/yellow]"
             )
-            console.print("[yellow]   WARNING: Cross-tenant data access is now possible![/yellow]")
-        elif enforce_tenant_isolation_env in ("true", "1", "yes", "on"):
-            enforce_tenant_isolation = True
-            console.print(
-                "[green]✓ Tenant isolation ENABLED by NEXUS_ENFORCE_TENANT_ISOLATION[/green]"
-            )
-        elif cfg and hasattr(cfg, "enforce_tenant_isolation"):
+            console.print("[yellow]   WARNING: Cross-zone data access is now possible![/yellow]")
+        elif enforce_zone_isolation_env in ("true", "1", "yes", "on"):
+            enforce_zone_isolation = True
+            console.print("[green]✓ Zone isolation ENABLED by NEXUS_ENFORCE_ZONE_ISOLATION[/green]")
+        elif cfg and hasattr(cfg, "enforce_zone_isolation"):
             # Use config file value
-            enforce_tenant_isolation = cfg.enforce_tenant_isolation
+            enforce_zone_isolation = cfg.enforce_zone_isolation
             console.print(
-                f"[{'yellow' if not enforce_tenant_isolation else 'green'}]"
-                f"{'⚠️  Tenant isolation DISABLED' if not enforce_tenant_isolation else '✓ Tenant isolation ENABLED'} "
-                f"by config file[/{'yellow' if not enforce_tenant_isolation else 'green'}]"
+                f"[{'yellow' if not enforce_zone_isolation else 'green'}]"
+                f"{'⚠️  Zone isolation DISABLED' if not enforce_zone_isolation else '✓ Zone isolation ENABLED'} "
+                f"by config file[/{'yellow' if not enforce_zone_isolation else 'green'}]"
             )
-            if not enforce_tenant_isolation:
+            if not enforce_zone_isolation:
                 console.print(
-                    "[yellow]   WARNING: Cross-tenant data access is now possible![/yellow]"
+                    "[yellow]   WARNING: Cross-zone data access is now possible![/yellow]"
                 )
         else:
-            # Default: enable tenant isolation for security
-            enforce_tenant_isolation = True
+            # Default: enable zone isolation for security
+            enforce_zone_isolation = True
 
         # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
         # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
@@ -632,7 +630,7 @@ def serve(
             enforce_permissions=enforce_permissions,
             force_local=True,  # Force local mode to prevent RemoteNexusFS
             allow_admin_bypass=allow_admin_bypass,
-            enforce_tenant_isolation=enforce_tenant_isolation,
+            enforce_zone_isolation=enforce_zone_isolation,
         )
 
         # Load backends from config file if specified
@@ -700,7 +698,7 @@ def serve(
                                 backend = create_backend_from_config(
                                     backend_type,
                                     backend_cfg,
-                                    session_factory=nx.metadata.SessionLocal,
+                                    session_factory=nx.SessionLocal,
                                 )
 
                                 # Add mount to router
@@ -1083,15 +1081,15 @@ def serve(
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            tenant_id = "default"
+            zone_id = "default"
 
             # User might already exist, ignore errors
             with contextlib.suppress(Exception):
                 entity_registry.register_entity(
                     entity_type="user",
                     entity_id=admin_user,
-                    parent_type="tenant",
-                    parent_id=tenant_id,
+                    parent_type="zone",
+                    parent_id=zone_id,
                 )
 
             # Create API key using DatabaseAPIKeyAuth
@@ -1104,7 +1102,7 @@ def serve(
                         session,
                         user_id=admin_user,
                         name="Admin key (created by init)",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=True,
                         expires_at=expires_at,
                     )
@@ -1145,7 +1143,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        tenant_id="default",
+                        zone_id="default",
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

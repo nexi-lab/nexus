@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
 
 # Entity types that can contain members (groups)
-GROUP_ENTITY_TYPES = frozenset({"group", "team", "organization", "tenant"})
+GROUP_ENTITY_TYPES = frozenset({"group", "team", "organization", "zone"})
 
 
 @dataclass
@@ -45,7 +45,7 @@ class ClosureEntry:
     member_id: str
     group_type: str
     group_id: str
-    tenant_id: str
+    zone_id: str
     depth: int
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -67,10 +67,10 @@ class LeopardCache:
         self._max_size = max_size
         self._lock = threading.RLock()
 
-        # member (type, id, tenant) -> set of (group_type, group_id)
+        # member (type, id, zone) -> set of (group_type, group_id)
         self._member_to_groups: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
 
-        # group (type, id, tenant) -> set of (member_type, member_id)
+        # group (type, id, zone) -> set of (member_type, member_id)
         # Used for invalidation when group membership changes
         self._group_to_members: dict[tuple[str, str, str], set[tuple[str, str]]] = {}
 
@@ -78,19 +78,19 @@ class LeopardCache:
         self._access_times: dict[tuple[str, str, str], float] = {}
 
     def get_transitive_groups(
-        self, member_type: str, member_id: str, tenant_id: str
+        self, member_type: str, member_id: str, zone_id: str
     ) -> set[tuple[str, str]] | None:
         """Get all groups a member transitively belongs to.
 
         Args:
             member_type: Type of member (e.g., "user", "agent")
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Set of (group_type, group_id) tuples, or None if not cached
         """
-        key = (member_type, member_id, tenant_id)
+        key = (member_type, member_id, zone_id)
         with self._lock:
             if key in self._member_to_groups:
                 self._access_times[key] = time.time()
@@ -101,7 +101,7 @@ class LeopardCache:
         self,
         member_type: str,
         member_id: str,
-        tenant_id: str,
+        zone_id: str,
         groups: set[tuple[str, str]],
     ) -> None:
         """Cache transitive groups for a member.
@@ -109,10 +109,10 @@ class LeopardCache:
         Args:
             member_type: Type of member
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             groups: Set of (group_type, group_id) tuples
         """
-        key = (member_type, member_id, tenant_id)
+        key = (member_type, member_id, zone_id)
         with self._lock:
             # Evict if at capacity
             if len(self._member_to_groups) >= self._max_size and key not in self._member_to_groups:
@@ -125,25 +125,25 @@ class LeopardCache:
 
             # Update reverse mapping (group -> members)
             for group_type, group_id in old_groups - groups:
-                group_key = (group_type, group_id, tenant_id)
+                group_key = (group_type, group_id, zone_id)
                 if group_key in self._group_to_members:
                     self._group_to_members[group_key].discard((member_type, member_id))
 
             for group_type, group_id in groups:
-                group_key = (group_type, group_id, tenant_id)
+                group_key = (group_type, group_id, zone_id)
                 if group_key not in self._group_to_members:
                     self._group_to_members[group_key] = set()
                 self._group_to_members[group_key].add((member_type, member_id))
 
-    def invalidate_member(self, member_type: str, member_id: str, tenant_id: str) -> None:
+    def invalidate_member(self, member_type: str, member_id: str, zone_id: str) -> None:
         """Invalidate cache for a specific member.
 
         Args:
             member_type: Type of member
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
-        key = (member_type, member_id, tenant_id)
+        key = (member_type, member_id, zone_id)
         with self._lock:
             if key in self._member_to_groups:
                 groups = self._member_to_groups.pop(key)
@@ -151,11 +151,11 @@ class LeopardCache:
 
                 # Clean up reverse mapping
                 for group_type, group_id in groups:
-                    group_key = (group_type, group_id, tenant_id)
+                    group_key = (group_type, group_id, zone_id)
                     if group_key in self._group_to_members:
                         self._group_to_members[group_key].discard((member_type, member_id))
 
-    def invalidate_group(self, group_type: str, group_id: str, tenant_id: str) -> None:
+    def invalidate_group(self, group_type: str, group_id: str, zone_id: str) -> None:
         """Invalidate cache for all members of a group.
 
         Called when group membership changes.
@@ -163,29 +163,29 @@ class LeopardCache:
         Args:
             group_type: Type of group
             group_id: ID of group
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
-        group_key = (group_type, group_id, tenant_id)
+        group_key = (group_type, group_id, zone_id)
         with self._lock:
             members = self._group_to_members.pop(group_key, set())
             for member_type, member_id in members:
-                member_key = (member_type, member_id, tenant_id)
+                member_key = (member_type, member_id, zone_id)
                 self._member_to_groups.pop(member_key, None)
                 self._access_times.pop(member_key, None)
 
-    def invalidate_tenant(self, tenant_id: str) -> None:
-        """Invalidate all cache entries for a tenant.
+    def invalidate_zone(self, zone_id: str) -> None:
+        """Invalidate all cache entries for a zone.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
         with self._lock:
-            keys_to_remove = [k for k in self._member_to_groups if k[2] == tenant_id]
+            keys_to_remove = [k for k in self._member_to_groups if k[2] == zone_id]
             for key in keys_to_remove:
                 self._member_to_groups.pop(key, None)
                 self._access_times.pop(key, None)
 
-            group_keys_to_remove = [k for k in self._group_to_members if k[2] == tenant_id]
+            group_keys_to_remove = [k for k in self._group_to_members if k[2] == zone_id]
             for key in group_keys_to_remove:
                 self._group_to_members.pop(key, None)
 
@@ -244,7 +244,7 @@ class LeopardIndex:
         self,
         member_type: str,
         member_id: str,
-        tenant_id: str,
+        zone_id: str,
         conn: Connection | None = None,
     ) -> set[tuple[str, str]]:
         """Get all groups a member transitively belongs to.
@@ -254,7 +254,7 @@ class LeopardIndex:
         Args:
             member_type: Type of member (e.g., "user", "agent")
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Optional existing database connection
 
         Returns:
@@ -262,7 +262,7 @@ class LeopardIndex:
         """
         # Check cache first
         if self._cache:
-            cached = self._cache.get_transitive_groups(member_type, member_id, tenant_id)
+            cached = self._cache.get_transitive_groups(member_type, member_id, zone_id)
             if cached is not None:
                 logger.debug(
                     f"[LEOPARD] Cache hit for {member_type}:{member_id} -> {len(cached)} groups"
@@ -270,11 +270,11 @@ class LeopardIndex:
                 return cached
 
         # Query database
-        groups = self._fetch_transitive_groups_from_db(member_type, member_id, tenant_id, conn)
+        groups = self._fetch_transitive_groups_from_db(member_type, member_id, zone_id, conn)
 
         # Update cache
         if self._cache:
-            self._cache.set_transitive_groups(member_type, member_id, tenant_id, groups)
+            self._cache.set_transitive_groups(member_type, member_id, zone_id, groups)
             logger.debug(f"[LEOPARD] Cached {member_type}:{member_id} -> {len(groups)} groups")
 
         return groups
@@ -283,7 +283,7 @@ class LeopardIndex:
         self,
         member_type: str,
         member_id: str,
-        tenant_id: str,
+        zone_id: str,
         conn: Connection | None = None,
     ) -> set[tuple[str, str]]:
         """Fetch transitive groups from database.
@@ -291,7 +291,7 @@ class LeopardIndex:
         Args:
             member_type: Type of member
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Optional existing database connection
 
         Returns:
@@ -304,13 +304,13 @@ class LeopardIndex:
             FROM rebac_group_closure
             WHERE member_type = :member_type
               AND member_id = :member_id
-              AND tenant_id = :tenant_id
+              AND zone_id = :zone_id
         """)
 
         params = {
             "member_type": member_type,
             "member_id": member_id,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
         }
 
         groups: set[tuple[str, str]] = set()
@@ -334,7 +334,7 @@ class LeopardIndex:
         subject_id: str,
         group_type: str,
         group_id: str,
-        tenant_id: str,
+        zone_id: str,
         conn: Connection | None = None,
     ) -> int:
         """Update transitive closure when a membership is added.
@@ -349,7 +349,7 @@ class LeopardIndex:
             subject_id: ID of subject being added
             group_type: Type of group receiving the member
             group_id: ID of group receiving the member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Optional existing database connection
 
         Returns:
@@ -368,11 +368,11 @@ class LeopardIndex:
                 FROM rebac_group_closure
                 WHERE member_type = :group_type
                   AND member_id = :group_id
-                  AND tenant_id = :tenant_id
+                  AND zone_id = :zone_id
             """)
             ancestors_result = connection.execute(
                 ancestors_query,
-                {"group_type": group_type, "group_id": group_id, "tenant_id": tenant_id},
+                {"group_type": group_type, "group_id": group_id, "zone_id": zone_id},
             )
             ancestors = [(row.group_type, row.group_id, row.depth) for row in ancestors_result]
 
@@ -386,14 +386,14 @@ class LeopardIndex:
                     FROM rebac_group_closure
                     WHERE group_type = :subject_type
                       AND group_id = :subject_id
-                      AND tenant_id = :tenant_id
+                      AND zone_id = :zone_id
                 """)
                 desc_result = connection.execute(
                     descendants_query,
                     {
                         "subject_type": subject_type,
                         "subject_id": subject_id,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     },
                 )
                 descendants.extend(
@@ -411,7 +411,7 @@ class LeopardIndex:
                         "member_id": desc_id,
                         "group_type": group_type,
                         "group_id": group_id,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "depth": desc_depth + 1,
                     }
                 )
@@ -424,7 +424,7 @@ class LeopardIndex:
                             "member_id": desc_id,
                             "group_type": anc_type,
                             "group_id": anc_id,
-                            "tenant_id": tenant_id,
+                            "zone_id": zone_id,
                             "depth": desc_depth + anc_depth + 1,
                         }
                     )
@@ -447,7 +447,7 @@ class LeopardIndex:
         subject_id: str,
         group_type: str,
         group_id: str,
-        tenant_id: str,
+        zone_id: str,
         conn: Connection | None = None,
     ) -> int:
         """Update transitive closure when a membership is removed.
@@ -462,7 +462,7 @@ class LeopardIndex:
             subject_id: ID of subject being removed
             group_type: Type of group losing the member
             group_id: ID of group losing the member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Optional existing database connection
 
         Returns:
@@ -477,7 +477,7 @@ class LeopardIndex:
 
             # Invalidate cache for the group that lost a member
             if self._cache:
-                self._cache.invalidate_group(group_type, group_id, tenant_id)
+                self._cache.invalidate_group(group_type, group_id, zone_id)
 
             # Get all descendants of the subject (including itself)
             descendants: list[tuple[str, str]] = [(subject_type, subject_id)]
@@ -488,21 +488,21 @@ class LeopardIndex:
                     FROM rebac_group_closure
                     WHERE group_type = :subject_type
                       AND group_id = :subject_id
-                      AND tenant_id = :tenant_id
+                      AND zone_id = :zone_id
                 """)
                 desc_result = connection.execute(
                     descendants_query,
                     {
                         "subject_type": subject_type,
                         "subject_id": subject_id,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     },
                 )
                 descendants.extend([(row.member_type, row.member_id) for row in desc_result])
 
             # For each descendant, recompute their closure
             for desc_type, desc_id in descendants:
-                removed = self._recompute_member_closure(connection, desc_type, desc_id, tenant_id)
+                removed = self._recompute_member_closure(connection, desc_type, desc_id, zone_id)
                 entries_removed += removed
 
             return entries_removed
@@ -518,7 +518,7 @@ class LeopardIndex:
         conn: Connection,
         member_type: str,
         member_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Recompute transitive closure for a single member.
 
@@ -528,7 +528,7 @@ class LeopardIndex:
             conn: Database connection
             member_type: Type of member
             member_id: ID of member
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of entries that were removed (negative) or added (positive)
@@ -540,11 +540,11 @@ class LeopardIndex:
             DELETE FROM rebac_group_closure
             WHERE member_type = :member_type
               AND member_id = :member_id
-              AND tenant_id = :tenant_id
+              AND zone_id = :zone_id
         """)
         result = conn.execute(
             delete_query,
-            {"member_type": member_type, "member_id": member_id, "tenant_id": tenant_id},
+            {"member_type": member_type, "member_id": member_id, "zone_id": zone_id},
         )
         old_count = result.rowcount
 
@@ -555,12 +555,12 @@ class LeopardIndex:
             WHERE subject_type = :member_type
               AND subject_id = :member_id
               AND relation IN ('member-of', 'member', 'belongs-to')
-              AND tenant_id = :tenant_id
+              AND zone_id = :zone_id
               AND (expires_at IS NULL OR expires_at > {self._now_sql})
         """)
         direct_result = conn.execute(
             direct_query,
-            {"member_type": member_type, "member_id": member_id, "tenant_id": tenant_id},
+            {"member_type": member_type, "member_id": member_id, "zone_id": zone_id},
         )
         direct_groups = [(row.object_type, row.object_id) for row in direct_result]
 
@@ -583,7 +583,7 @@ class LeopardIndex:
                         "member_id": member_id,
                         "group_type": g_type,
                         "group_id": g_id,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "depth": depth,
                     }
                 )
@@ -596,12 +596,12 @@ class LeopardIndex:
                     WHERE subject_type = :g_type
                       AND subject_id = :g_id
                       AND relation IN ('member-of', 'member', 'belongs-to')
-                      AND tenant_id = :tenant_id
+                      AND zone_id = :zone_id
                       AND (expires_at IS NULL OR expires_at > {now_sql})
                 """)
                 parent_result = conn.execute(
                     parent_query,
-                    {"g_type": g_type, "g_id": g_id, "tenant_id": tenant_id},
+                    {"g_type": g_type, "g_id": g_id, "zone_id": zone_id},
                 )
                 for row in parent_result:
                     if (row.object_type, row.object_id) not in visited:
@@ -615,7 +615,7 @@ class LeopardIndex:
 
         # Invalidate cache for this member
         if self._cache:
-            self._cache.invalidate_member(member_type, member_id, tenant_id)
+            self._cache.invalidate_member(member_type, member_id, zone_id)
 
         return len(entries) - old_count
 
@@ -628,7 +628,7 @@ class LeopardIndex:
 
         Args:
             conn: Database connection
-            entries: List of entry dicts with member_type, member_id, group_type, group_id, tenant_id, depth
+            entries: List of entry dicts with member_type, member_id, group_type, group_id, zone_id, depth
 
         Returns:
             Number of entries affected
@@ -642,19 +642,19 @@ class LeopardIndex:
             # PostgreSQL: Use ON CONFLICT DO UPDATE
             query = text("""
                 INSERT INTO rebac_group_closure
-                    (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+                    (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
                 VALUES
-                    (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, NOW())
-                ON CONFLICT (member_type, member_id, group_type, group_id, tenant_id)
+                    (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, NOW())
+                ON CONFLICT (member_type, member_id, group_type, group_id, zone_id)
                 DO UPDATE SET depth = EXCLUDED.depth, updated_at = NOW()
             """)
         else:
             # SQLite: Use INSERT OR REPLACE
             query = text("""
                 INSERT OR REPLACE INTO rebac_group_closure
-                    (member_type, member_id, group_type, group_id, tenant_id, depth, updated_at)
+                    (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
                 VALUES
-                    (:member_type, :member_id, :group_type, :group_id, :tenant_id, :depth, datetime('now'))
+                    (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, datetime('now'))
             """)
 
         count = 0
@@ -664,8 +664,8 @@ class LeopardIndex:
 
         return count
 
-    def rebuild_closure_for_tenant(self, tenant_id: str, conn: Connection | None = None) -> int:
-        """Rebuild entire closure table for a tenant.
+    def rebuild_closure_for_zone(self, zone_id: str, conn: Connection | None = None) -> int:
+        """Rebuild entire closure table for a zone.
 
         Useful for:
         - Initial migration
@@ -673,7 +673,7 @@ class LeopardIndex:
         - Periodic verification
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Optional database connection
 
         Returns:
@@ -684,22 +684,22 @@ class LeopardIndex:
         now_sql = self._now_sql
 
         def do_rebuild(connection: Connection) -> int:
-            # 1. Delete all existing closure entries for tenant
+            # 1. Delete all existing closure entries for zone
             delete_query = text("""
                 DELETE FROM rebac_group_closure
-                WHERE tenant_id = :tenant_id
+                WHERE zone_id = :zone_id
             """)
-            connection.execute(delete_query, {"tenant_id": tenant_id})
+            connection.execute(delete_query, {"zone_id": zone_id})
 
-            # 2. Get all membership tuples for tenant
+            # 2. Get all membership tuples for zone
             tuples_query = text(f"""
                 SELECT subject_type, subject_id, object_type, object_id
                 FROM rebac_tuples
                 WHERE relation IN ('member-of', 'member', 'belongs-to')
-                  AND tenant_id = :tenant_id
+                  AND zone_id = :zone_id
                   AND (expires_at IS NULL OR expires_at > {now_sql})
             """)
-            result = connection.execute(tuples_query, {"tenant_id": tenant_id})
+            result = connection.execute(tuples_query, {"zone_id": zone_id})
             tuples = [
                 (row.subject_type, row.subject_id, row.object_type, row.object_id) for row in result
             ]
@@ -714,7 +714,7 @@ class LeopardIndex:
                         "member_id": subj_id,
                         "group_type": obj_type,
                         "group_id": obj_id,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "depth": 1,
                     }
                 )
@@ -756,7 +756,7 @@ class LeopardIndex:
                                 "member_id": member[1],
                                 "group_type": group[0],
                                 "group_id": group[1],
-                                "tenant_id": tenant_id,
+                                "zone_id": zone_id,
                                 "depth": depth,
                             }
                         )
@@ -765,9 +765,9 @@ class LeopardIndex:
             if entries:
                 self._bulk_upsert_closure(connection, entries)
 
-            # 6. Clear cache for tenant
+            # 6. Clear cache for zone
             if self._cache:
-                self._cache.invalidate_tenant(tenant_id)
+                self._cache.invalidate_zone(zone_id)
 
             return len(entries)
 
@@ -777,20 +777,20 @@ class LeopardIndex:
             with self._engine.begin() as new_conn:
                 return do_rebuild(new_conn)
 
-    def invalidate_cache_for_member(self, member_type: str, member_id: str, tenant_id: str) -> None:
+    def invalidate_cache_for_member(self, member_type: str, member_id: str, zone_id: str) -> None:
         """Invalidate in-memory cache for a member."""
         if self._cache:
-            self._cache.invalidate_member(member_type, member_id, tenant_id)
+            self._cache.invalidate_member(member_type, member_id, zone_id)
 
-    def invalidate_cache_for_group(self, group_type: str, group_id: str, tenant_id: str) -> None:
+    def invalidate_cache_for_group(self, group_type: str, group_id: str, zone_id: str) -> None:
         """Invalidate in-memory cache for all members of a group."""
         if self._cache:
-            self._cache.invalidate_group(group_type, group_id, tenant_id)
+            self._cache.invalidate_group(group_type, group_id, zone_id)
 
-    def invalidate_cache_for_tenant(self, tenant_id: str) -> None:
-        """Invalidate in-memory cache for a tenant."""
+    def invalidate_cache_for_zone(self, zone_id: str) -> None:
+        """Invalidate in-memory cache for a zone."""
         if self._cache:
-            self._cache.invalidate_tenant(tenant_id)
+            self._cache.invalidate_zone(zone_id)
 
     def clear_cache(self) -> None:
         """Clear entire in-memory cache."""

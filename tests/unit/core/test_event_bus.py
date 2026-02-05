@@ -64,12 +64,12 @@ class TestFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/inbox/test.txt"
-        assert event.tenant_id == "tenant1"
+        assert event.zone_id == "zone1"
         assert event.event_id is not None
         assert event.timestamp is not None
 
@@ -78,7 +78,7 @@ class TestFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_RENAME,
             path="/inbox/new.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             old_path="/inbox/old.txt",
             size=1024,
             etag="abc123",
@@ -95,7 +95,7 @@ class TestFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             event_id="event-123",
         )
 
@@ -103,7 +103,7 @@ class TestFileEvent:
 
         assert data["type"] == "file_write"
         assert data["path"] == "/inbox/test.txt"
-        assert data["tenant_id"] == "tenant1"
+        assert data["zone_id"] == "zone1"
         assert data["event_id"] == "event-123"
         assert "timestamp" in data
 
@@ -112,7 +112,7 @@ class TestFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             old_path="/inbox/old.txt",
             size=1024,
         )
@@ -129,7 +129,7 @@ class TestFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         json_str = event.to_json()
@@ -144,7 +144,7 @@ class TestFileEvent:
         data = {
             "type": "file_write",
             "path": "/inbox/test.txt",
-            "tenant_id": "tenant1",
+            "zone_id": "zone1",
             "timestamp": "2024-01-01T00:00:00Z",
             "event_id": "event-123",
         }
@@ -153,12 +153,12 @@ class TestFileEvent:
 
         assert event.type == "file_write"
         assert event.path == "/inbox/test.txt"
-        assert event.tenant_id == "tenant1"
+        assert event.zone_id == "zone1"
         assert event.event_id == "event-123"
 
     def test_from_json_string(self):
         """Test creating event from JSON string."""
-        json_str = '{"type": "file_delete", "path": "/inbox/test.txt", "tenant_id": "tenant1"}'
+        json_str = '{"type": "file_delete", "path": "/inbox/test.txt", "zone_id": "zone1"}'
 
         event = FileEvent.from_json(json_str)
 
@@ -167,7 +167,7 @@ class TestFileEvent:
 
     def test_from_json_bytes(self):
         """Test creating event from JSON bytes."""
-        json_bytes = b'{"type": "file_delete", "path": "/inbox/test.txt", "tenant_id": "tenant1"}'
+        json_bytes = b'{"type": "file_delete", "path": "/inbox/test.txt", "zone_id": "zone1"}'
 
         event = FileEvent.from_json(json_bytes)
 
@@ -179,7 +179,7 @@ class TestFileEvent:
         original = FileEvent(
             type=FileEventType.FILE_RENAME,
             path="/inbox/new.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             old_path="/inbox/old.txt",
             size=2048,
             etag="hash123",
@@ -190,36 +190,36 @@ class TestFileEvent:
 
         assert restored.type == "file_rename"  # Note: Enum becomes string
         assert restored.path == original.path
-        assert restored.tenant_id == original.tenant_id
+        assert restored.zone_id == original.zone_id
         assert restored.old_path == original.old_path
         assert restored.size == original.size
         assert restored.etag == original.etag
 
-    def test_event_with_none_tenant_id(self):
-        """Test that tenant_id can be None (Layer 1 local events)."""
+    def test_event_with_none_zone_id(self):
+        """Test that zone_id can be None (Layer 1 local events)."""
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id=None,  # Layer 1 doesn't have tenant
+            zone_id=None,  # Layer 1 doesn't have zone
         )
 
-        assert event.tenant_id is None
+        assert event.zone_id is None
 
-        # to_dict should not include tenant_id when None
+        # to_dict should not include zone_id when None
         data = event.to_dict()
-        assert "tenant_id" not in data
+        assert "zone_id" not in data
 
-    def test_from_dict_without_tenant_id(self):
-        """Test that from_dict handles missing tenant_id."""
+    def test_from_dict_without_zone_id(self):
+        """Test that from_dict handles missing zone_id."""
         data = {
             "type": "file_write",
             "path": "/inbox/test.txt",
-            # No tenant_id
+            # No zone_id
         }
 
         event = FileEvent.from_dict(data)
 
-        assert event.tenant_id is None
+        assert event.zone_id is None
         assert event.type == "file_write"
         assert event.path == "/inbox/test.txt"
 
@@ -246,7 +246,7 @@ class TestFileEventFromFileChange:
 
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "new_file.txt"
-        assert event.tenant_id is None
+        assert event.zone_id is None
         assert event.event_id is not None
 
     def test_from_file_change_modified(self):
@@ -314,8 +314,8 @@ class TestFileEventFromFileChange:
         assert event.path == "new_name.txt"
         assert event.old_path == "old_name.txt"
 
-    def test_from_file_change_with_tenant_id(self):
-        """Test converting FileChange with tenant_id."""
+    def test_from_file_change_with_zone_id(self):
+        """Test converting FileChange with zone_id."""
         from dataclasses import dataclass
         from enum import Enum
 
@@ -329,9 +329,9 @@ class TestFileEventFromFileChange:
             old_path: str | None = None
 
         change = MockFileChange(type=MockChangeType.CREATED, path="file.txt")
-        event = FileEvent.from_file_change(change, tenant_id="my-tenant")
+        event = FileEvent.from_file_change(change, zone_id="my-zone")
 
-        assert event.tenant_id == "my-tenant"
+        assert event.zone_id == "my-zone"
 
 
 class TestFileEventPathMatching:
@@ -342,7 +342,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/inbox/test.txt") is True
@@ -353,7 +353,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/subdir/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/inbox/") is True
@@ -365,7 +365,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.DIR_CREATE,
             path="/inbox",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/inbox/") is True
@@ -376,7 +376,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/inbox/*.txt") is True
@@ -389,7 +389,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/inbox/tes?.txt") is True
@@ -401,7 +401,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/deep/nested/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # fnmatch uses shell patterns, ** matches any characters
@@ -413,7 +413,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_RENAME,
             path="/inbox/new.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             old_path="/inbox/old.txt",
         )
 
@@ -431,7 +431,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_RENAME,
             path="/archive/file.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             old_path="/inbox/file.txt",
         )
 
@@ -444,7 +444,7 @@ class TestFileEventPathMatching:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert event.matches_path_pattern("/other/test.txt") is False
@@ -516,7 +516,7 @@ class TestRedisEventBus:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         with pytest.raises(RuntimeError, match="not started"):
@@ -534,7 +534,7 @@ class TestRedisEventBus:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         num_subscribers = await bus.publish(event)
@@ -542,7 +542,7 @@ class TestRedisEventBus:
         assert num_subscribers == 2
         mock_redis_client.client.publish.assert_called_once()
         call_args = mock_redis_client.client.publish.call_args
-        assert call_args[0][0] == "nexus:events:tenant1"  # Channel
+        assert call_args[0][0] == "nexus:events:zone1"  # Channel
         assert "file_write" in call_args[0][1]  # Message contains event type
 
     @pytest.mark.asyncio
@@ -550,9 +550,9 @@ class TestRedisEventBus:
         """Test channel name generation."""
         bus = RedisEventBus(mock_redis_client)
 
-        assert bus._channel_name("tenant1") == "nexus:events:tenant1"
+        assert bus._channel_name("zone1") == "nexus:events:zone1"
         assert bus._channel_name("default") == "nexus:events:default"
-        assert bus._channel_name("multi-tenant-123") == "nexus:events:multi-tenant-123"
+        assert bus._channel_name("multi-zone-123") == "nexus:events:multi-zone-123"
 
     @pytest.mark.asyncio
     async def test_wait_for_event_requires_start(self, mock_redis_client):
@@ -560,7 +560,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
 
         with pytest.raises(RuntimeError, match="not started"):
-            await bus.wait_for_event("tenant1", "/inbox/")
+            await bus.wait_for_event("zone1", "/inbox/")
 
     @pytest.mark.asyncio
     async def test_wait_for_event_timeout(self, mock_redis_client, mock_pubsub):
@@ -590,7 +590,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        result = await bus.wait_for_event("tenant1", "/inbox/", timeout=0.1)
+        result = await bus.wait_for_event("zone1", "/inbox/", timeout=0.1)
 
         assert result is None
 
@@ -610,7 +610,7 @@ class TestRedisEventBus:
         event_data = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         ).to_json()
 
         message = {
@@ -633,7 +633,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        result = await bus.wait_for_event("tenant1", "/inbox/", timeout=5.0)
+        result = await bus.wait_for_event("zone1", "/inbox/", timeout=5.0)
 
         assert result is not None
         assert result.type == "file_write"
@@ -654,13 +654,13 @@ class TestRedisEventBus:
         non_matching_event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/other/test.txt",  # Not in /inbox/
-            tenant_id="tenant1",
+            zone_id="zone1",
         ).to_json()
 
         matching_event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/inbox/test.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
         ).to_json()
 
         messages = [
@@ -683,7 +683,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
         await bus.start()
 
-        result = await bus.wait_for_event("tenant1", "/inbox/", timeout=5.0)
+        result = await bus.wait_for_event("zone1", "/inbox/", timeout=5.0)
 
         assert result is not None
         assert result.path == "/inbox/test.txt"
@@ -831,12 +831,12 @@ class TestSubscribeMethod:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/test/file1.txt",
-                tenant_id="tenant-1",
+                zone_id="zone-1",
             ),
             FileEvent(
                 type=FileEventType.FILE_DELETE,
                 path="/test/file2.txt",
-                tenant_id="tenant-1",
+                zone_id="zone-1",
             ),
         ]
 
@@ -857,7 +857,7 @@ class TestSubscribeMethod:
         # Collect events from subscribe generator
         received = []
         count = 0
-        async for event in bus.subscribe("tenant-1"):
+        async for event in bus.subscribe("zone-1"):
             received.append(event)
             count += 1
             if count >= 2:
@@ -874,7 +874,7 @@ class TestSubscribeMethod:
         bus._started = False
 
         with pytest.raises(RuntimeError, match="not started"):
-            async for _ in bus.subscribe("tenant-1"):
+            async for _ in bus.subscribe("zone-1"):
                 pass
 
     @pytest.mark.asyncio
@@ -890,7 +890,7 @@ class TestSubscribeMethod:
         test_event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test/file.txt",
-            tenant_id="tenant-1",
+            zone_id="zone-1",
         )
 
         # Mock get_message to return subscribe confirmation, then event, then None
@@ -912,7 +912,7 @@ class TestSubscribeMethod:
 
         received = []
         count = 0
-        async for event in bus.subscribe("tenant-1"):
+        async for event in bus.subscribe("zone-1"):
             received.append(event)
             count += 1
             if count >= 1:
@@ -950,7 +950,7 @@ class TestErrorRecovery:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test/file.txt",
-            tenant_id="tenant-1",
+            zone_id="zone-1",
         )
 
         # Should raise the error (caller should handle)
@@ -970,7 +970,7 @@ class TestErrorRecovery:
         valid_event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test/file.txt",
-            tenant_id="tenant-1",
+            zone_id="zone-1",
         )
 
         messages = [
@@ -991,7 +991,7 @@ class TestErrorRecovery:
         mock_pubsub.unsubscribe = AsyncMock()
 
         # Should skip malformed message and return valid one
-        result = await bus.wait_for_event("tenant-1", "/test/", timeout=1.0)
+        result = await bus.wait_for_event("zone-1", "/test/", timeout=1.0)
 
         assert result is not None
         assert result.path == "/test/file.txt"

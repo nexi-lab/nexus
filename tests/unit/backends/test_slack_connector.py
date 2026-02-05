@@ -208,7 +208,7 @@ class TestSlackConnectorWriteOperations:
             groups=[],
             backend_path="channels/general/new-message.json",
         )
-        context.tenant_id = "default"
+        context.zone_id = "default"
 
         # Write message
         result = slack_connector.write_content(content, context)
@@ -247,7 +247,7 @@ class TestSlackConnectorWriteOperations:
             groups=[],
             backend_path="channels/general/new-message.json",
         )
-        context.tenant_id = "default"
+        context.zone_id = "default"
 
         # Write message
         result = slack_connector.write_content(content, context)
@@ -283,7 +283,7 @@ class TestSlackConnectorGetVersion:
             groups=[],
             backend_path="channels/general/1234567890.123456-msg.json",
         )
-        context.tenant_id = "default"
+        context.zone_id = "default"
 
         version = slack_connector.get_version(
             "channels/general/1234567890.123456-msg.json", context
@@ -298,7 +298,7 @@ class TestSlackConnectorGetVersion:
             groups=[],
             backend_path="channels/general",
         )
-        context.tenant_id = "default"
+        context.zone_id = "default"
 
         version = slack_connector.get_version("channels/general", context)
 

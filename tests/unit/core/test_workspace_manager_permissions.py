@@ -1,7 +1,7 @@
 """Tests for WorkspaceManager ReBAC permission checks.
 
 Tests the security fix for P0 issue: workspace snapshots now require
-proper ReBAC permissions to prevent cross-tenant access.
+proper ReBAC permissions to prevent cross-zone access.
 """
 
 from unittest.mock import MagicMock
@@ -41,7 +41,7 @@ def workspace_manager(mock_metadata, mock_backend, mock_rebac_manager):
         metadata=mock_metadata,
         backend=mock_backend,
         rebac_manager=mock_rebac_manager,
-        tenant_id="tenant1",
+        zone_id="zone1",
         agent_id="agent1",
     )
 
@@ -75,7 +75,7 @@ class TestWorkspaceManagerPermissions:
             subject=("agent", "agent1"),
             permission="write",
             object=("file", "/test-workspace"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         # Verify snapshot was created
@@ -100,7 +100,7 @@ class TestWorkspaceManagerPermissions:
             metadata=mock_metadata,
             backend=mock_backend,
             rebac_manager=mock_rebac_manager,
-            tenant_id="tenant1",
+            zone_id="zone1",
             agent_id=None,  # No agent ID
         )
 
@@ -145,7 +145,7 @@ class TestWorkspaceManagerPermissions:
             subject=("agent", "agent1"),
             permission="write",
             object=("file", "/test-workspace"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert result["snapshot_info"]["snapshot_id"] == "snap123"
@@ -195,7 +195,7 @@ class TestWorkspaceManagerPermissions:
             subject=("agent", "agent1"),
             permission="read",
             object=("file", "/test-workspace"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert isinstance(result, list)
@@ -253,7 +253,7 @@ class TestWorkspaceManagerPermissions:
             subject=("agent", "agent1"),
             permission="read",
             object=("file", "/test-workspace"),
-            tenant_id="tenant1",
+            zone_id="zone1",
         )
 
         assert "added" in result
@@ -346,7 +346,7 @@ class TestWorkspaceManagerPermissions:
             metadata=mock_metadata,
             backend=mock_backend,
             rebac_manager=None,  # No ReBAC manager
-            tenant_id="tenant1",
+            zone_id="zone1",
             agent_id="agent1",
         )
 
@@ -365,28 +365,28 @@ class TestWorkspaceManagerPermissions:
         # Verify no exception was raised
         assert result["snapshot_number"] == 1
 
-    def test_cross_tenant_protection(self, mock_metadata, mock_backend, mock_rebac_manager):
-        """Test that cross-tenant snapshot access is prevented."""
-        # Setup: Agent from tenant1 trying to access tenant2's workspace
+    def test_cross_zone_protection(self, mock_metadata, mock_backend, mock_rebac_manager):
+        """Test that cross-zone snapshot access is prevented."""
+        # Setup: Agent from zone1 trying to access zone2's workspace
         manager = WorkspaceManager(
             metadata=mock_metadata,
             backend=mock_backend,
             rebac_manager=mock_rebac_manager,
-            tenant_id="tenant1",
+            zone_id="zone1",
             agent_id="agent1",
         )
 
-        # Deny cross-tenant access
+        # Deny cross-zone access
         mock_rebac_manager.rebac_check.return_value = False
 
         # Execute & Verify
         with pytest.raises(NexusPermissionError):
             manager.create_snapshot(
-                workspace_path="/tenant2-workspace",
-                description="Attempting cross-tenant access",
+                workspace_path="/zone2-workspace",
+                description="Attempting cross-zone access",
             )
 
-        # Verify the permission check included tenant_id
+        # Verify the permission check included zone_id
         mock_rebac_manager.rebac_check.assert_called_once()
         call_args = mock_rebac_manager.rebac_check.call_args
-        assert call_args[1]["tenant_id"] == "tenant1"
+        assert call_args[1]["zone_id"] == "zone1"

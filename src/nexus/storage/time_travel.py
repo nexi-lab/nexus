@@ -58,7 +58,7 @@ class TimeTravelReader:
         path: str,
         operation_id: str,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Get file content and metadata at a specific operation point.
 
@@ -73,7 +73,7 @@ class TimeTravelReader:
         Args:
             path: File path to query
             operation_id: Operation ID to query state at
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Dict with keys: content (bytes), metadata (dict), operation_id (str)
@@ -97,8 +97,8 @@ class TimeTravelReader:
             .order_by(OperationLogModel.created_at.asc())
         )
 
-        if tenant_id is not None:
-            stmt = stmt.where(OperationLogModel.tenant_id == tenant_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
 
         all_operations = list(self.session.execute(stmt).scalars())
 
@@ -147,8 +147,8 @@ class TimeTravelReader:
             # No next write, or next write has no snapshot (new file creation)
             # Check if file still exists in current metadata
             path_stmt = select(FilePathModel).where(FilePathModel.virtual_path == path)
-            if tenant_id is not None:
-                path_stmt = path_stmt.where(FilePathModel.tenant_id == tenant_id)
+            if zone_id is not None:
+                path_stmt = path_stmt.where(FilePathModel.zone_id == zone_id)
 
             current_path = self.session.execute(path_stmt).scalar_one_or_none()
 
@@ -199,7 +199,7 @@ class TimeTravelReader:
         directory: str,
         operation_id: str,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         recursive: bool = False,
     ) -> list[dict[str, Any]]:
         """List files in a directory at a specific operation point.
@@ -207,7 +207,7 @@ class TimeTravelReader:
         Args:
             directory: Directory path to list
             operation_id: Operation ID to query state at
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
             recursive: Whether to list recursively
 
         Returns:
@@ -247,8 +247,8 @@ class TimeTravelReader:
             .order_by(OperationLogModel.path, OperationLogModel.created_at.desc())
         )
 
-        if tenant_id is not None:
-            stmt = stmt.where(OperationLogModel.tenant_id == tenant_id)
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
 
         operations = list(self.session.execute(stmt).scalars())
 
@@ -299,7 +299,7 @@ class TimeTravelReader:
         operation_id_1: str,
         operation_id_2: str,
         *,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare file state between two operation points.
 
@@ -307,7 +307,7 @@ class TimeTravelReader:
             path: File path to compare
             operation_id_1: First operation ID
             operation_id_2: Second operation ID
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Dict with keys:
@@ -326,10 +326,10 @@ class TimeTravelReader:
         state_2 = None
 
         with suppress(NotFoundError):
-            state_1 = self.get_file_at_operation(path, operation_id_1, tenant_id=tenant_id)
+            state_1 = self.get_file_at_operation(path, operation_id_1, zone_id=zone_id)
 
         with suppress(NotFoundError):
-            state_2 = self.get_file_at_operation(path, operation_id_2, tenant_id=tenant_id)
+            state_2 = self.get_file_at_operation(path, operation_id_2, zone_id=zone_id)
 
         # Compare states
         content_changed = True

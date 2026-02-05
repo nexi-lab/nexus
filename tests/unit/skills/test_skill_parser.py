@@ -204,8 +204,8 @@ def test_parse_metadata_only_with_tier() -> None:
         temp_path = f.name
 
     try:
-        metadata = parser.parse_metadata_only(temp_path, tier="tenant")
-        assert metadata.tier == "tenant"
+        metadata = parser.parse_metadata_only(temp_path, tier="zone")
+        assert metadata.tier == "zone"
     finally:
         Path(temp_path).unlink()
 

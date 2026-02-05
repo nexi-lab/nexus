@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("name", help="Key name (e.g., 'Alice laptop')")
     parser.add_argument("--admin", action="store_true", help="Grant admin privileges")
     parser.add_argument("--days", type=int, help="Expiry in days (optional)")
-    parser.add_argument("--tenant-id", default="default", help="Tenant ID (default: default)")
+    parser.add_argument("--zone-id", default="default", help="Zone ID (default: default)")
 
     args = parser.parse_args()
 
@@ -52,8 +52,8 @@ def main() -> None:
     entity_registry.register_entity(
         entity_type="user",
         entity_id=args.user_id,
-        parent_type="tenant",
-        parent_id=args.tenant_id,
+        parent_type="zone",
+        parent_id=args.zone_id,
     )
 
     # Create API key
@@ -63,7 +63,7 @@ def main() -> None:
                 session,
                 user_id=args.user_id,
                 name=args.name,
-                tenant_id=args.tenant_id,
+                zone_id=args.zone_id,
                 is_admin=args.admin,
                 expires_at=expires_at,
             )

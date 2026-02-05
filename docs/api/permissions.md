@@ -52,7 +52,7 @@ from nexus.core.permissions_enhanced import EnhancedOperationContext, AdminCapab
 context = EnhancedOperationContext(
     user: str,                              # User ID (legacy - use subject_id)
     groups: list[str] = [],                 # List of group IDs
-    tenant_id: str | None = None,           # Tenant/organization ID
+    zone_id: str | None = None,           # Tenant/organization ID
     is_admin: bool = False,                 # Admin privileges flag
     is_system: bool = False,                # System operation flag
     admin_capabilities: set[str] = set(),   # Scoped admin capabilities (P0-4)
@@ -71,7 +71,7 @@ from nexus.core.permissions_enhanced import EnhancedOperationContext, AdminCapab
 user_ctx = EnhancedOperationContext(
     user="alice",
     groups=["team-engineering"],
-    tenant_id="acme-corp",
+    zone_id="acme-corp",
     is_admin=False
 )
 
@@ -119,7 +119,7 @@ def rebac_create(
     relation: str,
     object: tuple[str, str],
     expires_at: datetime | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
 ) -> str
 ```
 
@@ -128,7 +128,7 @@ def rebac_create(
 - `relation`: Relation type (e.g., `"member-of"`, `"owner-of"`, `"viewer-of"`)
 - `object`: (object_type, object_id) tuple (e.g., `("group", "developers")`)
 - `expires_at` (optional): Expiration datetime for temporary relationships
-- `tenant_id` (optional): Tenant ID for multi-tenant isolation
+- `zone_id` (optional): Zone ID for multi-zone isolation
 
 **Returns:** Tuple ID (string)
 
@@ -168,7 +168,7 @@ def rebac_check(
     permission: str,
     object: tuple[str, str],
     context: dict[str, Any] | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
 ) -> bool
 ```
 
@@ -177,7 +177,7 @@ def rebac_check(
 - `permission`: Permission to check (e.g., `"read"`, `"write"`, `"owner"`)
 - `object`: (object_type, object_id) tuple
 - `context` (optional): ABAC context for condition evaluation (time, IP, device, custom attributes)
-- `tenant_id` (optional): Tenant ID for multi-tenant isolation
+- `zone_id` (optional): Zone ID for multi-zone isolation
 
 **Returns:** `True` if permission is granted, `False` otherwise
 
@@ -188,7 +188,7 @@ has_access = nx.rebac_check(
     subject=("agent", "alice"),
     permission="read",
     object=("file", "/workspace/doc.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # ABAC check with time window
@@ -220,7 +220,7 @@ def rebac_explain(
     subject: tuple[str, str],
     permission: str,
     object: tuple[str, str],
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
 ) -> dict
 ```
 
@@ -228,7 +228,7 @@ def rebac_explain(
 - `subject`: (subject_type, subject_id) tuple
 - `permission`: Permission to check (e.g., `"read"`, `"write"`, `"owner"`)
 - `object`: (object_type, object_id) tuple
-- `tenant_id` (optional): Tenant ID for multi-tenant isolation
+- `zone_id` (optional): Zone ID for multi-zone isolation
 
 **Returns:** Dictionary with:
 - `result` (bool): Whether permission is granted
@@ -244,7 +244,7 @@ explanation = nx.rebac_explain(
     subject=("agent", "alice"),
     permission="read",
     object=("file", "/workspace/doc.txt"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 print(explanation["result"])  # True
@@ -331,7 +331,7 @@ def grant_consent(
     from_subject: tuple[str, str],
     to_subject: tuple[str, str],
     expires_at: datetime | None = None,
-    tenant_id: str | None = None
+    zone_id: str | None = None
 ) -> str
 ```
 
@@ -339,7 +339,7 @@ def grant_consent(
 - `from_subject`: Who is granting consent (e.g., `("profile", "alice")`, `("file", "/doc.txt")`)
 - `to_subject`: Who can now discover (e.g., `("user", "bob")`)
 - `expires_at` (optional): Expiration datetime for temporary consent
-- `tenant_id` (optional): Tenant ID for multi-tenant isolation
+- `zone_id` (optional): Zone ID for multi-zone isolation
 
 **Returns:** Tuple ID of the consent relationship
 
@@ -408,13 +408,13 @@ Make a resource publicly discoverable (anyone can discover it without consent).
 ```python
 def make_public(
     resource: tuple[str, str],
-    tenant_id: str | None = None
+    zone_id: str | None = None
 ) -> str
 ```
 
 **Parameters:**
 - `resource`: Resource to make public (e.g., `("profile", "alice")`, `("file", "/doc.txt")`)
-- `tenant_id` (optional): Tenant ID for multi-tenant isolation
+- `zone_id` (optional): Zone ID for multi-zone isolation
 
 **Returns:** Tuple ID of the public relationship
 

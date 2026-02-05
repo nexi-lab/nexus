@@ -4,7 +4,7 @@ Tests cover:
 - rebac_write_batch() basic functionality
 - Batch deduplication
 - Transaction rollback on failure
-- Cross-tenant validation in batches
+- Cross-zone validation in batches
 - Cycle detection in batches
 - Cache invalidation after batch writes
 - Performance compared to individual writes
@@ -45,19 +45,19 @@ def test_batch_write_basic(rebac_manager):
             "subject": ("file", "/a/b/c.txt"),
             "relation": "parent",
             "object": ("file", "/a/b"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
         {
             "subject": ("file", "/a/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
         {
             "subject": ("file", "/a"),
             "relation": "parent",
             "object": ("file", "/"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -69,13 +69,13 @@ def test_batch_write_basic(rebac_manager):
         subject=("file", "/a/b/c.txt"),
         permission="parent",
         object=("file", "/a/b"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
     assert rebac_manager.rebac_check(
         subject=("file", "/a/b"),
         permission="parent",
         object=("file", "/a"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
 
@@ -86,7 +86,7 @@ def test_batch_write_deduplication(rebac_manager):
             "subject": ("file", "/a/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -106,13 +106,13 @@ def test_batch_write_multiple_duplicates_in_same_batch(rebac_manager):
             "subject": ("file", "/a/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
         {
             "subject": ("file", "/c/d"),
             "relation": "parent",
             "object": ("file", "/c"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -127,19 +127,19 @@ def test_batch_write_empty_list(rebac_manager):
     assert created == 0
 
 
-def test_batch_write_cross_tenant_validation(rebac_manager):
-    """Test that cross-tenant relationships are rejected in batch."""
+def test_batch_write_cross_zone_validation(rebac_manager):
+    """Test that cross-zone relationships are rejected in batch."""
     tuples = [
         {
             "subject": ("file", "/a/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
-            "subject_tenant_id": "org_456",  # Different tenant!
+            "zone_id": "org_123",
+            "subject_zone_id": "org_456",  # Different zone!
         },
     ]
 
-    with pytest.raises(ValueError, match="Cross-tenant relationship not allowed"):
+    with pytest.raises(ValueError, match="Cross-zone relationship not allowed"):
         rebac_manager.rebac_write_batch(tuples)
 
 
@@ -150,7 +150,7 @@ def test_batch_write_cycle_detection(rebac_manager):
         subject=("file", "/a"),
         relation="parent",
         object=("file", "/b"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
     # Try to create cycle: /b -> /a (would create cycle)
@@ -159,7 +159,7 @@ def test_batch_write_cycle_detection(rebac_manager):
             "subject": ("file", "/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -172,7 +172,7 @@ def test_batch_write_cycle_detection(rebac_manager):
         subject=("file", "/b"),
         permission="parent",
         object=("file", "/a"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
 
@@ -183,7 +183,7 @@ def test_batch_write_mixed_valid_and_cycle(rebac_manager):
         subject=("file", "/a"),
         relation="parent",
         object=("file", "/b"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
     tuples = [
@@ -192,14 +192,14 @@ def test_batch_write_mixed_valid_and_cycle(rebac_manager):
             "subject": ("file", "/c"),
             "relation": "parent",
             "object": ("file", "/d"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
         # Cycle-creating tuple (should be skipped)
         {
             "subject": ("file", "/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -211,7 +211,7 @@ def test_batch_write_mixed_valid_and_cycle(rebac_manager):
         subject=("file", "/c"),
         permission="parent",
         object=("file", "/d"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
 
@@ -222,14 +222,14 @@ def test_batch_write_cache_invalidation(rebac_manager):
         subject=("file", "/a/b"),
         relation="parent",
         object=("file", "/a"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
     result1 = rebac_manager.rebac_check(
         subject=("file", "/a/b"),
         permission="parent",
         object=("file", "/a"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
     assert result1 is True
 
@@ -241,7 +241,7 @@ def test_batch_write_cache_invalidation(rebac_manager):
             "subject": ("file", "/a/b/c"),
             "relation": "parent",
             "object": ("file", "/a/b"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -252,7 +252,7 @@ def test_batch_write_cache_invalidation(rebac_manager):
         subject=("file", "/a/b/c"),
         permission="parent",
         object=("file", "/a/b"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
     assert result2 is True
 
@@ -264,7 +264,7 @@ def test_batch_write_with_userset_subject(rebac_manager):
             "subject": ("group", "eng-team", "member"),
             "relation": "can_view",
             "object": ("file", "/docs"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
     ]
 
@@ -282,7 +282,7 @@ def test_batch_write_large_batch(rebac_manager):
                 "subject": ("file", f"/files/file_{i}.txt"),
                 "relation": "parent",
                 "object": ("file", "/files"),
-                "tenant_id": "org_123",
+                "zone_id": "org_123",
             }
         )
 
@@ -294,30 +294,30 @@ def test_batch_write_large_batch(rebac_manager):
         subject=("file", "/files/file_0.txt"),
         permission="parent",
         object=("file", "/files"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
     assert rebac_manager.rebac_check(
         subject=("file", "/files/file_999.txt"),
         permission="parent",
         object=("file", "/files"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
 
 
-def test_batch_write_different_tenants(rebac_manager):
-    """Test batch write with tuples from different tenants."""
+def test_batch_write_different_zones(rebac_manager):
+    """Test batch write with tuples from different zones."""
     tuples = [
         {
             "subject": ("file", "/a/b"),
             "relation": "parent",
             "object": ("file", "/a"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         },
         {
             "subject": ("file", "/x/y"),
             "relation": "parent",
             "object": ("file", "/x"),
-            "tenant_id": "org_456",
+            "zone_id": "org_456",
         },
     ]
 
@@ -329,18 +329,18 @@ def test_batch_write_different_tenants(rebac_manager):
         subject=("file", "/a/b"),
         permission="parent",
         object=("file", "/a"),
-        tenant_id="org_123",
+        zone_id="org_123",
     )
     assert rebac_manager.rebac_check(
         subject=("file", "/x/y"),
         permission="parent",
         object=("file", "/x"),
-        tenant_id="org_456",
+        zone_id="org_456",
     )
 
-    # Note: In the current implementation, tenant isolation is enforced at write time
-    # via cross-tenant validation, not at check time. The check above verifies that
-    # tuples were created correctly for each tenant.
+    # Note: In the current implementation, zone isolation is enforced at write time
+    # via cross-zone validation, not at check time. The check above verifies that
+    # tuples were created correctly for each zone.
 
 
 @pytest.mark.skip(reason="Performance tests are flaky in CI")
@@ -353,7 +353,7 @@ def test_batch_write_performance_vs_individual(rebac_manager):
             "subject": ("file", f"/files/file_{i}.txt"),
             "relation": "parent",
             "object": ("file", "/files"),
-            "tenant_id": "org_123",
+            "zone_id": "org_123",
         }
         for i in range(100)
     ]
@@ -376,7 +376,7 @@ def test_batch_write_performance_vs_individual(rebac_manager):
             subject=t["subject"],
             relation=t["relation"],
             object=t["object"],
-            tenant_id=t["tenant_id"],
+            zone_id=t["zone_id"],
         )
     individual_time = time.time() - start
 

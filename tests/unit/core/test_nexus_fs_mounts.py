@@ -238,7 +238,7 @@ class TestAddMount:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="alice",
             is_admin=True,
@@ -340,7 +340,7 @@ class TestSaveMount:
             priority=5,
             readonly=False,
             owner_user_id="alice",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             description="Test saved mount",
         )
 
@@ -559,7 +559,7 @@ class TestMountPermissionEnforcement:
         context = OperationContext(
             user="bob",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="bob",
             is_admin=False,
@@ -586,7 +586,7 @@ class TestMountPermissionEnforcement:
         admin_context = OperationContext(
             user="admin",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="admin",
             is_admin=True,
@@ -602,7 +602,7 @@ class TestMountPermissionEnforcement:
         user_context = OperationContext(
             user="bob",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="bob",
             is_admin=False,
@@ -624,7 +624,7 @@ class TestMountPermissionEnforcement:
         admin_context = OperationContext(
             user="admin",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="admin",
             is_admin=True,
@@ -640,7 +640,7 @@ class TestMountPermissionEnforcement:
         user_context = OperationContext(
             user="bob",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="bob",
             is_admin=False,
@@ -662,7 +662,7 @@ class TestMountPermissionEnforcement:
         admin_context = OperationContext(
             user="admin",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="admin",
             is_admin=True,
@@ -678,7 +678,7 @@ class TestMountPermissionEnforcement:
         user_context = OperationContext(
             user="bob",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="bob",
             is_admin=False,
@@ -731,7 +731,7 @@ class TestGrantMountOwnerPermission:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="alice",
         )
@@ -822,7 +822,7 @@ class TestMountContextUtilsIntegration:
     def test_add_mount_uses_context_utils_functions(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ):
-        """Test that add_mount uses context_utils.get_tenant_id and get_user_identity."""
+        """Test that add_mount uses context_utils.get_zone_id and get_user_identity."""
         from nexus.core.permissions import OperationContext
 
         mount_data_dir = temp_dir / "context_mount"
@@ -832,7 +832,7 @@ class TestMountContextUtilsIntegration:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="alice",
             is_admin=True,
@@ -840,10 +840,10 @@ class TestMountContextUtilsIntegration:
 
         # Patch in mount_core_service where the functions are actually imported
         with (
-            patch("nexus.services.mount_core_service.get_tenant_id") as mock_get_tenant,
+            patch("nexus.services.mount_core_service.get_zone_id") as mock_get_zone,
             patch("nexus.services.mount_core_service.get_user_identity") as mock_get_user,
         ):
-            mock_get_tenant.return_value = "test_tenant"
+            mock_get_zone.return_value = "test_zone"
             mock_get_user.return_value = ("user", "alice")
 
             nx_with_permissions.add_mount(
@@ -854,7 +854,7 @@ class TestMountContextUtilsIntegration:
             )
 
             # Verify context_utils functions were called
-            mock_get_tenant.assert_called()
+            mock_get_zone.assert_called()
             mock_get_user.assert_called()
 
     def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
@@ -868,7 +868,7 @@ class TestMountContextUtilsIntegration:
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             subject_type="user",
             subject_id="alice",
             is_admin=True,

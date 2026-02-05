@@ -29,7 +29,7 @@ def create_session(
     session: Session,
     user_id: str,
     agent_id: str | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
     ttl: timedelta | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
@@ -40,7 +40,7 @@ def create_session(
         session: Database session
         user_id: User identifier
         agent_id: Optional agent identifier (if agent session)
-        tenant_id: Organization identifier
+        zone_id: Organization identifier
         ttl: Time-to-live (None = persistent session, "Remember me")
         ip_address: Client IP
         user_agent: Client user agent
@@ -70,7 +70,7 @@ def create_session(
     user_session = UserSessionModel(
         user_id=user_id,
         agent_id=agent_id,
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         expires_at=expires_at,
         ip_address=ip_address,
         user_agent=user_agent,

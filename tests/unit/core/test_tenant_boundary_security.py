@@ -1,7 +1,7 @@
-"""Unit tests for tenant boundary security (Issue #819).
+"""Unit tests for zone boundary security (Issue #819).
 
-Tests that admins with admin:read:* cannot access files from other tenants
-unless they have MANAGE_TENANTS capability (system admin only).
+Tests that admins with admin:read:* cannot access files from other zones
+unless they have MANAGE_ZONES capability (system admin only).
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.core.permissions_enhanced import AdminCapability
-from nexus.server.auth.user_helpers import add_user_to_tenant
+from nexus.server.auth.user_helpers import add_user_to_zone
 
 
 @pytest.fixture
@@ -33,205 +33,205 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
         db_path=temp_dir / "metadata.db",
         auto_parse=False,
         enforce_permissions=True,
-        allow_admin_bypass=True,  # Enable admin bypass for tenant boundary tests
+        allow_admin_bypass=True,  # Enable admin bypass for zone boundary tests
     )
     yield nx
     nx.close()
 
 
-class TestTenantBoundarySecurity:
-    """Test tenant boundary security for admin bypass."""
+class TestZoneBoundarySecurity:
+    """Test zone boundary security for admin bypass."""
 
-    def test_tenant_admin_cannot_access_other_tenant_files(self, nx: NexusFS) -> None:
-        """Test that tenant admin cannot access files from other tenants."""
-        # Setup: Create file in tenant1 as system admin with MANAGE_TENANTS
+    def test_zone_admin_cannot_access_other_zone_files(self, nx: NexusFS) -> None:
+        """Test that zone admin cannot access files from other zones."""
+        # Setup: Create file in zone1 as system admin with MANAGE_ZONES
         system_admin = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id=None,  # No tenant restriction - can access all tenants
+            zone_id=None,  # No zone restriction - can access all zones
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,
+                AdminCapability.MANAGE_ZONES,
             },
         )
 
-        # Create tenant directory first
-        nx.mkdir("/tenant:acme", context=system_admin)
+        # Create zone directory first
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/tenant:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret acme data", context=system_admin)
 
-        # Tenant admin from tenant2 (techcorp) tries to access tenant1 (acme) file
-        tenant_admin_techcorp = OperationContext(
+        # Zone admin from zone2 (techcorp) tries to access zone1 (acme) file
+        zone_admin_techcorp = OperationContext(
             user="alice",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id="techcorp",  # Alice is admin of techcorp, not acme
+            zone_id="techcorp",  # Alice is admin of techcorp, not acme
             admin_capabilities={
-                AdminCapability.READ_ALL,  # Has wildcard read, but NOT MANAGE_TENANTS
+                AdminCapability.READ_ALL,  # Has wildcard read, but NOT MANAGE_ZONES
                 AdminCapability.WRITE_ALL,
             },
         )
 
-        # Should be denied - cross-tenant access without MANAGE_TENANTS
+        # Should be denied - cross-zone access without MANAGE_ZONES
         with pytest.raises(PermissionError, match="Access denied"):
-            nx.read(test_file, context=tenant_admin_techcorp)
+            nx.read(test_file, context=zone_admin_techcorp)
 
-    def test_system_admin_can_access_any_tenant(self, nx: NexusFS) -> None:
-        """Test that system admin with MANAGE_TENANTS can access any tenant."""
-        # Setup: Create file in tenant1
+    def test_system_admin_can_access_any_zone(self, nx: NexusFS) -> None:
+        """Test that system admin with MANAGE_ZONES can access any zone."""
+        # Setup: Create file in zone1
         system_admin_setup = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id=None,
+            zone_id=None,
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,
+                AdminCapability.MANAGE_ZONES,
             },
         )
 
-        # Create tenant directory first
-        nx.mkdir("/tenant:acme", context=system_admin_setup)
+        # Create zone directory first
+        nx.mkdir("/zone/acme", context=system_admin_setup)
 
-        test_file = "/tenant:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret acme data", context=system_admin_setup)
 
-        # System admin from tenant2 should be able to access tenant1 file
-        system_admin_tenant2 = OperationContext(
+        # System admin from zone2 should be able to access zone1 file
+        system_admin_zone2 = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id="techcorp",  # Different tenant
+            zone_id="techcorp",  # Different zone
             admin_capabilities={
                 AdminCapability.READ_ALL,
-                AdminCapability.MANAGE_TENANTS,  # System admin capability
+                AdminCapability.MANAGE_ZONES,  # System admin capability
             },
         )
 
-        # Should succeed - system admin with MANAGE_TENANTS
-        content = nx.read(test_file, context=system_admin_tenant2)
+        # Should succeed - system admin with MANAGE_ZONES
+        content = nx.read(test_file, context=system_admin_zone2)
         assert content == b"secret acme data"
 
-    def test_tenant_admin_can_access_own_tenant(self, nx: NexusFS) -> None:
-        """Test that tenant admin can access files in their own tenant."""
-        # Setup: Create file in tenant1
+    def test_zone_admin_can_access_own_zone(self, nx: NexusFS) -> None:
+        """Test that zone admin can access files in their own zone."""
+        # Setup: Create file in zone1
         system_admin = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id=None,
+            zone_id=None,
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,
+                AdminCapability.MANAGE_ZONES,
             },
         )
 
-        # Create tenant directory first
-        nx.mkdir("/tenant:acme", context=system_admin)
+        # Create zone directory first
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/tenant:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"acme data", context=system_admin)
 
-        # Add alice as tenant admin for acme
-        add_user_to_tenant(nx._rebac_manager, "alice", "acme", role="admin")
+        # Add alice as zone admin for acme
+        add_user_to_zone(nx._rebac_manager, "alice", "acme", role="admin")
 
-        # Tenant admin from same tenant should be able to access
-        tenant_admin_acme = OperationContext(
+        # Zone admin from same zone should be able to access
+        zone_admin_acme = OperationContext(
             user="alice",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id="acme",  # Same tenant
+            zone_id="acme",  # Same zone
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
             },
         )
 
-        # Should succeed - same tenant
-        content = nx.read(test_file, context=tenant_admin_acme)
+        # Should succeed - same zone
+        content = nx.read(test_file, context=zone_admin_acme)
         assert content == b"acme data"
 
-    def test_cross_tenant_write_denied(self, nx: NexusFS) -> None:
-        """Test that tenant admin cannot write to other tenant's files."""
-        # Setup: Create file in tenant1
+    def test_cross_zone_write_denied(self, nx: NexusFS) -> None:
+        """Test that zone admin cannot write to other zone's files."""
+        # Setup: Create file in zone1
         system_admin = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id=None,
+            zone_id=None,
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,
+                AdminCapability.MANAGE_ZONES,
             },
         )
 
-        # Create tenant directory first
-        nx.mkdir("/tenant:acme", context=system_admin)
+        # Create zone directory first
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/tenant:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"original", context=system_admin)
 
-        # Tenant admin from tenant2 tries to write to tenant1 file
-        tenant_admin_techcorp = OperationContext(
+        # Zone admin from zone2 tries to write to zone1 file
+        zone_admin_techcorp = OperationContext(
             user="alice",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id="techcorp",  # Different tenant
+            zone_id="techcorp",  # Different zone
             admin_capabilities={
-                AdminCapability.WRITE_ALL,  # Has wildcard write, but NOT MANAGE_TENANTS
+                AdminCapability.WRITE_ALL,  # Has wildcard write, but NOT MANAGE_ZONES
             },
         )
 
-        # Should be denied - cross-tenant write without MANAGE_TENANTS
+        # Should be denied - cross-zone write without MANAGE_ZONES
         with pytest.raises(PermissionError, match="Access denied"):
-            nx.write(test_file, b"hacked!", context=tenant_admin_techcorp)
+            nx.write(test_file, b"hacked!", context=zone_admin_techcorp)
 
-    def test_system_admin_without_manage_tenants_denied(self, nx: NexusFS) -> None:
-        """Test that admin without MANAGE_TENANTS cannot access other tenants."""
-        # Setup: Create file in tenant1
+    def test_system_admin_without_manage_zones_denied(self, nx: NexusFS) -> None:
+        """Test that admin without MANAGE_ZONES cannot access other zones."""
+        # Setup: Create file in zone1
         system_admin = OperationContext(
             user="system_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id=None,
+            zone_id=None,
             admin_capabilities={
                 AdminCapability.READ_ALL,
                 AdminCapability.WRITE_ALL,
-                AdminCapability.MANAGE_TENANTS,
+                AdminCapability.MANAGE_ZONES,
             },
         )
 
-        # Create tenant directory first
-        nx.mkdir("/tenant:acme", context=system_admin)
+        # Create zone directory first
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/tenant:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret", context=system_admin)
 
-        # Admin without MANAGE_TENANTS tries to access different tenant
+        # Admin without MANAGE_ZONES tries to access different zone
         limited_admin = OperationContext(
             user="limited_admin",
             groups=[],
             is_admin=True,
             is_system=False,
-            tenant_id="techcorp",  # Different tenant
+            zone_id="techcorp",  # Different zone
             admin_capabilities={
                 AdminCapability.READ_ALL,  # Has wildcard read
-                # But NOT MANAGE_TENANTS
+                # But NOT MANAGE_ZONES
             },
         )
 

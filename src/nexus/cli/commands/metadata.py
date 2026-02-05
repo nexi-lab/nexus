@@ -97,7 +97,7 @@ def version(
 @click.command(name="export")
 @click.argument("output", type=click.Path())
 @click.option("-p", "--prefix", default="", help="Export only files with this prefix")
-@click.option("--tenant-id", default=None, help="Filter by tenant ID")
+@click.option("--zone-id", default=None, help="Filter by zone ID")
 @click.option(
     "--after",
     default=None,
@@ -108,7 +108,7 @@ def version(
 def export_metadata(
     output: str,
     prefix: str,
-    tenant_id: str | None,
+    zone_id: str | None,
     after: str | None,
     include_deleted: bool,
     backend_config: BackendConfig,
@@ -128,7 +128,7 @@ def export_metadata(
         nexus export metadata-backup.jsonl
         nexus export workspace-backup.jsonl --prefix /workspace
         nexus export recent.jsonl --after 2024-01-01T00:00:00
-        nexus export tenant.jsonl --tenant-id acme-corp
+        nexus export zone.jsonl --zone-id acme-corp
     """
     try:
         from nexus.core.export_import import ExportFilter
@@ -157,7 +157,7 @@ def export_metadata(
 
         # Create export filter
         export_filter = ExportFilter(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             path_prefix=prefix,
             after_time=after_time,
             include_deleted=include_deleted,
@@ -167,8 +167,8 @@ def export_metadata(
         console.print(f"[cyan]Exporting metadata to:[/cyan] {output}")
         if prefix:
             console.print(f"  Path prefix: [cyan]{prefix}[/cyan]")
-        if tenant_id:
-            console.print(f"  Tenant ID: [cyan]{tenant_id}[/cyan]")
+        if zone_id:
+            console.print(f"  Zone ID: [cyan]{zone_id}[/cyan]")
         if after_time:
             console.print(f"  After time: [cyan]{after_time.isoformat()}[/cyan]")
         if include_deleted:

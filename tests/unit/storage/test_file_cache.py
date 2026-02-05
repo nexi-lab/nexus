@@ -13,9 +13,9 @@ class TestFileContentCache:
         cache = FileContentCache(tmp_path)
 
         content = b"Hello World"
-        cache.write("tenant1", "/mnt/gcs/file.txt", content)
+        cache.write("zone1", "/mnt/gcs/file.txt", content)
 
-        result = cache.read("tenant1", "/mnt/gcs/file.txt")
+        result = cache.read("zone1", "/mnt/gcs/file.txt")
         assert result == content
 
     def test_write_with_text_content(self, tmp_path: Path):
@@ -24,24 +24,24 @@ class TestFileContentCache:
 
         content = b"Hello World"
         text_content = "Hello World"
-        cache.write("tenant1", "/mnt/gcs/file.txt", content, text_content=text_content)
+        cache.write("zone1", "/mnt/gcs/file.txt", content, text_content=text_content)
 
         # Read binary
-        result = cache.read("tenant1", "/mnt/gcs/file.txt")
+        result = cache.read("zone1", "/mnt/gcs/file.txt")
         assert result == content
 
         # Read text
-        text_result = cache.read_text("tenant1", "/mnt/gcs/file.txt")
+        text_result = cache.read_text("zone1", "/mnt/gcs/file.txt")
         assert text_result == text_content
 
     def test_read_nonexistent(self, tmp_path: Path):
         """Test reading a non-existent file returns None."""
         cache = FileContentCache(tmp_path)
 
-        result = cache.read("tenant1", "/mnt/gcs/nonexistent.txt")
+        result = cache.read("zone1", "/mnt/gcs/nonexistent.txt")
         assert result is None
 
-        text_result = cache.read_text("tenant1", "/mnt/gcs/nonexistent.txt")
+        text_result = cache.read_text("zone1", "/mnt/gcs/nonexistent.txt")
         assert text_result is None
 
     def test_exists(self, tmp_path: Path):
@@ -49,47 +49,47 @@ class TestFileContentCache:
         cache = FileContentCache(tmp_path)
 
         # Before write
-        assert not cache.exists("tenant1", "/mnt/gcs/file.txt")
+        assert not cache.exists("zone1", "/mnt/gcs/file.txt")
 
         # After write
-        cache.write("tenant1", "/mnt/gcs/file.txt", b"content")
-        assert cache.exists("tenant1", "/mnt/gcs/file.txt")
+        cache.write("zone1", "/mnt/gcs/file.txt", b"content")
+        assert cache.exists("zone1", "/mnt/gcs/file.txt")
 
     def test_delete(self, tmp_path: Path):
         """Test delete operation."""
         cache = FileContentCache(tmp_path)
 
         # Write content
-        cache.write("tenant1", "/mnt/gcs/file.txt", b"content", text_content="content")
-        assert cache.exists("tenant1", "/mnt/gcs/file.txt")
+        cache.write("zone1", "/mnt/gcs/file.txt", b"content", text_content="content")
+        assert cache.exists("zone1", "/mnt/gcs/file.txt")
 
         # Delete
-        deleted = cache.delete("tenant1", "/mnt/gcs/file.txt")
+        deleted = cache.delete("zone1", "/mnt/gcs/file.txt")
         assert deleted
 
         # Verify deleted
-        assert not cache.exists("tenant1", "/mnt/gcs/file.txt")
-        assert cache.read("tenant1", "/mnt/gcs/file.txt") is None
-        assert cache.read_text("tenant1", "/mnt/gcs/file.txt") is None
+        assert not cache.exists("zone1", "/mnt/gcs/file.txt")
+        assert cache.read("zone1", "/mnt/gcs/file.txt") is None
+        assert cache.read_text("zone1", "/mnt/gcs/file.txt") is None
 
     def test_delete_nonexistent(self, tmp_path: Path):
         """Test deleting non-existent file returns False."""
         cache = FileContentCache(tmp_path)
 
-        deleted = cache.delete("tenant1", "/mnt/gcs/nonexistent.txt")
+        deleted = cache.delete("zone1", "/mnt/gcs/nonexistent.txt")
         assert not deleted
 
-    def test_tenant_isolation(self, tmp_path: Path):
-        """Test that tenants are isolated."""
+    def test_zone_isolation(self, tmp_path: Path):
+        """Test that zones are isolated."""
         cache = FileContentCache(tmp_path)
 
-        # Write to two tenants
-        cache.write("tenant1", "/file.txt", b"tenant1 content")
-        cache.write("tenant2", "/file.txt", b"tenant2 content")
+        # Write to two zones
+        cache.write("zone1", "/file.txt", b"zone1 content")
+        cache.write("zone2", "/file.txt", b"zone2 content")
 
-        # Read should return correct content per tenant
-        assert cache.read("tenant1", "/file.txt") == b"tenant1 content"
-        assert cache.read("tenant2", "/file.txt") == b"tenant2 content"
+        # Read should return correct content per zone
+        assert cache.read("zone1", "/file.txt") == b"zone1 content"
+        assert cache.read("zone2", "/file.txt") == b"zone2 content"
 
     def test_read_bulk(self, tmp_path: Path):
         """Test bulk read operation."""
@@ -97,11 +97,11 @@ class TestFileContentCache:
 
         # Write multiple files
         for i in range(5):
-            cache.write("tenant1", f"/file{i}.txt", f"content{i}".encode())
+            cache.write("zone1", f"/file{i}.txt", f"content{i}".encode())
 
         # Bulk read
         paths = [f"/file{i}.txt" for i in range(5)]
-        results = cache.read_bulk("tenant1", paths)
+        results = cache.read_bulk("zone1", paths)
 
         assert len(results) == 5
         for i in range(5):
@@ -112,12 +112,12 @@ class TestFileContentCache:
         cache = FileContentCache(tmp_path)
 
         # Write only some files
-        cache.write("tenant1", "/file1.txt", b"content1")
-        cache.write("tenant1", "/file3.txt", b"content3")
+        cache.write("zone1", "/file1.txt", b"content1")
+        cache.write("zone1", "/file3.txt", b"content3")
 
         # Bulk read including missing files
         paths = ["/file1.txt", "/file2.txt", "/file3.txt", "/file4.txt"]
-        results = cache.read_bulk("tenant1", paths)
+        results = cache.read_bulk("zone1", paths)
 
         # Should only contain existing files
         assert len(results) == 2
@@ -130,35 +130,35 @@ class TestFileContentCache:
 
         # Write multiple files with text
         for i in range(3):
-            cache.write("tenant1", f"/file{i}.txt", b"binary", text_content=f"text{i}")
+            cache.write("zone1", f"/file{i}.txt", b"binary", text_content=f"text{i}")
 
         # Bulk read text
         paths = [f"/file{i}.txt" for i in range(3)]
-        results = cache.read_text_bulk("tenant1", paths)
+        results = cache.read_text_bulk("zone1", paths)
 
         assert len(results) == 3
         for i in range(3):
             assert results[f"/file{i}.txt"] == f"text{i}"
 
-    def test_delete_tenant(self, tmp_path: Path):
-        """Test deleting all files for a tenant."""
+    def test_delete_zone(self, tmp_path: Path):
+        """Test deleting all files for a zone."""
         cache = FileContentCache(tmp_path)
 
-        # Write files for multiple tenants
+        # Write files for multiple zones
         for i in range(5):
-            cache.write("tenant1", f"/file{i}.txt", b"content")
-        cache.write("tenant2", "/file.txt", b"content")
+            cache.write("zone1", f"/file{i}.txt", b"content")
+        cache.write("zone2", "/file.txt", b"content")
 
-        # Delete tenant1
-        deleted_count = cache.delete_tenant("tenant1")
+        # Delete zone1
+        deleted_count = cache.delete_zone("zone1")
         assert deleted_count == 5
 
-        # Verify tenant1 files are gone
+        # Verify zone1 files are gone
         for i in range(5):
-            assert not cache.exists("tenant1", f"/file{i}.txt")
+            assert not cache.exists("zone1", f"/file{i}.txt")
 
-        # Tenant2 should be unaffected
-        assert cache.exists("tenant2", "/file.txt")
+        # Zone2 should be unaffected
+        assert cache.exists("zone2", "/file.txt")
 
     def test_cache_stats(self, tmp_path: Path):
         """Test cache statistics."""
@@ -170,18 +170,18 @@ class TestFileContentCache:
         assert stats["total_size_bytes"] == 0
 
         # Write some files
-        cache.write("tenant1", "/file1.txt", b"12345")  # 5 bytes
-        cache.write("tenant1", "/file2.txt", b"1234567890")  # 10 bytes
-        cache.write("tenant2", "/file.txt", b"abc")  # 3 bytes
+        cache.write("zone1", "/file1.txt", b"12345")  # 5 bytes
+        cache.write("zone1", "/file2.txt", b"1234567890")  # 10 bytes
+        cache.write("zone2", "/file.txt", b"abc")  # 3 bytes
 
         # Check stats
         stats = cache.get_cache_stats()
         assert stats["total_files"] == 3
         assert stats["total_size_bytes"] == 18
-        assert stats["tenants"]["tenant1"]["files"] == 2
-        assert stats["tenants"]["tenant1"]["size_bytes"] == 15
-        assert stats["tenants"]["tenant2"]["files"] == 1
-        assert stats["tenants"]["tenant2"]["size_bytes"] == 3
+        assert stats["zones"]["zone1"]["files"] == 2
+        assert stats["zones"]["zone1"]["size_bytes"] == 15
+        assert stats["zones"]["zone2"]["files"] == 1
+        assert stats["zones"]["zone2"]["size_bytes"] == 3
 
     def test_zoekt_index_path(self, tmp_path: Path):
         """Test Zoekt index path returns cache directory."""
@@ -195,10 +195,10 @@ class TestFileContentCache:
         cache = FileContentCache(tmp_path)
 
         # Write a file
-        cache.write("tenant1", "/mnt/gcs/test.txt", b"content")
+        cache.write("zone1", "/mnt/gcs/test.txt", b"content")
 
         # Check that it's stored with hash-based path
-        cache_dir = tmp_path / ".cache" / "tenant1"
+        cache_dir = tmp_path / ".cache" / "zone1"
 
         # Find the file (should be in hash subdirectory)
         files = list(cache_dir.rglob("*.bin"))
@@ -214,15 +214,15 @@ class TestFileContentCache:
         cache = FileContentCache(tmp_path)
 
         # Write same path twice
-        cache.write("tenant1", "/file.txt", b"content1")
-        cache.write("tenant1", "/file.txt", b"content2")
+        cache.write("zone1", "/file.txt", b"content1")
+        cache.write("zone1", "/file.txt", b"content2")
 
         # Should only have one file (overwritten)
         stats = cache.get_cache_stats()
         assert stats["total_files"] == 1
 
         # Content should be the newer one
-        assert cache.read("tenant1", "/file.txt") == b"content2"
+        assert cache.read("zone1", "/file.txt") == b"content2"
 
 
 class TestGetFileCache:

@@ -44,7 +44,7 @@ Dynamic mounts are added programmatically at runtime using the mount management 
 **Use dynamic mounts when:**
 - Mounts are user-specific or session-based
 - Applications need to add/remove backends on-the-fly
-- Multi-tenant scenarios with isolated storage per tenant
+- Multi-zone scenarios with isolated storage per tenant
 - Temporary mounts that should not persist in configuration
 
 ---
@@ -164,7 +164,7 @@ def list_mounts() -> list[MountConfig]
   - `mount_id`: Unique mount identifier
   - `created_at`: Creation timestamp
   - `owner_user_id`: Owner user ID (optional)
-  - `tenant_id`: Tenant ID (optional)
+  - `zone_id`: Zone ID (optional)
 
 **Examples:**
 

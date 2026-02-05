@@ -38,7 +38,7 @@ def test_workspace_namespace_operations():
             subject_type="agent",
             subject_id="agent1",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             is_admin=False,
         )
 
@@ -79,7 +79,7 @@ def test_shared_namespace_operations():
             subject_type="user",
             subject_id="alice",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             is_admin=False,
         )
 
@@ -114,7 +114,7 @@ def test_external_namespace_operations():
 
         ctx = OperationContext(
             user="anonymous", subject_type="user", subject_id="anonymous", groups=[], is_admin=False
-        )  # External namespace doesn't require tenant_id
+        )  # External namespace doesn't require zone_id
 
         # Write to external namespace
         nx.write("/external/s3/bucket/file.txt", b"external data", context=ctx)
@@ -135,8 +135,8 @@ def test_external_namespace_operations():
         cleanup_windows_db()
 
 
-def test_multi_namespace_operations_single_tenant():
-    """Test operations across multiple namespaces for single tenant."""
+def test_multi_namespace_operations_single_zone():
+    """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = NexusFS(
             auto_parse=False,
@@ -150,7 +150,7 @@ def test_multi_namespace_operations_single_tenant():
             subject_type="agent",
             subject_id="agent1",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
             is_admin=False,
         )
 
@@ -168,8 +168,8 @@ def test_multi_namespace_operations_single_tenant():
         cleanup_windows_db()
 
 
-def test_namespace_isolation_between_tenants():
-    """Test that different tenants' workspaces are isolated."""
+def test_namespace_isolation_between_zones():
+    """Test that different zones' workspaces are isolated."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = NexusFS(
             auto_parse=False,
@@ -178,7 +178,7 @@ def test_namespace_isolation_between_tenants():
             enforce_permissions=False,
         )
 
-        # Tenant 1 writes
+        # Zone 1 writes
         nx.write(
             "/workspace/acme/agent1/secret.txt",
             b"acme secret",
@@ -187,12 +187,12 @@ def test_namespace_isolation_between_tenants():
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
-                tenant_id="acme",
+                zone_id="acme",
                 is_admin=False,
             ),
         )
 
-        # Tenant 2 writes to same path structure (different tenant)
+        # Zone 2 writes to same path structure (different zone)
         nx.write(
             "/workspace/globex/agent1/secret.txt",
             b"globex secret",
@@ -201,12 +201,12 @@ def test_namespace_isolation_between_tenants():
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
-                tenant_id="globex",
+                zone_id="globex",
                 is_admin=False,
             ),
         )
 
-        # Verify isolation - each tenant sees only their data
+        # Verify isolation - each zone sees only their data
         acme_content = nx.read(
             "/workspace/acme/agent1/secret.txt",
             context=OperationContext(
@@ -214,7 +214,7 @@ def test_namespace_isolation_between_tenants():
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
-                tenant_id="acme",
+                zone_id="acme",
                 is_admin=False,
             ),
         )
@@ -225,7 +225,7 @@ def test_namespace_isolation_between_tenants():
                 subject_type="agent",
                 subject_id="agent1",
                 groups=[],
-                tenant_id="globex",
+                zone_id="globex",
                 is_admin=False,
             ),
         )

@@ -244,7 +244,7 @@ def test_in_process_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            tenant_id="default",
+            zone_id="default",
             subject_type="user",
             subject_id="test_user",
         )
@@ -254,7 +254,7 @@ def test_in_process_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         print("Created 50 test files")
@@ -263,8 +263,8 @@ def test_in_process_thread_exhaustion(
         # Clear caches to simulate cold start
         print("\nClearing caches to simulate cold start...")
         if hasattr(nx, "_rebac_manager"):
-            if hasattr(nx._rebac_manager, "_tenant_graph_cache"):
-                nx._rebac_manager._tenant_graph_cache.clear()
+            if hasattr(nx._rebac_manager, "_zone_graph_cache"):
+                nx._rebac_manager._zone_graph_cache.clear()
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
@@ -360,7 +360,7 @@ async def test_async_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            tenant_id="default",
+            zone_id="default",
             subject_type="user",
             subject_id="test_user",
         )
@@ -370,7 +370,7 @@ async def test_async_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         print("Created 100 test files")
@@ -384,8 +384,8 @@ async def test_async_thread_exhaustion(
 
         # Clear caches
         if hasattr(nx, "_rebac_manager"):
-            if hasattr(nx._rebac_manager, "_tenant_graph_cache"):
-                nx._rebac_manager._tenant_graph_cache.clear()
+            if hasattr(nx._rebac_manager, "_zone_graph_cache"):
+                nx._rebac_manager._zone_graph_cache.clear()
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 

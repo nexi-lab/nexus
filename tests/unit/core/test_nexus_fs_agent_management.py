@@ -43,40 +43,40 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx.close()
 
 
-class TestExtractTenantId:
-    """Tests for _extract_tenant_id helper method."""
+class TestExtractZoneId:
+    """Tests for _extract_zone_id helper method."""
 
-    def test_extract_tenant_id_from_none(self, nx: NexusFS) -> None:
-        """Test extracting tenant_id from None context."""
-        result = nx._extract_tenant_id(None)
+    def test_extract_zone_id_from_none(self, nx: NexusFS) -> None:
+        """Test extracting zone_id from None context."""
+        result = nx._extract_zone_id(None)
         assert result is None
 
-    def test_extract_tenant_id_from_dict(self, nx: NexusFS) -> None:
-        """Test extracting tenant_id from dict context."""
-        context = {"tenant_id": "acme"}
-        result = nx._extract_tenant_id(context)
+    def test_extract_zone_id_from_dict(self, nx: NexusFS) -> None:
+        """Test extracting zone_id from dict context."""
+        context = {"zone_id": "acme"}
+        result = nx._extract_zone_id(context)
         assert result == "acme"
 
-    def test_extract_tenant_id_from_dict_missing(self, nx: NexusFS) -> None:
-        """Test extracting tenant_id from dict without tenant_id."""
+    def test_extract_zone_id_from_dict_missing(self, nx: NexusFS) -> None:
+        """Test extracting zone_id from dict without zone_id."""
         context = {"user_id": "alice"}
-        result = nx._extract_tenant_id(context)
+        result = nx._extract_zone_id(context)
         assert result is None
 
-    def test_extract_tenant_id_from_operation_context(self, nx: NexusFS) -> None:
-        """Test extracting tenant_id from OperationContext."""
+    def test_extract_zone_id_from_operation_context(self, nx: NexusFS) -> None:
+        """Test extracting zone_id from OperationContext."""
         context = OperationContext(
             user="alice",
             groups=[],
-            tenant_id="acme",
+            zone_id="acme",
         )
-        result = nx._extract_tenant_id(context)
+        result = nx._extract_zone_id(context)
         assert result == "acme"
 
-    def test_extract_tenant_id_from_operation_context_missing(self, nx: NexusFS) -> None:
-        """Test extracting tenant_id from OperationContext without tenant_id."""
+    def test_extract_zone_id_from_operation_context_missing(self, nx: NexusFS) -> None:
+        """Test extracting zone_id from OperationContext without zone_id."""
         context = OperationContext(user="alice", groups=[])
-        result = nx._extract_tenant_id(context)
+        result = nx._extract_zone_id(context)
         assert result is None
 
 
@@ -223,7 +223,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=0,
             )
@@ -247,7 +247,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=None,
                 revoked=0,
             )
@@ -287,7 +287,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=datetime.now(UTC) - timedelta(days=1),  # Expired
                 revoked=0,
             )
@@ -310,7 +310,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="agent",
                 subject_id="alice,agent1",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=datetime.now(UTC) + timedelta(days=10),
                 revoked=0,
             )
@@ -323,7 +323,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash2",
                 subject_type="user",
                 subject_id="alice",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=0,
             )
@@ -348,7 +348,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                tenant_id="default",
+                zone_id="default",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=1,  # Revoked
             )
@@ -370,7 +370,7 @@ class TestDeleteAgentCleanup:
     def test_delete_agent_revokes_api_keys(self, nx: NexusFS) -> None:
         """Test that delete_agent revokes all API keys for the agent."""
         # Register agent first
-        context = {"user_id": "alice", "tenant_id": "default"}
+        context = {"user_id": "alice", "zone_id": "default"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -387,7 +387,7 @@ class TestDeleteAgentCleanup:
                 key_hash="hash",
                 subject_type="agent",
                 subject_id="alice,test_agent",
-                tenant_id="default",
+                zone_id="default",
                 revoked=0,
             )
             session.add(agent_key)
@@ -441,7 +441,7 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_removes_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent removes agent directory."""
-        context = {"user_id": "alice", "tenant_id": "default"}
+        context = {"user_id": "alice", "zone_id": "default"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -483,7 +483,7 @@ class TestDeleteAgentCleanup:
         original_rebac_delete = nx.rebac_delete
         nx.rebac_delete = MagicMock(return_value=True)
 
-        context = {"user_id": "alice", "tenant_id": "default"}
+        context = {"user_id": "alice", "zone_id": "default"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -505,7 +505,7 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_handles_missing_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent handles missing directory gracefully."""
-        context = {"user_id": "alice", "tenant_id": "default"}
+        context = {"user_id": "alice", "zone_id": "default"}
 
         # Register agent
         nx.register_agent(
@@ -523,7 +523,7 @@ class TestDeleteAgentCleanup:
         admin_ctx = OperationContext(
             user=ctx.user,
             groups=ctx.groups,
-            tenant_id=ctx.tenant_id,
+            zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             is_admin=True,
             is_system=False,
@@ -546,7 +546,7 @@ class TestDeleteAgentCleanup:
         original_rebac_manager = nx._rebac_manager
         nx._rebac_manager = None
 
-        context = {"user_id": "alice", "tenant_id": "default"}
+        context = {"user_id": "alice", "zone_id": "default"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",

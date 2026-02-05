@@ -131,14 +131,14 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
             logger.debug(
                 f"Authenticated subject: ({subject_type}, {subject_id}) "
-                f"[key: {api_key.key_id}, tenant: {api_key.tenant_id}]"
+                f"[key: {api_key.key_id}, tenant: {api_key.zone_id}]"
             )
 
             return AuthResult(
                 authenticated=True,
                 subject_type=subject_type,
                 subject_id=subject_id,
-                tenant_id=api_key.tenant_id,
+                zone_id=api_key.zone_id,
                 is_admin=bool(api_key.is_admin),  # Convert from SQLite Integer to bool
                 metadata={
                     "key_id": api_key.key_id,
@@ -206,7 +206,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
         name: str,
         subject_type: str = "user",  # v0.5.0 ACE: "user" or "agent"
         subject_id: str | None = None,  # v0.5.0 ACE: Custom agent ID
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         is_admin: bool = False,
         expires_at: datetime | None = None,
         inherit_permissions: bool = False,  # v0.5.1: Default False (zero permissions)
@@ -224,7 +224,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             subject_type: Type of subject ("user" or "agent") - v0.5.0 NEW
             subject_id: Custom subject ID (for agents) - v0.5.0 NEW
                        If None, defaults to user_id
-            tenant_id: Optional tenant identifier
+            zone_id: Optional tenant identifier
             is_admin: Whether this key has admin privileges
             expires_at: Optional expiry datetime (UTC)
             inherit_permissions: Whether agent inherits owner's permissions - v0.5.1 NEW
@@ -274,7 +274,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
         # P0-5: Generate key with prefix, tenant, and high entropy (32+ bytes)
         # Format: sk-<tenant>_<subject>_<id>_<random-hex>
-        tenant_prefix = f"{tenant_id[:8]}_" if tenant_id else ""
+        tenant_prefix = f"{zone_id[:8]}_" if zone_id else ""
         subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
         random_suffix = secrets.token_hex(16)  # 32 hex chars = 16 bytes
         key_id_part = secrets.token_hex(4)  # 8 hex chars for uniqueness
@@ -288,7 +288,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             key_hash=key_hash,
             user_id=user_id,  # Always track the owner
             name=name,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             is_admin=int(is_admin),  # Convert bool to int for PostgreSQL
             expires_at=expires_at,
             subject_type=subject_type,  # v0.5.0: "user" or "agent"

@@ -77,7 +77,7 @@ class ReBACPermissionCache:
         xfetch_beta: float = 1.0,
         # Issue #1077: Tiered TTL configuration
         tiered_ttl_config: dict[str, int] | None = None,
-        # Issue #1077: Invalidation mode ("targeted" or "tenant_wide")
+        # Issue #1077: Invalidation mode ("targeted" or "zone_wide")
         invalidation_mode: str = "targeted",
     ):
         """
@@ -109,7 +109,7 @@ class ReBACPermissionCache:
                 If not provided, defaults to sensible values.
             invalidation_mode: Invalidation strategy (Issue #1077)
                 - "targeted": Use secondary indexes for O(1) invalidation (default)
-                - "tenant_wide": Legacy O(n) full cache scan
+                - "zone_wide": Legacy O(n) full cache scan
         """
         # Deprecation warning for old parameter
         if quantization_interval > 0:
@@ -132,15 +132,15 @@ class ReBACPermissionCache:
         self._lock = threading.RLock()
 
         # Revision-based quantization (Issue #909)
-        # Callback to fetch current revision for a tenant
+        # Callback to fetch current revision for a zone
         self._revision_fetcher: Callable[[str], int] | None = None
-        # Local cache for revisions to reduce DB queries (tenant -> (revision, timestamp))
+        # Local cache for revisions to reduce DB queries (zone -> (revision, timestamp))
         self._revision_cache: dict[str, tuple[int, float]] = {}
         self._revision_cache_ttl = 1.0  # Refresh revision from DB every 1 second
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
-        # Key format: "subject_type:subject_id:permission:object_type:object_id:tenant_id:r{revision_bucket}"
+        # Key format: "subject_type:subject_id:permission:object_type:object_id:zone_id:r{revision_bucket}"
         grant_cache_size = max_size // 2  # Split capacity between grant and denial caches
         denial_cache_size = max_size - grant_cache_size
         self._grant_cache: TTLCache[str, bool] = TTLCache(maxsize=grant_cache_size, ttl=ttl_seconds)
@@ -180,7 +180,7 @@ class ReBACPermissionCache:
         # Track entry metadata for jitter, refresh-ahead, and XFetch
         # Maps key -> (created_at, jittered_ttl, delta, revision)
         # delta is the recomputation time in seconds (Issue #718)
-        # revision is the tenant revision at cache time (Issue #1081)
+        # revision is the zone revision at cache time (Issue #1081)
         self._entry_metadata: dict[str, tuple[float, float, float, int]] = {}
         # Track keys currently being refreshed in background
         self._refresh_in_progress: set[str] = set()
@@ -215,9 +215,9 @@ class ReBACPermissionCache:
 
         # Issue #1077: Secondary indexes for O(1) targeted invalidation
         # Instead of scanning all cache keys, we maintain indexes
-        # _subject_index: Maps (tenant_id, subject_type, subject_id) -> set of cache keys
-        # _object_index: Maps (tenant_id, object_type, object_id) -> set of cache keys
-        # _path_prefix_index: Maps (tenant_id, object_type, path_prefix) -> set of cache keys
+        # _subject_index: Maps (zone_id, subject_type, subject_id) -> set of cache keys
+        # _object_index: Maps (zone_id, object_type, object_id) -> set of cache keys
+        # _path_prefix_index: Maps (zone_id, object_type, path_prefix) -> set of cache keys
         self._subject_index: dict[tuple[str, str, str], set[str]] = {}
         self._object_index: dict[tuple[str, str, str], set[str]] = {}
         self._path_prefix_index: dict[tuple[str, str, str], set[str]] = {}
@@ -268,7 +268,7 @@ class ReBACPermissionCache:
         subject_id: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Add a cache key to secondary indexes for O(1) invalidation (Issue #1077).
 
@@ -280,19 +280,19 @@ class ReBACPermissionCache:
             subject_id: Subject identifier
             object_type: Type of object
             object_id: Object identifier (path)
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
         if self._invalidation_mode != "targeted":
             return
 
         # Subject index
-        subject_key = (tenant_id, subject_type, subject_id)
+        subject_key = (zone_id, subject_type, subject_id)
         if subject_key not in self._subject_index:
             self._subject_index[subject_key] = set()
         self._subject_index[subject_key].add(key)
 
         # Object index
-        object_key = (tenant_id, object_type, object_id)
+        object_key = (zone_id, object_type, object_id)
         if object_key not in self._object_index:
             self._object_index[object_key] = set()
         self._object_index[object_key].add(key)
@@ -304,7 +304,7 @@ class ReBACPermissionCache:
             path = object_id
             while path and path != "/":
                 parent = path.rsplit("/", 1)[0] or "/"
-                prefix_key = (tenant_id, object_type, parent)
+                prefix_key = (zone_id, object_type, parent)
                 if prefix_key not in self._path_prefix_index:
                     self._path_prefix_index[prefix_key] = set()
                 self._path_prefix_index[prefix_key].add(key)
@@ -328,17 +328,17 @@ class ReBACPermissionCache:
         if not parsed:
             return
 
-        subject_type, subject_id, _, object_type, object_id, tenant_id = parsed
+        subject_type, subject_id, _, object_type, object_id, zone_id = parsed
 
         # Remove from subject index
-        subject_key = (tenant_id, subject_type, subject_id)
+        subject_key = (zone_id, subject_type, subject_id)
         if subject_key in self._subject_index:
             self._subject_index[subject_key].discard(key)
             if not self._subject_index[subject_key]:
                 del self._subject_index[subject_key]
 
         # Remove from object index
-        object_key = (tenant_id, object_type, object_id)
+        object_key = (zone_id, object_type, object_id)
         if object_key in self._object_index:
             self._object_index[object_key].discard(key)
             if not self._object_index[object_key]:
@@ -349,7 +349,7 @@ class ReBACPermissionCache:
             path = object_id
             while path and path != "/":
                 parent = path.rsplit("/", 1)[0] or "/"
-                prefix_key = (tenant_id, object_type, parent)
+                prefix_key = (zone_id, object_type, parent)
                 if prefix_key in self._path_prefix_index:
                     self._path_prefix_index[prefix_key].discard(key)
                     if not self._path_prefix_index[prefix_key]:
@@ -358,16 +358,16 @@ class ReBACPermissionCache:
                     break
                 path = parent
 
-    def _get_keys_for_subject(self, tenant_id: str, subject_type: str, subject_id: str) -> set[str]:
+    def _get_keys_for_subject(self, zone_id: str, subject_type: str, subject_id: str) -> set[str]:
         """Get all cache keys for a subject using secondary index (Issue #1077).
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Type of subject
             subject_id: Subject identifier
 
         Returns:
-            Set of cache keys (empty if no matches or using tenant_wide mode)
+            Set of cache keys (empty if no matches or using zone_wide mode)
         """
         if self._invalidation_mode != "targeted":
             return set()
@@ -375,19 +375,19 @@ class ReBACPermissionCache:
         if self._enable_metrics:
             self._index_lookups += 1
 
-        subject_key = (tenant_id, subject_type, subject_id)
+        subject_key = (zone_id, subject_type, subject_id)
         return self._subject_index.get(subject_key, set()).copy()
 
-    def _get_keys_for_object(self, tenant_id: str, object_type: str, object_id: str) -> set[str]:
+    def _get_keys_for_object(self, zone_id: str, object_type: str, object_id: str) -> set[str]:
         """Get all cache keys for an object using secondary index (Issue #1077).
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             object_type: Type of object
             object_id: Object identifier
 
         Returns:
-            Set of cache keys (empty if no matches or using tenant_wide mode)
+            Set of cache keys (empty if no matches or using zone_wide mode)
         """
         if self._invalidation_mode != "targeted":
             return set()
@@ -395,23 +395,23 @@ class ReBACPermissionCache:
         if self._enable_metrics:
             self._index_lookups += 1
 
-        object_key = (tenant_id, object_type, object_id)
+        object_key = (zone_id, object_type, object_id)
         return self._object_index.get(object_key, set()).copy()
 
     def _get_keys_for_path_prefix(
-        self, tenant_id: str, object_type: str, path_prefix: str
+        self, zone_id: str, object_type: str, path_prefix: str
     ) -> set[str]:
         """Get all cache keys under a path prefix using secondary index (Issue #1077).
 
         This is the key optimization: instead of O(n) scan, we get O(affected) lookup.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             object_type: Type of object
             path_prefix: Path prefix (e.g., "/workspace/")
 
         Returns:
-            Set of cache keys under this prefix (empty if no matches or using tenant_wide mode)
+            Set of cache keys under this prefix (empty if no matches or using zone_wide mode)
         """
         if self._invalidation_mode != "targeted":
             return set()
@@ -423,35 +423,35 @@ class ReBACPermissionCache:
         normalized_prefix = path_prefix.rstrip("/") or "/"
 
         # Get direct matches from the prefix index
-        prefix_key = (tenant_id, object_type, normalized_prefix)
+        prefix_key = (zone_id, object_type, normalized_prefix)
         keys = self._path_prefix_index.get(prefix_key, set()).copy()
 
         # Also include the exact object if it exists
-        object_key = (tenant_id, object_type, normalized_prefix)
+        object_key = (zone_id, object_type, normalized_prefix)
         if object_key in self._object_index:
             keys |= self._object_index[object_key]
 
         return keys
 
     def set_revision_fetcher(self, fetcher: Callable[[str], int]) -> None:
-        """Set callback to fetch current revision for a tenant.
+        """Set callback to fetch current revision for a zone.
 
         The revision fetcher is used for revision-based cache key quantization (Issue #909).
-        It should return the current write revision for the given tenant.
+        It should return the current write revision for the given zone.
 
         Args:
-            fetcher: Function that takes tenant_id and returns current revision number
+            fetcher: Function that takes zone_id and returns current revision number
         """
         self._revision_fetcher = fetcher
 
-    def _get_revision_bucket(self, tenant_id: str | None) -> int:
+    def _get_revision_bucket(self, zone_id: str | None) -> int:
         """Get quantized revision bucket for cache key.
 
         Uses cached revision with short TTL to reduce DB queries.
         Falls back to 0 if revision fetcher not set (graceful degradation).
 
         Args:
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
 
         Returns:
             Quantized revision bucket number
@@ -459,54 +459,54 @@ class ReBACPermissionCache:
         if not self._enable_revision_quantization:
             return 0
 
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
         current_time = time.time()
 
         # Check local revision cache
-        if effective_tenant in self._revision_cache:
-            cached_rev, cached_at = self._revision_cache[effective_tenant]
+        if effective_zone in self._revision_cache:
+            cached_rev, cached_at = self._revision_cache[effective_zone]
             if current_time - cached_at < self._revision_cache_ttl:
                 return cached_rev // self._revision_quantization_window
 
         # Fetch from DB via callback
         if self._revision_fetcher:
             try:
-                revision = self._revision_fetcher(effective_tenant)
-                self._revision_cache[effective_tenant] = (revision, current_time)
+                revision = self._revision_fetcher(effective_zone)
+                self._revision_cache[effective_zone] = (revision, current_time)
                 return revision // self._revision_quantization_window
             except Exception as e:
-                logger.warning(f"Failed to fetch revision for {effective_tenant}: {e}")
+                logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
 
         return 0  # Fallback: all entries share same bucket (still functional)
 
-    def _get_current_revision(self, tenant_id: str | None) -> int:
-        """Get current revision for a tenant (Issue #1081).
+    def _get_current_revision(self, zone_id: str | None) -> int:
+        """Get current revision for a zone (Issue #1081).
 
         Used for tracking revision at cache time for AT_LEAST_AS_FRESH consistency.
 
         Args:
-            tenant_id: Tenant ID (defaults to "default")
+            zone_id: Zone ID (defaults to "default")
 
         Returns:
             Current revision number, or 0 if unavailable
         """
-        effective_tenant = tenant_id or "default"
+        effective_zone = zone_id or "default"
         current_time = time.time()
 
         # Check local revision cache first
-        if effective_tenant in self._revision_cache:
-            cached_rev, cached_at = self._revision_cache[effective_tenant]
+        if effective_zone in self._revision_cache:
+            cached_rev, cached_at = self._revision_cache[effective_zone]
             if current_time - cached_at < self._revision_cache_ttl:
                 return cached_rev
 
         # Fetch from DB via callback
         if self._revision_fetcher:
             try:
-                revision = self._revision_fetcher(effective_tenant)
-                self._revision_cache[effective_tenant] = (revision, current_time)
+                revision = self._revision_fetcher(effective_zone)
+                self._revision_cache[effective_zone] = (revision, current_time)
                 return revision
             except Exception as e:
-                logger.warning(f"Failed to fetch revision for {effective_tenant}: {e}")
+                logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
 
         return 0  # Fallback
 
@@ -517,7 +517,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> str:
         """Create cache key from permission check parameters.
 
@@ -527,20 +527,20 @@ class ReBACPermissionCache:
             permission: Permission to check (e.g., "read", "write")
             object_type: Type of object (e.g., "file", "memory")
             object_id: Object identifier (e.g., path)
-            tenant_id: Optional tenant ID for multi-tenant isolation
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             Cache key string with revision bucket for distributed cache sharing
         """
-        tenant_part = tenant_id if tenant_id else "default"
-        revision_bucket = self._get_revision_bucket(tenant_id)
-        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_part}:r{revision_bucket}"
+        zone_part = zone_id if zone_id else "default"
+        revision_bucket = self._get_revision_bucket(zone_id)
+        return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{zone_part}:r{revision_bucket}"
 
     def _parse_key(self, key: str) -> tuple[str, str, str, str, str, str] | None:
         """Parse a cache key into components (excluding revision bucket).
 
         Returns:
-            Tuple of (subject_type, subject_id, permission, object_type, object_id, tenant_id)
+            Tuple of (subject_type, subject_id, permission, object_type, object_id, zone_id)
             or None if key format is invalid.
         """
         parts = key.split(":")
@@ -550,9 +550,9 @@ class ReBACPermissionCache:
         subject_id = parts[1]
         permission = parts[2]
         object_type = parts[3]
-        tenant_id = parts[-2]
+        zone_id = parts[-2]
         object_id = ":".join(parts[4:-2])
-        return (subject_type, subject_id, permission, object_type, object_id, tenant_id)
+        return (subject_type, subject_id, permission, object_type, object_id, zone_id)
 
     def get(
         self,
@@ -561,7 +561,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool | None:
         """
         Get cached permission check result.
@@ -572,15 +572,13 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             True/False if cached, None if not cached or expired
         """
         start_time = time.perf_counter()
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
             # Check grant cache first (Issue #877)
@@ -615,7 +613,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         min_revision: int | None = None,
     ) -> tuple[bool | None, int]:
         """Get cached result with revision check for AT_LEAST_AS_FRESH consistency (Issue #1081).
@@ -629,7 +627,7 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             min_revision: Minimum acceptable revision (for AT_LEAST_AS_FRESH mode)
 
         Returns:
@@ -641,16 +639,14 @@ class ReBACPermissionCache:
             # After a write, check with read-your-writes guarantee
             result, revision = cache.get_with_revision_check(
                 "user", "alice", "read", "file", "/doc.txt",
-                tenant_id="default",
+                zone_id="default",
                 min_revision=write_result.revision
             )
             if result is None:
                 # Cache miss or stale - need fresh computation
                 ...
         """
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
             # Get metadata to check revision
@@ -698,7 +694,7 @@ class ReBACPermissionCache:
         object_type: str,
         object_id: str,
         result: bool,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         delta: float = 0.0,
         relation: str | None = None,
         is_inherited: bool = False,
@@ -720,7 +716,7 @@ class ReBACPermissionCache:
             object_type: Type of object
             object_id: Object identifier
             result: Permission check result (True/False)
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             delta: Recomputation time in seconds (Issue #718: XFetch algorithm)
                 Used for probabilistic early expiration - items that take longer
                 to recompute are refreshed earlier.
@@ -729,10 +725,8 @@ class ReBACPermissionCache:
             is_inherited: Whether this is an inherited permission (Issue #1077)
                 Inherited permissions use shorter TTL since they depend on parent.
         """
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
-        tenant_part = tenant_id if tenant_id else "default"
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
+        zone_part = zone_id if zone_id else "default"
 
         with self._lock:
             # Issue #1077: Get tiered TTL based on relation type
@@ -753,7 +747,7 @@ class ReBACPermissionCache:
             # and delta for XFetch (Issue #718), plus revision for AT_LEAST_AS_FRESH (Issue #1081)
             jittered_ttl = self._get_jittered_ttl(float(base_ttl))
             # Get current revision for consistency tracking
-            current_revision = self._get_current_revision(tenant_id)
+            current_revision = self._get_current_revision(zone_id)
             self._entry_metadata[key] = (time.time(), jittered_ttl, delta, current_revision)
 
             # Route to appropriate cache based on result (Issue #877)
@@ -768,7 +762,7 @@ class ReBACPermissionCache:
                     self._denial_sets += 1
 
             # Issue #1077: Add to secondary indexes for O(1) invalidation
-            self._add_to_indexes(key, subject_type, subject_id, object_type, object_id, tenant_part)
+            self._add_to_indexes(key, subject_type, subject_id, object_type, object_id, zone_part)
 
             if self._enable_metrics:
                 self._sets += 1
@@ -784,7 +778,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> tuple[bool, str]:
         """
         Try to acquire the right to compute a permission check.
@@ -799,16 +793,14 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Tuple of (should_compute, cache_key):
             - (True, key) if caller should compute and then call release_compute()
             - (False, key) if another request is computing, caller should call wait_for_compute()
         """
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
             # Check if already being computed
@@ -872,7 +864,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         delta: float = 0.0,
     ) -> None:
         """
@@ -889,7 +881,7 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
         with self._lock:
@@ -901,7 +893,7 @@ class ReBACPermissionCache:
                 object_type,
                 object_id,
                 result,
-                tenant_id,
+                zone_id,
                 delta=delta,
             )
 
@@ -987,7 +979,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         beta: float | None = None,
     ) -> bool:
         """
@@ -999,15 +991,13 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             beta: Optional override for aggressiveness parameter
 
         Returns:
             True if we should trigger a refresh now
         """
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
         with self._lock:
             return self._should_refresh_xfetch(key, beta)
 
@@ -1022,7 +1012,7 @@ class ReBACPermissionCache:
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> tuple[bool | None, bool, str]:
         """
         Get cached value and check if refresh is needed.
@@ -1038,7 +1028,7 @@ class ReBACPermissionCache:
             permission: Permission to check
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Tuple of (cached_value, needs_refresh, cache_key):
@@ -1047,9 +1037,7 @@ class ReBACPermissionCache:
             - cache_key: The cache key for use with refresh methods
         """
         start_time = time.perf_counter()
-        key = self._make_key(
-            subject_type, subject_id, permission, object_type, object_id, tenant_id
-        )
+        key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
             # Get cached value (existing logic)
@@ -1141,7 +1129,7 @@ class ReBACPermissionCache:
         return keys
 
     def invalidate_subject(
-        self, subject_type: str, subject_id: str, tenant_id: str | None = None
+        self, subject_type: str, subject_id: str, zone_id: str | None = None
     ) -> int:
         """
         Invalidate all cache entries for a specific subject.
@@ -1153,18 +1141,18 @@ class ReBACPermissionCache:
         Args:
             subject_type: Type of subject
             subject_id: Subject identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Number of entries invalidated
         """
-        tenant_part = tenant_id if tenant_id else "default"
+        zone_part = zone_id if zone_id else "default"
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
             if self._invalidation_mode == "targeted":
                 keys_to_delete = list(
-                    self._get_keys_for_subject(tenant_part, subject_type, subject_id)
+                    self._get_keys_for_subject(zone_part, subject_type, subject_id)
                 )
                 if self._enable_metrics:
                     self._targeted_invalidations += 1
@@ -1176,7 +1164,7 @@ class ReBACPermissionCache:
                         parsed
                         and parsed[0] == subject_type
                         and parsed[1] == subject_id
-                        and parsed[5] == tenant_part
+                        and parsed[5] == zone_part
                     )
 
                 keys_to_delete = self._collect_matching_keys(match_fn)
@@ -1197,7 +1185,7 @@ class ReBACPermissionCache:
             return count
 
     def invalidate_object(
-        self, object_type: str, object_id: str, tenant_id: str | None = None
+        self, object_type: str, object_id: str, zone_id: str | None = None
     ) -> int:
         """
         Invalidate all cache entries for a specific object.
@@ -1209,19 +1197,17 @@ class ReBACPermissionCache:
         Args:
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Number of entries invalidated
         """
-        tenant_part = tenant_id if tenant_id else "default"
+        zone_part = zone_id if zone_id else "default"
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
             if self._invalidation_mode == "targeted":
-                keys_to_delete = list(
-                    self._get_keys_for_object(tenant_part, object_type, object_id)
-                )
+                keys_to_delete = list(self._get_keys_for_object(zone_part, object_type, object_id))
                 if self._enable_metrics:
                     self._targeted_invalidations += 1
             else:
@@ -1232,7 +1218,7 @@ class ReBACPermissionCache:
                         parsed
                         and parsed[3] == object_type
                         and parsed[4] == object_id
-                        and parsed[5] == tenant_part
+                        and parsed[5] == zone_part
                     )
 
                 keys_to_delete = self._collect_matching_keys(match_fn)
@@ -1258,7 +1244,7 @@ class ReBACPermissionCache:
         subject_id: str,
         object_type: str,
         object_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """
         Invalidate cache entries for a specific subject-object pair.
@@ -1272,18 +1258,18 @@ class ReBACPermissionCache:
             subject_id: Subject identifier
             object_type: Type of object
             object_id: Object identifier
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Number of entries invalidated
         """
-        tenant_part = tenant_id if tenant_id else "default"
+        zone_part = zone_id if zone_id else "default"
 
         with self._lock:
             # Issue #1077: Use intersection of indexes for precise O(1) lookup
             if self._invalidation_mode == "targeted":
-                subject_keys = self._get_keys_for_subject(tenant_part, subject_type, subject_id)
-                object_keys = self._get_keys_for_object(tenant_part, object_type, object_id)
+                subject_keys = self._get_keys_for_subject(zone_part, subject_type, subject_id)
+                object_keys = self._get_keys_for_object(zone_part, object_type, object_id)
                 # Intersection gives us exactly the subject-object pair keys
                 keys_to_delete = list(subject_keys & object_keys)
                 if self._enable_metrics:
@@ -1298,7 +1284,7 @@ class ReBACPermissionCache:
                         and parsed[1] == subject_id
                         and parsed[3] == object_type
                         and parsed[4] == object_id
-                        and parsed[5] == tenant_part
+                        and parsed[5] == zone_part
                     )
 
                 keys_to_delete = self._collect_matching_keys(match_fn)
@@ -1320,7 +1306,7 @@ class ReBACPermissionCache:
             return count
 
     def invalidate_object_prefix(
-        self, object_type: str, object_id_prefix: str, tenant_id: str | None = None
+        self, object_type: str, object_id_prefix: str, zone_id: str | None = None
     ) -> int:
         """
         Invalidate all cache entries for objects matching a prefix.
@@ -1333,18 +1319,18 @@ class ReBACPermissionCache:
         Args:
             object_type: Type of object
             object_id_prefix: Object ID prefix (e.g., "/workspace/")
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
 
         Returns:
             Number of entries invalidated
         """
-        tenant_part = tenant_id if tenant_id else "default"
+        zone_part = zone_id if zone_id else "default"
 
         with self._lock:
             # Issue #1077: Use path prefix index for O(affected) lookup
             if self._invalidation_mode == "targeted":
                 keys_to_delete = list(
-                    self._get_keys_for_path_prefix(tenant_part, object_type, object_id_prefix)
+                    self._get_keys_for_path_prefix(zone_part, object_type, object_id_prefix)
                 )
                 if self._enable_metrics:
                     self._targeted_invalidations += 1
@@ -1356,7 +1342,7 @@ class ReBACPermissionCache:
                         parsed
                         and parsed[3] == object_type
                         and parsed[4].startswith(object_id_prefix)
-                        and parsed[5] == tenant_part
+                        and parsed[5] == zone_part
                     )
 
                 keys_to_delete = self._collect_matching_keys(match_fn)

@@ -277,7 +277,7 @@ await plugin.generate_skill(
     url="...",
     tier="tenant",  # /shared/skills/
     creator_id="alice",
-    tenant_id="acme-corp"
+    zone_id="acme-corp"
 )
 
 # System tier - global skills (admin only)
@@ -328,7 +328,7 @@ await plugin.generate_skill(
     name="api-users-v2",
     tier="tenant",
     creator_id="engineering",
-    tenant_id="company"
+    zone_id="company"
 )
 
 # Claude can now understand your API
@@ -369,7 +369,7 @@ for name, url in docs.items():
         url=url,
         name=f"kb-{name}",
         tier="tenant",
-        tenant_id="engineering"
+        zone_id="engineering"
     )
 ```
 

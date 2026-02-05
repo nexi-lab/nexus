@@ -95,7 +95,7 @@ Developers testing sandbox features with filesystem mounting experience:
 ### Non-Goals
 
 ❌ **Production Deployment:**
-- Not designed for multi-tenant production use
+- Not designed for multi-zone production use
 - No advanced isolation beyond Docker containers
 - No distributed orchestration (use E2B for cloud)
 
@@ -1224,7 +1224,7 @@ nx.sandbox_connect(
 | Production (cloud) | E2B |
 | No Docker available | E2B |
 | Need GPU | E2B (Phase 1) |
-| Multi-tenant SaaS | E2B |
+| Multi-zone SaaS | E2B |
 
 ---
 

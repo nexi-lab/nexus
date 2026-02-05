@@ -110,7 +110,7 @@ class ReBACService:
         relation: str,
         object: tuple[str, str],
         expires_at: datetime | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -121,7 +121,7 @@ class ReBACService:
             relation: Relation name e.g., "owner", "can-read", "member", "dynamic_viewer"
             object: Object tuple (type, id) e.g., ("file", "/doc.txt")
             expires_at: Optional expiration datetime for temporary relationships
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             context: Operation context for permission checks
             column_config: Optional column-level permissions for dynamic_viewer relation.
                           Only applies to CSV files. Structure:
@@ -187,14 +187,14 @@ class ReBACService:
             if not isinstance(object, tuple) or len(object) != 2:
                 raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-            # Use tenant_id from context if not explicitly provided
-            effective_tenant_id = tenant_id
-            if effective_tenant_id is None and context:
+            # Use zone_id from context if not explicitly provided
+            effective_zone_id = zone_id
+            if effective_zone_id is None and context:
                 # Handle both dict and OperationContext
                 if isinstance(context, dict):
-                    effective_tenant_id = context.get("tenant")
-                elif hasattr(context, "tenant_id"):
-                    effective_tenant_id = context.tenant_id
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # SECURITY: Check execute permission before allowing permission management
             # Only owners (those with execute permission) can grant/manage permissions on resources
@@ -295,7 +295,7 @@ class ReBACService:
                 relation=relation,
                 object=object,
                 expires_at=expires_at,
-                tenant_id=effective_tenant_id,
+                zone_id=effective_zone_id,
                 conditions=conditions,
             )
 
@@ -303,11 +303,11 @@ class ReBACService:
 
             if self._enable_audit_logging:
                 logger.info(
-                    "[ReBACService] Created tuple: %s -[%s]-> %s (tenant=%s, expires=%s)",
+                    "[ReBACService] Created tuple: %s -[%s]-> %s (zone=%s, expires=%s)",
                     subject,
                     relation,
                     object,
-                    effective_tenant_id,
+                    effective_zone_id,
                     expires_at,
                 )
 
@@ -330,7 +330,7 @@ class ReBACService:
         permission: str,
         object: tuple[str, str],
         context: Any = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         consistency_mode: str | None = None,  # Issue #1081
         min_revision: int | None = None,  # Issue #1081
     ) -> bool:
@@ -347,7 +347,7 @@ class ReBACService:
             permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation (time, ip, device, attributes)
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             consistency_mode: Per-request consistency mode (Issue #1081):
                 - "minimize_latency" (default): Use cache for fastest response
                 - "at_least_as_fresh": Cache must be >= min_revision
@@ -400,14 +400,14 @@ class ReBACService:
             if not isinstance(object, tuple) or len(object) != 2:
                 raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-            # Use tenant_id from context if not explicitly provided
-            effective_tenant_id = tenant_id
-            if effective_tenant_id is None and context:
+            # Use zone_id from context if not explicitly provided
+            effective_zone_id = zone_id
+            if effective_zone_id is None and context:
                 # Handle both dict and OperationContext
                 if isinstance(context, dict):
-                    effective_tenant_id = context.get("tenant")
-                elif hasattr(context, "tenant_id"):
-                    effective_tenant_id = context.tenant_id
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # Issue #1081: Build consistency requirement from API params
             consistency = None
@@ -431,7 +431,7 @@ class ReBACService:
                 permission=permission,
                 object=object,
                 context=context,
-                tenant_id=effective_tenant_id,
+                zone_id=effective_zone_id,
                 consistency=consistency,
             )
 
@@ -452,7 +452,7 @@ class ReBACService:
         self,
         permission: str,
         object: tuple[str, str],
-        _tenant_id: str | None = None,
+        _zone_id: str | None = None,
         _limit: int = 100,
     ) -> list[tuple[str, str]]:
         """Find all subjects that have a permission on an object.
@@ -462,7 +462,7 @@ class ReBACService:
         Args:
             permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             limit: Maximum results (not currently enforced by manager)
 
         Returns:
@@ -512,7 +512,7 @@ class ReBACService:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,
     ) -> dict[str, Any]:
         """Explain why a subject has or doesn't have permission.
@@ -524,7 +524,7 @@ class ReBACService:
             subject: Subject tuple e.g., ("user", "alice")
             permission: Permission to explain e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             context: Operation context (automatically provided by RPC server)
 
         Returns:
@@ -570,21 +570,21 @@ class ReBACService:
             if not isinstance(object, tuple) or len(object) != 2:
                 raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-            # Use tenant_id from context if not explicitly provided
-            effective_tenant_id = tenant_id
-            if effective_tenant_id is None and context:
+            # Use zone_id from context if not explicitly provided
+            effective_zone_id = zone_id
+            if effective_zone_id is None and context:
                 # Handle both dict and OperationContext
                 if isinstance(context, dict):
-                    effective_tenant_id = context.get("tenant")
-                elif hasattr(context, "tenant_id"):
-                    effective_tenant_id = context.tenant_id
+                    effective_zone_id = context.get("zone")
+                elif hasattr(context, "zone_id"):
+                    effective_zone_id = context.zone_id
 
             # Get explanation from manager
             return self._rebac_manager.rebac_explain(
                 subject=subject,
                 permission=permission,
                 object=object,
-                tenant_id=effective_tenant_id,
+                zone_id=effective_zone_id,
             )
 
         # Run in thread pool since _rebac_manager operations may block
@@ -596,7 +596,7 @@ class ReBACService:
     async def rebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        _tenant_id: str | None = None,
+        _zone_id: str | None = None,
     ) -> list[bool]:
         """Check multiple permissions in a single call for efficiency.
 
@@ -605,7 +605,7 @@ class ReBACService:
 
         Args:
             checks: List of (subject, permission, object) tuples
-            tenant_id: Tenant ID (currently unused by manager)
+            zone_id: Zone ID (currently unused by manager)
 
         Returns:
             List of boolean results (same order as input)
@@ -710,7 +710,7 @@ class ReBACService:
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
-        _tenant_id: str | None = None,
+        _zone_id: str | None = None,
         _limit: int = 100,
         _offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -721,7 +721,7 @@ class ReBACService:
             relation: Filter by relation (optional, mutually exclusive with relation_in)
             object: Filter by object (optional)
             relation_in: Filter by multiple relations (optional, mutually exclusive with relation)
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             limit: Maximum results (not currently enforced)
             offset: Pagination offset (not currently enforced)
 
@@ -735,7 +735,7 @@ class ReBACService:
             - object_id: str
             - created_at: datetime
             - expires_at: datetime | None
-            - tenant_id: str | None
+            - zone_id: str | None
 
         Raises:
             RuntimeError: If ReBAC manager not available
@@ -800,9 +800,9 @@ class ReBACService:
                     # Both SQLite and PostgreSQL return dict-like rows
                     # Note: sqlite3.Row doesn't have .get() method, use try/except
                     try:
-                        tenant_id_val = row["tenant_id"]
+                        zone_id_val = row["zone_id"]
                     except (KeyError, IndexError):
-                        tenant_id_val = None
+                        zone_id_val = None
 
                     results.append(
                         {
@@ -814,7 +814,7 @@ class ReBACService:
                             "object_id": row["object_id"],
                             "created_at": row["created_at"],
                             "expires_at": row["expires_at"],
-                            "tenant_id": tenant_id_val,
+                            "zone_id": zone_id_val,
                         }
                     )
 
@@ -1001,7 +1001,7 @@ class ReBACService:
         permission: str,
         object: tuple[str, str],
         requesting_subject: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 100,
     ) -> list[tuple[str, str]]:
         """Expand permissions with privacy filtering.
@@ -1033,7 +1033,7 @@ class ReBACService:
         raise NotImplementedError("revoke_consent() not yet implemented - Phase 2 in progress")
 
     @rpc_expose(description="Make resource publicly discoverable")
-    async def make_public(self, resource: tuple[str, str], tenant_id: str | None = None) -> str:
+    async def make_public(self, resource: tuple[str, str], zone_id: str | None = None) -> str:
         """Make a resource publicly discoverable."""
         # TODO: Extract make_public implementation
         raise NotImplementedError("make_public() not yet implemented - Phase 2 in progress")
@@ -1048,14 +1048,14 @@ class ReBACService:
     # Public API: Resource Sharing
     # =========================================================================
 
-    @rpc_expose(description="Share a resource with a specific user (same or different tenant)")
+    @rpc_expose(description="Share a resource with a specific user (same or different zone)")
     async def share_with_user(
         self,
         resource: tuple[str, str],
         target_user: str,
         permission: str = "can-read",
         context: Any = None,
-        target_tenant_id: str | None = None,
+        target_zone_id: str | None = None,
         expiry: datetime | None = None,
         message: str | None = None,
     ) -> str:
@@ -1071,7 +1071,7 @@ class ReBACService:
             target_user: User ID to share with
             permission: Permission to grant (default: "can-read")
             context: Operation context
-            target_tenant_id: Target tenant (for cross-tenant sharing)
+            target_zone_id: Target zone (for cross-zone sharing)
             expiry: Optional expiry datetime
             message: Optional message to recipient
 
@@ -1127,7 +1127,7 @@ class ReBACService:
     async def list_incoming_shares(
         self,
         user_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List shares received by a user (incoming shares)."""
         # TODO: Extract list_incoming_shares implementation
@@ -1276,7 +1276,7 @@ class ReBACService:
             op_context = OperationContext(
                 user=context.get("user", "unknown"),
                 groups=context.get("groups", []),
-                tenant_id=context.get("tenant_id"),
+                zone_id=context.get("zone_id"),
                 is_admin=context.get("is_admin", False),
                 is_system=context.get("is_system", False),
             )
@@ -1320,29 +1320,29 @@ class ReBACService:
         if hasattr(self, "_permission_enforcer"):
             has_permission = self._permission_enforcer.check(resource_path, perm_enum, op_context)
 
-            # If user is not owner, check if they are tenant admin
+            # If user is not owner, check if they are zone admin
             if not has_permission:
-                # Extract tenant from resource path (format: /tenant:{tenant_id}/...)
-                tenant_id = None
-                if resource_path.startswith("/tenant:"):
-                    parts = resource_path[8:].split("/", 1)  # Remove "/tenant:" prefix
+                # Extract zone from resource path (format: /zone/{zone_id}/...)
+                zone_id = None
+                if resource_path.startswith("/zone/"):
+                    parts = resource_path[6:].split("/", 1)  # Remove "/zone/" prefix
                     if parts:
-                        tenant_id = parts[0]
+                        zone_id = parts[0]
 
-                # Check if user is tenant admin for this resource's tenant
-                if tenant_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_tenant_admin
+                # Check if user is zone admin for this resource's zone
+                if zone_id and op_context.user:
+                    from nexus.server.auth.user_helpers import is_zone_admin
 
-                    if is_tenant_admin(self._rebac_manager, op_context.user, tenant_id):
-                        # Tenant admin can share resources in their tenant
+                    if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
+                        # Zone admin can share resources in their zone
                         return
 
-                # Neither owner nor tenant admin - deny
+                # Neither owner nor zone admin - deny
                 perm_name = required_permission.upper()
                 raise PermissionError(
                     f"Access denied: User '{op_context.user}' does not have {perm_name} "
                     f"permission to manage permissions on '{resource_path}'. "
-                    f"Only owners or tenant admins can share resources."
+                    f"Only owners or zone admins can share resources."
                 )
 
 

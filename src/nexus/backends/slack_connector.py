@@ -233,9 +233,9 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
 
         try:
             # Default to 'default' tenant if not specified
-            tenant_id = (
-                context.tenant_id
-                if context and hasattr(context, "tenant_id") and context.tenant_id
+            zone_id = (
+                context.zone_id
+                if context and hasattr(context, "zone_id") and context.zone_id
                 else "default"
             )
 
@@ -255,7 +255,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                     self.token_manager.get_valid_token(
                         provider=self.provider,
                         user_email=user_email,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                 )
         except Exception as e:
@@ -567,12 +567,12 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         # Cache the result
         if self._has_caching():
             try:
-                tenant_id = getattr(context, "tenant_id", None)
+                zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
                     backend_version=IMMUTABLE_VERSION,  # Messages are immutable
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             except Exception:
                 pass  # Don't fail on cache write errors

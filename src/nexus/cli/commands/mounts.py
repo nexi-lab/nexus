@@ -62,7 +62,7 @@ def mounts_group() -> None:
 @click.option("--priority", type=int, default=0, help="Mount priority (higher = preferred)")
 @click.option("--readonly", is_flag=True, help="Mount as read-only")
 @click.option("--owner", type=str, default=None, help="Owner user ID")
-@click.option("--tenant", type=str, default=None, help="Tenant ID")
+@click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
 def add_mount(
     mount_point: str,
@@ -71,7 +71,7 @@ def add_mount(
     priority: int,
     readonly: bool,
     owner: str | None,
-    tenant: str | None,
+    zone: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Add a new backend mount.
@@ -93,7 +93,7 @@ def add_mount(
 
         # Mount with ownership
         nexus mounts add /personal/alice google_drive '{"access_token":"..."}' \\
-            --owner "google:alice123" --tenant "acme"
+            --owner "google:alice123" --zone "acme"
     """
     try:
         # Parse backend config JSON
@@ -133,8 +133,8 @@ def add_mount(
         console.print(f"  Read-Only: [cyan]{readonly}[/cyan]")
         if owner:
             console.print(f"  Owner: [cyan]{owner}[/cyan]")
-        if tenant:
-            console.print(f"  Tenant: [cyan]{tenant}[/cyan]")
+        if zone:
+            console.print(f"  Zone: [cyan]{zone}[/cyan]")
 
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -181,16 +181,16 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 
 @mounts_group.command(name="list")
 @click.option("--owner", type=str, default=None, help="Filter by owner user ID")
-@click.option("--tenant", type=str, default=None, help="Filter by tenant ID")
+@click.option("--zone", type=str, default=None, help="Filter by zone ID")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @add_backend_options
 def list_mounts(
-    owner: str | None, tenant: str | None, output_json: bool, backend_config: BackendConfig
+    owner: str | None, zone: str | None, output_json: bool, backend_config: BackendConfig
 ) -> None:
     """List all persisted mounts.
 
     Shows all backend mounts stored in the database, with optional filtering
-    by owner or tenant.
+    by owner or zone.
 
     Examples:
         # List all mounts
@@ -199,8 +199,8 @@ def list_mounts(
         # List mounts for specific user
         nexus mounts list --owner "google:alice123"
 
-        # List mounts for specific tenant
-        nexus mounts list --tenant "acme"
+        # List mounts for specific zone
+        nexus mounts list --zone "acme"
 
         # Output as JSON
         nexus mounts list --json
@@ -217,10 +217,10 @@ def list_mounts(
             console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
             sys.exit(1)
 
-        # Note: owner/tenant filtering not yet supported in remote mode
-        if owner or tenant:
+        # Note: owner/zone filtering not yet supported in remote mode
+        if owner or zone:
             console.print(
-                "[yellow]Warning:[/yellow] Filtering by owner/tenant not yet supported. Showing all mounts."
+                "[yellow]Warning:[/yellow] Filtering by owner/zone not yet supported. Showing all mounts."
             )
 
         if output_json:

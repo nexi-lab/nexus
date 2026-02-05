@@ -60,7 +60,7 @@ Agent Identity System (v0.5.0):
         "--admin", action="store_true", help="Grant admin privileges (requires --with-key)"
     )
     parser.add_argument("--days", type=int, help="API key expiry in days (requires --with-key)")
-    parser.add_argument("--tenant-id", default="default", help="Tenant ID (default: default)")
+    parser.add_argument("--zone-id", default="default", help="Zone ID (default: default)")
 
     args = parser.parse_args()
 
@@ -143,7 +143,7 @@ Agent Identity System (v0.5.0):
                 user_id=args.user_id,
                 agent_id=args.agent_id,
                 name=args.name,
-                tenant_id=args.tenant_id,
+                zone_id=args.zone_id,
                 entity_registry=registry,
             )
 

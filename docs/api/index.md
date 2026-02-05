@@ -207,13 +207,13 @@ except PermissionDeniedError:
 
 ```python
 # Create tenant workspace
-nx.workspace.create("/tenant/acme-corp", tenant_id="acme-123")
+nx.workspace.create("/tenant/acme-corp", zone_id="acme-123")
 
 # All operations within workspace are isolated
 nx.write(
     "/tenant/acme-corp/data.json",
     data,
-    context={"tenant_id": "acme-123"}
+    context={"zone_id": "acme-123"}
 )
 ```
 

@@ -54,14 +54,14 @@ def list_skills(
     Args:
         config: Runtime configuration (provided by framework) containing auth metadata
         state: Agent state (injected by LangGraph, not used directly)
-        tier: Tier filter - "all" (default), "agent", "user", "tenant", or "system"
+        tier: Tier filter - "all" (default), "agent", "user", "zone", or "system"
         include_metadata: Whether to include full metadata (default: True)
 
     Available Tiers:
         - "all": Show skills from all tiers (default)
         - "agent": Agent-level skills
         - "user": User-level skills
-        - "tenant": Tenant-wide skills
+        - "zone": Zone-wide skills
         - "system": System-level skills
 
     Returns:

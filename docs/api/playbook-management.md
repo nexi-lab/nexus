@@ -14,7 +14,7 @@ The Playbook Management API provides storage and retrieval of learned strategies
 - 🔄 Automatic curation from reflections
 - 🔍 Semantic search for relevant strategies
 - 📊 Usage tracking and effectiveness metrics
-- 🔒 Multi-tenant with ReBAC permissions
+- 🔒 Multi-zone with ReBAC permissions
 - 🗂️ Version control for playbooks
 
 ## Core Concepts
@@ -75,7 +75,7 @@ playbook_mgr = PlaybookManager(
     backend=storage_backend,
     user_id="user_123",
     agent_id="agent_456",
-    tenant_id="tenant_789",
+    zone_id="tenant_789",
     context=operation_context  # Optional
 )
 ```
@@ -86,7 +86,7 @@ playbook_mgr = PlaybookManager(
 - `backend` (Any): Storage backend for CAS content
 - `user_id` (str): User ID for ownership
 - `agent_id` (str, optional): Agent ID for scoping
-- `tenant_id` (str, optional): Tenant ID for multi-tenancy
+- `zone_id` (str, optional): Zone ID for multi-tenancy
 - `context` (OperationContext, optional): Permission context
 
 ---

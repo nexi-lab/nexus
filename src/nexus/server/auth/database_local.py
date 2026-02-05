@@ -309,7 +309,7 @@ class DatabaseLocalAuth(LocalAuth):
         user_info = {
             "subject_type": "user",
             "subject_id": user.user_id,
-            "tenant_id": None,  # TODO: Get from ReBAC groups
+            "zone_id": None,  # TODO: Get from ReBAC groups
             "is_admin": user.is_global_admin == 1,
             "name": user.display_name or user.username or user.email,
         }
@@ -363,7 +363,7 @@ class DatabaseLocalAuth(LocalAuth):
             user_info = {
                 "subject_type": "user",
                 "subject_id": user.user_id,
-                "tenant_id": None,  # TODO: Get from ReBAC groups
+                "zone_id": None,  # TODO: Get from ReBAC groups
                 "is_admin": user.is_global_admin == 1,
                 "name": user.display_name or user.username or user.email,
             }
@@ -515,7 +515,7 @@ class DatabaseLocalAuth(LocalAuth):
                 "is_global_admin": user.is_global_admin == 1,
                 "email_verified": user.email_verified == 1,
                 "api_key": user.api_key if hasattr(user, "api_key") else None,
-                "tenant_id": user.tenant_id if hasattr(user, "tenant_id") else None,
+                "zone_id": user.zone_id if hasattr(user, "zone_id") else None,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "last_login_at": (user.last_login_at.isoformat() if user.last_login_at else None),
             }
@@ -537,7 +537,7 @@ class DatabaseLocalAuth(LocalAuth):
             return {
                 "subject_type": "user",
                 "subject_id": user.user_id,
-                "tenant_id": user.tenant_id,
+                "zone_id": user.zone_id,
                 "is_admin": user.is_global_admin == 1,
                 "name": user.display_name or user.username or user.email,
                 "api_key": user.api_key,

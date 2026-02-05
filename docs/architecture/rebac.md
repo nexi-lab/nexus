@@ -48,29 +48,29 @@ EnhancedReBACManager (adds consistency + graph limits)
 
 **File:** `src/nexus/core/rebac_manager_tenant_aware.py`
 
-**Purpose:** Adds mandatory tenant scoping for multi-tenant security
+**Purpose:** Adds mandatory tenant scoping for multi-zone security
 
 **Additional Features:**
-- ✅ **P0-2: Tenant ID validation** - All checks require `tenant_id`
-- ✅ **Tenant-scoped queries** - All tuple queries filtered by `tenant_id`
+- ✅ **P0-2: Zone ID validation** - All checks require `zone_id`
+- ✅ **Tenant-scoped queries** - All tuple queries filtered by `zone_id`
 - ✅ **Cross-tenant relationship prevention** - Rejects tuples spanning tenants
-- ✅ **Tenant-scoped cache** - Cache keys include `tenant_id`
+- ✅ **Tenant-scoped cache** - Cache keys include `zone_id`
 
 **API Changes:**
 ```python
 # ReBACManager (no tenant required)
 rebac_check(subject, permission, object)
 
-# TenantAwareReBACManager (tenant_id required)
-rebac_check(subject, permission, object, tenant_id)  # Raises if tenant_id missing
+# TenantAwareReBACManager (zone_id required)
+rebac_check(subject, permission, object, zone_id)  # Raises if zone_id missing
 ```
 
 **Used By:**
 - `rebac_manager_enhanced.py` (parent)
 
 **Key Difference:**
-- **ReBACManager**: Optional `tenant_id` in tuples, optional in checks
-- **TenantAwareReBACManager**: Mandatory `tenant_id` for all operations
+- **ReBACManager**: Optional `zone_id` in tuples, optional in checks
+- **TenantAwareReBACManager**: Mandatory `zone_id` for all operations
 
 ---
 
@@ -99,7 +99,7 @@ allowed = manager.rebac_check(
     subject=("agent", "alice"),
     permission="read",
     object=("file", "doc.txt"),
-    tenant_id="org_123",
+    zone_id="org_123",
     consistency=ConsistencyLevel.STRONG  # NEW: Explicit consistency
 )
 
@@ -130,14 +130,14 @@ result = manager.rebac_check_detailed(...)
 - ✅ You handle tenant isolation at a higher layer
 
 ### Use `TenantAwareReBACManager` if:
-- ✅ Multi-tenant system
+- ✅ Multi-zone system
 - ✅ You need tenant isolation enforcement
 - ❌ Don't need consistency levels
 - ❌ Don't need DoS protection
 
 ### Use `EnhancedReBACManager` if:
 - ✅ **PRODUCTION DEPLOYMENTS** (recommended)
-- ✅ Multi-tenant system
+- ✅ Multi-zone system
 - ✅ Need consistency guarantees
 - ✅ Need DoS protection
 - ✅ Need observability (traversal stats)

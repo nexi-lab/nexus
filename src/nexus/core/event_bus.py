@@ -70,7 +70,7 @@ class FileEvent:
     Attributes:
         type: Type of event (file_write, file_delete, file_rename, etc.)
         path: Virtual path that changed
-        tenant_id: Tenant that owns the file (None for Layer 1 local events)
+        zone_id: Tenant that owns the file (None for Layer 1 local events)
         timestamp: When the event occurred (ISO format)
         event_id: Unique event ID for deduplication
         old_path: Previous path (for rename events only)
@@ -82,7 +82,7 @@ class FileEvent:
 
     type: FileEventType | str
     path: str
-    tenant_id: str | None = None  # None for Layer 1 (local) events
+    zone_id: str | None = None  # None for Layer 1 (local) events
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     old_path: str | None = None
@@ -100,8 +100,8 @@ class FileEvent:
             "event_id": self.event_id,
         }
         # Optional fields - only include if set
-        if self.tenant_id is not None:
-            result["tenant_id"] = self.tenant_id
+        if self.zone_id is not None:
+            result["zone_id"] = self.zone_id
         if self.old_path is not None:
             result["old_path"] = self.old_path
         if self.size is not None:
@@ -124,7 +124,7 @@ class FileEvent:
         return cls(
             type=data["type"],
             path=data["path"],
-            tenant_id=data.get("tenant_id"),  # Optional for Layer 1
+            zone_id=data.get("zone_id"),  # Optional for Layer 1
             timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
             event_id=data.get("event_id", str(uuid.uuid4())),
             old_path=data.get("old_path"),
@@ -145,7 +145,7 @@ class FileEvent:
     def from_file_change(
         cls,
         change: Any,  # FileChange from file_watcher.py (avoid circular import)
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> FileEvent:
         """Create FileEvent from Layer 1 FileChange.
 
@@ -157,7 +157,7 @@ class FileEvent:
 
         Args:
             change: FileChange from file_watcher.py
-            tenant_id: Optional tenant ID to associate
+            zone_id: Optional zone ID to associate
 
         Returns:
             FileEvent with unified format
@@ -177,7 +177,7 @@ class FileEvent:
         return cls(
             type=event_type,
             path=change.path,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             old_path=getattr(change, "old_path", None),
         )
 
@@ -270,7 +270,7 @@ class EventBusProtocol(Protocol):
 
     async def wait_for_event(
         self,
-        tenant_id: str,
+        zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
@@ -278,7 +278,7 @@ class EventBusProtocol(Protocol):
         """Wait for an event matching the path pattern.
 
         Args:
-            tenant_id: Tenant ID to subscribe to
+            zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
             since_revision: Only return events with revision > this value (Issue #1187).
@@ -293,7 +293,7 @@ class EventBusProtocol(Protocol):
         """Check if the event bus is healthy."""
         ...
 
-    def subscribe(self, tenant_id: str) -> AsyncIterator[FileEvent]:
+    def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
         """Subscribe to all events for a tenant (async generator)."""
         ...
 
@@ -323,7 +323,7 @@ class EventBusBase(ABC):
     @abstractmethod
     async def wait_for_event(
         self,
-        tenant_id: str,
+        zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
@@ -347,13 +347,13 @@ class EventBusBase(ABC):
         pass
 
     @abstractmethod
-    def subscribe(self, tenant_id: str) -> AsyncIterator[FileEvent]:
+    def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
         """Subscribe to all events for a tenant (async generator).
 
         Use this for background listeners like cache invalidation.
 
         Args:
-            tenant_id: Tenant ID to subscribe to
+            zone_id: Zone ID to subscribe to
 
         Yields:
             FileEvent objects as they are received
@@ -377,7 +377,7 @@ class RedisEventBus(EventBusBase):
     """Redis Pub/Sub implementation of the event bus with PG SSOT.
 
     Uses per-tenant channels for efficient event routing.
-    Channel format: nexus:events:{tenant_id}
+    Channel format: nexus:events:{zone_id}
 
     SSOT Architecture:
         - PostgreSQL (operation_log) is the source of truth
@@ -393,7 +393,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     tenant_id="default",
+        ...     zone_id="default",
         ... )
         >>> await bus.publish(event)
     """
@@ -431,9 +431,9 @@ class RedisEventBus(EventBusBase):
         pid = os.getpid()
         return f"{hostname}-{pid}"
 
-    def _channel_name(self, tenant_id: str) -> str:
+    def _channel_name(self, zone_id: str) -> str:
         """Get Redis channel name for a tenant."""
-        return f"{self.CHANNEL_PREFIX}:{tenant_id}"
+        return f"{self.CHANNEL_PREFIX}:{zone_id}"
 
     async def start(self) -> None:
         """Start the event bus listener."""
@@ -469,8 +469,8 @@ class RedisEventBus(EventBusBase):
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
-        tenant_id = event.tenant_id or "default"
-        channel = self._channel_name(tenant_id)
+        zone_id = event.zone_id or "default"
+        channel = self._channel_name(zone_id)
         message = event.to_json()
 
         try:
@@ -486,7 +486,7 @@ class RedisEventBus(EventBusBase):
 
     async def wait_for_event(
         self,
-        tenant_id: str,
+        zone_id: str,
         path_pattern: str,
         timeout: float = 30.0,
         since_revision: int | None = None,
@@ -506,7 +506,7 @@ class RedisEventBus(EventBusBase):
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
-        channel = self._channel_name(tenant_id)
+        channel = self._channel_name(zone_id)
         pubsub = self._redis.client.pubsub()
 
         try:
@@ -563,7 +563,7 @@ class RedisEventBus(EventBusBase):
 
     async def subscribe(
         self,
-        tenant_id: str,
+        zone_id: str,
     ) -> AsyncIterator[FileEvent]:
         """Subscribe to all events for a tenant.
 
@@ -571,7 +571,7 @@ class RedisEventBus(EventBusBase):
         Use this for background listeners like cache invalidation.
 
         Args:
-            tenant_id: Tenant ID to subscribe to
+            zone_id: Zone ID to subscribe to
 
         Yields:
             FileEvent objects as they are received
@@ -584,7 +584,7 @@ class RedisEventBus(EventBusBase):
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
 
-        channel = self._channel_name(tenant_id)
+        channel = self._channel_name(zone_id)
         pubsub = self._redis.client.pubsub()
 
         try:
@@ -754,7 +754,7 @@ class RedisEventBus(EventBusBase):
                 event = FileEvent(
                     type=self._operation_type_to_event_type(op.operation_type),
                     path=op.path,
-                    tenant_id=op.tenant_id,
+                    zone_id=op.zone_id,
                     timestamp=op.created_at.isoformat(),
                     old_path=op.new_path,  # new_path in operation_log is old_path for rename
                 )

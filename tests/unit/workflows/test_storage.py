@@ -35,7 +35,7 @@ def session_factory(engine):
 @pytest.fixture
 def workflow_store(session_factory):
     """Create workflow store."""
-    return WorkflowStore(session_factory, tenant_id="test-tenant")
+    return WorkflowStore(session_factory, zone_id="test-zone")
 
 
 class TestWorkflowStore:
@@ -44,7 +44,7 @@ class TestWorkflowStore:
     def test_create_store(self, workflow_store):
         """Test creating workflow store."""
         assert workflow_store is not None
-        assert workflow_store.tenant_id == "test-tenant"
+        assert workflow_store.zone_id == "test-zone"
 
     def test_save_workflow(self, workflow_store):
         """Test saving a workflow."""
@@ -424,11 +424,11 @@ class TestWorkflowStore:
         assert len(hash1) == 64  # SHA256 hex
         assert len(hash2) == 64
 
-    def test_get_tenant_id(self, workflow_store):
-        """Test getting tenant ID."""
-        assert workflow_store._get_tenant_id() == "test-tenant"
+    def test_get_zone_id(self, workflow_store):
+        """Test getting zone ID."""
+        assert workflow_store._get_zone_id() == "test-zone"
 
-    def test_default_tenant_id(self, session_factory):
-        """Test default tenant ID."""
+    def test_default_zone_id(self, session_factory):
+        """Test default zone ID."""
         store = WorkflowStore(session_factory)
-        assert store._get_tenant_id() == "default"
+        assert store._get_zone_id() == "default"

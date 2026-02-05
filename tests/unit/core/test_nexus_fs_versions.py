@@ -20,19 +20,19 @@ class TestNexusFSVersions:
         fs = Mock(spec=NexusFSVersionsMixin)
         fs.metadata = Mock()
         fs.router = Mock()
-        fs.tenant_id = None
+        fs.zone_id = None
         fs.agent_id = None
         fs.is_admin = False
         fs._validate_path = Mock(side_effect=lambda p, allow_root=False: p)
         fs._check_permission = Mock()
         fs._get_routing_params = Mock(
             return_value=(None, None, False)
-        )  # Returns (tenant_id, agent_id, is_admin)
+        )  # Returns (zone_id, agent_id, is_admin)
         fs._get_created_by = Mock(return_value="test-user")  # Mock created_by tracking
         fs._default_context = EnhancedOperationContext(
             user="test",
             groups=[],
-            tenant_id=None,
+            zone_id=None,
             agent_id=None,
             is_admin=False,
             is_system=False,

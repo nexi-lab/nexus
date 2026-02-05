@@ -25,7 +25,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 # Re-export context_utils functions for backward compatibility with tests
-# that patch nexus.core.nexus_fs_mounts.get_tenant_id, etc.
+# that patch nexus.core.nexus_fs_mounts.get_zone_id, etc.
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
@@ -305,16 +305,16 @@ class NexusFSMountsMixin:
                 try:
                     import asyncio
 
-                    from nexus.core.context_utils import get_tenant_id
+                    from nexus.core.context_utils import get_zone_id
 
-                    tenant_id = get_tenant_id(context)
+                    zone_id = get_zone_id(context)
                     # Available via NexusFSOAuthMixin in multiple inheritance
                     token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
                     revoked = asyncio.run(
                         token_manager.revoke_credential(
                             provider=provider,
                             user_email=user_email,
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                         )
                     )
                     result["oauth_revoked"] = revoked
@@ -586,7 +586,7 @@ class NexusFSMountsMixin:
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -599,7 +599,7 @@ class NexusFSMountsMixin:
             priority: Mount priority
             readonly: Read-only flag
             owner_user_id: Owner user ID
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             description: Description
             context: Operation context
 
@@ -613,7 +613,7 @@ class NexusFSMountsMixin:
             priority=priority,
             readonly=readonly,
             owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             description=description,
             context=context,
         )
@@ -622,14 +622,14 @@ class NexusFSMountsMixin:
     def list_saved_mounts(
         self,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations.
 
         Args:
             owner_user_id: Filter by owner
-            tenant_id: Filter by tenant
+            zone_id: Filter by tenant
             context: Operation context
 
         Returns:
@@ -637,7 +637,7 @@ class NexusFSMountsMixin:
         """
         return self._mount_persist_service.list_saved_mounts(
             owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
 

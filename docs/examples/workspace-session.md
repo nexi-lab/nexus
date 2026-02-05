@@ -1,11 +1,11 @@
 # Workspace & Session Management Example
 
-Build multi-tenant applications with workspace isolation and session tracking in Nexus.
+Build multi-zone applications with workspace isolation and session tracking in Nexus.
 
 ## 🎯 What You'll Learn
 
 - Create and manage workspaces
-- Implement multi-tenant isolation
+- Implement multi-zone isolation
 - Track agent sessions
 - Use workspace snapshots for versioning
 - Restore workspace state
@@ -22,7 +22,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
     # Create workspace
     nx.workspace.create(
         "/workspace/acme-corp",
-        metadata={"tenant_id": "acme-123", "plan": "enterprise"}
+        metadata={"zone_id": "acme-123", "plan": "enterprise"}
     )
 
     # Write to workspace
@@ -310,15 +310,15 @@ Build multi-tenant applications with workspace isolation and session tracking in
         def __init__(self, nx):
             self.nx = nx
 
-        def onboard_tenant(self, tenant_id, company_name, plan):
+        def onboard_tenant(self, zone_id, company_name, plan):
             """Complete tenant onboarding"""
-            workspace_path = f"/tenants/{tenant_id}"
+            workspace_path = f"/tenants/{zone_id}"
 
             # 1. Create workspace
             self.nx.workspace.create(
                 workspace_path,
                 metadata={
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "company": company_name,
                     "plan": plan,
                     "onboarded_at": datetime.now().isoformat()
@@ -331,7 +331,7 @@ Build multi-tenant applications with workspace isolation and session tracking in
                 self.nx.mkdir(f"{workspace_path}/{subdir}", parents=True)
 
             # 3. Set up permissions
-            admin_email = f"admin@{tenant_id}.com"
+            admin_email = f"admin@{zone_id}.com"
             self.nx.rebac_create("user", admin_email, "owner", "file", workspace_path)
 
             # 4. Create initial snapshot
@@ -344,9 +344,9 @@ Build multi-tenant applications with workspace isolation and session tracking in
             print(f"✅ Tenant {company_name} onboarded successfully")
             return workspace_path
 
-        def daily_backup(self, tenant_id):
+        def daily_backup(self, zone_id):
             """Create daily backup snapshot"""
-            workspace_path = f"/tenants/{tenant_id}"
+            workspace_path = f"/tenants/{zone_id}"
 
             snapshot_name = f"daily-{datetime.now().strftime('%Y%m%d')}"
             snapshot_id = self.nx.workspace.snapshot(
@@ -357,11 +357,11 @@ Build multi-tenant applications with workspace isolation and session tracking in
             print(f"Created backup: {snapshot_name}")
             return snapshot_id
 
-        def restore_tenant(self, tenant_id, snapshot_id):
+        def restore_tenant(self, zone_id, snapshot_id):
             """Restore tenant to previous state"""
-            workspace_path = f"/tenants/{tenant_id}"
+            workspace_path = f"/tenants/{zone_id}"
             self.nx.workspace.restore(workspace_path, snapshot_id)
-            print(f"✅ Restored tenant {tenant_id}")
+            print(f"✅ Restored tenant {zone_id}")
 
     # Usage
     manager = TenantManager(nx)

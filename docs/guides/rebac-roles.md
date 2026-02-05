@@ -608,7 +608,7 @@ If you used the old system with hardcoded roles:
 | Old System | New ReBAC |
 |------------|-----------|
 | `is_admin=True` | System admin flag (unchanged) |
-| `tenant_id="acme"` | Use groups: `member` of `("tenant", "acme")` |
+| `zone_id="acme"` | Use groups: `member` of `("tenant", "acme")` |
 | File owner | `direct_owner` relation |
 | Shared with user | `direct_editor` or `direct_viewer` |
 | Public file | Grant `direct_viewer` to special `("group", "public")` |

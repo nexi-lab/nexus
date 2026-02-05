@@ -87,7 +87,7 @@ class TestServiceName:
         return OperationContext(
             user="test_user",
             groups=["test_group"],
-            tenant_id="test_tenant"
+            zone_id="test_tenant"
         )
 
     # ========================================================================

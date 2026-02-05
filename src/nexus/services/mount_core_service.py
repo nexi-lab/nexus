@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_tenant_id, get_user_identity
+from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -179,10 +179,8 @@ class MountCoreService:
 
         # Clean up sparse directory index entries
         try:
-            tenant_id = get_tenant_id(context)
-            dir_entries_deleted = self._gw.delete_directory_entries_recursive(
-                mount_point, tenant_id
-            )
+            zone_id = get_zone_id(context)
+            dir_entries_deleted = self._gw.delete_directory_entries_recursive(mount_point, zone_id)
             result["directory_entries_deleted"] = dir_entries_deleted
             logger.info(
                 f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
@@ -194,8 +192,8 @@ class MountCoreService:
 
         # Clean up hierarchy tuples
         try:
-            tenant_id = get_tenant_id(context)
-            removed = self._gw.remove_parent_tuples(mount_point, tenant_id)
+            zone_id = get_zone_id(context)
+            removed = self._gw.remove_parent_tuples(mount_point, zone_id)
             result["permissions_cleaned"] += removed
             logger.info(f"Removed {removed} parent tuples for {mount_point}")
         except Exception as e:
@@ -205,10 +203,10 @@ class MountCoreService:
 
         # Remove permission tuples
         try:
-            tenant_id = get_tenant_id(context)
+            zone_id = get_zone_id(context)
             deleted = self._gw.rebac_delete_object_tuples(
                 object=("file", mount_point),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             result["permissions_cleaned"] += deleted
             logger.info(f"Removed {deleted} permission tuples for {mount_point}")
@@ -490,7 +488,7 @@ class MountCoreService:
             return
 
         try:
-            tenant_id = get_tenant_id(context)
+            zone_id = get_zone_id(context)
             subject_type, subject_id = get_user_identity(context)
 
             if not subject_id:
@@ -501,7 +499,7 @@ class MountCoreService:
                 subject=(subject_type, subject_id),
                 relation="direct_owner",
                 object=("file", mount_point),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             logger.info(
@@ -539,8 +537,8 @@ class MountCoreService:
             # Determine skill path
             if context and hasattr(context, "user_id") and context.user_id:
                 skill_base_path = f"/skills/users/{context.user_id}/"
-            elif context and hasattr(context, "tenant_id") and context.tenant_id:
-                skill_base_path = f"/skills/tenants/{context.tenant_id}/"
+            elif context and hasattr(context, "zone_id") and context.zone_id:
+                skill_base_path = f"/skills/tenants/{context.zone_id}/"
             else:
                 skill_base_path = "/skills/system/"
 
@@ -597,13 +595,13 @@ class MountCoreService:
             if not subject_id:
                 return False
 
-            tenant_id = get_tenant_id(context)
+            zone_id = get_zone_id(context)
 
             return self._gw.rebac_check(
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("file", path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         except Exception as e:
             logger.error(f"Permission check failed for {path}: {e}")

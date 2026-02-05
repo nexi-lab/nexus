@@ -6,7 +6,7 @@ Stores cached content on disk instead of PostgreSQL for:
 - Zoekt compatibility (direct file indexing)
 
 PostgreSQL still stores metadata (path, hash, size, synced_at).
-Content is stored in: {cache_dir}/.cache/{tenant_id}/{path_hash}/{filename}
+Content is stored in: {cache_dir}/.cache/{zone_id}/{path_hash}/{filename}
 
 Performance optimization:
 - Uses Bloom filter for fast cache miss detection (avoids disk I/O)
@@ -52,7 +52,7 @@ class FileContentCache:
     """File-based content cache for L2 storage.
 
     Stores content on disk in a structured directory layout:
-    {base_dir}/.cache/{tenant_id}/{path_hash[:2]}/{path_hash[2:4]}/{path_hash}.bin
+    {base_dir}/.cache/{zone_id}/{path_hash[:2]}/{path_hash[2:4]}/{path_hash}.bin
 
     Uses hash-based sharding to avoid too many files in a single directory.
 
@@ -121,14 +121,14 @@ class FileContentCache:
             for tenant_dir in self.cache_dir.iterdir():
                 if not tenant_dir.is_dir():
                     continue
-                tenant_id = tenant_dir.name
+                zone_id = tenant_dir.name
                 # Scan all .bin files in tenant directory
                 for cache_file in tenant_dir.rglob("*.bin"):
                     # Extract hash from filename (remove .bin extension)
                     file_hash = cache_file.stem
-                    # We store keys as "tenant_id:hash" since we can't recover original path
+                    # We store keys as "zone_id:hash" since we can't recover original path
                     # This works because _bloom_key uses the same format
-                    keys.append(f"{tenant_id}:{file_hash}")
+                    keys.append(f"{zone_id}:{file_hash}")
 
             if keys:
                 self._bloom.add_bulk(keys)
@@ -136,15 +136,15 @@ class FileContentCache:
         except Exception as e:
             logger.warning(f"Failed to populate Bloom filter from disk: {e}")
 
-    def _bloom_key(self, tenant_id: str, virtual_path: str) -> str:
+    def _bloom_key(self, zone_id: str, virtual_path: str) -> str:
         """Generate Bloom filter key for a cache entry.
 
-        Uses tenant_id:path_hash format to match what we store on disk.
+        Uses zone_id:path_hash format to match what we store on disk.
         """
         path_hash = self._path_hash(virtual_path)
-        return f"{tenant_id}:{path_hash}"
+        return f"{zone_id}:{path_hash}"
 
-    def _bloom_check(self, tenant_id: str, virtual_path: str) -> bool:
+    def _bloom_check(self, zone_id: str, virtual_path: str) -> bool:
         """Check Bloom filter for possible existence.
 
         Returns:
@@ -153,12 +153,12 @@ class FileContentCache:
         """
         if self._bloom is None:
             return True  # No Bloom filter, always check disk
-        return bool(self._bloom.might_exist(self._bloom_key(tenant_id, virtual_path)))
+        return bool(self._bloom.might_exist(self._bloom_key(zone_id, virtual_path)))
 
-    def _bloom_add(self, tenant_id: str, virtual_path: str) -> None:
+    def _bloom_add(self, zone_id: str, virtual_path: str) -> None:
         """Add entry to Bloom filter after writing to disk."""
         if self._bloom is not None:
-            self._bloom.add(self._bloom_key(tenant_id, virtual_path))
+            self._bloom.add(self._bloom_key(zone_id, virtual_path))
 
     def _path_hash(self, virtual_path: str) -> str:
         """Generate a hash for the virtual path.
@@ -169,23 +169,23 @@ class FileContentCache:
         hash_hex: str = blake3.blake3(virtual_path.encode()).hexdigest()
         return hash_hex[:32]
 
-    def _get_cache_path(self, tenant_id: str, virtual_path: str) -> Path:
+    def _get_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached content.
 
         Uses hash-based sharding: {tenant}/{hash[:2]}/{hash[2:4]}/{hash}.bin
         This prevents too many files in a single directory (max 256 per level).
         """
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / tenant_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
+        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.bin"
 
-    def _get_text_cache_path(self, tenant_id: str, virtual_path: str) -> Path:
+    def _get_text_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached parsed text."""
         path_hash = self._path_hash(virtual_path)
-        return self.cache_dir / tenant_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
+        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
 
     def write(
         self,
-        tenant_id: str,
+        zone_id: str,
         virtual_path: str,
         content: bytes,
         text_content: str | None = None,
@@ -193,7 +193,7 @@ class FileContentCache:
         """Write content to cache.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_path: Virtual file path
             content: Binary content to cache
             text_content: Optional parsed text content
@@ -202,7 +202,7 @@ class FileContentCache:
             Path to the cached binary file
         """
         # Write binary content
-        cache_path = self._get_cache_path(tenant_id, virtual_path)
+        cache_path = self._get_cache_path(zone_id, virtual_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -214,18 +214,18 @@ class FileContentCache:
 
         # Write text content if provided
         if text_content:
-            text_path = self._get_text_cache_path(tenant_id, virtual_path)
+            text_path = self._get_text_cache_path(zone_id, virtual_path)
             try:
                 text_path.write_text(text_content, encoding="utf-8")
             except Exception as e:
                 logger.warning(f"Failed to write text cache {text_path}: {e}")
 
         # Add to Bloom filter for fast future lookups
-        self._bloom_add(tenant_id, virtual_path)
+        self._bloom_add(zone_id, virtual_path)
 
         return cache_path
 
-    def read(self, tenant_id: str, virtual_path: str) -> bytes | None:
+    def read(self, zone_id: str, virtual_path: str) -> bytes | None:
         """Read binary content from cache.
 
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
@@ -236,17 +236,17 @@ class FileContentCache:
         - 20-70% faster for medium to large files
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
             Cached content bytes, or None if not cached
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
-        if not self._bloom_check(tenant_id, virtual_path):
+        if not self._bloom_check(zone_id, virtual_path):
             return None
 
-        cache_path = self._get_cache_path(tenant_id, virtual_path)
+        cache_path = self._get_cache_path(zone_id, virtual_path)
 
         try:
             from nexus_fast import read_file
@@ -266,14 +266,14 @@ class FileContentCache:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None
 
-    def read_text(self, tenant_id: str, virtual_path: str) -> str | None:
+    def read_text(self, zone_id: str, virtual_path: str) -> str | None:
         """Read parsed text content from cache.
 
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
         for entries that definitely don't exist.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
@@ -281,10 +281,10 @@ class FileContentCache:
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
         # (text file uses same path hash as binary file)
-        if not self._bloom_check(tenant_id, virtual_path):
+        if not self._bloom_check(zone_id, virtual_path):
             return None
 
-        text_path = self._get_text_cache_path(tenant_id, virtual_path)
+        text_path = self._get_text_cache_path(zone_id, virtual_path)
 
         if not text_path.exists():
             return None
@@ -297,7 +297,7 @@ class FileContentCache:
 
     def read_bulk(
         self,
-        tenant_id: str,
+        zone_id: str,
         virtual_paths: list[str],
     ) -> dict[str, bytes]:
         """Read multiple files from cache.
@@ -306,14 +306,14 @@ class FileContentCache:
         when reading many files (10+ files uses parallel I/O).
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_paths: List of virtual file paths
 
         Returns:
             Dict mapping virtual_path to content (only for cached files)
         """
         # Filter out paths that definitely don't exist (via Bloom filter)
-        paths_to_check = [p for p in virtual_paths if self._bloom_check(tenant_id, p)]
+        paths_to_check = [p for p in virtual_paths if self._bloom_check(zone_id, p)]
 
         if not paths_to_check:
             return {}
@@ -322,7 +322,7 @@ class FileContentCache:
         cache_to_virtual: dict[str, str] = {}
         cache_paths: list[str] = []
         for vpath in paths_to_check:
-            cache_path = str(self._get_cache_path(tenant_id, vpath))
+            cache_path = str(self._get_cache_path(zone_id, vpath))
             cache_to_virtual[cache_path] = vpath
             cache_paths.append(cache_path)
 
@@ -343,20 +343,20 @@ class FileContentCache:
             # Fallback to sequential read if nexus_fast not available
             result = {}
             for path in paths_to_check:
-                content = self.read(tenant_id, path)
+                content = self.read(zone_id, path)
                 if content is not None:
                     result[path] = content
             return result
 
     def read_text_bulk(
         self,
-        tenant_id: str,
+        zone_id: str,
         virtual_paths: list[str],
     ) -> dict[str, str]:
         """Read multiple text files from cache.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_paths: List of virtual file paths
 
         Returns:
@@ -364,14 +364,14 @@ class FileContentCache:
         """
         result = {}
         for path in virtual_paths:
-            text = self.read_text(tenant_id, path)
+            text = self.read_text(zone_id, path)
             if text is not None:
                 result[path] = text
         return result
 
     def get_disk_paths_bulk(
         self,
-        tenant_id: str,
+        zone_id: str,
         virtual_paths: list[str],
     ) -> dict[str, str]:
         """Get disk paths for cached files (Issue #893).
@@ -380,50 +380,50 @@ class FileContentCache:
         enabling mmap-based operations to bypass Python.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_paths: List of virtual file paths
 
         Returns:
             Dict mapping virtual_path to disk_path (only for existing cached files)
         """
         # Filter out paths that definitely don't exist (via Bloom filter)
-        paths_to_check = [p for p in virtual_paths if self._bloom_check(tenant_id, p)]
+        paths_to_check = [p for p in virtual_paths if self._bloom_check(zone_id, p)]
 
         if not paths_to_check:
             return {}
 
         result: dict[str, str] = {}
         for vpath in paths_to_check:
-            cache_path = self._get_cache_path(tenant_id, vpath)
+            cache_path = self._get_cache_path(zone_id, vpath)
             if cache_path.exists():
                 result[vpath] = str(cache_path)
 
         return result
 
-    def exists(self, tenant_id: str, virtual_path: str) -> bool:
+    def exists(self, zone_id: str, virtual_path: str) -> bool:
         """Check if content is cached.
 
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
         for entries that definitely don't exist.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
             True if content is cached
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
-        if not self._bloom_check(tenant_id, virtual_path):
+        if not self._bloom_check(zone_id, virtual_path):
             return False
 
-        return self._get_cache_path(tenant_id, virtual_path).exists()
+        return self._get_cache_path(zone_id, virtual_path).exists()
 
-    def delete(self, tenant_id: str, virtual_path: str) -> bool:
+    def delete(self, zone_id: str, virtual_path: str) -> bool:
         """Delete cached content.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
@@ -432,7 +432,7 @@ class FileContentCache:
         deleted = False
 
         # Delete binary cache
-        cache_path = self._get_cache_path(tenant_id, virtual_path)
+        cache_path = self._get_cache_path(zone_id, virtual_path)
         if cache_path.exists():
             try:
                 cache_path.unlink()
@@ -441,7 +441,7 @@ class FileContentCache:
                 logger.warning(f"Failed to delete cache file {cache_path}: {e}")
 
         # Delete text cache
-        text_path = self._get_text_cache_path(tenant_id, virtual_path)
+        text_path = self._get_text_cache_path(zone_id, virtual_path)
         if text_path.exists():
             try:
                 text_path.unlink()
@@ -450,16 +450,16 @@ class FileContentCache:
 
         return deleted
 
-    def delete_tenant(self, tenant_id: str) -> int:
+    def delete_tenant(self, zone_id: str) -> int:
         """Delete all cached content for a tenant.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of files deleted
         """
-        tenant_dir = self.cache_dir / tenant_id
+        tenant_dir = self.cache_dir / zone_id
         if not tenant_dir.exists():
             return 0
 
@@ -467,7 +467,7 @@ class FileContentCache:
 
         try:
             shutil.rmtree(tenant_dir)
-            logger.info(f"Deleted {count} cached files for tenant {tenant_id}")
+            logger.info(f"Deleted {count} cached files for tenant {zone_id}")
         except Exception as e:
             logger.error(f"Failed to delete tenant cache {tenant_dir}: {e}")
             return 0
@@ -493,7 +493,7 @@ class FileContentCache:
             if not tenant_dir.is_dir():
                 continue
 
-            tenant_id = tenant_dir.name
+            zone_id = tenant_dir.name
             tenant_files = 0
             tenant_size = 0
 
@@ -501,7 +501,7 @@ class FileContentCache:
                 tenant_files += 1
                 tenant_size += cache_file.stat().st_size
 
-            stats["tenants"][tenant_id] = {
+            stats["tenants"][zone_id] = {
                 "files": tenant_files,
                 "size_bytes": tenant_size,
             }

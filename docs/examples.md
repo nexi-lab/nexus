@@ -48,7 +48,7 @@ nx = nexus.connect(remote_url="https://nexus.example.com", api_key="admin-key")
 # Create isolated workspace for tenant
 nx.workspace.create(
     "/tenant/acme-corp",
-    tenant_id="acme-123",
+    zone_id="acme-123",
     metadata={"company": "Acme Corp", "plan": "enterprise"}
 )
 
@@ -432,7 +432,7 @@ from langgraph_react_demo import create_react_agent
 # Connect to remote Nexus server
 nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"tenant_id": "team-dev", "agent_id": "code-analyzer"}
+    config={"zone_id": "team-dev", "agent_id": "code-analyzer"}
 )
 
 # Create ReAct agent with file operation tools
@@ -485,7 +485,7 @@ from agents import Agent, function_tool
 # Connect to Nexus
 nx = nexus.connect(
     remote_url="http://nexus-server:2026",
-    config={"tenant_id": "team-dev", "agent_id": "file-agent"}
+    config={"zone_id": "team-dev", "agent_id": "file-agent"}
 )
 
 # Define tools with @function_tool decorator

@@ -189,7 +189,7 @@ class OAuthUserAuth:
             user_info_dict = {
                 "subject_type": "user",
                 "subject_id": user.user_id,
-                "tenant_id": None,  # TODO: Get from ReBAC groups
+                "zone_id": None,  # TODO: Get from ReBAC groups
                 "is_admin": user.is_global_admin == 1,
                 "name": user.display_name or user.username or user.email,
             }
@@ -381,7 +381,7 @@ class OAuthUserAuth:
 
                 logger.info(f"Created new user from OAuth: {provider_email} (user_id={user_id})")
 
-                # Provision user resources (tenant, directories, workspace, agents, skills, API key)
+                # Provision user resources (zone, directories, workspace, agents, skills, API key)
                 if provider_email:
                     await self._provision_oauth_user(
                         user_id=user_id,
@@ -482,18 +482,18 @@ class OAuthUserAuth:
         """Provision user resources after OAuth user creation.
 
         Creates all necessary resources for a new OAuth user:
-        - TenantModel (if tenant doesn't exist)
+        - ZoneModel (if zone doesn't exist)
         - User directories (workspace, memory, skill, agent, connector, resource)
         - Default workspace
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
         - API key for programmatic access
-        - ReBAC permissions (user as tenant owner)
+        - ReBAC permissions (user as zone owner)
         - Entity registry entries
 
         Args:
             user_id: User ID (UUID)
-            email: User email (used to extract tenant_id)
+            email: User email (used to extract zone_id)
             display_name: User display name
 
         Notes:
@@ -508,31 +508,29 @@ class OAuthUserAuth:
         if nx is None:
             logger.error(
                 "Cannot provision OAuth user: NexusFS instance not available. "
-                "User created but missing tenant, directories, workspace, agents, skills, API key."
+                "User created but missing zone, directories, workspace, agents, skills, API key."
             )
             return
 
-        # Extract tenant_id from email (e.g., alice@gmail.com → tenant_id "alice")
-        tenant_id = email.split("@")[0] if email else user_id
+        # Extract zone_id from email (e.g., alice@gmail.com → zone_id "alice")
+        zone_id = email.split("@")[0] if email else user_id
 
         # Create admin context for provisioning
         admin_context = OperationContext(
             user="system",
             groups=[],
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             is_admin=True,
         )
 
         try:
-            logger.info(
-                f"Provisioning OAuth user resources: user_id={user_id}, tenant_id={tenant_id}"
-            )
+            logger.info(f"Provisioning OAuth user resources: user_id={user_id}, zone_id={zone_id}")
 
             result = nx.provision_user(
                 user_id=user_id,
                 email=email,
                 display_name=display_name,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 create_api_key=True,  # OAuth users need API keys for programmatic access
                 create_agents=True,
                 import_skills=True,
@@ -542,7 +540,7 @@ class OAuthUserAuth:
             logger.info(
                 f"Successfully provisioned OAuth user: "
                 f"user_id={user_id}, "
-                f"tenant_id={result['tenant_id']}, "
+                f"zone_id={result['zone_id']}, "
                 f"workspace={result['workspace_path']}, "
                 f"agents={len(result['agent_paths'])}, "
                 f"skills={len(result['skill_paths'])}"

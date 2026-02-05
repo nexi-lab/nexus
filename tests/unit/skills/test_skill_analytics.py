@@ -87,17 +87,17 @@ async def test_get_skill_analytics_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_skill_analytics_tenant_filter() -> None:
-    """Test getting analytics filtered by tenant."""
+async def test_get_skill_analytics_zone_filter() -> None:
+    """Test getting analytics filtered by zone."""
     tracker = SkillAnalyticsTracker()
 
-    # Track usages for different tenants
-    await tracker.track_usage("test-skill", tenant_id="tenant1", success=True)
-    await tracker.track_usage("test-skill", tenant_id="tenant2", success=True)
-    await tracker.track_usage("test-skill", tenant_id="tenant1", success=False)
+    # Track usages for different zones
+    await tracker.track_usage("test-skill", zone_id="zone1", success=True)
+    await tracker.track_usage("test-skill", zone_id="zone2", success=True)
+    await tracker.track_usage("test-skill", zone_id="zone1", success=False)
 
-    # Get analytics for tenant1
-    analytics = await tracker.get_skill_analytics("test-skill", tenant_id="tenant1")
+    # Get analytics for zone1
+    analytics = await tracker.get_skill_analytics("test-skill", zone_id="zone1")
 
     assert analytics.usage_count == 2
     assert analytics.success_count == 1
@@ -140,17 +140,17 @@ async def test_get_dashboard_metrics() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_dashboard_metrics_tenant_filter() -> None:
-    """Test dashboard metrics filtered by tenant."""
+async def test_get_dashboard_metrics_zone_filter() -> None:
+    """Test dashboard metrics filtered by zone."""
     tracker = SkillAnalyticsTracker()
 
-    # Track usages for different tenants
-    await tracker.track_usage("skill1", tenant_id="tenant1", agent_id="alice", success=True)
-    await tracker.track_usage("skill1", tenant_id="tenant2", agent_id="bob", success=True)
-    await tracker.track_usage("skill2", tenant_id="tenant1", agent_id="alice", success=True)
+    # Track usages for different zones
+    await tracker.track_usage("skill1", zone_id="zone1", agent_id="alice", success=True)
+    await tracker.track_usage("skill1", zone_id="zone2", agent_id="bob", success=True)
+    await tracker.track_usage("skill2", zone_id="zone1", agent_id="alice", success=True)
 
-    # Get metrics for tenant1
-    metrics = await tracker.get_dashboard_metrics(tenant_id="tenant1")
+    # Get metrics for zone1
+    metrics = await tracker.get_dashboard_metrics(zone_id="zone1")
 
     assert metrics.total_skills == 2
     assert metrics.total_usage_count == 2
@@ -167,7 +167,7 @@ async def test_usage_record_validation() -> None:
         usage_id="123",
         skill_name="test-skill",
         agent_id="alice",
-        tenant_id=None,
+        zone_id=None,
         execution_time=1.0,
         success=True,
         error_message=None,

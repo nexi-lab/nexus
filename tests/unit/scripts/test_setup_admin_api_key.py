@@ -66,10 +66,10 @@ class TestSetupAdminAPIKey:
     def test_setup_admin_api_key_creates_new_key(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key creates a new admin API key."""
         admin_key = "sk-admin_test_key_12345"
-        # Use explicit tenant_id to avoid test pollution from parallel tests
-        tenant_id = "test_tenant_create"
+        # Use explicit zone_id to avoid test pollution from parallel tests
+        zone_id = "test_zone_create"
 
-        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id)
+        result = setup_admin_api_key(database_url, admin_key, zone_id=zone_id)
 
         assert result is True
 
@@ -84,7 +84,7 @@ class TestSetupAdminAPIKey:
             assert existing.user_id == "admin"
             assert existing.subject_type == "user"
             assert existing.subject_id == "admin"
-            assert existing.tenant_id == tenant_id
+            assert existing.zone_id == zone_id
             assert existing.is_admin == 1
             assert existing.name == "Admin Bootstrap Key"
             assert existing.revoked == 0
@@ -114,11 +114,11 @@ class TestSetupAdminAPIKey:
         from nexus.core.entity_registry import EntityRegistry
 
         admin_key = "sk-admin_register_test"
-        # Use explicit tenant_id and user_id to avoid test pollution from parallel tests
-        tenant_id = "test_tenant_register"
+        # Use explicit zone_id and user_id to avoid test pollution from parallel tests
+        zone_id = "test_zone_register"
         user_id = "test_admin_register"
 
-        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id, user_id=user_id)
+        result = setup_admin_api_key(database_url, admin_key, zone_id=zone_id, user_id=user_id)
 
         assert result is True
 
@@ -127,19 +127,19 @@ class TestSetupAdminAPIKey:
         entity = registry.get_entity("user", user_id)
         assert entity is not None
         assert entity.entity_id == user_id
-        assert entity.parent_type == "tenant"
-        assert entity.parent_id == tenant_id
+        assert entity.parent_type == "zone"
+        assert entity.parent_id == zone_id
 
-    def test_setup_admin_api_key_with_custom_tenant_id(self, engine, session_factory, database_url):
-        """Test setup_admin_api_key with custom tenant_id."""
-        admin_key = "sk-admin_custom_tenant"
-        tenant_id = "acme_corp"
+    def test_setup_admin_api_key_with_custom_zone_id(self, engine, session_factory, database_url):
+        """Test setup_admin_api_key with custom zone_id."""
+        admin_key = "sk-admin_custom_zone"
+        zone_id = "acme_corp"
 
-        result = setup_admin_api_key(database_url, admin_key, tenant_id=tenant_id, user_id="admin")
+        result = setup_admin_api_key(database_url, admin_key, zone_id=zone_id, user_id="admin")
 
         assert result is True
 
-        # Verify key was created with custom tenant_id
+        # Verify key was created with custom zone_id
         with session_factory() as session:
             key_hash = DatabaseAPIKeyAuth._hash_key(admin_key)
             existing = session.execute(
@@ -147,14 +147,14 @@ class TestSetupAdminAPIKey:
             ).scalar_one_or_none()
 
             assert existing is not None
-            assert existing.tenant_id == tenant_id
+            assert existing.zone_id == zone_id
 
     def test_setup_admin_api_key_with_custom_user_id(self, engine, session_factory, database_url):
         """Test setup_admin_api_key with custom user_id."""
         admin_key = "sk-custom_user_key"
         user_id = "superadmin"
 
-        result = setup_admin_api_key(database_url, admin_key, tenant_id="default", user_id=user_id)
+        result = setup_admin_api_key(database_url, admin_key, zone_id="default", user_id=user_id)
 
         assert result is True
 
@@ -181,7 +181,7 @@ class TestSetupAdminAPIKey:
         registry.register_entity(
             entity_type="user",
             entity_id="admin",
-            parent_type="tenant",
+            parent_type="zone",
             parent_id="default",
         )
 

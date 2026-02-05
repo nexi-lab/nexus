@@ -1,7 +1,7 @@
-"""Async scoped filesystem wrapper for multi-tenant path isolation.
+"""Async scoped filesystem wrapper for multi-zone path isolation.
 
 This module provides an AsyncScopedFilesystem wrapper that rebases all paths
-to a user's root directory, enabling multi-tenant isolation without
+to a user's root directory, enabling multi-zone isolation without
 modifying existing code that uses hardcoded global paths.
 
 Example:
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class AsyncScopedFilesystem:
     """Async filesystem wrapper that scopes all paths to a base directory.
 
-    This enables multi-tenant isolation by transparently rebasing paths.
+    This enables multi-zone isolation by transparently rebasing paths.
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
     actually access "/tenants/team_X/users/user_Y/workspace/.nexus/skills/".
 
@@ -125,14 +125,14 @@ class AsyncScopedFilesystem:
     # ============================================================
 
     @property
-    def tenant_id(self) -> str | None:
-        """Tenant ID for this filesystem instance."""
-        return self._fs.tenant_id
+    def zone_id(self) -> str | None:
+        """Zone ID for this filesystem instance."""
+        return self._fs.zone_id
 
-    @tenant_id.setter
-    def tenant_id(self, value: str | None) -> None:
-        """Set tenant ID."""
-        self._fs.tenant_id = value
+    @zone_id.setter
+    def zone_id(self, value: str | None) -> None:
+        """Set zone ID."""
+        self._fs.zone_id = value
 
     @property
     def agent_id(self) -> str | None:

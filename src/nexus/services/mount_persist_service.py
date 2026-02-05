@@ -31,7 +31,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_tenant_id, get_user_identity
+from nexus.core.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.core.mount_manager import MountManager
@@ -84,7 +84,7 @@ class MountPersistService:
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -97,7 +97,7 @@ class MountPersistService:
             priority: Mount priority (default: 0)
             readonly: Read-only flag (default: False)
             owner_user_id: Owner user ID (auto-populated from context)
-            tenant_id: Tenant ID (auto-populated from context)
+            zone_id: Zone ID (auto-populated from context)
             description: Human-readable description
             context: Operation context
 
@@ -113,10 +113,10 @@ class MountPersistService:
                 owner_user_id = f"{subject_type}:{subject_id}"
                 logger.info(f"[SAVE_MOUNT] Auto-populated owner_user_id: {owner_user_id}")
 
-        if tenant_id is None and context:
-            tenant_id = get_tenant_id(context)
-            if tenant_id:
-                logger.info(f"[SAVE_MOUNT] Auto-populated tenant_id: {tenant_id}")
+        if zone_id is None and context:
+            zone_id = get_zone_id(context)
+            if zone_id:
+                logger.info(f"[SAVE_MOUNT] Auto-populated zone_id: {zone_id}")
 
         assert self._manager is not None
         mount_id = self._manager.save_mount(
@@ -126,7 +126,7 @@ class MountPersistService:
             priority=priority,
             readonly=readonly,
             owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             description=description,
         )
 
@@ -290,14 +290,14 @@ class MountPersistService:
     def list_saved_mounts(
         self,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations.
 
         Args:
             owner_user_id: Filter by owner (auto-populated from context)
-            tenant_id: Filter by tenant (auto-populated from context)
+            zone_id: Filter by tenant (auto-populated from context)
             context: Operation context
 
         Returns:
@@ -312,13 +312,13 @@ class MountPersistService:
                 owner_user_id = f"{subject_type}:{subject_id}"
                 logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by owner: {owner_user_id}")
 
-        if tenant_id is None and context:
-            tenant_id = get_tenant_id(context)
-            if tenant_id:
-                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {tenant_id}")
+        if zone_id is None and context:
+            zone_id = get_zone_id(context)
+            if zone_id:
+                logger.info(f"[LIST_SAVED_MOUNTS] Auto-filtering by tenant: {zone_id}")
 
         assert self._manager is not None
-        return self._manager.list_mounts(owner_user_id=owner_user_id, tenant_id=tenant_id)
+        return self._manager.list_mounts(owner_user_id=owner_user_id, zone_id=zone_id)
 
     def delete_saved_mount(self, mount_point: str) -> bool:
         """Delete saved mount configuration.
@@ -360,7 +360,7 @@ class MountPersistService:
             return OperationContext(
                 user=subject_id,
                 groups=[],
-                tenant_id=mount.get("tenant_id", "default"),
+                zone_id=mount.get("zone_id", "default"),
                 subject_type=subject_type,
                 subject_id=subject_id,
             )

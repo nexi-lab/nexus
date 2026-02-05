@@ -2,7 +2,7 @@
 Utility functions for extracting and resolving context information.
 
 This module provides centralized helpers for:
-- Extracting tenant_id from context with defaults
+- Extracting zone_id from context with defaults
 - Extracting user identity (type, id) from context
 - Resolving database URLs with environment variable priority
 
@@ -17,25 +17,25 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def get_tenant_id(context: Any) -> str:
+def get_zone_id(context: Any) -> str:
     """
-    Extract tenant_id from context with default fallback.
+    Extract zone_id from context with default fallback.
 
     Args:
-        context: Operation context object (may have tenant_id attribute)
+        context: Operation context object (may have zone_id attribute)
 
     Returns:
-        Tenant ID string, defaults to "default" if not found
+        Zone ID string, defaults to "default" if not found
 
     Examples:
-        >>> ctx = OperationContext(tenant_id="acme")
-        >>> get_tenant_id(ctx)
+        >>> ctx = OperationContext(zone_id="acme")
+        >>> get_zone_id(ctx)
         'acme'
-        >>> get_tenant_id(None)
+        >>> get_zone_id(None)
         'default'
     """
-    if context and hasattr(context, "tenant_id") and context.tenant_id:
-        return str(context.tenant_id)
+    if context and hasattr(context, "zone_id") and context.zone_id:
+        return str(context.zone_id)
     return "default"
 
 
@@ -134,11 +134,11 @@ def resolve_skill_base_path(context: Any) -> str:
 
     Priority order:
     1. User-specific path: /skills/users/{user_id}/
-    2. Tenant-specific path: /skills/tenants/{tenant_id}/
+    2. Tenant-specific path: /skills/tenants/{zone_id}/
     3. System default path: /skills/system/
 
     Args:
-        context: Operation context with optional user_id and tenant_id
+        context: Operation context with optional user_id and zone_id
 
     Returns:
         Base path string for skills
@@ -153,8 +153,8 @@ def resolve_skill_base_path(context: Any) -> str:
         if user_id:
             return f"/skills/users/{user_id}/"
 
-        tenant_id = getattr(context, "tenant_id", None)
-        if tenant_id:
-            return f"/skills/tenants/{tenant_id}/"
+        zone_id = getattr(context, "zone_id", None)
+        if zone_id:
+            return f"/skills/tenants/{zone_id}/"
 
     return "/skills/system/"

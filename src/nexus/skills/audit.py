@@ -54,7 +54,7 @@ class AuditLogEntry:
     skill_name: str
     action: AuditAction
     agent_id: str | None
-    tenant_id: str | None
+    zone_id: str | None
     details: dict[str, Any] | None
     timestamp: datetime
 
@@ -122,7 +122,7 @@ class SkillAuditLogger:
         skill_name: str,
         action: AuditAction,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> str:
         """Log a skill operation for audit trail.
@@ -131,7 +131,7 @@ class SkillAuditLogger:
             skill_name: Name of the skill
             action: Type of action performed
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             details: Optional additional context (inputs, outputs, findings, etc.)
 
         Returns:
@@ -158,7 +158,7 @@ class SkillAuditLogger:
             skill_name=skill_name,
             action=action,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             details=details,
             timestamp=timestamp,
         )
@@ -170,10 +170,10 @@ class SkillAuditLogger:
             query = """
             INSERT INTO skill_audit_log (
                 audit_id, skill_name, action, agent_id,
-                tenant_id, details, timestamp
+                zone_id, details, timestamp
             ) VALUES (
                 :audit_id, :skill_name, :action, :agent_id,
-                :tenant_id, :details, :timestamp
+                :zone_id, :details, :timestamp
             )
             """
             import json
@@ -186,7 +186,7 @@ class SkillAuditLogger:
                     "skill_name": skill_name,
                     "action": action.value,
                     "agent_id": agent_id,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "details": json.dumps(details) if details else None,
                     "timestamp": timestamp,
                 },
@@ -204,7 +204,7 @@ class SkillAuditLogger:
         skill_name: str | None = None,
         action: AuditAction | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         limit: int | None = 100,
@@ -215,7 +215,7 @@ class SkillAuditLogger:
             skill_name: Optional skill name filter
             action: Optional action type filter
             agent_id: Optional agent ID filter
-            tenant_id: Optional tenant ID filter
+            zone_id: Optional zone ID filter
             start_time: Optional start time filter
             end_time: Optional end time filter
             limit: Maximum number of results (default: 100)
@@ -255,9 +255,9 @@ class SkillAuditLogger:
                 query += " AND agent_id = :agent_id"
                 params["agent_id"] = agent_id
 
-            if tenant_id:
-                query += " AND tenant_id = :tenant_id"
-                params["tenant_id"] = tenant_id
+            if zone_id:
+                query += " AND zone_id = :zone_id"
+                params["zone_id"] = zone_id
 
             if start_time:
                 query += " AND timestamp >= :start_time"
@@ -284,7 +284,7 @@ class SkillAuditLogger:
                         skill_name=row["skill_name"],
                         action=AuditAction(row["action"]),
                         agent_id=row.get("agent_id"),
-                        tenant_id=row.get("tenant_id"),
+                        zone_id=row.get("zone_id"),
                         details=details,
                         timestamp=row["timestamp"],
                     )
@@ -304,8 +304,8 @@ class SkillAuditLogger:
             if agent_id:
                 logs = [log for log in logs if log.agent_id == agent_id]
 
-            if tenant_id:
-                logs = [log for log in logs if log.tenant_id == tenant_id]
+            if zone_id:
+                logs = [log for log in logs if log.zone_id == zone_id]
 
             if start_time:
                 logs = [log for log in logs if log.timestamp >= start_time]
@@ -359,14 +359,14 @@ class SkillAuditLogger:
 
     async def generate_compliance_report(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
     ) -> dict[str, Any]:
         """Generate a compliance report for audit purposes.
 
         Args:
-            tenant_id: Optional tenant ID to filter by
+            zone_id: Optional zone ID to filter by
             start_time: Optional start time
             end_time: Optional end time
 
@@ -382,7 +382,7 @@ class SkillAuditLogger:
             >>> print(f"Active agents: {report['active_agents']}")
         """
         logs = await self.query_logs(
-            tenant_id=tenant_id, start_time=start_time, end_time=end_time, limit=None
+            zone_id=zone_id, start_time=start_time, end_time=end_time, limit=None
         )
 
         # Aggregate metrics
@@ -419,7 +419,7 @@ class SkillAuditLogger:
                 "start": start_time.isoformat() if start_time else None,
                 "end": end_time.isoformat() if end_time else None,
             },
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "total_operations": len(logs),
             "skills_used": len(skills_used),
             "active_agents": len(active_agents),

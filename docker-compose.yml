@@ -30,9 +30,6 @@ services:
       - NEXUS_OAUTH_GOOGLE_CLIENT_SECRET=${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
       # Tiger Cache - disabled by default for simpler debugging
       - NEXUS_ENABLE_TIGER_CACHE=${NEXUS_ENABLE_TIGER_CACHE:-false}
-      # TigerBeetle for Nexus Pay (optional - disabled by default)
-      - TIGERBEETLE_ENABLED=${TIGERBEETLE_ENABLED:-false}
-      - TIGERBEETLE_ADDRESS=${TIGERBEETLE_ADDRESS:-tigerbeetle:3000}
     volumes:
       # Persistent data directory - use bind mount to match docker-compose.demo.yml
       - ./nexus-data:/app/data
@@ -109,16 +106,19 @@ services:
       - mcp  # Only run when explicitly requested
 
   # ============================================================================
-  # DragonflyDB - Cache Instance (Issue #950)
+  # DragonflyDB - Hot Cache (Architecture Simplified)
   # Redis-compatible in-memory cache for:
   # - Embedding cache (reduces API calls by 90%)
-  # - Permission cache
-  # - Tiger cache
+  # - Permission cache (hot path optimization)
+  # - Tiger cache (bitmap pre-computation)
+  # - Metadata hot cache (optional, SSOT is in Raft/sled)
+  #
   # Uses cache_mode=true: allows eviction when memory is full
+  # This is CACHE ONLY - all SSOT data is in Raft state machine (sled)
   # ============================================================================
-  dragonfly-cache:
+  dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
-    container_name: nexus-dragonfly-cache
+    container_name: nexus-dragonfly
     restart: unless-stopped
     profiles:
       - cache  # Only starts with: docker compose --profile cache up
@@ -127,9 +127,9 @@ services:
       --maxmemory=512mb
       --proactor_threads=2
     ports:
-      - "${DRAGONFLY_CACHE_PORT:-6379}:6379"
+      - "${DRAGONFLY_PORT:-6379}:6379"
     volumes:
-      - dragonfly-cache-data:/data
+      - dragonfly-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -145,91 +145,19 @@ services:
         max-file: "3"
 
   # ============================================================================
-  # DragonflyDB - Coordination Instance (Issue #1106)
-  # Redis-compatible in-memory store for:
-  # - Distributed locks (must NOT be evicted)
+  # NOTE: dragonfly-coordination has been REMOVED (Architecture Change)
+  #
+  # Previous role:
+  # - Distributed locks (SSOT)
   # - Event bus pub/sub
-  # Uses cache_mode=false + noeviction: data is never evicted
+  #
+  # New architecture:
+  # - Distributed locks -> Raft State Machine (sled)
+  # - Metadata SSOT -> Raft State Machine (sled)
+  # - dragonfly-cache remains for hot caching only
+  #
+  # See: docs/architecture/p2p-federation-consensus-zones.md
   # ============================================================================
-  dragonfly-coordination:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly
-    container_name: nexus-dragonfly-coordination
-    restart: unless-stopped
-    profiles:
-      - cache  # Only starts with: docker compose --profile cache up
-      - test   # Also needed for test profile
-    command: >
-      --cache_mode=false
-      --maxmemory=256mb
-      --proactor_threads=1
-    ports:
-      - "${DRAGONFLY_COORDINATION_PORT:-6380}:6379"
-    volumes:
-      - dragonfly-coordination-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
-  # TigerBeetle - Financial Ledger (Issue #1205)
-  # High-performance ledger for:
-  # - Agent credit balances
-  # - Two-phase transfers (reservations)
-  # - API metering / rate limiting
-  # 40k+ TPS, <1ms latency
-  # ============================================================================
-  tigerbeetle:
-    image: ghcr.io/tigerbeetle/tigerbeetle:latest
-    container_name: nexus-tigerbeetle
-    restart: unless-stopped
-    profiles:
-      - pay   # Only starts with: docker compose --profile pay up
-      - test  # Also starts with test profile for integration tests
-    ports:
-      - "${TIGERBEETLE_PORT:-3000}:3000"
-    volumes:
-      - tigerbeetle-data:/data
-    # TigerBeetle requires special permissions for direct I/O
-    security_opt:
-      - seccomp=unconfined
-    # Required for memory locking on macOS
-    cap_add:
-      - IPC_LOCK
-    # Format data file on first run, then start server
-    # Using shell to handle first-run initialization
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        if [ ! -f /data/0_0.tigerbeetle ]; then
-          echo "Formatting TigerBeetle data file..."
-          /tigerbeetle format --cluster=0 --replica=0 --replica-count=1 /data/0_0.tigerbeetle
-        fi
-        echo "Starting TigerBeetle server..."
-        exec /tigerbeetle start --addresses=0.0.0.0:3000 --cache-grid=256MiB /data/0_0.tigerbeetle
-    healthcheck:
-      # TigerBeetle doesn't have HTTP health endpoint, check if port is listening
-      test: ["CMD-SHELL", "nc -z localhost 3000 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   # ============================================================================
   # PostgreSQL - Test Instance (for cross-platform integration tests)
@@ -277,17 +205,14 @@ services:
     profiles:
       - test  # Only starts with: docker compose --profile test up
     depends_on:
-      dragonfly-coordination:
-        condition: service_healthy
       postgres-test:
         condition: service_healthy
     environment:
       - NEXUS_HOST=0.0.0.0
       - NEXUS_PORT=2027
       - NEXUS_DATA_DIR=/app/data
-      # Don't set NEXUS_DATABASE_URL - tests use local SQLite
-      # PostgreSQL is only for startup_sync tests which set it explicitly
-      - NEXUS_DRAGONFLY_COORDINATION_URL=redis://dragonfly-coordination:6379
+      # Locks and metadata are now in Raft state machine (sled), not dragonfly
+      # dragonfly-coordination has been removed
       - NEXUS_TEST_MODE=1
       - NEXUS_ENFORCE_PERMISSIONS=false
       - PYTHONPATH=/app/src
@@ -318,11 +243,7 @@ services:
 volumes:
   nexus-data:
     driver: local
-  dragonfly-cache-data:
-    driver: local
-  dragonfly-coordination-data:
-    driver: local
-  tigerbeetle-data:
+  dragonfly-data:
     driver: local
   nexus-test-data:
     driver: local

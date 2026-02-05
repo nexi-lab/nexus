@@ -124,7 +124,7 @@ All actions have access to event context:
 - `${context.etag}` - Content hash (SHA-256)
 - `${context.version}` - File version number
 - `${context.created}` - `true` if new file, `false` if update
-- `${context.tenant_id}` - Tenant identifier
+- `${context.zone_id}` - Zone identifier
 - `${context.agent_id}` - Agent identifier
 - `${context.user_id}` - User identifier (if available)
 - `${context.timestamp}` - ISO timestamp

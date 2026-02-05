@@ -1,7 +1,7 @@
-"""Scoped filesystem wrapper for multi-tenant path isolation.
+"""Scoped filesystem wrapper for multi-zone path isolation.
 
 This module provides a ScopedFilesystem wrapper that rebases all paths
-to a user's root directory, enabling multi-tenant isolation without
+to a user's root directory, enabling multi-zone isolation without
 modifying existing code that uses hardcoded global paths.
 
 Example:
@@ -28,7 +28,7 @@ from nexus.skills.protocols import NexusFilesystem
 class ScopedFilesystem:
     """Filesystem wrapper that scopes all paths to a base directory.
 
-    This enables multi-tenant isolation by transparently rebasing paths.
+    This enables multi-zone isolation by transparently rebasing paths.
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
     actually access "/tenants/team_X/users/user_Y/workspace/.nexus/skills/".
 
@@ -132,9 +132,9 @@ class ScopedFilesystem:
         return self._fs.agent_id
 
     @property
-    def tenant_id(self) -> str | None:
-        """Tenant ID for this filesystem instance."""
-        return self._fs.tenant_id
+    def zone_id(self) -> str | None:
+        """Zone ID for this filesystem instance."""
+        return self._fs.zone_id
 
     # ============================================================
     # Core File Operations
@@ -480,12 +480,12 @@ class ScopedFilesystem:
         context: dict | None = None,
         verify_status: bool = False,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
     ) -> dict[Any, Any]:
         """List all sandboxes for the current user."""
-        return self._fs.sandbox_list(context, verify_status, user_id, tenant_id, agent_id, status)
+        return self._fs.sandbox_list(context, verify_status, user_id, zone_id, agent_id, status)
 
     def sandbox_status(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Get sandbox status."""

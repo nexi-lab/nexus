@@ -461,9 +461,9 @@ def stop_sandbox(
     help="Filter by agent ID",
 )
 @click.option(
-    "--tenant-id",
-    "-t",
-    help="Filter by tenant ID",
+    "--zone-id",
+    "-z",
+    help="Filter by zone ID",
 )
 @click.option(
     "--verify",
@@ -486,7 +486,7 @@ def stop_sandbox(
 def list_sandboxes(
     user_id: str | None,
     agent_id: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
     verify: bool,
     json_output: bool,
     data_dir: str | None,  # noqa: ARG001
@@ -494,7 +494,7 @@ def list_sandboxes(
     """List sandboxes with optional filtering.
 
     By default, lists sandboxes for the current user. Use filter options
-    to narrow results by user, agent, or tenant.
+    to narrow results by user, agent, or zone.
 
     The --verify flag checks actual status with Docker/E2B provider (slower
     but ensures accuracy). Without --verify, status comes from database cache
@@ -511,11 +511,11 @@ def list_sandboxes(
         # List sandboxes for specific agent
         nexus sandbox list --agent-id agent_123
 
-        # List sandboxes for specific tenant
-        nexus sandbox list --tenant-id tenant_456
+        # List sandboxes for specific zone
+        nexus sandbox list --zone-id zone_456
 
-        # Combine filters (sandboxes for specific agent and tenant)
-        nexus sandbox list --agent-id agent_123 --tenant-id tenant_456
+        # Combine filters (sandboxes for specific agent and zone)
+        nexus sandbox list --agent-id agent_123 --zone-id zone_456
 
         # Verify status with provider (slower but accurate)
         nexus sandbox list --verify
@@ -530,7 +530,7 @@ def list_sandboxes(
         result = nx.sandbox_list(
             user_id=user_id,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             verify_status=verify,
         )
         sandboxes = result["sandboxes"]

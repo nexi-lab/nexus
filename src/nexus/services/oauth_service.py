@@ -38,7 +38,7 @@ class OAuthService:
     Architecture:
         - Works with OAuthProviderFactory for provider creation
         - Uses TokenManager for credential storage
-        - Supports multi-tenant credential isolation
+        - Supports multi-zone credential isolation
         - Per-user permission enforcement
         - Clean dependency injection
 
@@ -300,7 +300,7 @@ class OAuthService:
             - If user_email not provided, service attempts to fetch it from provider
             - Credentials are stored per-tenant for isolation
         """
-        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.context_utils import get_zone_id
 
         logger.info(
             f"Exchanging OAuth code for provider={provider}, user_email={'provided' if user_email else 'will fetch'}"
@@ -343,7 +343,7 @@ class OAuthService:
 
         # Store credential
         token_manager = self._get_token_manager()
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract user_id from context (Nexus user identity)
         current_user_id = None
@@ -362,7 +362,7 @@ class OAuthService:
                 provider=provider_name,
                 user_email=user_email,
                 credential=credential,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 created_by=created_by,
                 user_id=current_user_id,
             )
@@ -438,10 +438,10 @@ class OAuthService:
             - Admins see all credentials in their tenant
             - Credentials from other tenants are never visible
         """
-        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -451,7 +451,7 @@ class OAuthService:
 
         # List credentials for tenant (and optionally user)
         credentials = await token_manager.list_credentials(
-            tenant_id=tenant_id, user_id=current_user_id if not is_admin else None
+            zone_id=zone_id, user_id=current_user_id if not is_admin else None
         )
 
         # Filter by provider and revoked status if needed
@@ -474,7 +474,7 @@ class OAuthService:
 
         logger.info(
             f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"tenant={tenant_id}, provider={provider}"
+            f"tenant={zone_id}, provider={provider}"
         )
         return result
 
@@ -525,10 +525,10 @@ class OAuthService:
             - Admins can revoke any credential in their tenant
             - Revoked credentials cannot be unrevoked (create new credential instead)
         """
-        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -540,7 +540,7 @@ class OAuthService:
         if not is_admin and current_user_id:
             # Fetch credential to check ownership
             cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, tenant_id=tenant_id
+                provider=provider, user_email=user_email, zone_id=zone_id
             )
             if cred:
                 # Check if user_id matches (preferred) or user_email matches (fallback)
@@ -566,7 +566,7 @@ class OAuthService:
             success = await token_manager.revoke_credential(
                 provider=provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if success:
@@ -633,10 +633,10 @@ class OAuthService:
             - Returns detailed error if credential cannot be refreshed
             - Does not revoke invalid credentials (use oauth_revoke_credential)
         """
-        from nexus.core.context_utils import get_tenant_id
+        from nexus.core.context_utils import get_zone_id
 
         token_manager = self._get_token_manager()
-        tenant_id = get_tenant_id(context)
+        zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
         current_user_id = None
@@ -648,7 +648,7 @@ class OAuthService:
         if not is_admin and current_user_id:
             # Fetch credential to check ownership
             cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, tenant_id=tenant_id
+                provider=provider, user_email=user_email, zone_id=zone_id
             )
             if cred:
                 # Check if user_id matches (preferred) or user_email matches (fallback)
@@ -675,13 +675,13 @@ class OAuthService:
             token = await token_manager.get_valid_token(
                 provider=provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if token:
                 # Get credential details
                 credentials = await token_manager.list_credentials(
-                    tenant_id=tenant_id, user_email=user_email
+                    zone_id=zone_id, user_email=user_email
                 )
                 cred_dict = next(
                     (c for c in credentials if c.get("user_email") == user_email),

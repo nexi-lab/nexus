@@ -48,7 +48,7 @@ nx.create_relationship(
     subject=("agent", "alice"),
     relation="member-of",
     object=("group", "eng-team"),
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # With expiration

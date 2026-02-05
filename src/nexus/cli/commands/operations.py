@@ -84,12 +84,12 @@ def ops_diff(
             return
 
         # Create time-travel reader with a session
-        with nx.metadata.SessionLocal() as session:
+        with nx.SessionLocal() as session:
             time_travel = TimeTravelReader(session, nx.backend)
 
             # Get diff between operations
             diff_result = time_travel.diff_operations(
-                path, operation_1, operation_2, tenant_id=nx.tenant_id
+                path, operation_1, operation_2, zone_id=nx.zone_id
             )
 
         nx.close()
@@ -181,7 +181,7 @@ def ops_diff(
 
 @ops_group.command(name="log")
 @click.option("--agent", "-a", help="Filter by agent ID")
-@click.option("--tenant", "-t", help="Filter by tenant ID")
+@click.option("--zone", "-z", help="Filter by zone ID")
 @click.option("--type", "op_type", help="Filter by operation type (write, delete, rename)")
 @click.option("--path", "-p", help="Filter by path")
 @click.option("--status", "-s", type=click.Choice(["success", "failure"]), help="Filter by status")
@@ -189,7 +189,7 @@ def ops_diff(
 @add_backend_options
 def ops_log(
     agent: str | None,
-    tenant: str | None,
+    zone: str | None,
     op_type: str | None,
     path: str | None,
     status: str | None,
@@ -212,12 +212,12 @@ def ops_log(
         # Access operation logger through metadata store
         from nexus.storage.operation_logger import OperationLogger
 
-        with nx.metadata.SessionLocal() as session:  # type: ignore[attr-defined]
+        with nx.SessionLocal() as session:  # type: ignore[attr-defined]
             logger = OperationLogger(session)
 
             # List operations with filters
             operations = logger.list_operations(
-                tenant_id=tenant,
+                zone_id=zone,
                 agent_id=agent,
                 operation_type=op_type,
                 path=path,
@@ -288,7 +288,7 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
 
         from nexus.storage.operation_logger import OperationLogger
 
-        with nx.metadata.SessionLocal() as session:  # type: ignore[attr-defined]
+        with nx.SessionLocal() as session:  # type: ignore[attr-defined]
             logger = OperationLogger(session)
 
             # Get last successful operation

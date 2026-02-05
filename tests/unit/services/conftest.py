@@ -14,12 +14,12 @@ def operation_context():
     """Create a standard operation context for tests.
 
     Returns:
-        OperationContext with test user, group, and tenant
+        OperationContext with test user, group, and zone
     """
     return OperationContext(
         user="test_user",
         groups=["test_group"],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_system=False,
         is_admin=False,
     )
@@ -35,7 +35,7 @@ def system_context():
     return OperationContext(
         user="system",
         groups=["system"],
-        tenant_id="system",
+        zone_id="system",
         is_system=True,
         is_admin=True,
     )
@@ -51,7 +51,7 @@ def admin_context():
     return OperationContext(
         user="admin_user",
         groups=["admin"],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_system=False,
         is_admin=True,
     )

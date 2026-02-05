@@ -5,7 +5,7 @@ Audit entries include:
 - timestamp: When the bypass occurred
 - request_id: For correlation across services
 - user: Who performed the operation
-- tenant_id: Multi-tenant isolation
+- zone_id: Multi-zone isolation
 - path: What was accessed
 - permission: What operation (read/write/execute)
 - bypass_type: "admin" or "system"
@@ -24,7 +24,7 @@ from nexus.core.permissions import OperationContext, Permission, PermissionEnfor
 class MockReBACManager:
     """Mock ReBAC manager."""
 
-    def rebac_check(self, subject, permission, object, tenant_id):
+    def rebac_check(self, subject, permission, object, zone_id):
         return False  # Always deny
 
 
@@ -57,7 +57,7 @@ class TestAdminBypassAuditLogging:
             is_admin=True,
             admin_capabilities={"admin:read:*"},
             request_id="req-123",
-            tenant_id="org_acme",
+            zone_id="org_acme",
         )
 
         enforcer.check("/file.txt", Permission.READ, ctx)
@@ -67,7 +67,7 @@ class TestAdminBypassAuditLogging:
 
         entry = audit_store.entries[0]
         assert entry.user == "admin"
-        assert entry.tenant_id == "org_acme"
+        assert entry.zone_id == "org_acme"
         assert entry.path == "/file.txt"
         assert entry.permission == "read"
         assert entry.bypass_type == "admin"
@@ -194,7 +194,7 @@ class TestSystemBypassAuditLogging:
             groups=[],
             is_system=True,
             request_id="sys-req-456",
-            tenant_id="default",
+            zone_id="default",
         )
 
         enforcer.check("/workspace/file.txt", Permission.READ, ctx)
@@ -351,8 +351,8 @@ class TestAuditEntryStructure:
         entry = audit_store.entries[0]
         assert entry.request_id == request_id
 
-    def test_audit_entry_tenant_isolation(self):
-        """Audit entries should include tenant_id for multi-tenant isolation."""
+    def test_audit_entry_zone_isolation(self):
+        """Audit entries should include zone_id for multi-zone isolation."""
         audit_store = MockAuditStore()
         enforcer = PermissionEnforcer(
             rebac_manager=MockReBACManager(),
@@ -365,13 +365,13 @@ class TestAuditEntryStructure:
             groups=[],
             is_admin=True,
             admin_capabilities={"admin:read:*"},
-            tenant_id="tenant_alpha",
+            zone_id="zone_alpha",
         )
 
         enforcer.check("/file.txt", Permission.READ, ctx)
 
         entry = audit_store.entries[0]
-        assert entry.tenant_id == "tenant_alpha"
+        assert entry.zone_id == "zone_alpha"
 
 
 class TestMultipleBypassAttempts:

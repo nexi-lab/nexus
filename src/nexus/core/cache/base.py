@@ -30,7 +30,7 @@ class PermissionCacheProtocol(Protocol):
         permission: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool | None:
         """Get cached permission result.
 
@@ -40,7 +40,7 @@ class PermissionCacheProtocol(Protocol):
             permission: Permission to check (e.g., "read", "write")
             object_type: Type of object (e.g., "file", "workspace")
             object_id: ID of object (e.g., "/workspace/file.txt")
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             True if permission granted, False if denied, None if not in cache
@@ -55,7 +55,7 @@ class PermissionCacheProtocol(Protocol):
         object_type: str,
         object_id: str,
         result: bool,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Cache permission result.
 
@@ -68,7 +68,7 @@ class PermissionCacheProtocol(Protocol):
             object_type: Type of object
             object_id: ID of object
             result: True if granted, False if denied
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
         ...
 
@@ -76,7 +76,7 @@ class PermissionCacheProtocol(Protocol):
         self,
         subject_type: str,
         subject_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all cached permissions for a subject.
 
@@ -85,7 +85,7 @@ class PermissionCacheProtocol(Protocol):
         Args:
             subject_type: Type of subject
             subject_id: ID of subject
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of entries invalidated
@@ -96,7 +96,7 @@ class PermissionCacheProtocol(Protocol):
         self,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate all cached permissions for an object.
 
@@ -105,7 +105,7 @@ class PermissionCacheProtocol(Protocol):
         Args:
             object_type: Type of object
             object_id: ID of object
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of entries invalidated
@@ -118,7 +118,7 @@ class PermissionCacheProtocol(Protocol):
         subject_id: str,
         object_type: str,
         object_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Invalidate cached permissions for a specific subject-object pair.
 
@@ -129,18 +129,18 @@ class PermissionCacheProtocol(Protocol):
             subject_id: ID of subject
             object_type: Type of object
             object_id: ID of object
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of entries invalidated
         """
         ...
 
-    async def clear(self, tenant_id: str | None = None) -> int:
+    async def clear(self, zone_id: str | None = None) -> int:
         """Clear all cached permissions.
 
         Args:
-            tenant_id: If provided, only clear entries for this tenant.
+            zone_id: If provided, only clear entries for this tenant.
                        If None, clear all entries.
 
         Returns:
@@ -186,7 +186,7 @@ class TigerCacheProtocol(Protocol):
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> tuple[bytes, int] | None:
         """Get Tiger bitmap for a subject.
 
@@ -195,7 +195,7 @@ class TigerCacheProtocol(Protocol):
             subject_id: ID of subject (e.g., "alice")
             permission: Permission type (e.g., "read")
             resource_type: Type of resources in bitmap (e.g., "file")
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Tuple of (bitmap_data, revision) if found, None otherwise.
@@ -210,7 +210,7 @@ class TigerCacheProtocol(Protocol):
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         bitmap_data: bytes,
         revision: int,
     ) -> None:
@@ -221,7 +221,7 @@ class TigerCacheProtocol(Protocol):
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resources
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             bitmap_data: Serialized Roaring Bitmap bytes
             revision: Current revision for staleness detection
         """
@@ -233,7 +233,7 @@ class TigerCacheProtocol(Protocol):
         subject_id: str | None = None,
         permission: str | None = None,
         resource_type: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Invalidate Tiger cache entries matching criteria.
 
@@ -244,7 +244,7 @@ class TigerCacheProtocol(Protocol):
             subject_id: Filter by subject ID
             permission: Filter by permission
             resource_type: Filter by resource type
-            tenant_id: Filter by tenant
+            zone_id: Filter by tenant
 
         Returns:
             Number of entries invalidated
@@ -272,14 +272,14 @@ class ResourceMapCacheProtocol(Protocol):
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int | None:
         """Get integer ID for a resource.
 
         Args:
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of resource (e.g., "/workspace/file.txt")
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Integer ID if found, None otherwise
@@ -288,12 +288,12 @@ class ResourceMapCacheProtocol(Protocol):
 
     async def get_int_ids_bulk(
         self,
-        resources: list[tuple[str, str, str]],  # (resource_type, resource_id, tenant_id)
+        resources: list[tuple[str, str, str]],  # (resource_type, resource_id, zone_id)
     ) -> dict[tuple[str, str, str], int | None]:
         """Bulk get integer IDs for multiple resources.
 
         Args:
-            resources: List of (resource_type, resource_id, tenant_id) tuples
+            resources: List of (resource_type, resource_id, zone_id) tuples
 
         Returns:
             Dict mapping resource tuples to their integer IDs (None if not found)
@@ -304,7 +304,7 @@ class ResourceMapCacheProtocol(Protocol):
         self,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
         int_id: int,
     ) -> None:
         """Store integer ID for a resource.
@@ -312,7 +312,7 @@ class ResourceMapCacheProtocol(Protocol):
         Args:
             resource_type: Type of resource
             resource_id: String ID of resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             int_id: Integer ID to store
         """
         ...
@@ -324,6 +324,6 @@ class ResourceMapCacheProtocol(Protocol):
         """Bulk store integer IDs for multiple resources.
 
         Args:
-            mappings: Dict mapping (resource_type, resource_id, tenant_id) to integer IDs
+            mappings: Dict mapping (resource_type, resource_id, zone_id) to integer IDs
         """
         ...

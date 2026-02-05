@@ -12,7 +12,7 @@
 4. [Permission Model](#permission-model)
 5. [API Patterns](#api-patterns)
 6. [Namespace Design](#namespace-design)
-7. [Multi-Tenant Isolation](#multi-tenant-isolation)
+7. [Multi-Tenant Isolation](#multi-zone-isolation)
 8. [Remote Server Usage](#remote-server-usage)
 9. [Common Patterns](#common-patterns)
 10. [Best Practices](#best-practices)
@@ -23,7 +23,7 @@
 ## Overview
 
 
-Nexus uses a **pure ReBAC** (Relationship-Based Access Control) permission system based on Google's Zanzibar design. This provides fine-grained, flexible, and scalable authorization for multi-tenant AI file systems.
+Nexus uses a **pure ReBAC** (Relationship-Based Access Control) permission system based on Google's Zanzibar design. This provides fine-grained, flexible, and scalable authorization for multi-zone AI file systems.
 
 ### Key Features
 
@@ -387,39 +387,39 @@ A common pattern is to create a **permission lattice** where higher privileges i
 
 ## Multi-Tenant Isolation
 
-### Tenant ID
+### Zone ID
 
-Every operation includes a **tenant_id** for data isolation:
+Every operation includes a **zone_id** for data isolation:
 
 ```python
 # Alice in org_acme
-nx.read("/workspace/doc.txt", subject=("user", "alice"), tenant_id="org_acme")
+nx.read("/workspace/doc.txt", subject=("user", "alice"), zone_id="org_acme")
 
 # Bob in org_techcorp (different tenant)
-nx.read("/workspace/doc.txt", subject=("user", "bob"), tenant_id="org_techcorp")
+nx.read("/workspace/doc.txt", subject=("user", "bob"), zone_id="org_techcorp")
 ```
 
 ### Isolation Mechanisms
 
 #### 1. Database-Level
-Metadata filtered by `tenant_id`:
+Metadata filtered by `zone_id`:
 
 ```sql
 SELECT * FROM file_paths
-WHERE tenant_id = 'org_acme' AND path = '/workspace/doc.txt'
+WHERE zone_id = 'org_acme' AND path = '/workspace/doc.txt'
 ```
 
 #### 2. Permission-Level (ReBAC)
-ReBAC tuples include tenant_id for isolation:
+ReBAC tuples include zone_id for isolation:
 
 ```python
-# Tenant ID validation at write-time
+# Zone ID validation at write-time
 # Create permission tuple with tenant isolation
 nx.rebac_create(
     subject=("user", "alice"),
     relation="direct_editor",
     object=("file", "/workspace/doc.txt"),
-    # Tenant ID is now stored in the tuple
+    # Zone ID is now stored in the tuple
 )
 
 # Cross-tenant relationships are REJECTED at write-time
@@ -460,7 +460,7 @@ try:
     nx.read(
         "/workspace/doc.txt",
         subject=("user", "alice"),
-        tenant_id="org_techcorp"  # Different tenant!
+        zone_id="org_techcorp"  # Different tenant!
     )
 except PermissionError:
     print("❌ Cross-tenant access denied")
@@ -698,13 +698,13 @@ subject = request.json["subject"]  # NEVER DO THIS!
 
 ### 7. Tenant Isolation
 
-Always specify tenant_id for multi-tenant operations:
+Always specify zone_id for multi-zone operations:
 
 ```python
 # ✅ Good: Explicit tenant isolation
-nx.read("/data/file.txt", subject=("user", "alice"), tenant_id="org_acme")
+nx.read("/data/file.txt", subject=("user", "alice"), zone_id="org_acme")
 
-# ❌ Bad: Missing tenant_id (may leak across tenants)
+# ❌ Bad: Missing zone_id (may leak across tenants)
 nx.read("/data/file.txt", subject=("user", "alice"))
 ```
 
@@ -796,21 +796,21 @@ rebac_manager.cleanup_expired_cache()
 
 ### Problem: "Cross-tenant access leak"
 
-**Cause**: Missing or incorrect tenant_id in operations.
+**Cause**: Missing or incorrect zone_id in operations.
 
 **Solution**:
 ```python
-# ✅ Always specify tenant_id
-nx.read("/file.txt", subject=("user", "alice"), tenant_id="org_acme")
+# ✅ Always specify zone_id
+nx.read("/file.txt", subject=("user", "alice"), zone_id="org_acme")
 
 # Verify isolation
 alice_acme_access = nx.rebac_check(
     ("user", "alice"), "read", ("file", "/file.txt")
-)  # tenant_id=org_acme
+)  # zone_id=org_acme
 
 alice_techcorp_access = nx.rebac_check(
     ("user", "alice"), "read", ("file", "/file.txt")
-)  # tenant_id=org_techcorp (should be False)
+)  # zone_id=org_techcorp (should be False)
 ```
 
 ---
@@ -824,7 +824,7 @@ alice_techcorp_access = nx.rebac_check(
 Nexus uses **pure ReBAC** for all permissions:
 - ✅ Explicit relationships define access
 - ✅ Subject-based operations
-- ✅ Multi-tenant isolation
+- ✅ Multi-zone isolation
 - ✅ Flexible and scalable
 - ✅ Industry-standard Zanzibar model
 

@@ -177,7 +177,7 @@ Authorization: Bearer YOUR_API_KEY
 For permission checks and multi-tenancy:
 
 - `X-Nexus-Subject`: Subject identity (e.g., `user:alice`, `agent:bot123`)
-- `X-Nexus-Tenant-ID`: Tenant identifier
+- `X-Nexus-Tenant-ID`: Zone identifier
 
 ### Consistency Headers (Issue #1187)
 
@@ -274,7 +274,7 @@ Returns authenticated user context.
   "authenticated": true,
   "subject_type": "user",
   "subject_id": "alice",
-  "tenant_id": "tenant-123",
+  "zone_id": "tenant-123",
   "is_admin": false
 }
 ```
@@ -1168,7 +1168,7 @@ Backend mount management for attaching multiple storage backends to different pa
 
 Nexus supports dynamic mount management, allowing you to add/remove storage backends at runtime. This is useful for:
 - User-specific storage (personal Google Drive, GCS buckets)
-- Multi-tenant scenarios with isolated storage per tenant
+- Multi-zone scenarios with isolated storage per tenant
 - Temporary mounts for specific tasks
 - Mounting external buckets or shared storage
 
@@ -1478,7 +1478,7 @@ Save a mount configuration to the database for persistence.
 - `priority` (int, optional): Mount priority (default: 0)
 - `readonly` (bool, optional): Whether mount is read-only (default: false)
 - `owner_user_id` (string, optional): User who owns this mount
-- `tenant_id` (string, optional): Tenant ID for multi-tenant isolation
+- `zone_id` (string, optional): Zone ID for multi-zone isolation
 - `description` (string, optional): Human-readable description
 
 **Example Request:**
@@ -1495,7 +1495,7 @@ Save a mount configuration to the database for persistence.
       "refresh_token": "1//xxx"
     },
     "owner_user_id": "google:alice123",
-    "tenant_id": "acme",
+    "zone_id": "acme",
     "description": "Alice's personal Google Drive",
     "priority": 10
   }
@@ -1523,7 +1523,7 @@ List mount configurations saved in the database.
 
 **Parameters:**
 - `owner_user_id` (string, optional): Filter by owner user ID
-- `tenant_id` (string, optional): Filter by tenant ID
+- `zone_id` (string, optional): Filter by zone ID
 
 **Example Request:**
 ```json
@@ -1554,7 +1554,7 @@ List mount configurations saved in the database.
       "priority": 10,
       "readonly": false,
       "owner_user_id": "google:alice123",
-      "tenant_id": "acme",
+      "zone_id": "acme",
       "description": "Alice's personal Google Drive",
       "created_at": "2025-01-15T10:00:00Z"
     }
@@ -2934,7 +2934,7 @@ Create a new API key for a user (admin only).
 - `name` (string, required): Key name/description
 - `is_admin` (boolean, optional): Grant admin privileges (default: false)
 - `expires_days` (int, optional): Expiration in days (null = never expires)
-- `tenant_id` (string, optional): Tenant identifier (default: "default")
+- `zone_id` (string, optional): Zone identifier (default: "default")
 - `subject_type` (string, optional): Subject type (default: "user")
 - `subject_id` (string, optional): Subject identifier (defaults to user_id)
 
@@ -2949,7 +2949,7 @@ Create a new API key for a user (admin only).
     "name": "Alice's API Key",
     "is_admin": false,
     "expires_days": 365,
-    "tenant_id": "default",
+    "zone_id": "default",
     "subject_type": "user"
   }
 }
@@ -2967,7 +2967,7 @@ Create a new API key for a user (admin only).
     "name": "Alice's API Key",
     "subject_type": "user",
     "subject_id": "alice",
-    "tenant_id": "default",
+    "zone_id": "default",
     "is_admin": false,
     "expires_at": "2026-10-30T12:00:00Z"
   }
@@ -2986,7 +2986,7 @@ List API keys with optional filtering (admin only).
 
 **Parameters:**
 - `user_id` (string, optional): Filter by user ID
-- `tenant_id` (string, optional): Filter by tenant ID
+- `zone_id` (string, optional): Filter by zone ID
 - `is_admin` (boolean, optional): Filter by admin status
 - `include_revoked` (boolean, optional): Include revoked keys (default: false)
 - `include_expired` (boolean, optional): Include expired keys (default: false)
@@ -3020,7 +3020,7 @@ List API keys with optional filtering (admin only).
         "subject_type": "user",
         "subject_id": "alice",
         "name": "Alice's API Key",
-        "tenant_id": "default",
+        "zone_id": "default",
         "is_admin": false,
         "created_at": "2025-10-30T12:00:00Z",
         "expires_at": "2026-10-30T12:00:00Z",
@@ -3070,7 +3070,7 @@ Get details of a specific API key (admin only).
     "subject_type": "user",
     "subject_id": "alice",
     "name": "Alice's API Key",
-    "tenant_id": "default",
+    "zone_id": "default",
     "is_admin": false,
     "created_at": "2025-10-30T12:00:00Z",
     "expires_at": "2026-10-30T12:00:00Z",
@@ -3169,7 +3169,7 @@ Update API key properties (admin only).
     "subject_type": "user",
     "subject_id": "alice",
     "name": "Alice's Production Key",
-    "tenant_id": "default",
+    "zone_id": "default",
     "is_admin": false,
     "created_at": "2025-10-30T12:00:00Z",
     "expires_at": "2027-10-30T12:00:00Z",
@@ -3227,7 +3227,7 @@ These relations are computed from direct relations during permission checks. **D
 - `agent` - AI agents
 - `user` - Human users
 - `group` - User groups
-- `tenant` - Multi-tenant organizations
+- `tenant` - Multi-zone organizations
 
 ### File Path Format Requirements
 
@@ -3265,7 +3265,7 @@ Create a relationship tuple.
 - `relation` (string, required): Relation name (see Available Relations above)
 - `object` (tuple[string, string], required): Object (type, id)
 - `expires_at` (string, optional): Expiration timestamp (ISO)
-- `tenant_id` (string, optional): Tenant identifier
+- `zone_id` (string, optional): Zone identifier
 
 **Example Request (Grant ownership):**
 ```json
@@ -3277,7 +3277,7 @@ Create a relationship tuple.
     "subject": ["user", "alice"],
     "relation": "direct_owner",
     "object": ["file", "/workspace"],
-    "tenant_id": "default"
+    "zone_id": "default"
   }
 }
 ```
@@ -3292,7 +3292,7 @@ Create a relationship tuple.
     "subject": ["user", "bob"],
     "relation": "direct_editor",
     "object": ["file", "/workspace/project"],
-    "tenant_id": "default"
+    "zone_id": "default"
   }
 }
 ```
@@ -3307,7 +3307,7 @@ Create a relationship tuple.
     "subject": ["user", "charlie"],
     "relation": "direct_viewer",
     "object": ["file", "/workspace/docs"],
-    "tenant_id": "default"
+    "zone_id": "default"
   }
 }
 ```
@@ -3369,7 +3369,7 @@ Check if subject has permission on object.
 - `subject` (tuple[string, string], required): Subject (type, id)
 - `permission` (string, required): Permission name
 - `object` (tuple[string, string], required): Object (type, id)
-- `tenant_id` (string, optional): Tenant identifier
+- `zone_id` (string, optional): Zone identifier
 
 **Example Request:**
 ```json
@@ -3435,7 +3435,7 @@ Explain why a subject has permission on an object.
 - `subject` (tuple[string, string], required): Subject (type, id)
 - `permission` (string, required): Permission name
 - `object` (tuple[string, string], required): Object (type, id)
-- `tenant_id` (string, optional): Tenant identifier
+- `zone_id` (string, optional): Zone identifier
 
 **Example Response:**
 ```json

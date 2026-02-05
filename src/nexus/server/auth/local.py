@@ -32,7 +32,7 @@ class LocalAuth(AuthProvider):
             password="secure-password",
             subject_type="user",
             subject_id="alice",
-            tenant_id="org_acme"
+            zone_id="org_acme"
         )
 
         # Verify password and get token
@@ -66,7 +66,7 @@ class LocalAuth(AuthProvider):
                         "password_hash": "bcrypt-hash",
                         "subject_type": "user",
                         "subject_id": "alice",
-                        "tenant_id": "org_acme",
+                        "zone_id": "org_acme",
                         "is_admin": False,
                         "metadata": {}
                     }
@@ -91,7 +91,7 @@ class LocalAuth(AuthProvider):
         password: str,
         subject_type: str = "user",
         subject_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         is_admin: bool = False,
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -103,7 +103,7 @@ class LocalAuth(AuthProvider):
             password: Plain-text password (will be hashed)
             subject_type: Type of subject ("user", "agent", "service", "session")
             subject_id: Unique identifier (defaults to email prefix)
-            tenant_id: Optional tenant/organization ID
+            zone_id: Optional tenant/organization ID
             is_admin: Whether user has admin privileges
             name: Display name (defaults to email prefix)
             metadata: Optional additional metadata
@@ -127,7 +127,7 @@ class LocalAuth(AuthProvider):
             "password_hash": password_hash,
             "subject_type": subject_type,
             "subject_id": subject_id or email.split("@")[0],
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": is_admin,
             "name": name or email.split("@")[0],
             "metadata": metadata or {},
@@ -177,7 +177,7 @@ class LocalAuth(AuthProvider):
             "email": email,
             "subject_type": user_info["subject_type"],
             "subject_id": user_info["subject_id"],
-            "tenant_id": user_info.get("tenant_id"),
+            "zone_id": user_info.get("zone_id"),
             "is_admin": user_info.get("is_admin", False),
             "name": user_info.get("name", email),
             "iat": int(time.time()),
@@ -240,7 +240,7 @@ class LocalAuth(AuthProvider):
                 authenticated=True,
                 subject_type=claims.get("subject_type", "user"),
                 subject_id=claims.get("subject_id"),
-                tenant_id=claims.get("tenant_id"),
+                zone_id=claims.get("zone_id"),
                 is_admin=claims.get("is_admin", False),
                 metadata={"email": claims.get("email"), "name": claims.get("name")},
             )

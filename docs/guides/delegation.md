@@ -75,7 +75,7 @@ context = OperationContext(
     subject_type="agent",
     subject_id=agent_session_id,
     groups=[],
-    tenant_id="alice_tenant"
+    zone_id="alice_tenant"
 )
 
 reports = nx.list("/alice/workspaces/q4-reports", subject=("agent", agent_session_id))

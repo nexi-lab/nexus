@@ -175,13 +175,11 @@ class VersionManager:
             List of migration history entries, newest first
         """
         # Import here to avoid circular imports
-        from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
-        store = SQLAlchemyMetadataStore(db_path=self.config.db_path)
-
         try:
-            with store.SessionLocal() as session:
+            with get_session(db_path=self.config.db_path) as session:
                 records = (
                     session.query(MigrationHistoryModel)
                     .order_by(MigrationHistoryModel.started_at.desc())
@@ -204,7 +202,7 @@ class VersionManager:
                     for r in records
                 ]
         finally:
-            store.close()
+            pass  # Session cleanup handled by context manager
 
     def plan_upgrade(self, from_version: str, to_version: str) -> MigrationPath | None:
         """Plan an upgrade path between versions.
@@ -576,13 +574,11 @@ class VersionManager:
         """
         import uuid
 
-        from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
-        store = SQLAlchemyMetadataStore(db_path=self.config.db_path)
-
         try:
-            with store.SessionLocal() as session:
+            with get_session(db_path=self.config.db_path) as session:
                 record = MigrationHistoryModel(
                     id=str(uuid.uuid4()),
                     from_version=from_version,
@@ -596,7 +592,7 @@ class VersionManager:
                 session.commit()
                 return record.id
         finally:
-            store.close()
+            pass  # Session cleanup handled by context manager
 
     def _record_migration_complete(
         self, history_id: str, status: str, error_message: str | None
@@ -608,13 +604,11 @@ class VersionManager:
             status: Final status
             error_message: Error message if failed
         """
-        from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
-        store = SQLAlchemyMetadataStore(db_path=self.config.db_path)
-
         try:
-            with store.SessionLocal() as session:
+            with get_session(db_path=self.config.db_path) as session:
                 record = session.query(MigrationHistoryModel).filter_by(id=history_id).first()
                 if record:
                     record.status = status
@@ -622,4 +616,4 @@ class VersionManager:
                     record.error_message = error_message
                     session.commit()
         finally:
-            store.close()
+            pass  # Session cleanup handled by context manager

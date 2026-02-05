@@ -96,7 +96,7 @@ class Subscription(BaseModel):
     """Response model for a subscription."""
 
     id: str = Field(..., description="Subscription ID")
-    tenant_id: str = Field(..., description="Tenant ID")
+    zone_id: str = Field(..., description="Zone ID")
     url: str = Field(..., description="Webhook URL")
     event_types: list[str] = Field(..., description="Subscribed event types")
     patterns: list[str] | None = Field(None, description="File path patterns")

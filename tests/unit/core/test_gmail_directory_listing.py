@@ -4,7 +4,7 @@ These tests verify:
 1. Directory paths have trailing slashes stripped for permission checks
 2. Directories are identified by mime_type="inode/directory" instead of trailing slash
 3. Response format includes both new fields (is_directory, etag, mime_type) and legacy fields
-4. Directory markers are created during sync with proper tenant_id
+4. Directory markers are created during sync with proper zone_id
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ class TestGmailDirectoryListing:
                         physical_path=f"/{dir_name}",
                         size_bytes=0,
                         file_type="inode/directory",
-                        tenant_id="default",
+                        zone_id="default",
                     )
                 )
             session.commit()
@@ -163,7 +163,7 @@ class TestGmailDirectoryListing:
                     physical_path="/INBOX",
                     size_bytes=0,
                     file_type="inode/directory",  # This marks it as directory
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.add(
@@ -174,7 +174,7 @@ class TestGmailDirectoryListing:
                     physical_path="/file.yaml",
                     size_bytes=100,
                     file_type="application/yaml",  # Regular file
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -215,7 +215,7 @@ class TestGmailDirectoryListing:
                     physical_path="/INBOX",
                     size_bytes=0,
                     file_type="inode/directory",
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -267,7 +267,7 @@ class TestGmailDirectoryListing:
                     physical_path="/INBOX",
                     size_bytes=0,
                     file_type="inode/directory",
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             # Files in directory
@@ -279,7 +279,7 @@ class TestGmailDirectoryListing:
                     physical_path="/INBOX/email1.yaml",
                     size_bytes=500,
                     file_type="application/yaml",
-                    tenant_id="default",
+                    zone_id="default",
                 )
             )
             session.commit()
@@ -306,8 +306,8 @@ class TestGmailDirectoryListing:
 class TestDirectoryMarkerCreation:
     """Test directory marker creation during sync."""
 
-    def test_directory_markers_created_with_tenant_id(self, nx: NexusFS) -> None:
-        """Test that directory markers are created with proper tenant_id during sync."""
+    def test_directory_markers_created_with_zone_id(self, nx: NexusFS) -> None:
+        """Test that directory markers are created with proper zone_id during sync."""
         # This is an integration test that would test the sync_mount functionality
         # The actual sync functionality would need to be tested with proper mount setup
         # For now, we verify the database schema supports the fields we need
@@ -316,13 +316,13 @@ class TestDirectoryMarkerCreation:
         try:
             # Create a directory marker as sync would
             dir_marker = FilePathModel(
-                path_id="/tenant:test/user:123/connector/gmail/INBOX",
-                virtual_path="/tenant:test/user:123/connector/gmail/INBOX",
+                path_id="/zone/test/user:123/connector/gmail/INBOX",
+                virtual_path="/zone/test/user:123/connector/gmail/INBOX",
                 backend_id="gmail",
                 physical_path="/INBOX",
                 size_bytes=0,
                 file_type="inode/directory",
-                tenant_id="test",  # Proper tenant_id for permission checks
+                zone_id="test",  # Proper zone_id for permission checks
             )
             session.add(dir_marker)
             session.commit()
@@ -330,11 +330,11 @@ class TestDirectoryMarkerCreation:
             # Verify it was created correctly
             result = (
                 session.query(FilePathModel)
-                .filter_by(virtual_path="/tenant:test/user:123/connector/gmail/INBOX")
+                .filter_by(virtual_path="/zone/test/user:123/connector/gmail/INBOX")
                 .first()
             )
             assert result is not None
-            assert result.tenant_id == "test"
+            assert result.zone_id == "test"
             assert result.file_type == "inode/directory"
             assert result.size_bytes == 0
         finally:
@@ -347,7 +347,7 @@ class TestAgentCreationFix:
     def test_register_agent_uses_correct_metadata_method(self, nx: NexusFS) -> None:
         """Test that register_agent uses metadata.get() instead of get_file_metadata()."""
         # Create an agent
-        context = {"user_id": "test_user", "tenant_id": "default"}
+        context = {"user_id": "test_user", "zone_id": "default"}
 
         try:
             result = nx.register_agent(
@@ -365,7 +365,7 @@ class TestAgentCreationFix:
             assert result["user_id"] == "test_user"
 
             # Verify agent config file exists
-            agent_config_path = "/tenant:default/user:test_user/agent/TestAgent/config.yaml"
+            agent_config_path = "/zone/default/user:test_user/agent/TestAgent/config.yaml"
             assert nx.exists(agent_config_path)
 
         except Exception as e:
@@ -373,7 +373,7 @@ class TestAgentCreationFix:
 
     def test_register_agent_prevents_duplicate(self, nx: NexusFS) -> None:
         """Test that register_agent prevents creating duplicate agents."""
-        context = {"user_id": "test_user", "tenant_id": "default"}
+        context = {"user_id": "test_user", "zone_id": "default"}
 
         # Create first agent
         result1 = nx.register_agent(

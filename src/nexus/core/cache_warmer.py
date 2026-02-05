@@ -136,7 +136,7 @@ class FileAccessEntry:
     """A file access tracking entry."""
 
     path: str
-    tenant_id: str
+    zone_id: str
     user_id: str | None
     access_count: int
     last_access: float
@@ -144,8 +144,8 @@ class FileAccessEntry:
 
     @property
     def cache_key(self) -> tuple[str, str]:
-        """Return (tenant_id, path) tuple for cache lookup."""
-        return (self.tenant_id, self.path)
+        """Return (zone_id, path) tuple for cache lookup."""
+        return (self.zone_id, self.path)
 
 
 class FileAccessTracker:
@@ -174,11 +174,11 @@ class FileAccessTracker:
         self._hot_threshold = hot_threshold
         self._max_tracked_paths = max_tracked_paths
 
-        # Access log: (tenant_id, path) -> list[timestamps]
+        # Access log: (zone_id, path) -> list[timestamps]
         self._access_log: dict[tuple[str, str], list[float]] = {}
-        # User tracking: (tenant_id, path) -> set[user_ids]
+        # User tracking: (zone_id, path) -> set[user_ids]
         self._user_access: dict[tuple[str, str], set[str]] = {}
-        # Size tracking: (tenant_id, path) -> total_bytes
+        # Size tracking: (zone_id, path) -> total_bytes
         self._size_cache: dict[tuple[str, str], int] = {}
 
         self._lock = threading.RLock()
@@ -187,7 +187,7 @@ class FileAccessTracker:
     def record_access(
         self,
         path: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         user_id: str | None = None,
         size_bytes: int = 0,
     ) -> None:
@@ -197,11 +197,11 @@ class FileAccessTracker:
 
         Args:
             path: File path accessed
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             user_id: User who accessed (optional)
             size_bytes: File size in bytes (optional, for prioritization)
         """
-        key = (tenant_id, path)
+        key = (zone_id, path)
         now = time.time()
 
         with self._lock:
@@ -246,14 +246,14 @@ class FileAccessTracker:
 
     def get_hot_files(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_id: str | None = None,
         limit: int | None = None,
     ) -> list[FileAccessEntry]:
         """Get frequently accessed files.
 
         Args:
-            tenant_id: Filter by tenant (None = all tenants)
+            zone_id: Filter by tenant (None = all tenants)
             user_id: Filter by user (None = all users)
             limit: Maximum entries to return
 
@@ -269,7 +269,7 @@ class FileAccessTracker:
                 key_tenant, path = key
 
                 # Filter by tenant
-                if tenant_id and key_tenant != tenant_id:
+                if zone_id and key_tenant != zone_id:
                     continue
 
                 # Filter by user
@@ -284,7 +284,7 @@ class FileAccessTracker:
                     hot.append(
                         FileAccessEntry(
                             path=path,
-                            tenant_id=key_tenant,
+                            zone_id=key_tenant,
                             user_id=user_id,
                             access_count=len(recent),
                             last_access=max(recent) if recent else 0,
@@ -302,7 +302,7 @@ class FileAccessTracker:
     def get_user_recent_files(
         self,
         user_id: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         hours: int = 24,
         limit: int = 100,
     ) -> list[FileAccessEntry]:
@@ -310,7 +310,7 @@ class FileAccessTracker:
 
         Args:
             user_id: User to get files for
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             hours: Look back N hours
             limit: Maximum files to return
 
@@ -325,7 +325,7 @@ class FileAccessTracker:
             for key, timestamps in self._access_log.items():
                 key_tenant, path = key
 
-                if key_tenant != tenant_id:
+                if key_tenant != zone_id:
                     continue
 
                 users = self._user_access.get(key, set())
@@ -338,7 +338,7 @@ class FileAccessTracker:
                     recent.append(
                         FileAccessEntry(
                             path=path,
-                            tenant_id=key_tenant,
+                            zone_id=key_tenant,
                             user_id=user_id,
                             access_count=len(in_range),
                             last_access=max(in_range),
@@ -462,7 +462,7 @@ class CacheWarmer:
         depth: int | None = None,
         include_content: bool | None = None,
         max_files: int | None = None,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         context: Any | None = None,
     ) -> WarmupStats:
         """Pre-cache directory tree metadata and optionally content.
@@ -472,7 +472,7 @@ class CacheWarmer:
             depth: Maximum depth to traverse (default: config.depth)
             include_content: Warm file content too (default: config.include_content)
             max_files: Maximum files to warm (default: config.max_files)
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             context: Operation context for permission checks
 
         Returns:
@@ -506,7 +506,7 @@ class CacheWarmer:
             logger.info(f"[WARMUP] Found {len(files)} files to warm")
 
             # Parallel metadata warmup
-            metadata_tasks = [self._warmup_metadata(f, tenant_id, context) for f in files]
+            metadata_tasks = [self._warmup_metadata(f, zone_id, context) for f in files]
             await asyncio.gather(*metadata_tasks, return_exceptions=True)
 
             # Content warmup for small files if requested
@@ -515,7 +515,7 @@ class CacheWarmer:
                 content_limit = min(100, max_files // 10)  # Limit content warming
                 small_files = small_files[:content_limit]
 
-                content_tasks = [self._warmup_content(f, tenant_id, context) for f in small_files]
+                content_tasks = [self._warmup_content(f, zone_id, context) for f in small_files]
                 await asyncio.gather(*content_tasks, return_exceptions=True)
 
             self._current_stats.duration_seconds = time.time() - start_time
@@ -538,7 +538,7 @@ class CacheWarmer:
         user: str | None = None,
         hours: int = 24,
         max_files: int | None = None,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         context: Any | None = None,
     ) -> WarmupStats:
         """Pre-cache files based on user's recent access patterns.
@@ -547,7 +547,7 @@ class CacheWarmer:
             user: User to warm cache for (None = all users)
             hours: Look back N hours
             max_files: Maximum files to warm (default: config.max_files)
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             context: Operation context
 
         Returns:
@@ -576,19 +576,17 @@ class CacheWarmer:
             # Get recent files from tracker
             if user:
                 recent_files = self._file_tracker.get_user_recent_files(
-                    user_id=user, tenant_id=tenant_id, hours=hours, limit=max_files
+                    user_id=user, zone_id=zone_id, hours=hours, limit=max_files
                 )
             else:
-                recent_files = self._file_tracker.get_hot_files(
-                    tenant_id=tenant_id, limit=max_files
-                )
+                recent_files = self._file_tracker.get_hot_files(zone_id=zone_id, limit=max_files)
 
             # Identify hot files (accessed multiple times)
             hot_files = [f for f in recent_files if f.access_count >= 2]
             logger.info(f"[WARMUP] Found {len(hot_files)} hot files from history")
 
             # Warm content for hot files
-            content_tasks = [self._warmup_content(f.path, tenant_id, context) for f in hot_files]
+            content_tasks = [self._warmup_content(f.path, zone_id, context) for f in hot_files]
             await asyncio.gather(*content_tasks, return_exceptions=True)
 
             self._current_stats.duration_seconds = time.time() - start_time
@@ -609,14 +607,14 @@ class CacheWarmer:
     async def warmup_permissions(
         self,
         user: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         paths: list[str] | None = None,
     ) -> WarmupStats:
         """Pre-cache permission graph for user.
 
         Args:
             user: User to warm permissions for
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             paths: Specific paths to warm (None = common paths)
 
         Returns:
@@ -641,13 +639,13 @@ class CacheWarmer:
 
             # Get common paths if not specified
             if paths is None:
-                paths = await self._get_common_paths(tenant_id)
+                paths = await self._get_common_paths(zone_id)
 
             # Warm permission checks for common paths
             for path in paths[: self._config.max_files]:
                 try:
                     # Trigger permission check to warm cache
-                    await self._warmup_permission_check(rebac_manager, user, path, tenant_id)
+                    await self._warmup_permission_check(rebac_manager, user, path, zone_id)
                     self._current_stats.permissions_warmed += 1
                 except Exception as e:
                     logger.debug(f"[WARMUP] Permission check failed for {path}: {e}")
@@ -671,7 +669,7 @@ class CacheWarmer:
         self,
         paths: list[str],
         include_content: bool = False,
-        tenant_id: str = "default",
+        zone_id: str = "default",
         context: Any | None = None,
     ) -> WarmupStats:
         """Warm specific paths.
@@ -679,7 +677,7 @@ class CacheWarmer:
         Args:
             paths: List of paths to warm
             include_content: Warm content too (not just metadata)
-            tenant_id: Tenant identifier
+            zone_id: Tenant identifier
             context: Operation context
 
         Returns:
@@ -696,13 +694,13 @@ class CacheWarmer:
             logger.info(f"[WARMUP] Warming {len(paths)} specific paths")
 
             # Warm metadata
-            metadata_tasks = [self._warmup_metadata(p, tenant_id, context) for p in paths]
+            metadata_tasks = [self._warmup_metadata(p, zone_id, context) for p in paths]
             await asyncio.gather(*metadata_tasks, return_exceptions=True)
 
             # Warm content if requested
             if include_content:
                 content_tasks = [
-                    self._warmup_content(p, tenant_id, context)
+                    self._warmup_content(p, zone_id, context)
                     for p in paths[: self._config.max_files]
                 ]
                 await asyncio.gather(*content_tasks, return_exceptions=True)
@@ -733,7 +731,7 @@ class CacheWarmer:
     async def _warmup_metadata(
         self,
         path: str,
-        _tenant_id: str,
+        _zone_id: str,
         _context: Any | None,
     ) -> None:
         """Warm metadata cache for a single file."""
@@ -758,7 +756,7 @@ class CacheWarmer:
     async def _warmup_content(
         self,
         path: str,
-        tenant_id: str,
+        zone_id: str,
         context: Any | None,
     ) -> None:
         """Warm content cache for a single file."""
@@ -783,7 +781,7 @@ class CacheWarmer:
                             self._local_disk_cache.put(
                                 content_hash,
                                 content,
-                                tenant_id=tenant_id,
+                                zone_id=zone_id,
                             )
 
             except Exception as e:
@@ -814,7 +812,7 @@ class CacheWarmer:
         rebac_manager: Any,
         user: str,
         path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> None:
         """Warm permission cache for a user/path combination."""
         try:
@@ -827,12 +825,12 @@ class CacheWarmer:
                     permission="read",
                     resource_type="file",
                     resource_id=path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
         except Exception as e:
             logger.debug(f"[WARMUP] Permission check warming failed: {e}")
 
-    async def _get_common_paths(self, _tenant_id: str) -> list[str]:
+    async def _get_common_paths(self, _zone_id: str) -> list[str]:
         """Get common paths for permission warming."""
         # Get root directories and common paths
         common: list[str] = []
@@ -988,7 +986,7 @@ async def warmup_on_mount(
     depth: int = 2,
     include_content: bool = False,
     max_files: int = 1000,
-    tenant_id: str = "default",
+    zone_id: str = "default",
 ) -> WarmupStats:
     """Convenience function: Warm cache after FUSE mount.
 
@@ -998,7 +996,7 @@ async def warmup_on_mount(
         depth: Directory depth to warm
         include_content: Warm content too
         max_files: Maximum files
-        tenant_id: Tenant identifier
+        zone_id: Tenant identifier
 
     Returns:
         WarmupStats
@@ -1009,7 +1007,7 @@ async def warmup_on_mount(
         depth=depth,
         include_content=include_content,
         max_files=max_files,
-        tenant_id=tenant_id,
+        zone_id=zone_id,
     )
 
 

@@ -138,7 +138,7 @@ from nexus import connect
 nx = connect(
     backend_type="local",
     agent_id="alice",
-    tenant_id="acme-corp",
+    zone_id="acme-corp",
     is_admin=False,
     enforce_permissions=True,  # ✅ Enable globally
 )
@@ -197,13 +197,13 @@ nx.write("/system/internal.db", b"system data", context=system_ctx)
 
 ### Pattern 4: Multi-Tenant Isolation
 
-Use tenant_id for multi-tenant isolation:
+Use zone_id for multi-zone isolation:
 
 ```python
 # Tenant A
 nx_tenant_a = connect(
     backend_type="local",
-    tenant_id="tenant-a",
+    zone_id="tenant-a",
     agent_id="alice",
     enforce_permissions=True,
 )
@@ -211,7 +211,7 @@ nx_tenant_a = connect(
 # Tenant B
 nx_tenant_b = connect(
     backend_type="local",
-    tenant_id="tenant-b",
+    zone_id="tenant-b",
     agent_id="bob",
     enforce_permissions=True,
 )
@@ -356,7 +356,7 @@ for path in nx.list("/", recursive=True):
 nx = connect(
     backend_type="local",
     agent_id="alice",                    # Used for default context
-    tenant_id="acme-corp",               # Used for isolation
+    zone_id="acme-corp",               # Used for isolation
     is_admin=False,                      # Admin bypass
     enforce_permissions=True,             # Enable enforcement
 )
@@ -369,7 +369,7 @@ nx = connect(
 [nexus]
 backend = "local"
 agent_id = "alice"
-tenant_id = "acme-corp"
+zone_id = "acme-corp"
 enforce_permissions = true
 
 [nexus.permissions]

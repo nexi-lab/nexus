@@ -63,7 +63,7 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
         backend=benchmark_backend,
         db_path=benchmark_db,
         is_admin=False,  # Not admin - will check permissions
-        tenant_id="benchmark_tenant",
+        zone_id="benchmark_zone",
         agent_id="benchmark_agent",
         enforce_permissions=True,
         auto_parse=False,

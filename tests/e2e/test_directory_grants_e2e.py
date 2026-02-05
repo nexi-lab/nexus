@@ -47,10 +47,10 @@ def add_migration_tables(engine):
                 member_id VARCHAR(255) NOT NULL,
                 group_type VARCHAR(50) NOT NULL,
                 group_id VARCHAR(255) NOT NULL,
-                tenant_id VARCHAR(255) NOT NULL,
+                zone_id VARCHAR(255) NOT NULL,
                 depth INTEGER NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (member_type, member_id, group_type, group_id, tenant_id)
+                PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
             )
         """
             )
@@ -66,7 +66,7 @@ def add_migration_tables(engine):
                 subject_id VARCHAR(255) NOT NULL,
                 permission VARCHAR(50) NOT NULL,
                 directory_path TEXT NOT NULL,
-                tenant_id VARCHAR(255) NOT NULL,
+                zone_id VARCHAR(255) NOT NULL,
                 grant_revision INTEGER NOT NULL DEFAULT 0,
                 include_future_files BOOLEAN NOT NULL DEFAULT 1,
                 expansion_status VARCHAR(20) NOT NULL DEFAULT 'pending',
@@ -76,7 +76,7 @@ def add_migration_tables(engine):
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 completed_at DATETIME,
                 error_message TEXT,
-                UNIQUE (tenant_id, directory_path, permission, subject_type, subject_id)
+                UNIQUE (zone_id, directory_path, permission, subject_type, subject_id)
             )
         """
             )
@@ -116,7 +116,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     admin_context = OperationContext(
         user="admin",
         groups=["admins"],
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
     )
     nx._default_context = admin_context
@@ -141,7 +141,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", directory_path),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Check that the grant was recorded in tiger_directory_grants
@@ -170,11 +170,11 @@ class TestDirectoryGrantExpansion:
 
         nx = nexus_fs_with_tiger
 
-        # Create admin context with tenant_id
+        # Create admin context with zone_id
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
 
@@ -188,7 +188,7 @@ class TestDirectoryGrantExpansion:
             nx.write(path, f"content of {path}", context=ctx)
 
         # Verify files exist
-        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, tenant_id="default")
+        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="default")
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory
@@ -196,7 +196,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/workspace/project/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Give a moment for expansion to complete
@@ -236,7 +236,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
 
@@ -245,7 +245,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             relation="reader",
             object=("file", "/workspace/shared/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Now create a new file in that directory
@@ -257,7 +257,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             permission="read",
             object=("file", new_file),
-            tenant_id="default",
+            zone_id="default",
         )
         assert has_access, "Charlie should have read access to newly created file"
 
@@ -278,7 +278,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
 
@@ -289,13 +289,13 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", "/dir_a/"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/dir_b/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Create file in dir_a
@@ -309,7 +309,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/dir_a/moveme.txt"),
-            tenant_id="default",
+            zone_id="default",
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
@@ -323,7 +323,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/dir_b/moveme.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert has_bob_access, "Bob should have access after file moved to dir_b"
 
@@ -364,7 +364,7 @@ def standalone_engine(tmp_path):
                 resource_int_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 resource_type VARCHAR(50) NOT NULL,
                 resource_id TEXT NOT NULL,
-                tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+                zone_id VARCHAR(255) NOT NULL DEFAULT 'default',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (resource_type, resource_id)
             )
@@ -399,7 +399,7 @@ class TestDirectoryGrantWorker:
                 text(
                     """
                 INSERT INTO tiger_directory_grants
-                (grant_id, subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
+                (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
                 VALUES (1, 'user', 'testuser', 'read', '/test/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
@@ -432,7 +432,7 @@ class TestDirectoryGrantWorker:
                 text(
                     """
                 INSERT INTO tiger_directory_grants
-                (grant_id, subject_type, subject_id, permission, directory_path, tenant_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
+                (grant_id, subject_type, subject_id, permission, directory_path, zone_id, grant_revision, include_future_files, expansion_status, expanded_count, created_at, updated_at)
                 VALUES (1, 'user', 'emptyuser', 'read', '/empty/dir/', 'default', 0, 1, 'pending', 0, datetime('now'), datetime('now'))
             """
                 )
@@ -479,7 +479,7 @@ class TestTigerCacheIntegration:
             subject=("user", "diana"),
             relation="reader",
             object=("file", "/cache_test/"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Wait for expansion

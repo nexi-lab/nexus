@@ -70,7 +70,7 @@ mount_id = manager.save_mount(
     priority=10,
     readonly=False,
     owner_user_id="google:alice123",
-    tenant_id="acme",
+    zone_id="acme",
     description="Alice's Google Drive"
 )
 
@@ -86,7 +86,7 @@ mount = manager.get_mount("/personal/alice")  # → dict | None
 # List mounts with filtering
 all_mounts = manager.list_mounts()
 user_mounts = manager.list_mounts(owner_user_id="alice")
-tenant_mounts = manager.list_mounts(tenant_id="acme")
+tenant_mounts = manager.list_mounts(zone_id="acme")
 
 # Remove mount from database
 manager.remove_mount("/personal/alice")  # → bool

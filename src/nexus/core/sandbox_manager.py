@@ -107,7 +107,7 @@ class SandboxManager:
         self,
         name: str,
         user_id: str,
-        tenant_id: str,
+        zone_id: str,
         agent_id: str | None = None,
         ttl_minutes: int = 10,
         provider: str | None = None,
@@ -118,7 +118,7 @@ class SandboxManager:
         Args:
             name: User-friendly name (unique per user)
             user_id: User ID
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             agent_id: Agent ID (optional)
             ttl_minutes: Idle timeout in minutes
             provider: Provider name ("docker", "e2b", etc.). If None, selects best available.
@@ -213,7 +213,7 @@ class SandboxManager:
             name=name,
             user_id=user_id,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             provider=provider,
             template_id=template_id,
             status="active",
@@ -396,7 +396,7 @@ class SandboxManager:
     async def list_sandboxes(
         self,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
         verify_status: bool = False,
@@ -405,7 +405,7 @@ class SandboxManager:
 
         Args:
             user_id: Filter by user (optional)
-            tenant_id: Filter by tenant (optional)
+            zone_id: Filter by tenant (optional)
             agent_id: Filter by agent (optional)
             status: Filter by status (e.g., 'active', 'stopped', 'paused') (optional)
             verify_status: If True, verify status with provider (slower but accurate)
@@ -417,8 +417,8 @@ class SandboxManager:
 
         if user_id:
             query = query.where(SandboxMetadataModel.user_id == user_id)
-        if tenant_id:
-            query = query.where(SandboxMetadataModel.tenant_id == tenant_id)
+        if zone_id:
+            query = query.where(SandboxMetadataModel.zone_id == zone_id)
         if agent_id:
             query = query.where(SandboxMetadataModel.agent_id == agent_id)
         if status:
@@ -530,7 +530,7 @@ class SandboxManager:
         self,
         name: str,
         user_id: str,
-        tenant_id: str,
+        zone_id: str,
         agent_id: str | None = None,
         ttl_minutes: int = 10,
         provider: str | None = None,
@@ -546,7 +546,7 @@ class SandboxManager:
         Args:
             name: User-friendly sandbox name (unique per user)
             user_id: User ID
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             agent_id: Agent ID (optional)
             ttl_minutes: Idle timeout in minutes (default: 10)
             provider: Sandbox provider ("docker", "e2b", etc.)
@@ -665,7 +665,7 @@ class SandboxManager:
             return await self.create_sandbox(
                 name=name,
                 user_id=user_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 ttl_minutes=ttl_minutes,
                 provider=provider,
@@ -704,7 +704,7 @@ class SandboxManager:
                 return await self.create_sandbox(
                     name=new_name,
                     user_id=user_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     ttl_minutes=ttl_minutes,
                     provider=provider,
@@ -968,7 +968,7 @@ class SandboxManager:
             "name": metadata.name,
             "user_id": metadata.user_id,
             "agent_id": metadata.agent_id,
-            "tenant_id": metadata.tenant_id,
+            "zone_id": metadata.zone_id,
             "provider": metadata.provider,
             "template_id": metadata.template_id,
             "status": metadata.status,

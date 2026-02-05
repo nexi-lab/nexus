@@ -97,7 +97,7 @@ from nexus.core.permissions import OperationContext
 
 context = OperationContext(
     user_id="alice@example.com",  # User's email
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/workspace/file.txt",  # Path in Drive
 )
 
@@ -172,13 +172,13 @@ backend = GoogleDriveConnectorBackend(
 # Different users, same tenant
 context_alice = OperationContext(
     user_id="alice@acme.com",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/workspace/alice-file.txt",
 )
 
 context_bob = OperationContext(
     user_id="bob@acme.com",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/workspace/bob-file.txt",
 )
 
@@ -230,7 +230,7 @@ The Google Drive connector is **user-scoped**, meaning it requires `OperationCon
 ```python
 context = OperationContext(
     user_id="user@example.com",     # REQUIRED: User's email
-    tenant_id="org_acme",            # Optional: Tenant ID
+    zone_id="org_acme",            # Optional: Zone ID
     backend_path="/path/to/file",   # REQUIRED: Path in Drive
 )
 ```
@@ -253,7 +253,7 @@ Path-based connectors don't use content hashes. The `backend_path` tells the con
 access_token = await token_manager.get_valid_token(
     provider="google",
     user_email="alice@example.com",
-    tenant_id="org_acme",
+    zone_id="org_acme",
 )
 
 # If token expired:
@@ -267,12 +267,12 @@ access_token = await token_manager.get_valid_token(
 
 ```python
 # Tenant A
-context_a = OperationContext(user_id="alice@acme.com", tenant_id="org_acme")
+context_a = OperationContext(user_id="alice@acme.com", zone_id="org_acme")
 
 # Tenant B
-context_b = OperationContext(user_id="alice@other.com", tenant_id="org_other")
+context_b = OperationContext(user_id="alice@other.com", zone_id="org_other")
 
-# Different credentials used (isolated by tenant_id)
+# Different credentials used (isolated by zone_id)
 ```
 
 ## Error Handling
@@ -476,13 +476,13 @@ nx = NexusFS(backend=backend)
 # Different team members
 context_alice = OperationContext(
     user_id="alice@acme.com",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/projects/project-a/design.pdf",
 )
 
 context_bob = OperationContext(
     user_id="bob@acme.com",
-    tenant_id="org_acme",
+    zone_id="org_acme",
     backend_path="/projects/project-a/code.py",
 )
 

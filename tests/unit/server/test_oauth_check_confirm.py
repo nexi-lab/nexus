@@ -71,7 +71,7 @@ def test_get_user_info_for_jwt_success(auth_provider, test_db):
     """Test getting user info formatted for JWT token creation."""
     # Create a test user
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
 
     with test_db() as session:
         user = UserModel(
@@ -83,7 +83,7 @@ def test_get_user_info_for_jwt_success(auth_provider, test_db):
             primary_auth_method="password",
             is_global_admin=0,
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="test-api-key",
             created_at=datetime.now(UTC),
         )
@@ -97,7 +97,7 @@ def test_get_user_info_for_jwt_success(auth_provider, test_db):
     assert user_info is not None
     assert user_info["subject_type"] == "user"
     assert user_info["subject_id"] == user_id
-    assert user_info["tenant_id"] == tenant_id
+    assert user_info["zone_id"] == zone_id
     assert user_info["is_admin"] is False
     assert user_info["name"] == "Test User"
     assert user_info["api_key"] == "test-api-key"
@@ -107,7 +107,7 @@ def test_get_user_info_for_jwt_no_display_name(auth_provider, test_db):
     """Test getting user info when display_name is None."""
     # Create a test user without display_name
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
 
     with test_db() as session:
         user = UserModel(
@@ -119,7 +119,7 @@ def test_get_user_info_for_jwt_no_display_name(auth_provider, test_db):
             primary_auth_method="password",
             is_global_admin=0,
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="test-api-key",
             created_at=datetime.now(UTC),
         )
@@ -138,7 +138,7 @@ def test_get_user_info_for_jwt_no_username(auth_provider, test_db):
     """Test getting user info when username is also None."""
     # Create a test user without display_name or username
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
 
     with test_db() as session:
         user = UserModel(
@@ -150,7 +150,7 @@ def test_get_user_info_for_jwt_no_username(auth_provider, test_db):
             primary_auth_method="password",
             is_global_admin=0,
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="test-api-key",
             created_at=datetime.now(UTC),
         )
@@ -169,7 +169,7 @@ def test_get_user_info_for_jwt_admin_user(auth_provider, test_db):
     """Test getting user info for an admin user."""
     # Create an admin user
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
 
     with test_db() as session:
         user = UserModel(
@@ -181,7 +181,7 @@ def test_get_user_info_for_jwt_admin_user(auth_provider, test_db):
             primary_auth_method="password",
             is_global_admin=1,  # Admin
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="admin-api-key",
             created_at=datetime.now(UTC),
         )
@@ -216,7 +216,7 @@ def test_oauth_existing_user_no_double_exchange(auth_provider, test_db):
     """Test that existing OAuth users don't trigger double code exchange."""
     # Create an existing OAuth user
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
     provider_user_id = "google-12345"
 
     with test_db() as session:
@@ -230,7 +230,7 @@ def test_oauth_existing_user_no_double_exchange(auth_provider, test_db):
             primary_auth_method="oauth",
             is_global_admin=0,
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="existing-api-key",
             created_at=datetime.now(UTC),
         )
@@ -255,7 +255,7 @@ def test_oauth_existing_user_no_double_exchange(auth_provider, test_db):
     # Verify user info is returned without querying UserModel directly
     assert user_info_dict is not None
     assert user_info_dict["subject_id"] == user_id
-    assert user_info_dict["tenant_id"] == tenant_id
+    assert user_info_dict["zone_id"] == zone_id
     assert user_info_dict["api_key"] == "existing-api-key"
 
     # Verify we can create a token with this info
@@ -273,7 +273,7 @@ def test_get_user_info_and_jwt_consistency(auth_provider, test_db):
     """Test that get_user_info and get_user_info_for_jwt return consistent data."""
     # Create a test user
     user_id = str(uuid.uuid4())
-    tenant_id = "test-tenant"
+    zone_id = "test-zone"
 
     with test_db() as session:
         user = UserModel(
@@ -285,7 +285,7 @@ def test_get_user_info_and_jwt_consistency(auth_provider, test_db):
             primary_auth_method="password",
             is_global_admin=0,
             email_verified=1,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             api_key="test-api-key",
             created_at=datetime.now(UTC),
         )
@@ -302,7 +302,7 @@ def test_get_user_info_and_jwt_consistency(auth_provider, test_db):
 
     # Check that JWT version maps correctly to user info version
     assert user_info_jwt["subject_id"] == user_info["user_id"]
-    assert user_info_jwt["tenant_id"] == user_info["tenant_id"]
+    assert user_info_jwt["zone_id"] == user_info["zone_id"]
     assert user_info_jwt["is_admin"] == user_info["is_global_admin"]
     assert user_info_jwt["api_key"] == user_info["api_key"]
 

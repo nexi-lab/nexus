@@ -17,7 +17,7 @@ from nexus.storage.models import WorkspaceSnapshotModel
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.rebac_manager import ReBACManager
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage import RaftMetadataStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,12 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: SQLAlchemyMetadataStore,
+        metadata: RaftMetadataStore,
         backend: Backend,
         rebac_manager: ReBACManager | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
+        session_factory: Any | None = None,
     ):
         """Initialize workspace manager.
 
@@ -51,14 +52,22 @@ class WorkspaceManager:
             metadata: Metadata store for querying file information
             backend: Backend for storing manifest in CAS
             rebac_manager: ReBAC manager for permission checks (optional)
-            tenant_id: Default tenant ID for operations (optional)
+            zone_id: Default zone ID for operations (optional)
             agent_id: Default agent ID for operations (optional)
+            session_factory: SQLAlchemy session factory for database operations
         """
         self.metadata = metadata
         self.backend = backend
         self.rebac_manager = rebac_manager
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.agent_id = agent_id
+        # Use provided session_factory or import from database module
+        if session_factory is not None:
+            self.metadata_session_factory = session_factory
+        else:
+            from nexus.storage.database import get_session_factory
+
+            self.metadata_session_factory = get_session_factory()
 
     def _check_workspace_permission(
         self,
@@ -66,7 +75,7 @@ class WorkspaceManager:
         permission: str,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> None:
         """Check if user or agent has permission on workspace.
 
@@ -75,7 +84,7 @@ class WorkspaceManager:
             permission: Permission to check (e.g., 'snapshot:create', 'snapshot:list')
             user_id: User ID to check (for user operations)
             agent_id: Agent ID to check (for agent operations)
-            tenant_id: Tenant ID for isolation (uses default if not provided)
+            zone_id: Zone ID for isolation (uses default if not provided)
 
         Raises:
             NexusPermissionError: If permission check fails
@@ -100,7 +109,7 @@ class WorkspaceManager:
 
         # Use provided IDs or fall back to defaults
         check_agent_id = agent_id or self.agent_id
-        check_tenant_id = tenant_id or self.tenant_id
+        check_zone_id = zone_id or self.zone_id
 
         # Determine subject based on available context
         # v0.5.0: Support both users and agents
@@ -138,13 +147,13 @@ class WorkspaceManager:
             subject=subject,
             permission=file_permission,
             object=("file", workspace_path),
-            tenant_id=check_tenant_id,
+            zone_id=check_zone_id,
         )
 
         if not has_permission:
             logger.warning(
                 f"WorkspaceManager: Permission denied for {subject_desc}, "
-                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, tenant={check_tenant_id}"
+                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, tenant={check_zone_id}"
             )
             raise NexusPermissionError(
                 f"Permission denied: {permission} on workspace {workspace_path}"
@@ -158,7 +167,7 @@ class WorkspaceManager:
         created_by: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a snapshot of a registered workspace.
 
@@ -169,7 +178,7 @@ class WorkspaceManager:
             created_by: User/agent who created the snapshot
             user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
-            tenant_id: Tenant ID for isolation (uses default if not provided)
+            zone_id: Zone ID for isolation (uses default if not provided)
 
         Returns:
             Snapshot metadata dict with keys:
@@ -190,14 +199,14 @@ class WorkspaceManager:
             permission="snapshot:create",
             user_id=user_id,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         # Ensure workspace_path ends with / for prefix matching
         workspace_prefix = workspace_path if workspace_path.endswith("/") else workspace_path + "/"
 
         # Get all files in workspace
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             files = self.metadata.list(prefix=workspace_prefix)
 
             # PERFORMANCE OPTIMIZATION: Stream manifest to avoid building large dict in memory
@@ -297,7 +306,7 @@ class WorkspaceManager:
         workspace_path: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
@@ -307,7 +316,7 @@ class WorkspaceManager:
             workspace_path: Workspace path (required if using snapshot_number)
             user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
-            tenant_id: Tenant ID for isolation (uses default if not provided)
+            zone_id: Zone ID for isolation (uses default if not provided)
 
         Returns:
             Restore operation result with keys:
@@ -321,7 +330,7 @@ class WorkspaceManager:
             NexusFileNotFoundError: If snapshot not found
             BackendError: If manifest cannot be read
         """
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             # Find snapshot first to get workspace_path
             if snapshot_id:
                 snapshot = session.get(WorkspaceSnapshotModel, snapshot_id)
@@ -346,7 +355,7 @@ class WorkspaceManager:
                 permission="snapshot:restore",
                 user_id=user_id,
                 agent_id=agent_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             # Read manifest from CAS
@@ -382,7 +391,7 @@ class WorkspaceManager:
 
             from datetime import UTC, datetime
 
-            from nexus.core.metadata import FileMetadata
+            from nexus.core._metadata_generated import FileMetadata
 
             for rel_path, file_info in manifest.items():
                 full_path = workspace_prefix + rel_path
@@ -429,7 +438,7 @@ class WorkspaceManager:
         limit: int = 100,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """List all snapshots for a workspace.
 
@@ -438,7 +447,7 @@ class WorkspaceManager:
             limit: Maximum number of snapshots to return
             user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
-            tenant_id: Tenant ID for isolation (uses default if not provided)
+            zone_id: Zone ID for isolation (uses default if not provided)
 
         Returns:
             List of snapshot metadata dicts (most recent first)
@@ -452,9 +461,9 @@ class WorkspaceManager:
             permission="snapshot:list",
             user_id=user_id,
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             stmt = (
                 select(WorkspaceSnapshotModel)
                 .where(
@@ -487,7 +496,7 @@ class WorkspaceManager:
         snapshot_id_2: str,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two snapshots and return diff.
 
@@ -496,7 +505,7 @@ class WorkspaceManager:
             snapshot_id_2: Second snapshot ID
             user_id: User ID for permission check (v0.5.0)
             agent_id: Agent ID for permission check (uses default if not provided)
-            tenant_id: Tenant ID for isolation (uses default if not provided)
+            zone_id: Zone ID for isolation (uses default if not provided)
 
         Returns:
             Diff dict with keys:
@@ -509,7 +518,7 @@ class WorkspaceManager:
             NexusPermissionError: If user/agent lacks snapshot:diff permission
             NexusFileNotFoundError: If either snapshot not found
         """
-        with self.metadata.SessionLocal() as session:
+        with self.metadata_session_factory() as session:
             # Load both snapshots
             snap1 = session.get(WorkspaceSnapshotModel, snapshot_id_1)
             snap2 = session.get(WorkspaceSnapshotModel, snapshot_id_2)
@@ -529,7 +538,7 @@ class WorkspaceManager:
                 permission="snapshot:diff",
                 user_id=user_id,
                 agent_id=agent_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             # Only check snap2 if it's a different workspace
             if snap1.workspace_path != snap2.workspace_path:
@@ -538,7 +547,7 @@ class WorkspaceManager:
                     permission="snapshot:diff",
                     user_id=user_id,
                     agent_id=agent_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
             # Read manifests

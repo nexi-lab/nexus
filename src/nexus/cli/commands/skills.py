@@ -2,7 +2,7 @@
 
 The Skills System provides vendor-neutral skill management with:
 - SKILL.md format with YAML frontmatter
-- Three-tier hierarchy (agent > tenant > system)
+- Three-tier hierarchy (agent > zone > system)
 - Dependency resolution with DAG and cycle detection
 - Vendor-neutral export to .zip packages
 - Skill lifecycle management (create, fork, publish)
@@ -102,7 +102,7 @@ def skills() -> None:
 
     The Skills System provides vendor-neutral skill management with:
     - SKILL.md format with YAML frontmatter
-    - Three-tier hierarchy (agent > tenant > system)
+    - Three-tier hierarchy (agent > zone > system)
     - Dependency resolution with DAG and cycle detection
     - Vendor-neutral export to .zip packages
     - Skill lifecycle management (create, fork, publish)
@@ -120,15 +120,15 @@ def skills() -> None:
 
 @skills.command(name="list")
 @click.option("--user", is_flag=True, help="Show user-level skills")
-@click.option("--tenant", is_flag=True, help="Show tenant-wide skills")
+@click.option("--zone", is_flag=True, help="Show zone-wide skills")
 @click.option("--system", is_flag=True, help="Show system skills")
 @click.option(
-    "--tier", type=click.Choice(["agent", "user", "tenant", "system"]), help="Filter by tier"
+    "--tier", type=click.Choice(["agent", "user", "zone", "system"]), help="Filter by tier"
 )
 @add_backend_options
 def skills_list(
     user: bool,
-    tenant: bool,
+    zone: bool,
     system: bool,
     tier: str | None,
     backend_config: BackendConfig,
@@ -138,7 +138,7 @@ def skills_list(
     Examples:
         nexus skills list
         nexus skills list --user
-        nexus skills list --tenant
+        nexus skills list --zone
         nexus skills list --system
         nexus skills list --tier agent
     """
@@ -150,8 +150,8 @@ def skills_list(
             tier_filter = tier
         elif user:
             tier_filter = "user"
-        elif tenant:
-            tier_filter = "tenant"
+        elif zone:
+            tier_filter = "zone"
         elif system:
             tier_filter = "system"
         else:
@@ -196,7 +196,7 @@ def skills_list(
 @click.option("--template", default="basic", help="Template to use (basic, data-analysis, etc.)")
 @click.option(
     "--tier",
-    type=click.Choice(["agent", "user", "tenant", "system"]),
+    type=click.Choice(["agent", "user", "zone", "system"]),
     default="user",
     help="Target tier",
 )
@@ -245,7 +245,7 @@ def skills_create(
 @click.option("--name", help="Skill name (auto-generated from URL/title if not provided)")
 @click.option(
     "--tier",
-    type=click.Choice(["agent", "user", "tenant", "system"]),
+    type=click.Choice(["agent", "user", "zone", "system"]),
     default="user",
     help="Target tier",
 )
@@ -375,7 +375,7 @@ def skills_create_from_web(
 @click.option("--name", help="Skill name (auto-generated from source if not provided)")
 @click.option(
     "--tier",
-    type=click.Choice(["agent", "user", "tenant", "system"]),
+    type=click.Choice(["agent", "user", "zone", "system"]),
     default="user",
     help="Target tier",
 )
@@ -551,7 +551,7 @@ def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
 @click.argument("target_skill", type=str)
 @click.option(
     "--tier",
-    type=click.Choice(["agent", "user", "tenant", "system"]),
+    type=click.Choice(["agent", "user", "zone", "system"]),
     default="user",
     help="Target tier",
 )
@@ -597,14 +597,14 @@ def skills_fork(
 @click.argument("skill_name", type=str)
 @click.option(
     "--from-tier",
-    type=click.Choice(["agent", "tenant", "system"]),
+    type=click.Choice(["agent", "zone", "system"]),
     default="agent",
     help="Source tier",
 )
 @click.option(
     "--to-tier",
-    type=click.Choice(["agent", "tenant", "system"]),
-    default="tenant",
+    type=click.Choice(["agent", "zone", "system"]),
+    default="zone",
     help="Target tier",
 )
 @add_backend_options
@@ -614,11 +614,11 @@ def skills_publish(
     to_tier: str,
     backend_config: BackendConfig,
 ) -> None:
-    """Publish skill to tenant or system library.
+    """Publish skill to zone or system library.
 
     Examples:
         nexus skills publish my-skill
-        nexus skills publish shared-skill --from-tier tenant --to-tier system
+        nexus skills publish shared-skill --from-tier zone --to-tier system
     """
     try:
         nx = get_filesystem(backend_config, enforce_permissions=False)
@@ -643,7 +643,7 @@ def skills_publish(
 @skills.command(name="search")
 @click.argument("query", type=str)
 @click.option(
-    "--tier", type=click.Choice(["agent", "user", "tenant", "system"]), help="Filter by tier"
+    "--tier", type=click.Choice(["agent", "user", "zone", "system"]), help="Filter by tier"
 )
 @click.option("--limit", default=10, type=int, help="Maximum results")
 @add_backend_options
@@ -657,7 +657,7 @@ def skills_search(
 
     Examples:
         nexus skills search "data analysis"
-        nexus skills search "code" --tier tenant --limit 5
+        nexus skills search "code" --tier zone --limit 5
     """
     try:
         nx = get_filesystem(backend_config, enforce_permissions=False)
@@ -1067,7 +1067,7 @@ def skills_submit_approval(
     comments: str | None,
     backend_config: BackendConfig,  # noqa: ARG001
 ) -> None:
-    """Submit a skill for approval to publish to tenant library.
+    """Submit a skill for approval to publish to zone library.
 
     Examples:
         nexus skills submit-approval my-analyzer --submitted-by alice
@@ -1109,14 +1109,14 @@ def skills_submit_approval(
     "--reviewer-type", default="user", type=click.Choice(["user", "agent"]), help="Reviewer type"
 )
 @click.option("--comments", help="Optional review comments")
-@click.option("--tenant-id", help="Tenant ID for scoping")
+@click.option("--zone-id", help="Zone ID for scoping")
 @add_backend_options
 def skills_approve(
     approval_id: str,
     reviewed_by: str,
     reviewer_type: str,
     comments: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
     backend_config: BackendConfig,  # noqa: ARG001
 ) -> None:
     """Approve a skill for publication.
@@ -1124,7 +1124,7 @@ def skills_approve(
     Examples:
         nexus skills approve <approval-id> --reviewed-by bob
         nexus skills approve <approval-id> --reviewed-by bob --comments "Code quality excellent!"
-        nexus skills approve <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
+        nexus skills approve <approval-id> --reviewed-by manager-id --reviewer-type user --zone-id acme-corp
     """
     try:
         nx = get_filesystem(backend_config, enforce_permissions=False)
@@ -1135,7 +1135,7 @@ def skills_approve(
             reviewed_by=reviewed_by,
             reviewer_type=reviewer_type,
             comments=comments,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         console.print(f"[green]✓[/green] Approved skill (Approval ID: [cyan]{approval_id}[/cyan])")
@@ -1156,21 +1156,21 @@ def skills_approve(
     "--reviewer-type", default="user", type=click.Choice(["user", "agent"]), help="Reviewer type"
 )
 @click.option("--comments", help="Optional rejection reason")
-@click.option("--tenant-id", help="Tenant ID for scoping")
+@click.option("--zone-id", help="Zone ID for scoping")
 @add_backend_options
 def skills_reject(
     approval_id: str,
     reviewed_by: str,
     reviewer_type: str,
     comments: str | None,
-    tenant_id: str | None,
+    zone_id: str | None,
     backend_config: BackendConfig,  # noqa: ARG001
 ) -> None:
     """Reject a skill for publication.
 
     Examples:
         nexus skills reject <approval-id> --reviewed-by bob --comments "Security concerns"
-        nexus skills reject <approval-id> --reviewed-by manager-id --reviewer-type user --tenant-id acme-corp
+        nexus skills reject <approval-id> --reviewed-by manager-id --reviewer-type user --zone-id acme-corp
     """
     try:
         nx = get_filesystem(backend_config, enforce_permissions=False)
@@ -1181,7 +1181,7 @@ def skills_reject(
             reviewed_by=reviewed_by,
             reviewer_type=reviewer_type,
             comments=comments,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         console.print(f"[red]✗[/red] Rejected skill (Approval ID: [cyan]{approval_id}[/cyan])")
@@ -1779,7 +1779,7 @@ def skills_mcp_mount(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
                             credential=credential,
-                            tenant_id="default",
+                            zone_id="default",
                             created_by=oauth_user,
                         )
 

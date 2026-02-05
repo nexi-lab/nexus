@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 class CacheKey:
     """Key for Tiger Cache lookup.
 
-    Note: tenant_id is intentionally excluded from the cache key.
+    Note: zone_id is intentionally excluded from the cache key.
     Tenant isolation is enforced during permission computation, not caching.
     This allows shared resources (e.g., /skills in 'default' tenant) to be
     accessible across tenants without cache misses.
@@ -70,7 +70,7 @@ class TigerResourceMap:
     Maintains a bidirectional mapping between string resource IDs and
     integer IDs suitable for Roaring Bitmaps.
 
-    Note: tenant_id is intentionally excluded from resource mapping.
+    Note: zone_id is intentionally excluded from resource mapping.
     Resource paths are globally unique (e.g., /skills/system/docs is the same
     file regardless of who queries it). Tenant isolation is enforced at the
     bitmap/permission level, not the resource ID mapping.
@@ -92,7 +92,7 @@ class TigerResourceMap:
         self,
         resource_type: str,
         resource_id: str,
-        _tenant_id: str | None = None,  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str | None = None,  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> int:
         """Get or create an integer ID for a resource.
@@ -100,7 +100,7 @@ class TigerResourceMap:
         Args:
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of resource (e.g., UUID or path)
-            tenant_id: DEPRECATED - ignored, kept for API compatibility
+            zone_id: DEPRECATED - ignored, kept for API compatibility
             conn: Optional database connection
 
         Returns:
@@ -506,7 +506,7 @@ class TigerCache:
         event loop conflicts with FastAPI's async context.
 
         Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}
-        Note: tenant_id excluded per Issue #979 for cross-tenant resource sharing.
+        Note: zone_id excluded per Issue #979 for cross-tenant resource sharing.
 
         Args:
             operation: One of "get", "set", "invalidate"
@@ -540,7 +540,7 @@ class TigerCache:
                 socket_connect_timeout=2.0,
             )
             try:
-                # Key format: exclude tenant_id per Issue #979
+                # Key format: exclude zone_id per Issue #979
                 key = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
 
                 if operation == "get":
@@ -607,7 +607,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> set[int]:
         """Get all resource integer IDs that subject can access.
@@ -617,7 +617,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID (kept for API compatibility)
+            zone_id: Zone ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
@@ -649,7 +649,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        _tenant_id: str = "",  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> bool | None:
         """Check if subject has permission on resource using cached bitmap.
@@ -660,7 +660,7 @@ class TigerCache:
             permission: Permission to check
             resource_type: Type of resource
             resource_id: String ID of resource
-            tenant_id: Tenant ID (used for resource lookup, not cache key)
+            zone_id: Zone ID (used for resource lookup, not cache key)
             conn: Optional database connection
 
         Returns:
@@ -711,7 +711,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         conn: Connection | None = None,
     ) -> bytes | None:
         """Get serialized bitmap bytes for Rust interop (Issue #896).
@@ -724,7 +724,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID (kept for API compatibility)
+            zone_id: Zone ID (kept for API compatibility)
             conn: Optional database connection
 
         Returns:
@@ -784,7 +784,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
+        zone_id: str = "",  # noqa: ARG002 - Kept for API compatibility, not used in cache key
     ) -> float | None:
         """Get cache age in seconds for a specific entry (Issue #921).
 
@@ -796,7 +796,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Deprecated, kept for API compatibility
+            zone_id: Deprecated, kept for API compatibility
 
         Returns:
             Age in seconds if entry is in memory cache, None if not cached
@@ -1018,7 +1018,7 @@ class TigerCache:
         if not to_fetch:
             return results
 
-        # Bulk fetch from database (tenant_id removed from cache key per Issue #979)
+        # Bulk fetch from database (zone_id removed from cache key per Issue #979)
         is_postgresql = "postgresql" in str(self._engine.url)
 
         if is_postgresql:
@@ -1082,7 +1082,7 @@ class TigerCache:
     def check_access_bulk(
         self,
         checks: list[tuple[str, str, str, str, str, str]],
-        # Each tuple: (subject_type, subject_id, permission, resource_type, resource_id, tenant_id)
+        # Each tuple: (subject_type, subject_id, permission, resource_type, resource_id, zone_id)
     ) -> dict[tuple[str, str, str, str, str, str], bool | None]:
         """Bulk check permissions using Tiger Cache with only 2 DB queries.
 
@@ -1093,7 +1093,7 @@ class TigerCache:
         4. Checks each item against in-memory bitmaps
 
         Args:
-            checks: List of (subject_type, subject_id, permission, resource_type, resource_id, tenant_id)
+            checks: List of (subject_type, subject_id, permission, resource_type, resource_id, zone_id)
 
         Returns:
             Dict mapping each check tuple to True (allowed), False (denied), or None (not in cache)
@@ -1148,7 +1148,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         resource_int_ids: set[int],
         revision: int,
         conn: Connection | None = None,
@@ -1160,7 +1160,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             resource_int_ids: Set of integer resource IDs the subject can access
             revision: Current revision for staleness detection
             conn: Optional database connection
@@ -1169,7 +1169,7 @@ class TigerCache:
 
         logger.info(
             f"Tiger Cache UPDATE: {subject_type}:{subject_id} -> {permission} -> {resource_type} "
-            f"(tenant={tenant_id}, {len(resource_int_ids)} resources, rev={revision}, "
+            f"(tenant={zone_id}, {len(resource_int_ids)} resources, rev={revision}, "
             f"db={self._engine.url.database}, dialect={self._engine.dialect.name})"
         )
 
@@ -1179,16 +1179,16 @@ class TigerCache:
         bitmap_data = bitmap.serialize()
         key = CacheKey(subject_type, subject_id, permission, resource_type)
 
-        # Upsert to database (tenant_id removed from unique constraint per Issue #979)
-        # Note: tenant_id still included in INSERT for backward compatibility (NOT NULL column)
+        # Upsert to database (zone_id removed from unique constraint per Issue #979)
+        # Note: zone_id still included in INSERT for backward compatibility (NOT NULL column)
         query: Any  # TextClause or tuple[TextClause, TextClause]
         if self._is_postgresql:
             query = text("""
                 INSERT INTO tiger_cache
-                    (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, created_at, updated_at)
+                    (subject_type, subject_id, permission, resource_type, zone_id, bitmap_data, revision, created_at, updated_at)
                 VALUES
-                    (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, NOW(), NOW())
-                ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                    (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :bitmap_data, :revision, NOW(), NOW())
+                ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
                 DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data, revision = EXCLUDED.revision, updated_at = NOW()
             """)
         else:
@@ -1203,9 +1203,9 @@ class TigerCache:
             """)
             insert_query = text("""
                 INSERT INTO tiger_cache
-                    (subject_type, subject_id, permission, resource_type, tenant_id, bitmap_data, revision, created_at, updated_at)
+                    (subject_type, subject_id, permission, resource_type, zone_id, bitmap_data, revision, created_at, updated_at)
                 VALUES
-                    (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :bitmap_data, :revision, datetime('now'), datetime('now'))
+                    (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :bitmap_data, :revision, datetime('now'), datetime('now'))
             """)
             query = (update_query, insert_query)  # Tuple of queries for SQLite
 
@@ -1214,7 +1214,7 @@ class TigerCache:
             "subject_id": subject_id,
             "permission": permission,
             "resource_type": resource_type,
-            "tenant_id": tenant_id,  # Keep for backward compatibility
+            "zone_id": zone_id,  # Keep for backward compatibility
             "bitmap_data": bitmap_data,
             "revision": revision,
         }
@@ -1271,7 +1271,7 @@ class TigerCache:
         subject_id: str | None = None,
         permission: str | None = None,
         resource_type: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         conn: Connection | None = None,
     ) -> int:
         """Invalidate cache entries matching the criteria.
@@ -1281,7 +1281,7 @@ class TigerCache:
             subject_id: Filter by subject ID (None = all)
             permission: Filter by permission (None = all)
             resource_type: Filter by resource type (None = all)
-            tenant_id: Filter by tenant (None = all)
+            zone_id: Filter by tenant (None = all)
             conn: Optional database connection
 
         Returns:
@@ -1291,7 +1291,7 @@ class TigerCache:
 
         logger.info(
             f"Tiger Cache INVALIDATE: subject={subject_type}:{subject_id}, "
-            f"permission={permission}, resource_type={resource_type}, tenant={tenant_id}"
+            f"permission={permission}, resource_type={resource_type}, tenant={zone_id}"
         )
 
         # Build WHERE clause
@@ -1310,9 +1310,9 @@ class TigerCache:
         if resource_type:
             conditions.append("resource_type = :resource_type")
             params["resource_type"] = resource_type
-        if tenant_id:
-            conditions.append("tenant_id = :tenant_id")
-            params["tenant_id"] = tenant_id
+        if zone_id:
+            conditions.append("zone_id = :zone_id")
+            params["zone_id"] = zone_id
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -1332,7 +1332,7 @@ class TigerCache:
                     new_conn.execute(text("PRAGMA busy_timeout=100"))
                 count = execute(new_conn)
 
-        # L2: Invalidate from Dragonfly cache (tenant_id excluded per Issue #979)
+        # L2: Invalidate from Dragonfly cache (zone_id excluded per Issue #979)
         dragonfly_count = 0
         if self._dragonfly:
             dragonfly_count = (
@@ -1360,7 +1360,7 @@ class TigerCache:
                     match = False
                 if resource_type and key.resource_type != resource_type:
                     match = False
-                # Note: tenant_id removed from CacheKey per Issue #979
+                # Note: zone_id removed from CacheKey per Issue #979
                 # Tenant isolation is enforced during permission computation
                 if match:
                     keys_to_remove.append(key)
@@ -1397,7 +1397,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Add a single resource to subject's permission bitmap (in-memory only).
@@ -1410,7 +1410,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID (kept for API compatibility)
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to add
 
         Returns:
@@ -1449,7 +1449,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool:
         """Write-through: Add a single resource grant and persist to database.
 
@@ -1469,7 +1469,7 @@ class TigerCache:
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being granted
-            tenant_id: Tenant ID (used for resource lookup, not cache key)
+            zone_id: Zone ID (used for resource lookup, not cache key)
 
         Returns:
             True if persisted successfully, False on error
@@ -1481,7 +1481,7 @@ class TigerCache:
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
             resource_int_id = self._resource_map.get_or_create_int_id(
-                resource_type, resource_id, tenant_id
+                resource_type, resource_id, zone_id
             )
 
             with self._engine.begin() as conn:
@@ -1509,19 +1509,19 @@ class TigerCache:
                     bitmap = RoaringBitmap([resource_int_id])
                     revision = 0
 
-                # Step 3: Persist to database (tenant_id removed from key per Issue #979)
-                # Note: tenant_id still included in INSERT for backward compatibility
+                # Step 3: Persist to database (zone_id removed from key per Issue #979)
+                # Note: zone_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
 
                 if self._is_postgresql:
                     upsert_query = text("""
                         INSERT INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                            (subject_type, subject_id, permission, resource_type, zone_id,
                              bitmap_data, revision, created_at, updated_at)
                         VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1530,10 +1530,10 @@ class TigerCache:
                     # SQLite: Use INSERT OR REPLACE
                     upsert_query = text("""
                         INSERT OR REPLACE INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                            (subject_type, subject_id, permission, resource_type, zone_id,
                              bitmap_data, revision, created_at, updated_at)
                         VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                              :bitmap_data, :revision, datetime('now'), datetime('now'))
                     """)
 
@@ -1544,7 +1544,7 @@ class TigerCache:
                         "subject_id": subject_id,
                         "permission": permission,
                         "resource_type": resource_type,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "bitmap_data": bitmap_data,
                         "revision": revision,
                     },
@@ -1586,7 +1586,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_id: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool:
         """Write-through: Remove a single resource grant and persist to database.
 
@@ -1598,7 +1598,7 @@ class TigerCache:
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of the resource being revoked
-            tenant_id: Tenant ID (used for resource lookup, not cache key)
+            zone_id: Zone ID (used for resource lookup, not cache key)
 
         Returns:
             True if persisted successfully, False on error
@@ -1663,19 +1663,19 @@ class TigerCache:
                     if key in self._cache:
                         _, revision, _ = self._cache[key]
 
-                # Step 4: Persist to database (tenant_id removed from key per Issue #979)
-                # Note: tenant_id still included in INSERT for backward compatibility
+                # Step 4: Persist to database (zone_id removed from key per Issue #979)
+                # Note: zone_id still included in INSERT for backward compatibility
                 bitmap_data = bitmap.serialize()
 
                 if self._is_postgresql:
                     upsert_query = text("""
                         INSERT INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                            (subject_type, subject_id, permission, resource_type, zone_id,
                              bitmap_data, revision, created_at, updated_at)
                         VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                              :bitmap_data, :revision, NOW(), NOW())
-                        ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                        ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
                         DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                       revision = EXCLUDED.revision,
                                       updated_at = NOW()
@@ -1683,10 +1683,10 @@ class TigerCache:
                 else:
                     upsert_query = text("""
                         INSERT OR REPLACE INTO tiger_cache
-                            (subject_type, subject_id, permission, resource_type, tenant_id,
+                            (subject_type, subject_id, permission, resource_type, zone_id,
                              bitmap_data, revision, created_at, updated_at)
                         VALUES
-                            (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                            (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                              :bitmap_data, :revision, datetime('now'), datetime('now'))
                     """)
 
@@ -1697,7 +1697,7 @@ class TigerCache:
                         "subject_id": subject_id,
                         "permission": permission,
                         "resource_type": resource_type,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "bitmap_data": bitmap_data,
                         "revision": revision,
                     },
@@ -1736,7 +1736,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_id: int,
     ) -> bool:
         """Remove a resource from subject's permission bitmap (write-through).
@@ -1749,7 +1749,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            tenant_id: Tenant ID (kept for API compatibility)
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_id: Integer ID of the resource to remove
 
         Returns:
@@ -1785,7 +1785,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
+        zone_id: str,  # noqa: ARG002 - Kept for API compatibility, not used in cache key (Issue #979)
         resource_int_ids: set[int],
     ) -> int:
         """Add multiple resources to subject's permission bitmap in bulk.
@@ -1798,7 +1798,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             resource_type: Type of resource
-            tenant_id: Tenant ID (kept for API compatibility)
+            zone_id: Zone ID (kept for API compatibility)
             resource_int_ids: Set of integer resource IDs to add
 
         Returns:
@@ -1836,7 +1836,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 
@@ -1859,7 +1859,7 @@ class TigerCache:
             permission: Permission type
             resource_type: Type of resource
             resource_int_ids: Set of integer resource IDs to persist
-            tenant_id: Tenant ID (for backward compatibility, not used in cache key)
+            zone_id: Zone ID (for backward compatibility, not used in cache key)
 
         Returns:
             True if persisted successfully, False on error
@@ -1882,16 +1882,16 @@ class TigerCache:
 
             bitmap_data = bitmap.serialize()
 
-            # Note: tenant_id still included in INSERT for backward compatibility
+            # Note: zone_id still included in INSERT for backward compatibility
             if self._is_postgresql:
                 upsert_query = text("""
                     INSERT INTO tiger_cache
-                        (subject_type, subject_id, permission, resource_type, tenant_id,
+                        (subject_type, subject_id, permission, resource_type, zone_id,
                          bitmap_data, revision, created_at, updated_at)
                     VALUES
-                        (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                        (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                          :bitmap_data, :revision, NOW(), NOW())
-                    ON CONFLICT (subject_type, subject_id, permission, resource_type, tenant_id)
+                    ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
                     DO UPDATE SET bitmap_data = EXCLUDED.bitmap_data,
                                   revision = EXCLUDED.revision,
                                   updated_at = NOW()
@@ -1899,10 +1899,10 @@ class TigerCache:
             else:
                 upsert_query = text("""
                     INSERT OR REPLACE INTO tiger_cache
-                        (subject_type, subject_id, permission, resource_type, tenant_id,
+                        (subject_type, subject_id, permission, resource_type, zone_id,
                          bitmap_data, revision, created_at, updated_at)
                     VALUES
-                        (:subject_type, :subject_id, :permission, :resource_type, :tenant_id,
+                        (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
                          :bitmap_data, :revision, datetime('now'), datetime('now'))
                 """)
 
@@ -1914,7 +1914,7 @@ class TigerCache:
                         "subject_id": subject_id,
                         "permission": permission,
                         "resource_type": resource_type,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "bitmap_data": bitmap_data,
                         "revision": revision,
                     },
@@ -1950,7 +1950,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
         grant_revision: int,
         include_future_files: bool = True,
     ) -> int | None:
@@ -1967,7 +1967,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type (e.g., "read", "write")
             directory_path: Path of the directory granted (e.g., "/workspace/")
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             grant_revision: Revision at time of grant (for consistency)
             include_future_files: Whether new files should inherit this grant
 
@@ -1984,14 +1984,14 @@ class TigerCache:
             if self._is_postgresql:
                 query = text("""
                     INSERT INTO tiger_directory_grants
-                        (subject_type, subject_id, permission, directory_path, tenant_id,
+                        (subject_type, subject_id, permission, directory_path, zone_id,
                          grant_revision, include_future_files, expansion_status, expanded_count,
                          created_at, updated_at)
                     VALUES
-                        (:subject_type, :subject_id, :permission, :directory_path, :tenant_id,
+                        (:subject_type, :subject_id, :permission, :directory_path, :zone_id,
                          :grant_revision, :include_future_files, 'pending', 0,
                          NOW(), NOW())
-                    ON CONFLICT (tenant_id, directory_path, permission, subject_type, subject_id)
+                    ON CONFLICT (zone_id, directory_path, permission, subject_type, subject_id)
                     DO UPDATE SET
                         grant_revision = EXCLUDED.grant_revision,
                         include_future_files = EXCLUDED.include_future_files,
@@ -2001,11 +2001,11 @@ class TigerCache:
             else:
                 query = text("""
                     INSERT OR REPLACE INTO tiger_directory_grants
-                        (subject_type, subject_id, permission, directory_path, tenant_id,
+                        (subject_type, subject_id, permission, directory_path, zone_id,
                          grant_revision, include_future_files, expansion_status, expanded_count,
                          created_at, updated_at)
                     VALUES
-                        (:subject_type, :subject_id, :permission, :directory_path, :tenant_id,
+                        (:subject_type, :subject_id, :permission, :directory_path, :zone_id,
                          :grant_revision, :include_future_files, 'pending', 0,
                          datetime('now'), datetime('now'))
                 """)
@@ -2018,7 +2018,7 @@ class TigerCache:
                         "subject_id": subject_id,
                         "permission": permission,
                         "directory_path": directory_path,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                         "grant_revision": grant_revision,
                         "include_future_files": include_future_files,
                     },
@@ -2035,7 +2035,7 @@ class TigerCache:
     def get_directory_grants_for_path(
         self,
         path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> list[dict]:
         """Get all directory grants that would apply to a given path.
 
@@ -2044,7 +2044,7 @@ class TigerCache:
 
         Args:
             path: File path to check (e.g., "/workspace/project/file.txt")
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of grant dictionaries with subject, permission, directory info
@@ -2062,11 +2062,11 @@ class TigerCache:
                     SELECT grant_id, subject_type, subject_id, permission, directory_path,
                            grant_revision, include_future_files
                     FROM tiger_directory_grants
-                    WHERE tenant_id = :tenant_id
+                    WHERE zone_id = :zone_id
                       AND directory_path = ANY(:ancestors)
                       AND expansion_status = 'completed'
                 """)
-                params = {"tenant_id": tenant_id, "ancestors": ancestors}
+                params = {"zone_id": zone_id, "ancestors": ancestors}
             else:
                 # SQLite: Use IN clause
                 placeholders = ", ".join([f":a{i}" for i in range(len(ancestors))])
@@ -2074,11 +2074,11 @@ class TigerCache:
                     SELECT grant_id, subject_type, subject_id, permission, directory_path,
                            grant_revision, include_future_files
                     FROM tiger_directory_grants
-                    WHERE tenant_id = :tenant_id
+                    WHERE zone_id = :zone_id
                       AND directory_path IN ({placeholders})
                       AND expansion_status = 'completed'
                 """)
-                params = {"tenant_id": tenant_id}
+                params = {"zone_id": zone_id}
                 for i, a in enumerate(ancestors):
                     params[f"a{i}"] = a
 
@@ -2135,7 +2135,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
         grant_revision: int,  # noqa: ARG002 - Reserved for future consistency checks
         descendants: list[str],
         batch_size: int = 1000,
@@ -2151,7 +2151,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             directory_path: Directory path granted
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             grant_revision: Revision for consistency
             descendants: List of descendant file paths
             batch_size: Number of files to process per batch
@@ -2166,7 +2166,7 @@ class TigerCache:
                 subject_id,
                 permission,
                 directory_path,
-                tenant_id,
+                zone_id,
                 status="completed",
                 expanded_count=0,
                 total_count=0,
@@ -2179,7 +2179,7 @@ class TigerCache:
             subject_id,
             permission,
             directory_path,
-            tenant_id,
+            zone_id,
             status="in_progress",
             total_count=len(descendants),
         )
@@ -2208,7 +2208,7 @@ class TigerCache:
                 if valid_int_ids:
                     # Add to in-memory bitmap
                     self.add_to_bitmap_bulk(
-                        subject_type, subject_id, permission, "file", tenant_id, valid_int_ids
+                        subject_type, subject_id, permission, "file", zone_id, valid_int_ids
                     )
 
                 total_expanded += len(valid_int_ids)
@@ -2219,7 +2219,7 @@ class TigerCache:
                     subject_id,
                     permission,
                     directory_path,
-                    tenant_id,
+                    zone_id,
                     status="in_progress",
                     expanded_count=total_expanded,
                 )
@@ -2236,7 +2236,7 @@ class TigerCache:
                     bitmap, revision, _ = self._cache[key]
                     all_int_ids = set(bitmap.to_array())
                     self.persist_bitmap_bulk(
-                        subject_type, subject_id, permission, "file", all_int_ids, tenant_id
+                        subject_type, subject_id, permission, "file", all_int_ids, zone_id
                     )
 
             # Mark as completed
@@ -2245,7 +2245,7 @@ class TigerCache:
                 subject_id,
                 permission,
                 directory_path,
-                tenant_id,
+                zone_id,
                 status="completed",
                 expanded_count=total_expanded,
             )
@@ -2264,7 +2264,7 @@ class TigerCache:
                 subject_id,
                 permission,
                 directory_path,
-                tenant_id,
+                zone_id,
                 status="failed",
                 error_message=str(e),
             )
@@ -2276,7 +2276,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
         status: str | None = None,
         expanded_count: int | None = None,
         total_count: int | None = None,
@@ -2291,7 +2291,7 @@ class TigerCache:
             "subject_id": subject_id,
             "permission": permission,
             "directory_path": directory_path,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
         }
 
         if status is not None:
@@ -2330,7 +2330,7 @@ class TigerCache:
               AND subject_id = :subject_id
               AND permission = :permission
               AND directory_path = :directory_path
-              AND tenant_id = :tenant_id
+              AND zone_id = :zone_id
         """)
 
         try:
@@ -2345,7 +2345,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> bool:
         """Remove a directory grant and optionally clean up expanded permissions.
 
@@ -2354,7 +2354,7 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission type
             directory_path: Directory path to remove grant from
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             True if removed successfully
@@ -2372,7 +2372,7 @@ class TigerCache:
                   AND subject_id = :subject_id
                   AND permission = :permission
                   AND directory_path = :directory_path
-                  AND tenant_id = :tenant_id
+                  AND zone_id = :zone_id
             """)
 
             with self._engine.begin() as conn:
@@ -2383,7 +2383,7 @@ class TigerCache:
                         "subject_id": subject_id,
                         "permission": permission,
                         "directory_path": directory_path,
-                        "tenant_id": tenant_id,
+                        "zone_id": zone_id,
                     },
                 )
 
@@ -2400,7 +2400,7 @@ class TigerCache:
     def add_file_to_ancestor_grants(
         self,
         file_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> int:
         """Add a newly created file to all applicable ancestor directory grants.
 
@@ -2412,7 +2412,7 @@ class TigerCache:
 
         Args:
             file_path: Path of the newly created file
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of grants the file was added to
@@ -2424,7 +2424,7 @@ class TigerCache:
             logger.error(f"[TIGER] Failed to get int_id for new file: {file_path}")
             return 0
 
-        grants = self.get_directory_grants_for_path(file_path, tenant_id)
+        grants = self.get_directory_grants_for_path(file_path, zone_id)
         if not grants:
             return 0
 
@@ -2441,7 +2441,7 @@ class TigerCache:
                     grant["subject_id"],
                     grant["permission"],
                     "file",
-                    tenant_id,
+                    zone_id,
                     int_id,
                 )
 
@@ -2452,7 +2452,7 @@ class TigerCache:
                     grant["permission"],
                     "file",
                     file_path,
-                    tenant_id,
+                    zone_id,
                 )
 
                 added_count += 1
@@ -2476,27 +2476,27 @@ class TigerCache:
                 if self._is_postgresql:
                     # PostgreSQL: Atomic upsert with increment
                     query = text("""
-                        INSERT INTO rebac_version_sequences (tenant_id, current_version, updated_at)
-                        VALUES (:tenant_id, 1, NOW())
-                        ON CONFLICT (tenant_id)
+                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
+                        VALUES (:zone_id, 1, NOW())
+                        ON CONFLICT (zone_id)
                         DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
                                       updated_at = NOW()
                     """)
                 else:
                     # SQLite: Use INSERT OR REPLACE
                     query = text("""
-                        INSERT OR REPLACE INTO rebac_version_sequences (tenant_id, current_version, updated_at)
+                        INSERT OR REPLACE INTO rebac_version_sequences (zone_id, current_version, updated_at)
                         VALUES (
-                            :tenant_id,
-                            COALESCE((SELECT current_version FROM rebac_version_sequences WHERE tenant_id = :tenant_id), 0) + 1,
+                            :zone_id,
+                            COALESCE((SELECT current_version FROM rebac_version_sequences WHERE zone_id = :zone_id), 0) + 1,
                             CURRENT_TIMESTAMP
                         )
                     """)
 
                 with self._engine.begin() as conn:
-                    conn.execute(query, {"tenant_id": tenant_id})
+                    conn.execute(query, {"zone_id": zone_id})
                     logger.debug(
-                        f"[TIGER] Incremented tenant revision for {tenant_id} after adding file to grants"
+                        f"[TIGER] Incremented tenant revision for {zone_id} after adding file to grants"
                     )
             except Exception as e:
                 logger.warning(f"[TIGER] Failed to increment tenant revision: {e}")
@@ -2594,7 +2594,7 @@ class TigerCacheUpdater:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         priority: int = 100,
         conn: Connection | None = None,
     ) -> int:
@@ -2605,7 +2605,7 @@ class TigerCacheUpdater:
             subject_id: ID of subject
             permission: Permission to recompute
             resource_type: Type of resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             priority: Priority (lower = higher priority)
             conn: Optional database connection
 
@@ -2617,9 +2617,9 @@ class TigerCacheUpdater:
         now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
         query = text(f"""
             INSERT INTO tiger_cache_queue
-                (subject_type, subject_id, permission, resource_type, tenant_id, priority, status, created_at)
+                (subject_type, subject_id, permission, resource_type, zone_id, priority, status, created_at)
             VALUES
-                (:subject_type, :subject_id, :permission, :resource_type, :tenant_id, :priority, 'pending', {now_sql})
+                (:subject_type, :subject_id, :permission, :resource_type, :zone_id, :priority, 'pending', {now_sql})
         """)
 
         params = {
@@ -2627,7 +2627,7 @@ class TigerCacheUpdater:
             "subject_id": subject_id,
             "permission": permission,
             "resource_type": resource_type,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "priority": priority,
         }
 
@@ -2734,7 +2734,7 @@ class TigerCacheUpdater:
         # Use FOR UPDATE SKIP LOCKED on PostgreSQL to avoid deadlocks
         if self._is_postgresql:
             select_query = text(f"""
-                SELECT queue_id, subject_type, subject_id, permission, resource_type, tenant_id
+                SELECT queue_id, subject_type, subject_id, permission, resource_type, zone_id
                 FROM tiger_cache_queue
                 WHERE status = 'pending'
                 ORDER BY priority, created_at
@@ -2743,7 +2743,7 @@ class TigerCacheUpdater:
             """)
         else:
             select_query = text(f"""
-                SELECT queue_id, subject_type, subject_id, permission, resource_type, tenant_id
+                SELECT queue_id, subject_type, subject_id, permission, resource_type, zone_id
                 FROM tiger_cache_queue
                 WHERE status = 'pending'
                 ORDER BY priority, created_at
@@ -2773,12 +2773,12 @@ class TigerCacheUpdater:
                         entry.subject_id,
                         entry.permission,
                         entry.resource_type,
-                        entry.tenant_id,
+                        entry.zone_id,
                         connection,
                     )
 
                     # Get current revision
-                    revision = self._get_current_revision(entry.tenant_id, connection)
+                    revision = self._get_current_revision(entry.zone_id, connection)
 
                     # Update cache
                     self._tiger_cache.update_cache(
@@ -2786,7 +2786,7 @@ class TigerCacheUpdater:
                         entry.subject_id,
                         entry.permission,
                         entry.resource_type,
-                        entry.tenant_id,
+                        entry.zone_id,
                         accessible,
                         revision,
                         connection,
@@ -2855,7 +2855,7 @@ class TigerCacheUpdater:
         subject_id: str,
         permission: str,
         resource_type: str,
-        tenant_id: str,
+        zone_id: str,
         conn: Connection,
     ) -> set[int]:
         """Compute all resources accessible by subject.
@@ -2867,7 +2867,7 @@ class TigerCacheUpdater:
             subject_id: ID of subject
             permission: Permission to check
             resource_type: Type of resource
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             conn: Database connection
 
         Returns:
@@ -2884,12 +2884,12 @@ class TigerCacheUpdater:
             SELECT resource_int_id, resource_id
             FROM tiger_resource_map
             WHERE resource_type = :resource_type
-              AND tenant_id = :tenant_id
+              AND zone_id = :zone_id
         """)
 
         result = conn.execute(
             resources_query,
-            {"resource_type": resource_type, "tenant_id": tenant_id},
+            {"resource_type": resource_type, "zone_id": zone_id},
         )
 
         accessible: set[int] = set()
@@ -2899,23 +2899,23 @@ class TigerCacheUpdater:
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=(resource_type, row.resource_id),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             if has_access:
                 accessible.add(row.resource_int_id)
 
         return accessible
 
-    def _get_current_revision(self, tenant_id: str, conn: Connection) -> int:
+    def _get_current_revision(self, zone_id: str, conn: Connection) -> int:
         """Get current revision from changelog."""
         from sqlalchemy import text
 
         query = text("""
             SELECT COALESCE(MAX(change_id), 0) as revision
             FROM rebac_changelog
-            WHERE tenant_id = :tenant_id
+            WHERE zone_id = :zone_id
         """)
-        result = conn.execute(query, {"tenant_id": tenant_id})
+        result = conn.execute(query, {"zone_id": zone_id})
         row = result.fetchone()
         return int(row.revision) if row else 0
 
@@ -3022,7 +3022,7 @@ class DirectoryGrantExpander:
 
         query = text("""
             SELECT grant_id, subject_type, subject_id, permission,
-                   directory_path, tenant_id, grant_revision,
+                   directory_path, zone_id, grant_revision,
                    include_future_files, expanded_count, total_count
             FROM tiger_directory_grants
             WHERE expansion_status = 'pending'
@@ -3042,7 +3042,7 @@ class DirectoryGrantExpander:
                             "subject_id": row.subject_id,
                             "permission": row.permission,
                             "directory_path": row.directory_path,
-                            "tenant_id": row.tenant_id,
+                            "zone_id": row.zone_id,
                             "grant_revision": row.grant_revision,
                             "include_future_files": row.include_future_files,
                             "expanded_count": row.expanded_count or 0,
@@ -3194,13 +3194,13 @@ class DirectoryGrantExpander:
     def _get_directory_descendants(
         self,
         directory_path: str,
-        tenant_id: str,
+        zone_id: str,
     ) -> list[str]:
         """Get all files under a directory.
 
         Args:
             directory_path: Directory path (ending with /)
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of file paths
@@ -3213,7 +3213,7 @@ class DirectoryGrantExpander:
             files = self._metadata_store.list(
                 prefix=directory_path,
                 recursive=True,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             return [f.path for f in files if f.path]
         except Exception as e:
@@ -3231,7 +3231,7 @@ class DirectoryGrantExpander:
         """
         grant_id = grant["grant_id"]
         directory_path = grant["directory_path"]
-        tenant_id = grant["tenant_id"]
+        zone_id = grant["zone_id"]
         subject_type = grant["subject_type"]
         subject_id = grant["subject_id"]
         permission = grant["permission"]
@@ -3245,7 +3245,7 @@ class DirectoryGrantExpander:
 
         try:
             # Get all descendants
-            descendants = self._get_directory_descendants(directory_path, tenant_id)
+            descendants = self._get_directory_descendants(directory_path, zone_id)
 
             if not descendants:
                 # No files - mark as completed
@@ -3279,7 +3279,7 @@ class DirectoryGrantExpander:
                     subject_id=subject_id,
                     permission=permission,
                     directory_path=directory_path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     grant_revision=grant_revision,
                     descendants=batch,
                 )

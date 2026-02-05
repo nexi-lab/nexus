@@ -41,7 +41,7 @@ class TestPermissionBoundaryCache:
         # Set boundary: /workspace/project/src/file.py → /workspace
         # Note: paths are normalized (trailing slashes removed)
         cache.set_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -51,7 +51,7 @@ class TestPermissionBoundaryCache:
 
         # Get boundary should return the cached boundary
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -75,7 +75,7 @@ class TestPermissionBoundaryCache:
         # Cache boundary for a directory path
         # Note: trailing slashes are normalized away
         cache.set_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -85,7 +85,7 @@ class TestPermissionBoundaryCache:
 
         # Files under that directory should find the boundary via ancestor lookup
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -96,7 +96,7 @@ class TestPermissionBoundaryCache:
 
         # Deep nested paths should also resolve
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -107,7 +107,7 @@ class TestPermissionBoundaryCache:
 
         # Paths outside the cached directory should not resolve
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -121,7 +121,7 @@ class TestPermissionBoundaryCache:
         cache = PermissionBoundaryCache()
 
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -130,13 +130,13 @@ class TestPermissionBoundaryCache:
 
         assert boundary is None
 
-    def test_tenant_isolation(self):
-        """Test that boundaries are isolated by tenant."""
+    def test_zone_isolation(self):
+        """Test that boundaries are isolated by zone."""
         cache = PermissionBoundaryCache()
 
-        # Set boundary for tenant1
+        # Set boundary for zone1
         cache.set_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -144,9 +144,9 @@ class TestPermissionBoundaryCache:
             boundary_path="/workspace/",
         )
 
-        # Should NOT find boundary for tenant2
+        # Should NOT find boundary for zone2
         boundary = cache.get_boundary(
-            tenant_id="tenant2",
+            zone_id="zone2",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -161,7 +161,7 @@ class TestPermissionBoundaryCache:
 
         # Set boundary for alice
         cache.set_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -171,7 +171,7 @@ class TestPermissionBoundaryCache:
 
         # Should NOT find boundary for bob
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="bob",
             permission="read",
@@ -186,7 +186,7 @@ class TestPermissionBoundaryCache:
 
         # Set boundary for read
         cache.set_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="read",
@@ -196,7 +196,7 @@ class TestPermissionBoundaryCache:
 
         # Should NOT find boundary for write
         boundary = cache.get_boundary(
-            tenant_id="tenant1",
+            zone_id="zone1",
             subject_type="user",
             subject_id="alice",
             permission="write",
@@ -210,65 +210,64 @@ class TestPermissionBoundaryCache:
         cache = PermissionBoundaryCache()
 
         # Set multiple boundaries for alice
-        cache.set_boundary("tenant1", "user", "alice", "read", "/a.py", "/")
-        cache.set_boundary("tenant1", "user", "alice", "write", "/b.py", "/")
-        cache.set_boundary("tenant1", "user", "bob", "read", "/c.py", "/")
+        cache.set_boundary("zone1", "user", "alice", "read", "/a.py", "/")
+        cache.set_boundary("zone1", "user", "alice", "write", "/b.py", "/")
+        cache.set_boundary("zone1", "user", "bob", "read", "/c.py", "/")
 
         # Invalidate alice's boundaries
-        count = cache.invalidate_subject("tenant1", "user", "alice")
+        count = cache.invalidate_subject("zone1", "user", "alice")
 
         assert count == 2  # alice had 2 boundaries
 
         # Alice's boundaries should be gone
-        assert cache.get_boundary("tenant1", "user", "alice", "read", "/a.py") is None
-        assert cache.get_boundary("tenant1", "user", "alice", "write", "/b.py") is None
+        assert cache.get_boundary("zone1", "user", "alice", "read", "/a.py") is None
+        assert cache.get_boundary("zone1", "user", "alice", "write", "/b.py") is None
 
         # Bob's boundary should still exist
-        assert cache.get_boundary("tenant1", "user", "bob", "read", "/c.py") == "/"
+        assert cache.get_boundary("zone1", "user", "bob", "read", "/c.py") == "/"
 
     def test_invalidate_path_prefix(self):
         """Test invalidating boundaries under a path prefix."""
         cache = PermissionBoundaryCache()
 
         # Set boundaries at different paths (trailing slashes normalized away)
-        cache.set_boundary("tenant1", "user", "alice", "read", "/workspace/a.py", "/workspace")
-        cache.set_boundary("tenant1", "user", "alice", "read", "/other/b.py", "/other")
-        cache.set_boundary("tenant1", "user", "bob", "read", "/workspace/c.py", "/workspace")
+        cache.set_boundary("zone1", "user", "alice", "read", "/workspace/a.py", "/workspace")
+        cache.set_boundary("zone1", "user", "alice", "read", "/other/b.py", "/other")
+        cache.set_boundary("zone1", "user", "bob", "read", "/workspace/c.py", "/workspace")
 
         # Invalidate /workspace prefix
-        count = cache.invalidate_path_prefix("tenant1", "/workspace")
+        count = cache.invalidate_path_prefix("zone1", "/workspace")
 
         assert count == 2  # Two entries under /workspace
 
         # /workspace boundaries should be gone
-        assert cache.get_boundary("tenant1", "user", "alice", "read", "/workspace/a.py") is None
-        assert cache.get_boundary("tenant1", "user", "bob", "read", "/workspace/c.py") is None
+        assert cache.get_boundary("zone1", "user", "alice", "read", "/workspace/a.py") is None
+        assert cache.get_boundary("zone1", "user", "bob", "read", "/workspace/c.py") is None
 
         # /other boundary should still exist
-        assert cache.get_boundary("tenant1", "user", "alice", "read", "/other/b.py") == "/other"
+        assert cache.get_boundary("zone1", "user", "alice", "read", "/other/b.py") == "/other"
 
     def test_invalidate_permission_change(self):
         """Test precise invalidation for a specific permission change."""
         cache = PermissionBoundaryCache()
 
         # Set boundaries (trailing slashes normalized away)
-        cache.set_boundary("tenant1", "user", "alice", "read", "/workspace/a.py", "/workspace")
-        cache.set_boundary("tenant1", "user", "alice", "read", "/workspace/b.py", "/workspace")
-        cache.set_boundary("tenant1", "user", "alice", "write", "/workspace/c.py", "/workspace")
+        cache.set_boundary("zone1", "user", "alice", "read", "/workspace/a.py", "/workspace")
+        cache.set_boundary("zone1", "user", "alice", "read", "/workspace/b.py", "/workspace")
+        cache.set_boundary("zone1", "user", "alice", "write", "/workspace/c.py", "/workspace")
 
         # Invalidate alice's read permission on /workspace
-        count = cache.invalidate_permission_change("tenant1", "user", "alice", "read", "/workspace")
+        count = cache.invalidate_permission_change("zone1", "user", "alice", "read", "/workspace")
 
         assert count == 2  # Two read entries pointing to /workspace
 
         # Read boundaries should be gone
-        assert cache.get_boundary("tenant1", "user", "alice", "read", "/workspace/a.py") is None
-        assert cache.get_boundary("tenant1", "user", "alice", "read", "/workspace/b.py") is None
+        assert cache.get_boundary("zone1", "user", "alice", "read", "/workspace/a.py") is None
+        assert cache.get_boundary("zone1", "user", "alice", "read", "/workspace/b.py") is None
 
         # Write boundary should still exist
         assert (
-            cache.get_boundary("tenant1", "user", "alice", "write", "/workspace/c.py")
-            == "/workspace"
+            cache.get_boundary("zone1", "user", "alice", "write", "/workspace/c.py") == "/workspace"
         )
 
     def test_metrics_tracking(self):
@@ -321,14 +320,14 @@ class TestPermissionBoundaryCache:
         assert stats["current_subjects"] == 0
         assert stats["total_mappings"] == 0
 
-    def test_default_tenant_id(self):
-        """Test that None tenant_id is treated as 'default'."""
+    def test_default_zone_id(self):
+        """Test that None zone_id is treated as 'default'."""
         cache = PermissionBoundaryCache()
 
-        # Set with None tenant
+        # Set with None zone
         cache.set_boundary(None, "user", "alice", "read", "/file.py", "/")  # type: ignore
 
-        # Should find with "default" tenant
+        # Should find with "default" zone
         boundary = cache.get_boundary("default", "user", "alice", "read", "/file.py")
         assert boundary == "/"
 

@@ -80,7 +80,7 @@ print(f"Created: {sandbox_id}")
   "name": "my-sandbox",
   "user_id": "user123",
   "agent_id": null,
-  "tenant_id": "default",
+  "zone_id": "default",
   "provider": "e2b",
   "template_id": null,
   "status": "active",
@@ -234,7 +234,7 @@ result = nx.sandbox_list()
 result = nx.sandbox_list(context={
     "user": "alice",           # Filter by user
     "agent_id": "agent_123",   # Filter by agent
-    "tenant_id": "tenant_456"  # Filter by tenant
+    "zone_id": "tenant_456"  # Filter by zone
 })
 
 # List with status verification
@@ -255,7 +255,7 @@ for sandbox in result["sandboxes"]:
 **Options:**
 - `--user-id, -u TEXT`: Filter by user ID
 - `--agent-id, -a TEXT`: Filter by agent ID
-- `--tenant-id, -t TEXT`: Filter by tenant ID
+- `--tenant-id, -t TEXT`: Filter by zone ID
 - `--verify, -v`: Verify status with provider (slower but accurate)
 - `--json, -j`: Output as JSON
 
@@ -335,7 +335,7 @@ print(f"Expires: {status['expires_at']}")
   "name": "demo-sandbox-1",
   "user_id": "user123",
   "agent_id": null,
-  "tenant_id": "default",
+  "zone_id": "default",
   "provider": "e2b",
   "template_id": "agupxq1ug1k3r5ujs8ma",
   "status": "active",

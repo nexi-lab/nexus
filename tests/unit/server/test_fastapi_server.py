@@ -32,20 +32,20 @@ async def test_get_auth_result_open_access_infers_subject_from_sk_token():
     fas._app_state.api_key = None
     fas._app_state.auth_provider = None
 
-    # Best-effort inference format: sk-<tenant>_<user>_<...>
+    # Best-effort inference format: sk-<zone>_<user>_<...>
     token = "sk-default_admin_deadbeef_0123456789abcdef0123456789abcdef"
     auth = await fas.get_auth_result(
         authorization=f"Bearer {token}",
         x_agent_id=None,
         x_nexus_subject=None,
-        x_nexus_tenant_id=None,
+        x_nexus_zone_id=None,
     )
 
     assert auth is not None
     assert auth["authenticated"] is True
     assert auth["subject_type"] == "user"
     assert auth["subject_id"] == "admin"
-    assert auth["tenant_id"] == "default"
+    assert auth["zone_id"] == "default"
     assert auth["metadata"]["open_access"] is True
 
 
@@ -59,15 +59,15 @@ async def test_get_auth_result_open_access_prefers_x_nexus_subject_over_token():
         authorization=f"Bearer {token}",
         x_agent_id=None,
         x_nexus_subject="user:alice",
-        x_nexus_tenant_id="tenant-xyz",
+        x_nexus_zone_id="zone-xyz",
     )
 
     assert auth is not None
     assert auth["authenticated"] is True
     assert auth["subject_type"] == "user"
     assert auth["subject_id"] == "alice"
-    # x_nexus_tenant_id should flow through
-    assert auth["tenant_id"] == "tenant-xyz"
+    # x_nexus_zone_id should flow through
+    assert auth["zone_id"] == "zone-xyz"
 
 
 def test_handle_delete_passes_context_to_filesystem():
@@ -86,7 +86,7 @@ def test_handle_delete_passes_context_to_filesystem():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
     )
     params = SimpleNamespace(path="/nexus_file_structure.pdf")
@@ -113,7 +113,7 @@ def test_handle_delete_falls_back_if_filesystem_delete_has_no_context_param():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
     )
     params = SimpleNamespace(path="/file.txt")
@@ -145,7 +145,7 @@ def test_handle_rename_passes_context_to_filesystem():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
     )
     params = SimpleNamespace(old_path="/a.txt", new_path="/b.txt")
@@ -165,7 +165,7 @@ async def test_auto_dispatch_injects__context_param():
 
     async def fn(_context: OperationContext | None = None):
         assert _context is not None
-        return {"subject_id": _context.subject_id, "tenant_id": _context.tenant_id}
+        return {"subject_id": _context.subject_id, "zone_id": _context.zone_id}
 
     fas._app_state.exposed_methods = {"dummy": fn}
 
@@ -174,13 +174,13 @@ async def test_auto_dispatch_injects__context_param():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
     )
     params = SimpleNamespace()
 
     result = await fas._auto_dispatch("dummy", params, ctx)
-    assert result == {"subject_id": "admin", "tenant_id": "default"}
+    assert result == {"subject_id": "admin", "zone_id": "default"}
 
 
 class TestFastAPIServerAuth:
@@ -198,7 +198,7 @@ class TestFastAPIServerAuth:
             authenticated=True,
             subject_type="user",
             subject_id="alice",
-            tenant_id="default",
+            zone_id="default",
             is_admin=False,
             inherit_permissions=True,
         )
@@ -210,7 +210,7 @@ class TestFastAPIServerAuth:
             authorization="Bearer sk-test-key",
             x_agent_id=None,
             x_nexus_subject=None,
-            x_nexus_tenant_id=None,
+            x_nexus_zone_id=None,
         )
 
         assert auth["authenticated"] is True
@@ -228,7 +228,7 @@ class TestFastAPIServerAuth:
             authorization=f"Bearer {token}",
             x_agent_id="agent-123",
             x_nexus_subject=None,
-            x_nexus_tenant_id=None,
+            x_nexus_zone_id=None,
         )
 
         assert auth["authenticated"] is True
@@ -245,7 +245,7 @@ class TestFastAPIServerAuth:
             authorization=None,
             x_agent_id=None,
             x_nexus_subject=None,
-            x_nexus_tenant_id=None,
+            x_nexus_zone_id=None,
         )
 
         # In open access mode (no auth configured), it returns authenticated=True
@@ -264,7 +264,7 @@ class TestFastAPIServerAuth:
             authorization="Bearer invalid-token-format",
             x_agent_id=None,
             x_nexus_subject=None,
-            x_nexus_tenant_id=None,
+            x_nexus_zone_id=None,
         )
 
         # Should still try to infer from token
@@ -290,7 +290,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=False)
@@ -315,7 +315,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=True)
@@ -349,7 +349,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -392,7 +392,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -429,7 +429,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -463,7 +463,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt")
@@ -488,7 +488,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt")
@@ -512,7 +512,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/newdir")
@@ -536,7 +536,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(path="/olddir")
@@ -560,7 +560,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(pattern="*.py", path="/workspace")
@@ -593,7 +593,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            tenant_id="default",
+            zone_id="default",
             is_admin=True,
         )
         params = SimpleNamespace(

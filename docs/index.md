@@ -128,7 +128,7 @@ Nexus is a **programmable filesystem for AI agents** that combines:
     **Great choice!** Built-in multi-tenancy and fine-grained permissions.
 
     ✅ **You need:** Workspace isolation, ReBAC permissions, audit trails
-    👉 **Start here:** [Multi-Tenant SaaS (30 min)](learning-paths/multi-tenant-saas.md)
+    👉 **Start here:** [Multi-Tenant SaaS (30 min)](learning-paths/multi-zone-saas.md)
 
     **Use cases:**
     - **Collaboration platforms** with team workspaces
@@ -499,7 +499,7 @@ Event-driven workflows fire automatically on file operations. No manual triggeri
 
     ⏱️ **30 min** | 💡 **Difficulty:** Hard
 
-    [:octicons-arrow-right-24: Start Learning](learning-paths/multi-tenant-saas.md)
+    [:octicons-arrow-right-24: Start Learning](learning-paths/multi-zone-saas.md)
 
 -   **⚡ Skills Management**
 

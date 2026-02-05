@@ -230,7 +230,7 @@ result = manager.rebac_check(
     subject=("user", "alice"),
     permission="read",
     object=("file", "/doc.txt"),
-    tenant_id="org_123",
+    zone_id="org_123",
     consistency=ConsistencyLevel.STRONG  # Bypass cache for critical checks
 )
 ```
@@ -286,7 +286,7 @@ See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.
 
 ## 2. Context & Identity Management
 
-### 2.1 Instance-Level tenant_id/agent_id (🟡 Soft Deprecated)
+### 2.1 Instance-Level zone_id/agent_id (🟡 Soft Deprecated)
 
 **Status:** Soft deprecated - shows security warning
 **Deprecated In:** v0.5.0
@@ -297,7 +297,7 @@ See REBAC_CONSOLIDATION_ANALYSIS.md for migration guide.
 # ❌ DEPRECATED (SECURITY RISK in server mode):
 nx = NexusFS(
     backend=backend,
-    tenant_id="tenant-123",  # ⚠️  Instance-level tenant_id
+    zone_id="tenant-123",  # ⚠️  Instance-level zone_id
     agent_id="agent-456"      # ⚠️  Instance-level agent_id
 )
 
@@ -311,7 +311,7 @@ nx.write(
     path="/file.txt",
     content=b"data",
     context=OperationContext(
-        tenant_id="tenant-123",
+        zone_id="tenant-123",
         agent_id="agent-456",
         user_id="user-789"
     )
@@ -320,7 +320,7 @@ nx.write(
 
 **Why Deprecated:**
 - **SECURITY RISK:** In server mode, a shared NexusFS instance serves multiple users
-- Instance-level tenant_id/agent_id causes identity confusion
+- Instance-level zone_id/agent_id causes identity confusion
 - Can lead to privilege escalation if not handled carefully
 - Server mode MUST use per-request context for security
 
@@ -331,11 +331,11 @@ nx.write(
 
 **Warning Message:**
 ```
-DeprecationWarning: tenant_id and agent_id parameters in NexusFS.__init__() are DEPRECATED.
+DeprecationWarning: zone_id and agent_id parameters in NexusFS.__init__() are DEPRECATED.
 They should only be used in embedded/CLI mode where a single NexusFS instance serves one user.
 For server mode (shared NexusFS instance serving multiple users), these MUST be None and
 context must be passed to each method call instead.
-Using instance-level tenant_id/agent_id in server mode creates SECURITY RISKS!
+Using instance-level zone_id/agent_id in server mode creates SECURITY RISKS!
 ```
 
 **Files Affected:**
@@ -351,13 +351,13 @@ Using instance-level tenant_id/agent_id in server mode creates SECURITY RISKS!
 
 ```python
 # ❌ DEPRECATED:
-tenant = nx.tenant_id  # Instance property
+tenant = nx.zone_id  # Instance property
 agent = nx.agent_id    # Instance property
 user = nx.user_id      # Instance property
 
 # ✅ REPLACEMENT:
 # Access from context parameter in each operation
-context = OperationContext(tenant_id="...", agent_id="...", user_id="...")
+context = OperationContext(zone_id="...", agent_id="...", user_id="...")
 nx.write(path="/file.txt", content=b"data", context=context)
 ```
 
@@ -366,7 +366,7 @@ nx.write(path="/file.txt", content=b"data", context=context)
 
 ---
 
-### 2.3 Tenant ID in Cache Classes (🟡 Soft Deprecated)
+### 2.3 Zone ID in Cache Classes (🟡 Soft Deprecated)
 
 **Status:** Soft deprecated - parameter ignored
 **Deprecated In:** v0.5.0
@@ -376,12 +376,12 @@ nx.write(path="/file.txt", content=b"data", context=context)
 # ❌ DEPRECATED:
 cache = TigerReBACCache(
     db_session=session,
-    tenant_id="tenant-123"  # ⚠️  Ignored parameter (kept for API compat)
+    zone_id="tenant-123"  # ⚠️  Ignored parameter (kept for API compat)
 )
 
 # ✅ REPLACEMENT:
 cache = TigerReBACCache(db_session=session)
-# tenant_id is now handled per-operation via context
+# zone_id is now handled per-operation via context
 ```
 
 **Why Deprecated:**
@@ -928,7 +928,7 @@ results = nx.search(query="test")  # Mode auto-detected
 ### v0.7.0 (Planned: Q2 2026)
 **Breaking Changes:**
 - 🔴 Remove `acl_store` parameter
-- 🔴 Remove `tenant_id`/`agent_id` in NexusFS.__init__()
+- 🔴 Remove `zone_id`/`agent_id` in NexusFS.__init__()
 - 🔴 Remove `agent_id` parameter in workspace methods
 - 🔴 Remove `custom_parsers` parameter
 - 🔴 Remove `overwrite`/`skip_existing` CLI flags
@@ -980,9 +980,9 @@ python scripts/migrate/update_parameters.py --fix
 Use these regex patterns for automated refactoring:
 
 ```regex
-# tenant_id/agent_id in __init__
-NexusFS\((.*?)tenant_id=(.*?)(,|\))
-→ NexusFS($1)  # Remove tenant_id, pass via context
+# zone_id/agent_id in __init__
+NexusFS\((.*?)zone_id=(.*?)(,|\))
+→ NexusFS($1)  # Remove zone_id, pass via context
 
 # agent_id → workspace_path
 agent_id=["']([^"']+)["']
@@ -1010,7 +1010,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # Suppress specific warning (better)
 warnings.filterwarnings(
     "ignore",
-    message="tenant_id and agent_id parameters.*are DEPRECATED",
+    message="zone_id and agent_id parameters.*are DEPRECATED",
     category=DeprecationWarning
 )
 ```
@@ -1037,7 +1037,7 @@ If you encounter issues during migration:
 | UNIX permissions (chmod/chown/chgrp) | ❌ | ❌ | ❌ | ❌ |
 | ACL operations (grant/deny/revoke) | ❌ | ❌ | ❌ | ❌ |
 | acl_store parameter | ⚠️ | ⚠️ | ❌ | ❌ |
-| tenant_id/agent_id in __init__ | ⚠️ | ⚠️ | ❌ | ❌ |
+| zone_id/agent_id in __init__ | ⚠️ | ⚠️ | ❌ | ❌ |
 | agent_id parameter | ⚠️ | ⚠️ | ❌ | ❌ |
 | custom_parsers | ⚠️ | ⚠️ | ❌ | ❌ |
 | keyword_weight/semantic_weight | ⚠️ | ⚠️ | ❌ | ❌ |

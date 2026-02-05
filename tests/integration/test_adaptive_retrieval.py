@@ -60,7 +60,9 @@ class TestAdaptiveRetrievalFastAPI:
 
         from nexus.server.fastapi_server import create_app
 
-        app = create_app()
+        mock_nexus_fs = MagicMock()
+        mock_nexus_fs.SessionLocal = None  # Skip subscription manager init
+        app = create_app(mock_nexus_fs)
         return TestClient(app)
 
     @pytest.fixture
@@ -271,7 +273,9 @@ class TestAdaptiveRetrievalAPIContract:
         pytest.importorskip("litellm")
         from nexus.server.fastapi_server import create_app
 
-        app = create_app()
+        mock_nexus_fs = MagicMock()
+        mock_nexus_fs.SessionLocal = None  # Skip subscription manager init
+        app = create_app(mock_nexus_fs)
         openapi = app.openapi()
 
         # Find the search endpoint

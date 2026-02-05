@@ -60,7 +60,7 @@ class TestGDriveMkdirFix:
         ):
             mock_context = Mock()
             mock_context.user_id = "test_user"
-            mock_context.tenant_id = "default"
+            mock_context.zone_id = "default"
 
             connector.mkdir(
                 "test_folder", parents=True, exist_ok=False, context=mock_context
@@ -95,7 +95,7 @@ class TestGDriveMkdirFix:
         ):
             mock_context = Mock()
             mock_context.user_id = "test_user"
-            mock_context.tenant_id = "default"
+            mock_context.zone_id = "default"
 
             connector.mkdir(
                 "workspace/data/images", parents=True, exist_ok=False, context=mock_context
@@ -127,7 +127,7 @@ class TestGDriveMkdirFix:
         ):
             mock_context = Mock()
             mock_context.user_id = "test_user"
-            mock_context.tenant_id = "default"
+            mock_context.zone_id = "default"
 
             # Path with leading slash
             connector.mkdir(
@@ -356,7 +356,7 @@ class TestGDriveIntegrationScenarios:
         ):
             mock_context = Mock()
             mock_context.user_id = "test_user"
-            mock_context.tenant_id = "default"
+            mock_context.zone_id = "default"
 
             # Create directory hierarchy
             connector.mkdir(
@@ -396,7 +396,7 @@ class TestGDriveGetOrCreateFolder:
         """Test _get_or_create_folder returns existing folder ID."""
         mock_context = Mock()
         mock_context.user_id = "test_user"
-        mock_context.tenant_id = "default"
+        mock_context.zone_id = "default"
 
         # Mock that folder exists
         mock_list_result = Mock()
@@ -418,7 +418,7 @@ class TestGDriveGetOrCreateFolder:
         """Test _get_or_create_folder creates folder when it doesn't exist."""
         mock_context = Mock()
         mock_context.user_id = "test_user"
-        mock_context.tenant_id = "default"
+        mock_context.zone_id = "default"
 
         # Mock that folder doesn't exist
         mock_list_result = Mock()
@@ -465,7 +465,7 @@ class TestGDriveErrorHandling:
         """Test mkdir handles invalid paths."""
         mock_context = Mock()
         mock_context.user_id = "test_user"
-        mock_context.tenant_id = "default"
+        mock_context.zone_id = "default"
 
         mock_service = Mock()
 
@@ -517,7 +517,7 @@ class TestGDriveWriteContent:
         test_content = b"Hello, Google Drive!"
         mock_context = Mock()
         mock_context.user_id = "test_user"
-        mock_context.tenant_id = "default"
+        mock_context.zone_id = "default"
         mock_context.backend_path = "workspace/test.txt"
 
         # Mock file doesn't exist
@@ -550,7 +550,7 @@ class TestGDriveWriteContent:
         test_content = b"Updated content"
         mock_context = Mock()
         mock_context.user_id = "test_user"
-        mock_context.tenant_id = "default"
+        mock_context.zone_id = "default"
         mock_context.backend_path = "workspace/existing.txt"
 
         # Mock file exists

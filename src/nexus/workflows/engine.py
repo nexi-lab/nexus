@@ -278,21 +278,21 @@ class WorkflowEngine:
             workflow_id = uuid.uuid4()
             logger.warning(f"No workflow_id found for {workflow_name}, using generated UUID")
 
-        # Get tenant_id from event context or workflow store
-        tenant_id_str = event_context.get("tenant_id", "default")
+        # Get zone_id from event context or workflow store
+        zone_id_str = event_context.get("zone_id", "default")
         try:
             # Try to convert to UUID if it's a valid UUID string
             import uuid as uuid_module
 
-            tenant_id = uuid_module.UUID(tenant_id_str) if tenant_id_str != "default" else None
+            zone_id = uuid_module.UUID(zone_id_str) if zone_id_str != "default" else None
         except (ValueError, AttributeError):
             # If not a valid UUID, use None or default
-            tenant_id = None
+            zone_id = None
 
         context = WorkflowContext(
             workflow_id=workflow_id,
             execution_id=execution_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             trigger_type=TriggerType(event_context.get("trigger_type", TriggerType.MANUAL.value)),
             trigger_context=event_context,
             variables=definition.variables.copy(),

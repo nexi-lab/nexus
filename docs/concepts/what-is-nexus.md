@@ -303,7 +303,7 @@ nx.read("/workspace/data.txt")  # Works on local, S3, PostgreSQL
 
 ### Q: Is this production-ready?
 **A**: Yes. Nexus is used in production for:
-- Multi-tenant SaaS applications
+- Multi-zone SaaS applications
 - AI agent platforms
 - Document processing pipelines
 - See: [Production Deployment Guide](../production/deployment.md)

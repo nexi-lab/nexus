@@ -26,7 +26,7 @@ class TrajectoryManager:
         backend: Any,
         user_id: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ):
         """Initialize trajectory manager.
@@ -36,14 +36,14 @@ class TrajectoryManager:
             backend: Storage backend for CAS content
             user_id: User ID for ownership
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             context: Optional operation context for permission checks
         """
         self.session = session
         self.backend = backend
         self.user_id = user_id
         self.agent_id = agent_id
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.context = context or OperationContext(
             user=user_id, groups=[], is_admin=False, is_system=False
         )
@@ -56,7 +56,7 @@ class TrajectoryManager:
         1. Admin/system bypass
         2. Direct creator (agent matches)
         3. User ownership (same user_id)
-        4. Tenant-scoped sharing (same tenant_id and scope='tenant')
+        4. Tenant-scoped sharing (same zone_id and scope='tenant')
 
         Args:
             trajectory: Trajectory model
@@ -124,7 +124,7 @@ class TrajectoryManager:
             trajectory_id=trajectory_id,
             user_id=self.user_id,
             agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             task_description=task_description,
             task_type=task_type or "general",
             parent_trajectory_id=parent_trajectory_id,
@@ -331,7 +331,7 @@ class TrajectoryManager:
                 trajectory_id=trajectory_id,
                 user_id=self.user_id,
                 agent_id=self.agent_id,
-                tenant_id=self.tenant_id,
+                zone_id=self.zone_id,
                 task_description=traj_data["task_description"],
                 task_type=traj_data["task_type"],
                 trace_hash=trace_hash,

@@ -55,8 +55,8 @@ graph TB
 ```
 
 **Key Insight**: Each tenant gets isolated:
-- **Filesystem namespace**: `/workspace/{tenant_id}/...`
-- **Memory**: `{tenant_id}:agent123:memory`
+- **Filesystem namespace**: `/workspace/{zone_id}/...`
+- **Memory**: `{zone_id}:agent123:memory`
 - **Permissions**: Tenant-scoped ReBAC subjects/objects
 - **Workflows**: Tenant-specific triggers and actions
 
@@ -340,7 +340,7 @@ graph TB
 
 **Characteristics**:
 - One Nexus server handles all tenants
-- Shared database (with tenant_id columns)
+- Shared database (with zone_id columns)
 - Shared S3 bucket (with tenant prefixes)
 - API key-based isolation
 
@@ -371,14 +371,14 @@ graph TB
 
     C1 --> API
     C2 --> API
-    API -->|"Route by tenant_id"| DB1
-    API -->|"Route by tenant_id"| DB2
+    API -->|"Route by zone_id"| DB1
+    API -->|"Route by zone_id"| DB2
 ```
 
 **Characteristics**:
 - One Nexus server
 - Per-tenant databases (schema isolation)
-- Nexus routes queries by tenant_id
+- Nexus routes queries by zone_id
 
 **Setup**:
 ```python
@@ -404,7 +404,7 @@ graph TB
     end
 
     subgraph "Load Balancer"
-        LB["Global LB<br>Route by tenant_id"]
+        LB["Global LB<br>Route by zone_id"]
     end
 
     subgraph "US Region"
@@ -466,16 +466,16 @@ Always validate tenant paths at the API layer:
 
 ```python
 # Server-side validation
-def validate_tenant_path(tenant_id: str, path: str):
-    expected_prefix = f"/workspace/{tenant_id}/"
+def validate_tenant_path(zone_id: str, path: str):
+    expected_prefix = f"/workspace/{zone_id}/"
     if not path.startswith(expected_prefix):
-        raise PermissionError(f"Path {path} not in tenant {tenant_id} workspace")
+        raise PermissionError(f"Path {path} not in tenant {zone_id} workspace")
     return path
 
 # Use in API handlers
 @app.post("/api/files/write")
-def write_file(path: str, content: bytes, tenant_id: str):
-    validated_path = validate_tenant_path(tenant_id, path)
+def write_file(path: str, content: bytes, zone_id: str):
+    validated_path = validate_tenant_path(zone_id, path)
     nx.write(validated_path, content)
 ```
 
@@ -485,7 +485,7 @@ Use ReBAC namespaces for additional isolation:
 
 ```python
 # Create tenant namespace on signup
-nx.rebac.create_namespace(f"tenant:{tenant_id}")
+nx.rebac.create_namespace(f"tenant:{zone_id}")
 
 # All operations include namespace context
 nx.write("/workspace/tenant-123/data.txt", b"...", context={
@@ -500,19 +500,19 @@ Log all cross-tenant access attempts:
 
 ```python
 # Log tenant operations
-def log_tenant_operation(tenant_id: str, operation: str, path: str, result: str):
-    logger.info(f"Tenant {tenant_id}: {operation} {path} -> {result}")
+def log_tenant_operation(zone_id: str, operation: str, path: str, result: str):
+    logger.info(f"Tenant {zone_id}: {operation} {path} -> {result}")
 
 # In API handlers
 @app.post("/api/files/read")
-def read_file(path: str, tenant_id: str):
+def read_file(path: str, zone_id: str):
     try:
-        validated_path = validate_tenant_path(tenant_id, path)
+        validated_path = validate_tenant_path(zone_id, path)
         content = nx.read(validated_path)
-        log_tenant_operation(tenant_id, "READ", path, "SUCCESS")
+        log_tenant_operation(zone_id, "READ", path, "SUCCESS")
         return content
     except PermissionError as e:
-        log_tenant_operation(tenant_id, "READ", path, f"DENIED: {e}")
+        log_tenant_operation(zone_id, "READ", path, f"DENIED: {e}")
         raise
 ```
 
@@ -527,12 +527,12 @@ def read_file(path: str, tenant_id: str):
 nx.admin.set_quota("tenant-a", max_bytes=10 * 1024**3)  # 10 GB
 
 # Check quota before writes
-def write_with_quota_check(tenant_id: str, path: str, content: bytes):
-    quota = nx.admin.get_quota(tenant_id)
-    current_usage = nx.admin.get_usage(tenant_id)
+def write_with_quota_check(zone_id: str, path: str, content: bytes):
+    quota = nx.admin.get_quota(zone_id)
+    current_usage = nx.admin.get_usage(zone_id)
 
     if current_usage + len(content) > quota.max_bytes:
-        raise QuotaExceededError(f"Tenant {tenant_id} quota exceeded")
+        raise QuotaExceededError(f"Tenant {zone_id} quota exceeded")
 
     nx.write(path, content)
 ```
@@ -545,12 +545,12 @@ from nexus.middleware import RateLimiter
 # Apply rate limits per tenant
 rate_limiter = RateLimiter(
     max_requests_per_minute=1000,
-    scope="tenant"  # Scope by tenant_id
+    scope="tenant"  # Scope by zone_id
 )
 
 @app.post("/api/files/write")
 @rate_limiter.limit()
-def write_file(path: str, content: bytes, tenant_id: str):
+def write_file(path: str, content: bytes, zone_id: str):
     nx.write(path, content)
 ```
 
@@ -563,8 +563,8 @@ def write_file(path: str, content: bytes, tenant_id: str):
 ```python
 # Track operations for billing
 class TenantMeter:
-    def __init__(self, tenant_id: str):
-        self.tenant_id = tenant_id
+    def __init__(self, zone_id: str):
+        self.zone_id = zone_id
         self.metrics = {
             "reads": 0,
             "writes": 0,
@@ -577,7 +577,7 @@ class TenantMeter:
         self.metrics["storage_bytes"] += size
         # Store in database for billing
         db.insert("tenant_usage", {
-            "tenant_id": self.tenant_id,
+            "zone_id": self.zone_id,
             "operation": "write",
             "bytes": size,
             "timestamp": datetime.now()
@@ -592,18 +592,18 @@ meter.record_write("/workspace/tenant-a/data.txt", len(content))
 
 ```python
 # Generate monthly bill
-def generate_tenant_bill(tenant_id: str, month: str):
+def generate_tenant_bill(zone_id: str, month: str):
     usage = db.query("""
         SELECT
             COUNT(*) FILTER (WHERE operation='read') as reads,
             COUNT(*) FILTER (WHERE operation='write') as writes,
             SUM(bytes) as total_bytes
         FROM tenant_usage
-        WHERE tenant_id = %s AND month = %s
-    """, (tenant_id, month))
+        WHERE zone_id = %s AND month = %s
+    """, (zone_id, month))
 
     bill = {
-        "tenant_id": tenant_id,
+        "zone_id": zone_id,
         "month": month,
         "reads": usage.reads,
         "writes": usage.writes,
@@ -684,21 +684,21 @@ results = nx.semantic_search("/workspace", query="API key")
 
 ## Migration from Single-Tenant to Multi-Tenant
 
-### Step 1: Add Tenant ID to Paths
+### Step 1: Add Zone ID to Paths
 
 ```python
 # Before (single tenant)
 nx.write("/data/report.txt", b"...")
 
-# After (multi-tenant)
-tenant_id = "acme-corp"
-nx.write(f"/workspace/{tenant_id}/data/report.txt", b"...")
+# After (multi-zone)
+zone_id = "acme-corp"
+nx.write(f"/workspace/{zone_id}/data/report.txt", b"...")
 ```
 
 ### Step 2: Migrate Existing Data
 
 ```python
-def migrate_to_multi_tenant(default_tenant_id: str):
+def migrate_to_multi_tenant(default_zone_id: str):
     # List all files in old single-tenant workspace
     files = nx.ls("/data", recursive=True)
 
@@ -707,7 +707,7 @@ def migrate_to_multi_tenant(default_tenant_id: str):
         content = nx.read(file_path)
 
         # Write to tenant-scoped path
-        new_path = f"/workspace/{default_tenant_id}{file_path}"
+        new_path = f"/workspace/{default_zone_id}{file_path}"
         nx.write(new_path, content)
 
         # Delete old path
@@ -724,8 +724,8 @@ nx = NexusFS(backend=backend, is_admin=True)
 # After
 nx = RemoteNexusFS(
     server_url="https://nexus.example.com",
-    api_key=get_tenant_api_key(tenant_id),
-    workspace_prefix=f"/workspace/{tenant_id}"
+    api_key=get_tenant_api_key(zone_id),
+    workspace_prefix=f"/workspace/{zone_id}"
 )
 ```
 
@@ -755,13 +755,13 @@ nx.rebac.grant(
 **A**: Cascade delete tenant resources:
 ```python
 # Delete tenant workspace
-nx.rmdir(f"/workspace/{tenant_id}", recursive=True)
+nx.rmdir(f"/workspace/{zone_id}", recursive=True)
 
 # Revoke API keys
 nx.admin.revoke_api_key(tenant_api_key)
 
 # Delete ReBAC namespace
-nx.rebac.delete_namespace(f"tenant:{tenant_id}")
+nx.rebac.delete_namespace(f"tenant:{zone_id}")
 ```
 
 ### Q: Can I enforce data residency per tenant?
@@ -781,6 +781,6 @@ nx.mount("/workspace/us-tenant", S3Backend(bucket="nexus-us-east-1"))
 - **[Agent Permissions](agent-permissions.md)** - Configure per-tenant agent permissions
 - **[ReBAC Explained](rebac-explained.md)** - Fine-grained access control
 - **[Mounts & Backends](mounts-and-backends.md)** - Set up tenant-isolated storage
-- **[Production Deployment](../production/deployment.md)** - Multi-tenant deployment guide
+- **[Production Deployment](../production/deployment.md)** - Multi-zone deployment guide
 
-For a hands-on example, see: **[Multi-Tenant SaaS Tutorial](../examples/multi-tenant-saas.md)**
+For a hands-on example, see: **[Multi-Tenant SaaS Tutorial](../examples/multi-zone-saas.md)**

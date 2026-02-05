@@ -91,7 +91,7 @@ class Memory:
         self,
         session: Session,
         backend: Any,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         entity_registry: EntityRegistry | None = None,
@@ -102,7 +102,7 @@ class Memory:
         Args:
             session: Database session.
             backend: Storage backend for content.
-            tenant_id: Current tenant ID.
+            zone_id: Current zone ID.
             user_id: Current user ID.
             agent_id: Current agent ID.
             entity_registry: Entity registry instance.
@@ -110,7 +110,7 @@ class Memory:
         """
         self.session = session
         self.backend = backend
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.user_id = user_id
         self.agent_id = agent_id
         self.llm_provider = llm_provider
@@ -261,7 +261,7 @@ class Memory:
             content_bytes = content
 
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
-        tenant_id = context.tenant_id if context else self.tenant_id
+        zone_id = context.zone_id if context else self.zone_id
         user_id = context.user_id if context else self.user_id
         agent_id = context.agent_id if context else self.agent_id
         # Store content in backend (CAS)
@@ -414,7 +414,7 @@ class Memory:
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             user_id=user_id,
             agent_id=agent_id,
             scope=scope,
@@ -444,7 +444,7 @@ class Memory:
             try:
                 self._store_to_graph(
                     memory_id=memory.memory_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     entities_json=entities_json_str,
                     relationships_json=relationships_json_str,
                 )
@@ -459,7 +459,7 @@ class Memory:
     def _store_to_graph(
         self,
         memory_id: str,
-        tenant_id: str | None,
+        zone_id: str | None,
         entities_json: str | None,
         relationships_json: str | None,
     ) -> None:
@@ -470,7 +470,7 @@ class Memory:
 
         Args:
             memory_id: Source memory ID for provenance tracking
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             entities_json: JSON string of extracted entities
             relationships_json: JSON string of extracted relationships
         """
@@ -506,7 +506,7 @@ class Memory:
             async_url = sync_url
 
         # Use default tenant if not provided
-        effective_tenant_id = tenant_id or "default"
+        effective_zone_id = zone_id or "default"
 
         async def _do_store() -> None:
             engine = create_async_engine(async_url)
@@ -515,7 +515,7 @@ class Memory:
             )
             try:
                 async with async_session_factory() as session:
-                    graph_store = GraphStore(session, tenant_id=effective_tenant_id)
+                    graph_store = GraphStore(session, zone_id=effective_zone_id)
 
                     # Store entities
                     entity_id_map: dict[str, str] = {}  # name -> entity_id
@@ -583,7 +583,7 @@ class Memory:
         self,
         user_id: str | None = None,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         scope: str | None = None,
         memory_type: str | None = None,
         state: str | None = "active",  # #368: Default to active memories only
@@ -604,7 +604,7 @@ class Memory:
         Args:
             user_id: Filter by user ID (defaults to current user).
             agent_id: Filter by agent ID.
-            tenant_id: Filter by tenant ID (defaults to current tenant).
+            zone_id: Filter by zone ID (defaults to current tenant).
             scope: Filter by scope.
             memory_type: Filter by memory type.
             state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
@@ -649,8 +649,8 @@ class Memory:
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity or explicit params
         if user_id is None:
             user_id = context.user_id if context else self.user_id
-        if tenant_id is None:
-            tenant_id = context.tenant_id if context else self.tenant_id
+        if zone_id is None:
+            zone_id = context.zone_id if context else self.zone_id
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
@@ -678,7 +678,7 @@ class Memory:
 
         # Query memories
         memories = self.memory_router.query_memories(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             user_id=user_id,
             agent_id=agent_id,
             scope=scope,
@@ -735,7 +735,7 @@ class Memory:
                     "memory_id": memory.memory_id,
                     "content": content,
                     "content_hash": memory.content_hash,
-                    "tenant_id": memory.tenant_id,
+                    "zone_id": memory.zone_id,
                     "user_id": memory.user_id,
                     "agent_id": memory.agent_id,
                     "scope": memory.scope,
@@ -866,8 +866,8 @@ class Memory:
                 stmt = stmt.where(MemoryModel.memory_type == memory_type)
 
             # Filter by tenant/user/agent
-            if self.tenant_id:
-                stmt = stmt.where(MemoryModel.tenant_id == self.tenant_id)
+            if self.zone_id:
+                stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
             if self.user_id:
                 stmt = stmt.where(MemoryModel.user_id == self.user_id)
             if self.agent_id:
@@ -947,7 +947,7 @@ class Memory:
                         "memory_id": memory.memory_id,
                         "content": content,
                         "content_hash": memory.content_hash,
-                        "tenant_id": memory.tenant_id,
+                        "zone_id": memory.zone_id,
                         "user_id": memory.user_id,
                         "agent_id": memory.agent_id,
                         "scope": memory.scope,
@@ -1092,7 +1092,7 @@ class Memory:
             memories = (
                 self.session.query(MemoryModel)
                 .filter(
-                    MemoryModel.tenant_id == self.tenant_id,
+                    MemoryModel.zone_id == self.zone_id,
                     MemoryModel.importance > min_importance,
                 )
                 .limit(batch_size)
@@ -1204,7 +1204,7 @@ class Memory:
             "memory_id": memory.memory_id,
             "content": content,
             "content_hash": memory.content_hash,
-            "tenant_id": memory.tenant_id,
+            "zone_id": memory.zone_id,
             "user_id": memory.user_id,
             "agent_id": memory.agent_id,
             "scope": memory.scope,
@@ -1306,7 +1306,7 @@ class Memory:
             "memory_id": memory.memory_id,
             "content": content,
             "content_hash": memory.content_hash,
-            "tenant_id": memory.tenant_id,
+            "zone_id": memory.zone_id,
             "user_id": memory.user_id,
             "agent_id": memory.agent_id,
             "scope": memory.scope,
@@ -1646,7 +1646,7 @@ class Memory:
             >>> jan = memory.list(during="2025-01")
         """
         # v0.7.1: Use context identity if provided, otherwise fall back to instance identity
-        tenant_id = context.tenant_id if context else self.tenant_id
+        zone_id = context.zone_id if context else self.zone_id
         user_id = context.user_id if context else self.user_id
         agent_id = context.agent_id if context else self.agent_id
 
@@ -1654,7 +1654,7 @@ class Memory:
         after_dt, before_dt = validate_temporal_params(after, before, during)
 
         memories = self.memory_router.query_memories(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             user_id=user_id,
             agent_id=agent_id,
             scope=scope,
@@ -1677,7 +1677,7 @@ class Memory:
                 {
                     "memory_id": memory.memory_id,
                     "content_hash": memory.content_hash,
-                    "tenant_id": memory.tenant_id,
+                    "zone_id": memory.zone_id,
                     "user_id": memory.user_id,
                     "agent_id": memory.agent_id,
                     "scope": memory.scope,
@@ -1722,7 +1722,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
         return traj_mgr.start_trajectory(task_description, task_type)
 
@@ -1748,7 +1748,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
         traj_mgr.log_step(trajectory_id, step_type, description, result)
 
@@ -1807,7 +1807,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
         return traj_mgr.complete_trajectory(
             trajectory_id,
@@ -2016,7 +2016,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         reflector = Reflector(
@@ -2026,7 +2026,7 @@ class Memory:
             traj_mgr,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         return await reflector.reflect_async(trajectory_id, context)
@@ -2117,7 +2117,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             target_agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         reflector = Reflector(
@@ -2127,7 +2127,7 @@ class Memory:
             traj_mgr,
             self.user_id or "system",
             target_agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         # Reflect on each trajectory
@@ -2237,7 +2237,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         # Query by name and agent_id
@@ -2288,7 +2288,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         # Get or create playbook
@@ -2352,7 +2352,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         curator = Curator(self.session, self.backend, playbook_mgr)
@@ -2417,7 +2417,7 @@ class Memory:
             self.llm_provider,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         # Determine max importance for consolidation
@@ -2524,7 +2524,7 @@ class Memory:
             self.llm_provider,
             self.user_id or "system",
             self.agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         # Get or create playbook for curation
@@ -2615,7 +2615,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             target_agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         return traj_mgr.query_trajectories(
@@ -2654,7 +2654,7 @@ class Memory:
             self.backend,
             self.user_id or "system",
             target_agent_id,
-            self.tenant_id,
+            self.zone_id,
         )
 
         return playbook_mgr.query_playbooks(
@@ -2692,7 +2692,7 @@ class Memory:
             backend=self.backend,
             user_id=self.user_id or "system",
             agent_id=self.agent_id,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             llm_provider=self.llm_provider,
         )
 
@@ -2752,8 +2752,8 @@ class Memory:
             stmt = stmt.where(MemoryModel.scope == scope)
 
         # Filter by tenant/user/agent
-        if self.tenant_id:
-            stmt = stmt.where(MemoryModel.tenant_id == self.tenant_id)
+        if self.zone_id:
+            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
         if self.user_id:
             stmt = stmt.where(MemoryModel.user_id == self.user_id)
         if self.agent_id:

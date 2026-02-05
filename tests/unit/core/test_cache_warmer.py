@@ -56,8 +56,8 @@ class TestFileAccessTracker:
         """Test recording file access."""
         tracker = FileAccessTracker(window_seconds=60, hot_threshold=3)
 
-        tracker.record_access("/test/file.txt", tenant_id="tenant1", user_id="alice")
-        tracker.record_access("/test/file.txt", tenant_id="tenant1", user_id="bob")
+        tracker.record_access("/test/file.txt", zone_id="zone1", user_id="alice")
+        tracker.record_access("/test/file.txt", zone_id="zone1", user_id="bob")
 
         stats = tracker.get_stats()
         assert stats["tracked_paths"] == 1
@@ -69,12 +69,12 @@ class TestFileAccessTracker:
 
         # Record enough accesses to make file "hot"
         for _ in range(5):
-            tracker.record_access("/hot/file.txt", tenant_id="tenant1")
+            tracker.record_access("/hot/file.txt", zone_id="zone1")
 
         # Record fewer accesses for another file
-        tracker.record_access("/cold/file.txt", tenant_id="tenant1")
+        tracker.record_access("/cold/file.txt", zone_id="zone1")
 
-        hot_files = tracker.get_hot_files(tenant_id="tenant1")
+        hot_files = tracker.get_hot_files(zone_id="zone1")
 
         assert len(hot_files) == 1
         assert hot_files[0].path == "/hot/file.txt"
@@ -86,14 +86,14 @@ class TestFileAccessTracker:
 
         # Alice accesses file many times
         for _ in range(5):
-            tracker.record_access("/shared/file.txt", tenant_id="tenant1", user_id="alice")
+            tracker.record_access("/shared/file.txt", zone_id="zone1", user_id="alice")
 
         # Bob accesses different file
         for _ in range(5):
-            tracker.record_access("/bob/file.txt", tenant_id="tenant1", user_id="bob")
+            tracker.record_access("/bob/file.txt", zone_id="zone1", user_id="bob")
 
         # Filter by alice
-        alice_hot = tracker.get_hot_files(tenant_id="tenant1", user_id="alice")
+        alice_hot = tracker.get_hot_files(zone_id="zone1", user_id="alice")
         assert len(alice_hot) == 1
         assert alice_hot[0].path == "/shared/file.txt"
 
@@ -102,11 +102,11 @@ class TestFileAccessTracker:
         tracker = FileAccessTracker(window_seconds=300, hot_threshold=1)
 
         # Record accesses for user
-        tracker.record_access("/alice/file1.txt", tenant_id="tenant1", user_id="alice")
-        tracker.record_access("/alice/file2.txt", tenant_id="tenant1", user_id="alice")
-        tracker.record_access("/bob/file.txt", tenant_id="tenant1", user_id="bob")
+        tracker.record_access("/alice/file1.txt", zone_id="zone1", user_id="alice")
+        tracker.record_access("/alice/file2.txt", zone_id="zone1", user_id="alice")
+        tracker.record_access("/bob/file.txt", zone_id="zone1", user_id="bob")
 
-        recent = tracker.get_user_recent_files(user_id="alice", tenant_id="tenant1", hours=24)
+        recent = tracker.get_user_recent_files(user_id="alice", zone_id="zone1", hours=24)
 
         assert len(recent) == 2
         assert all(f.path.startswith("/alice/") for f in recent)
@@ -115,7 +115,7 @@ class TestFileAccessTracker:
         """Test cleanup of old entries."""
         tracker = FileAccessTracker(window_seconds=1, hot_threshold=1)
 
-        tracker.record_access("/old/file.txt", tenant_id="tenant1")
+        tracker.record_access("/old/file.txt", zone_id="zone1")
         assert tracker.get_stats()["tracked_paths"] == 1
 
         # Wait for entries to become stale
@@ -131,7 +131,7 @@ class TestFileAccessTracker:
 
         # Add more paths than max
         for i in range(10):
-            tracker.record_access(f"/file{i}.txt", tenant_id="tenant1")
+            tracker.record_access(f"/file{i}.txt", zone_id="zone1")
 
         # Should only have max_tracked_paths
         assert tracker.get_stats()["tracked_paths"] <= 5
@@ -140,7 +140,7 @@ class TestFileAccessTracker:
         """Test clearing all tracking data."""
         tracker = FileAccessTracker()
 
-        tracker.record_access("/test/file.txt", tenant_id="tenant1")
+        tracker.record_access("/test/file.txt", zone_id="zone1")
         assert tracker.get_stats()["tracked_paths"] == 1
 
         tracker.clear()
@@ -179,7 +179,7 @@ class TestCacheWarmer:
     async def test_warmup_directory(self, warmer: CacheWarmer) -> None:
         """Test directory warmup."""
         stats = await warmer.warmup_directory(
-            path="/test", depth=2, include_content=False, tenant_id="tenant1"
+            path="/test", depth=2, include_content=False, zone_id="zone1"
         )
 
         assert stats.files_warmed == 2
@@ -191,7 +191,7 @@ class TestCacheWarmer:
     ) -> None:
         """Test directory warmup with content."""
         stats = await warmer.warmup_directory(
-            path="/test", depth=2, include_content=True, tenant_id="tenant1"
+            path="/test", depth=2, include_content=True, zone_id="zone1"
         )
 
         assert stats.files_warmed == 2
@@ -205,12 +205,12 @@ class TestCacheWarmer:
 
         # Record some accesses
         for _ in range(5):
-            tracker.record_access("/recent/file.txt", tenant_id="tenant1", user_id="alice")
+            tracker.record_access("/recent/file.txt", zone_id="zone1", user_id="alice")
 
         config = WarmupConfig(max_files=100)
         warmer = CacheWarmer(nexus_fs=mock_nexus_fs, config=config, file_tracker=tracker)
 
-        stats = await warmer.warmup_from_history(user="alice", hours=24, tenant_id="tenant1")
+        stats = await warmer.warmup_from_history(user="alice", hours=24, zone_id="zone1")
 
         assert stats.files_warmed >= 0
         assert stats.duration_seconds > 0
@@ -231,7 +231,7 @@ class TestCacheWarmer:
         """Test warming specific paths."""
         paths = ["/specific/file1.txt", "/specific/file2.txt"]
 
-        stats = await warmer.warmup_paths(paths=paths, include_content=False, tenant_id="tenant1")
+        stats = await warmer.warmup_paths(paths=paths, include_content=False, zone_id="zone1")
 
         assert stats.files_warmed == 2
 
@@ -260,7 +260,7 @@ class TestBackgroundCacheWarmer:
         """Create FileAccessTracker with some data."""
         tracker = FileAccessTracker(window_seconds=300, hot_threshold=2)
         for _ in range(5):
-            tracker.record_access("/hot/file.txt", tenant_id="tenant1")
+            tracker.record_access("/hot/file.txt", zone_id="zone1")
         return tracker
 
     @pytest.mark.asyncio
@@ -331,11 +331,11 @@ class TestFileAccessEntry:
         """Test cache key generation."""
         entry = FileAccessEntry(
             path="/test/file.txt",
-            tenant_id="tenant1",
+            zone_id="zone1",
             user_id="alice",
             access_count=5,
             last_access=time.time(),
         )
 
         key = entry.cache_key
-        assert key == ("tenant1", "/test/file.txt")
+        assert key == ("zone1", "/test/file.txt")

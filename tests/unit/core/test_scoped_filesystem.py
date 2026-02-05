@@ -1,6 +1,6 @@
 """Tests for ScopedFilesystem wrapper.
 
-Tests path scoping/unscoping for multi-tenant isolation.
+Tests path scoping/unscoping for multi-zone isolation.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ def mock_fs() -> MagicMock:
     fs = MagicMock()
     # Set up property mocks
     type(fs).agent_id = PropertyMock(return_value="test-agent")
-    type(fs).tenant_id = PropertyMock(return_value="test-tenant")
+    type(fs).zone_id = PropertyMock(return_value="test-zone")
     return fs
 
 
@@ -116,9 +116,9 @@ class TestProperties:
         """Test agent_id property delegation."""
         assert scoped_fs.agent_id == "test-agent"
 
-    def test_tenant_id(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
-        """Test tenant_id property delegation."""
-        assert scoped_fs.tenant_id == "test-tenant"
+    def test_zone_id(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
+        """Test zone_id property delegation."""
+        assert scoped_fs.zone_id == "test-zone"
 
     def test_root_property(self, scoped_fs: ScopedFilesystem) -> None:
         """Test root property."""

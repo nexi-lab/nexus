@@ -366,11 +366,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         # Step 3: Populate L1 cache for future reads
         if self._has_caching():
             with contextlib.suppress(Exception):
-                tenant_id = getattr(context, "tenant_id", None)
+                zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
         return HandlerResponse.ok(
@@ -420,11 +420,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             cache_path = context.virtual_path if context and context.virtual_path else write_path
             if self._has_caching():
                 with contextlib.suppress(Exception):
-                    tenant_id = getattr(context, "tenant_id", None) if context else None
+                    zone_id = getattr(context, "zone_id", None) if context else None
                     self._write_to_cache(
                         path=cache_path,
                         content=content,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
 
             # Return content hash for consistency

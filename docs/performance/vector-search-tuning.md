@@ -101,7 +101,7 @@ SET hnsw.ef_search = 200;
 
 **Considerations for >1M vectors:**
 - Consider IVFFlat for faster builds (12-42x faster than HNSW)
-- Use partitioning by `tenant_id` for multi-tenant deployments
+- Use partitioning by `zone_id` for multi-zone deployments
 - Consider `halfvec` for 50% memory reduction (see below)
 
 ## Half-Precision Vectors (halfvec)
@@ -215,7 +215,7 @@ SET hnsw.iterative_scan = relaxed_order;
 SELECT chunk_id, chunk_text, embedding <=> :query AS distance
 FROM document_chunks dc
 JOIN file_paths fp ON dc.path_id = fp.path_id
-WHERE fp.tenant_id = :tenant_id
+WHERE fp.zone_id = :zone_id
 ORDER BY embedding <=> :query
 LIMIT 10;
 ```

@@ -299,9 +299,9 @@ send_notifications: true
         import asyncio
 
         try:
-            tenant_id = (
-                context.tenant_id
-                if context and hasattr(context, "tenant_id") and context.tenant_id
+            zone_id = (
+                context.zone_id
+                if context and hasattr(context, "zone_id") and context.zone_id
                 else "default"
             )
 
@@ -316,7 +316,7 @@ send_notifications: true
                     self.token_manager.get_valid_token(
                         provider=self.provider,
                         user_email=user_email,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                 )
         except Exception as e:
@@ -471,12 +471,12 @@ send_notifications: true
         # Cache the result
         if self._has_caching():
             with suppress(Exception):
-                tenant_id = getattr(context, "tenant_id", None)
+                zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
                     backend_version=event.get("etag", IMMUTABLE_VERSION),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
         return HandlerResponse.ok(

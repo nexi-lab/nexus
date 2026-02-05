@@ -119,7 +119,7 @@ async def test_query_logs_by_time_range() -> None:
         skill_name="skill1",
         action=AuditAction.EXECUTED,
         agent_id="alice",
-        tenant_id=None,
+        zone_id=None,
         details=None,
         timestamp=two_days_ago,
     )
@@ -130,7 +130,7 @@ async def test_query_logs_by_time_range() -> None:
         skill_name="skill2",
         action=AuditAction.EXECUTED,
         agent_id="bob",
-        tenant_id=None,
+        zone_id=None,
         details=None,
         timestamp=yesterday,
     )
@@ -141,7 +141,7 @@ async def test_query_logs_by_time_range() -> None:
         skill_name="skill3",
         action=AuditAction.EXECUTED,
         agent_id="charlie",
-        tenant_id=None,
+        zone_id=None,
         details=None,
         timestamp=now,
     )
@@ -174,24 +174,24 @@ async def test_query_logs_multiple_filters() -> None:
     audit = SkillAuditLogger()
 
     # Log various entries
-    await audit.log("skill1", AuditAction.EXECUTED, agent_id="alice", tenant_id="tenant1")
-    await audit.log("skill1", AuditAction.EXECUTED, agent_id="bob", tenant_id="tenant1")
-    await audit.log("skill1", AuditAction.FORKED, agent_id="alice", tenant_id="tenant1")
-    await audit.log("skill2", AuditAction.EXECUTED, agent_id="alice", tenant_id="tenant2")
+    await audit.log("skill1", AuditAction.EXECUTED, agent_id="alice", zone_id="zone1")
+    await audit.log("skill1", AuditAction.EXECUTED, agent_id="bob", zone_id="zone1")
+    await audit.log("skill1", AuditAction.FORKED, agent_id="alice", zone_id="zone1")
+    await audit.log("skill2", AuditAction.EXECUTED, agent_id="alice", zone_id="zone2")
 
     # Query with multiple filters
     logs = await audit.query_logs(
         skill_name="skill1",
         action=AuditAction.EXECUTED,
         agent_id="alice",
-        tenant_id="tenant1",
+        zone_id="zone1",
     )
 
     assert len(logs) == 1
     assert logs[0].skill_name == "skill1"
     assert logs[0].action == AuditAction.EXECUTED
     assert logs[0].agent_id == "alice"
-    assert logs[0].tenant_id == "tenant1"
+    assert logs[0].zone_id == "zone1"
 
 
 @pytest.mark.asyncio
@@ -227,15 +227,15 @@ async def test_generate_compliance_report() -> None:
     audit = SkillAuditLogger()
 
     # Log various activities
-    await audit.log("skill1", AuditAction.EXECUTED, agent_id="alice", tenant_id="tenant1")
-    await audit.log("skill2", AuditAction.EXECUTED, agent_id="bob", tenant_id="tenant1")
-    await audit.log("skill1", AuditAction.FORKED, agent_id="charlie", tenant_id="tenant1")
-    await audit.log("skill3", AuditAction.CREATED, agent_id="alice", tenant_id="tenant1")
+    await audit.log("skill1", AuditAction.EXECUTED, agent_id="alice", zone_id="zone1")
+    await audit.log("skill2", AuditAction.EXECUTED, agent_id="bob", zone_id="zone1")
+    await audit.log("skill1", AuditAction.FORKED, agent_id="charlie", zone_id="zone1")
+    await audit.log("skill3", AuditAction.CREATED, agent_id="alice", zone_id="zone1")
 
     # Generate report
-    report = await audit.generate_compliance_report(tenant_id="tenant1")
+    report = await audit.generate_compliance_report(zone_id="zone1")
 
-    assert report["tenant_id"] == "tenant1"
+    assert report["zone_id"] == "zone1"
     assert report["total_operations"] == 4
     assert report["skills_used"] == 3
     assert report["active_agents"] == 3
@@ -269,7 +269,7 @@ async def test_generate_compliance_report_with_time_range() -> None:
         skill_name="skill1",
         action=AuditAction.EXECUTED,
         agent_id="alice",
-        tenant_id="tenant1",
+        zone_id="zone1",
         details=None,
         timestamp=yesterday - timedelta(days=1),
     )
@@ -280,14 +280,14 @@ async def test_generate_compliance_report_with_time_range() -> None:
         skill_name="skill2",
         action=AuditAction.EXECUTED,
         agent_id="bob",
-        tenant_id="tenant1",
+        zone_id="zone1",
         details=None,
         timestamp=now,
     )
     audit._in_memory_logs.append(recent_entry)
 
     # Generate report for last 24 hours
-    report = await audit.generate_compliance_report(tenant_id="tenant1", start_time=yesterday)
+    report = await audit.generate_compliance_report(zone_id="zone1", start_time=yesterday)
 
     assert report["total_operations"] == 1  # Only recent_entry
     assert report["skills_used"] == 1
@@ -306,7 +306,7 @@ async def test_audit_log_entry_validation() -> None:
         skill_name="test-skill",
         action=AuditAction.EXECUTED,
         agent_id="alice",
-        tenant_id=None,
+        zone_id=None,
         details=None,
         timestamp=datetime.utcnow(),
     )

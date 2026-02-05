@@ -198,7 +198,7 @@ manager = ReBACManager(
   ```sql
   CREATE TABLE rebac_check_cache (
       cache_id TEXT PRIMARY KEY,
-      tenant_id TEXT,
+      zone_id TEXT,
       subject_type TEXT,
       subject_id TEXT,
       permission TEXT,
@@ -209,12 +209,12 @@ manager = ReBACManager(
       expires_at TIMESTAMP
   );
   ```
-- **Indexes**: Composite index on `(tenant_id, subject_type, subject_id, permission, object_type, object_id)`
+- **Indexes**: Composite index on `(zone_id, subject_type, subject_id, permission, object_type, object_id)`
 
 ### Cache Key Format
 
 ```
-L1 Key: "{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{tenant_id}"
+L1 Key: "{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{zone_id}"
 
 Example:
   "agent:alice:read:file:/workspace/doc.txt:default"
@@ -229,7 +229,7 @@ Example:
 - Read-heavy workloads
 - Frequent permission checks on same files
 - Directory listings
-- Multi-tenant deployments
+- Multi-zone deployments
 
 ❌ **Disable** (set `enable_l1_cache=False`):
 - Memory-constrained environments (<100MB RAM available)

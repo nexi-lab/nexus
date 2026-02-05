@@ -14,7 +14,7 @@ Prerequisites:
 
 Usage:
     NEXUS_DATABASE_URL=postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test \
-    NEXUS_DRAGONFLY_COORDINATION_URL=redis://localhost:6380 \
+    NEXUS_REDIS_URL=redis://localhost:6380 \
     pytest tests/integration/test_startup_sync.py -v --tb=short
 """
 
@@ -51,7 +51,7 @@ def is_postgres_available():
 def is_redis_available():
     """Check if Redis/Dragonfly is available."""
     redis_url = os.environ.get(
-        "NEXUS_DRAGONFLY_COORDINATION_URL",
+        "NEXUS_REDIS_URL",
         os.environ.get("NEXUS_REDIS_URL"),
     )
     if not redis_url:
@@ -73,7 +73,7 @@ pytestmark = [
     ),
     pytest.mark.skipif(
         not is_redis_available(),
-        reason="Redis not available (set NEXUS_DRAGONFLY_COORDINATION_URL)",
+        reason="Redis not available (set NEXUS_REDIS_URL)",
     ),
 ]
 
@@ -162,7 +162,7 @@ class TestStartupSyncBasic:
         from nexus.storage.models import OperationLogModel
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
@@ -172,7 +172,7 @@ class TestStartupSyncBasic:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/test/file{i}.txt",
-                    tenant_id="default",
+                    zone_id="default",
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=30 - i),
                 )
@@ -223,7 +223,7 @@ class TestStartupSyncBasic:
         from nexus.core.event_bus import RedisEventBus
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
@@ -262,7 +262,7 @@ class TestStartupSyncBasic:
         from nexus.storage.models import OperationLogModel, SystemSettingsModel
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
@@ -285,7 +285,7 @@ class TestStartupSyncBasic:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/test/file{i}.txt",
-                    tenant_id="default",
+                    zone_id="default",
                     status="success",
                     created_at=base_time - timedelta(minutes=offset),
                 )
@@ -326,7 +326,7 @@ class TestStartupSyncBasic:
         from nexus.storage.models import OperationLogModel
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
@@ -335,7 +335,7 @@ class TestStartupSyncBasic:
             op = OperationLogModel(
                 operation_type="write",
                 path="/test/file.txt",
-                tenant_id="default",
+                zone_id="default",
                 status="success",
                 created_at=_utcnow_naive() - timedelta(minutes=10),
             )
@@ -403,7 +403,7 @@ class TestStartupSyncCrossPlatform:
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/shared/file{i}.txt",
-                    tenant_id="default",
+                    zone_id="default",
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=30 - i),
                 )
@@ -498,7 +498,7 @@ asyncio.run(sync_and_verify())
         from nexus.storage.models import OperationLogModel
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
@@ -508,7 +508,7 @@ asyncio.run(sync_and_verify())
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/bidirectional/win_file{i}.txt",
-                    tenant_id="default",
+                    zone_id="default",
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=50 - i),
                 )
@@ -565,7 +565,7 @@ async def sync_and_create():
                 op = OperationLogModel(
                     operation_type="write",
                     path=f"/bidirectional/linux_file{i}.txt",
-                    tenant_id="default",
+                    zone_id="default",
                     status="success",
                     created_at=_utcnow_naive() - timedelta(minutes=20 - i),
                 )
@@ -661,11 +661,11 @@ class TestEventBusLockIntegration:
         from nexus.core.event_bus import RedisEventBus
 
         redis_url = os.environ.get(
-            "NEXUS_DRAGONFLY_COORDINATION_URL",
+            "NEXUS_REDIS_URL",
             "redis://localhost:6380",
         )
 
-        tenant_id = "default"
+        zone_id = "default"
         test_path = "/event-lock-integration/test-file.txt"
 
         # Linux: start subscriber that waits for events
@@ -688,7 +688,7 @@ async def subscribe_and_wait():
         received_events = []
 
         async def collect_events():
-            async for event in event_bus.subscribe("{tenant_id}"):
+            async for event in event_bus.subscribe("{zone_id}"):
                 received_events.append(event)
                 print(f"LINUX_RECEIVED:{{event.type}}:{{event.path}}", flush=True)
                 if len(received_events) >= 1:
@@ -738,7 +738,7 @@ asyncio.run(subscribe_and_wait())
                 event = FileEvent(
                     type=FileEventType.FILE_WRITE,
                     path=test_path,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 await event_bus.publish(event)
 
@@ -812,7 +812,7 @@ class TestStartupSyncConcurrentWrites:
                         op = OperationLogModel(
                             operation_type="write",
                             path=f"/concurrent/file_{write_count['value']}.txt",
-                            tenant_id="default",
+                            zone_id="default",
                             status="success",
                             created_at=_utcnow_naive(),
                         )

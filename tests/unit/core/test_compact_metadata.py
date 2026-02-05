@@ -109,7 +109,7 @@ class TestCompactFileMetadata:
             created_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             modified_at=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
             version=1,
-            tenant_id="tenant-1",
+            zone_id="zone-1",
             created_by="user-1",
             is_directory=False,
         )
@@ -133,7 +133,7 @@ class TestCompactFileMetadata:
             created_at=datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC),
             modified_at=datetime(2024, 1, 2, 12, 0, 0, tzinfo=UTC),
             version=5,
-            tenant_id="tenant-1",
+            zone_id="zone-1",
             created_by="user-1",
             is_directory=False,
         )
@@ -148,7 +148,7 @@ class TestCompactFileMetadata:
         assert restored.etag == original.etag
         assert restored.mime_type == original.mime_type
         assert restored.version == original.version
-        assert restored.tenant_id == original.tenant_id
+        assert restored.zone_id == original.zone_id
         assert restored.created_by == original.created_by
         assert restored.is_directory == original.is_directory
         # Timestamps are converted to/from Unix, so compare as integers
@@ -167,7 +167,7 @@ class TestCompactFileMetadata:
             created_at=None,
             modified_at=None,
             version=1,
-            tenant_id=None,
+            zone_id=None,
             created_by=None,
             is_directory=False,
         )
@@ -179,7 +179,7 @@ class TestCompactFileMetadata:
         assert restored.mime_type is None
         assert restored.created_at is None
         assert restored.modified_at is None
-        assert restored.tenant_id is None
+        assert restored.zone_id is None
         assert restored.created_by is None
 
     def test_is_directory_flag(self):
@@ -259,7 +259,7 @@ class TestPoolStats:
             size=1024,
             etag="hash123",
             mime_type="text/plain",
-            tenant_id="tenant-1",
+            zone_id="zone-1",
             created_by="user-1",
         )
         CompactFileMetadata.from_file_metadata(metadata)
@@ -270,7 +270,7 @@ class TestPoolStats:
         assert "backend" in stats
         assert "hash" in stats
         assert "mime" in stats
-        assert "tenant" in stats
+        assert "zone" in stats
         assert "user" in stats
 
         # Each pool should have count and memory_estimate
@@ -297,7 +297,7 @@ class TestMemoryEfficiency:
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
             modified_at=datetime(2024, 1, 2, tzinfo=UTC),
             version=1,
-            tenant_id="tenant-abc-123-def-456",
+            zone_id="zone-abc-123-def-456",
             created_by="user-abc-123-def-456",
             is_directory=False,
         )

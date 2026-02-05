@@ -49,7 +49,7 @@ class MockRouter:
     def __init__(self, mount_point: str = "/mnt/gcs"):
         self.mount_point = mount_point
 
-    def route(self, path: str, tenant_id=None, agent_id=None, is_admin=False, check_write=False):
+    def route(self, path: str, zone_id=None, agent_id=None, is_admin=False, check_write=False):
         # Simulate mount point stripping
         if path.startswith(self.mount_point):
             backend_path = path[len(self.mount_point) + 1 :]  # Strip /mnt/gcs/
@@ -72,7 +72,7 @@ class MockReBACManager:
         """Grant permission for a path."""
         self.granted_paths.add(path)
 
-    def rebac_check(self, subject, permission, object, tenant_id):
+    def rebac_check(self, subject, permission, object, zone_id):
         """Record check and return True if path is in granted set."""
         object_type, object_id = object
         self.checks.append(
@@ -81,7 +81,7 @@ class MockReBACManager:
                 "permission": permission,
                 "object_type": object_type,
                 "object_id": object_id,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
             }
         )
         # Grant permission if path is in granted set

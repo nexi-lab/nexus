@@ -29,7 +29,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.core._metadata_generated import FileMetadata
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
@@ -232,7 +232,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "delete_batch"):
             self._fs.metadata.delete_batch(paths)
 
-    def delete_directory_entries_recursive(self, path: str, tenant_id: str | None = None) -> int:
+    def delete_directory_entries_recursive(self, path: str, zone_id: str | None = None) -> int:
         """Delete all directory entries under a path (recursive).
 
         Cleans up the sparse directory index for a path and all descendants.
@@ -240,7 +240,7 @@ class NexusFSGateway:
 
         Args:
             path: Virtual path to clean up
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             Number of entries deleted
@@ -248,7 +248,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "metadata") and hasattr(
             self._fs.metadata, "delete_directory_entries_recursive"
         ):
-            return self._fs.metadata.delete_directory_entries_recursive(path, tenant_id)
+            return self._fs.metadata.delete_directory_entries_recursive(path, zone_id)
         return 0
 
     # =========================================================================
@@ -260,7 +260,7 @@ class NexusFSGateway:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Create ReBAC permission tuple.
 
@@ -268,7 +268,7 @@ class NexusFSGateway:
             subject: (subject_type, subject_id) tuple
             relation: Relation name (e.g., "direct_owner")
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Tuple ID if created, None otherwise
@@ -278,7 +278,7 @@ class NexusFSGateway:
                 subject=subject,
                 relation=relation,
                 object=object,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         return None
 
@@ -287,7 +287,7 @@ class NexusFSGateway:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object.
 
@@ -295,7 +295,7 @@ class NexusFSGateway:
             subject: (subject_type, subject_id) tuple
             permission: Permission to check (e.g., "read")
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             True if permission granted, False otherwise
@@ -305,20 +305,20 @@ class NexusFSGateway:
                 subject=subject,
                 permission=permission,
                 object=object,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         return False
 
     def rebac_delete_object_tuples(
         self,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Delete all permission tuples for an object.
 
         Args:
             object: (object_type, object_id) tuple
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Number of tuples deleted
@@ -326,7 +326,7 @@ class NexusFSGateway:
         if hasattr(self._fs, "rebac_delete_object_tuples"):
             result: int = self._fs.rebac_delete_object_tuples(
                 object=object,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
             return result
         return 0
@@ -349,13 +349,13 @@ class NexusFSGateway:
     def ensure_parent_tuples_batch(
         self,
         paths: builtins.list[str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Create parent tuples for paths in batch.
 
         Args:
             paths: List of virtual paths
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Number of tuples created
@@ -365,21 +365,19 @@ class NexusFSGateway:
             and self._fs._hierarchy_manager
             and hasattr(self._fs._hierarchy_manager, "ensure_parent_tuples_batch")
         ):
-            return self._fs._hierarchy_manager.ensure_parent_tuples_batch(
-                paths, tenant_id=tenant_id
-            )
+            return self._fs._hierarchy_manager.ensure_parent_tuples_batch(paths, zone_id=zone_id)
         return 0
 
     def remove_parent_tuples(
         self,
         path: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Remove parent tuples for a path.
 
         Args:
             path: Virtual path
-            tenant_id: Tenant ID for multi-tenancy
+            zone_id: Zone ID for multi-tenancy
 
         Returns:
             Number of tuples removed
@@ -389,7 +387,7 @@ class NexusFSGateway:
             and self._fs._hierarchy_manager
             and hasattr(self._fs._hierarchy_manager, "remove_parent_tuples")
         ):
-            return self._fs._hierarchy_manager.remove_parent_tuples(path, tenant_id=tenant_id)
+            return self._fs._hierarchy_manager.remove_parent_tuples(path, zone_id=zone_id)
         return 0
 
     # =========================================================================
@@ -416,8 +414,8 @@ class NexusFSGateway:
         Returns:
             SessionLocal factory if available, None otherwise
         """
-        if hasattr(self._fs, "metadata") and hasattr(self._fs.metadata, "SessionLocal"):
-            return self._fs.metadata.SessionLocal
+        if hasattr(self._fs, "SessionLocal"):
+            return self._fs.SessionLocal
         return None
 
     # =========================================================================

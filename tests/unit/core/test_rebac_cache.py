@@ -145,17 +145,17 @@ class TestReBACPermissionCache:
         assert stats["hit_rate_percent"] == pytest.approx(66.67, rel=0.01)
         assert stats["avg_lookup_time_ms"] >= 0
 
-    def test_cache_tenant_isolation(self):
-        """Test that tenants are properly isolated."""
+    def test_cache_zone_isolation(self):
+        """Test that zones are properly isolated."""
         cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
 
-        # Set entries for different tenants
-        cache.set("agent", "alice", "read", "file", "/doc.txt", True, tenant_id="tenant1")
-        cache.set("agent", "alice", "read", "file", "/doc.txt", False, tenant_id="tenant2")
+        # Set entries for different zones
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, zone_id="zone1")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", False, zone_id="zone2")
 
         # Verify isolation
-        result1 = cache.get("agent", "alice", "read", "file", "/doc.txt", tenant_id="tenant1")
-        result2 = cache.get("agent", "alice", "read", "file", "/doc.txt", tenant_id="tenant2")
+        result1 = cache.get("agent", "alice", "read", "file", "/doc.txt", zone_id="zone1")
+        result2 = cache.get("agent", "alice", "read", "file", "/doc.txt", zone_id="zone2")
 
         assert result1 is True
         assert result2 is False
@@ -223,7 +223,7 @@ class TestRevisionQuantization:
         cache = ReBACPermissionCache(revision_quantization_window=10)
         cache.set_revision_fetcher(lambda t: 25)  # Revision 25 -> bucket 2
 
-        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "zone1")
         assert ":r2" in key  # 25 // 10 = 2
 
     def test_revision_bucket_boundaries(self):
@@ -242,7 +242,7 @@ class TestRevisionQuantization:
             # Create fresh cache for each test to avoid local revision cache
             cache = ReBACPermissionCache(revision_quantization_window=10)
             cache.set_revision_fetcher(lambda t, r=revision: r)
-            bucket = cache._get_revision_bucket("tenant1")
+            bucket = cache._get_revision_bucket("zone1")
             assert bucket == expected_bucket, (
                 f"Revision {revision} -> expected bucket {expected_bucket}, got {bucket}"
             )
@@ -254,13 +254,13 @@ class TestRevisionQuantization:
         cache.set_revision_fetcher(lambda t: current_revision[0])
 
         # Set a value
-        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "zone1")
 
         # Advance revision within same bucket (20-29 all map to bucket 2)
         current_revision[0] = 25
 
         # Should still hit
-        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "zone1")
         assert result is True
 
     def test_cache_miss_after_bucket_change(self):
@@ -269,7 +269,7 @@ class TestRevisionQuantization:
         cache = ReBACPermissionCache(revision_quantization_window=10)
         cache.set_revision_fetcher(lambda t: current_revision[0])
 
-        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "zone1")
 
         # Advance to next bucket
         current_revision[0] = 30  # Bucket 3
@@ -278,21 +278,21 @@ class TestRevisionQuantization:
         cache._revision_cache.clear()
 
         # Should miss (different revision bucket in key)
-        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        result = cache.get("agent", "alice", "read", "file", "/doc.txt", "zone1")
         assert result is None
 
-    def test_tenant_isolation_with_revisions(self):
-        """Test that different tenants have independent revision tracking."""
-        revisions = {"tenant1": 50, "tenant2": 100}
+    def test_zone_isolation_with_revisions(self):
+        """Test that different zones have independent revision tracking."""
+        revisions = {"zone1": 50, "zone2": 100}
         cache = ReBACPermissionCache(revision_quantization_window=10)
         cache.set_revision_fetcher(lambda t: revisions.get(t, 0))
 
-        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "tenant1")
-        cache.set("agent", "alice", "read", "file", "/doc.txt", False, "tenant2")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", True, "zone1")
+        cache.set("agent", "alice", "read", "file", "/doc.txt", False, "zone2")
 
         # Keys should differ due to different revision buckets
-        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant1") is True
-        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "tenant2") is False
+        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "zone1") is True
+        assert cache.get("agent", "alice", "read", "file", "/doc.txt", "zone2") is False
 
     def test_disabled_revision_quantization(self):
         """When revision quantization is disabled, always uses bucket 0."""
@@ -301,7 +301,7 @@ class TestRevisionQuantization:
         )
         cache.set_revision_fetcher(lambda t: 999)
 
-        bucket = cache._get_revision_bucket("tenant1")
+        bucket = cache._get_revision_bucket("zone1")
         assert bucket == 0
 
     def test_fallback_without_fetcher(self):
@@ -309,7 +309,7 @@ class TestRevisionQuantization:
         cache = ReBACPermissionCache(revision_quantization_window=10)
         # Don't set fetcher
 
-        bucket = cache._get_revision_bucket("tenant1")
+        bucket = cache._get_revision_bucket("zone1")
         assert bucket == 0  # Fallback to 0
 
     def test_key_format_with_revision(self):
@@ -317,9 +317,9 @@ class TestRevisionQuantization:
         cache = ReBACPermissionCache(revision_quantization_window=10)
         cache.set_revision_fetcher(lambda t: 35)
 
-        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "tenant1")
+        key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", "zone1")
 
-        assert key == "agent:alice:read:file:/doc.txt:tenant1:r3"
+        assert key == "agent:alice:read:file:/doc.txt:zone1:r3"
 
     def test_revision_cache_local_caching(self):
         """Test that revisions are cached locally to reduce fetcher calls."""
@@ -333,11 +333,11 @@ class TestRevisionQuantization:
         cache.set_revision_fetcher(counting_fetcher)
 
         # First call fetches from callback
-        cache._get_revision_bucket("tenant1")
+        cache._get_revision_bucket("zone1")
         assert call_count[0] == 1
 
         # Second call should use local cache (no new fetch)
-        cache._get_revision_bucket("tenant1")
+        cache._get_revision_bucket("zone1")
         assert call_count[0] == 1
 
     def test_stats_include_revision_info(self):
@@ -764,10 +764,10 @@ class TestIssue1077TargetedInvalidation:
         cache = ReBACPermissionCache(max_size=100, ttl_seconds=60)
         assert cache._invalidation_mode == "targeted"
 
-    def test_invalidation_mode_tenant_wide(self):
-        """Test legacy tenant_wide invalidation mode."""
-        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="tenant_wide")
-        assert cache._invalidation_mode == "tenant_wide"
+    def test_invalidation_mode_zone_wide(self):
+        """Test legacy zone_wide invalidation mode."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="zone_wide")
+        assert cache._invalidation_mode == "zone_wide"
 
     def test_indexes_created_on_set(self):
         """Test that secondary indexes are created when setting cache entries."""
@@ -790,9 +790,9 @@ class TestIssue1077TargetedInvalidation:
         assert prefix_key in cache._path_prefix_index
         assert len(cache._path_prefix_index[prefix_key]) >= 1
 
-    def test_indexes_not_created_in_tenant_wide_mode(self):
-        """Test that indexes are not created in tenant_wide mode."""
-        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="tenant_wide")
+    def test_indexes_not_created_in_zone_wide_mode(self):
+        """Test that indexes are not created in zone_wide mode."""
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=60, invalidation_mode="zone_wide")
 
         cache.set("agent", "alice", "read", "file", "/workspace/doc.txt", True)
 

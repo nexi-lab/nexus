@@ -10,7 +10,7 @@ Nexus now includes a comprehensive OAuth 2.0 token management system for secure 
 - **Secure token storage** with encryption at rest
 - **Automatic token refresh** when tokens expire
 - **Multi-provider support** (Google, Microsoft, etc.)
-- **Multi-tenant isolation** for organization security
+- **Multi-zone isolation** for organization security
 - **CLI commands** for easy token management
 - **Audit logging** for compliance
 
@@ -101,7 +101,7 @@ await manager.store_credential(
     provider="google",
     user_email="alice@example.com",
     credential=credential,
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 ```
 
@@ -112,7 +112,7 @@ await manager.store_credential(
 access_token = await manager.get_valid_token(
     provider="google",
     user_email="alice@example.com",
-    tenant_id="org_acme"
+    zone_id="org_acme"
 )
 
 # Use token for API calls
@@ -128,14 +128,14 @@ response = requests.get("https://www.googleapis.com/drive/v3/files", headers=hea
 # List all stored credentials
 nexus oauth list
 
-# Filter by tenant
+# Filter by zone
 nexus oauth list --tenant-id org_acme
 ```
 
 **Output:**
 ```
 ┌──────────┬─────────────────────┬───────────┬──────────┬─────────────────────┬────────────┐
-│ Provider │ User Email          │ Tenant ID │ Status   │ Expires At          │ Last Used  │
+│ Provider │ User Email          │ Zone ID │ Status   │ Expires At          │ Last Used  │
 ├──────────┼─────────────────────┼───────────┼──────────┼─────────────────────┼────────────┤
 │ google   │ alice@example.com   │ org_acme  │ 🟢 Valid │ 2025-01-21T10:00:00 │ 2 min ago  │
 │ microsoft│ bob@company.com     │ org_other │ 🔴 Expired│ 2025-01-20T09:00:00│ 1 hour ago │
@@ -202,7 +202,7 @@ nexus oauth init microsoft \
 - Falls back gracefully if refresh fails
 
 ### 3. **Tenant Isolation**
-- Each credential tied to a tenant ID
+- Each credential tied to a zone ID
 - Database queries filter by tenant
 - Prevents cross-tenant token access
 
@@ -235,7 +235,7 @@ CREATE TABLE oauth_credentials (
     credential_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
     user_email TEXT NOT NULL,
-    tenant_id TEXT,
+    zone_id TEXT,
     encrypted_access_token TEXT NOT NULL,
     encrypted_refresh_token TEXT,
     token_type TEXT DEFAULT 'Bearer',
@@ -251,12 +251,12 @@ CREATE TABLE oauth_credentials (
     created_by TEXT,
     last_used_at TIMESTAMP,
 
-    UNIQUE(provider, user_email, tenant_id)
+    UNIQUE(provider, user_email, zone_id)
 );
 
 CREATE INDEX idx_oauth_provider ON oauth_credentials(provider);
 CREATE INDEX idx_oauth_user_email ON oauth_credentials(user_email);
-CREATE INDEX idx_oauth_tenant ON oauth_credentials(tenant_id);
+CREATE INDEX idx_oauth_tenant ON oauth_credentials(zone_id);
 CREATE INDEX idx_oauth_expires ON oauth_credentials(expires_at);
 CREATE INDEX idx_oauth_revoked ON oauth_credentials(revoked);
 ```
@@ -304,15 +304,15 @@ class TokenManager:
     def register_provider(self, provider_name: str, provider: OAuthProvider) -> None
 
     async def store_credential(self, provider: str, user_email: str, credential: OAuthCredential,
-                               tenant_id: str | None = None, created_by: str | None = None) -> str
+                               zone_id: str | None = None, created_by: str | None = None) -> str
 
-    async def get_valid_token(self, provider: str, user_email: str, tenant_id: str | None = None) -> str
+    async def get_valid_token(self, provider: str, user_email: str, zone_id: str | None = None) -> str
 
-    async def get_credential(self, provider: str, user_email: str, tenant_id: str | None = None) -> OAuthCredential | None
+    async def get_credential(self, provider: str, user_email: str, zone_id: str | None = None) -> OAuthCredential | None
 
-    async def revoke_credential(self, provider: str, user_email: str, tenant_id: str | None = None) -> bool
+    async def revoke_credential(self, provider: str, user_email: str, zone_id: str | None = None) -> bool
 
-    async def list_credentials(self, tenant_id: str | None = None) -> list[dict[str, Any]]
+    async def list_credentials(self, zone_id: str | None = None) -> list[dict[str, Any]]
 
     def close(self) -> None
 ```

@@ -2,8 +2,8 @@
 
 Provides utility functions for:
 - User lookup by various identifiers (email, username, OAuth, external ID)
-- ReBAC group-based tenant membership management
-- Tenant group naming conventions
+- ReBAC group-based zone membership management
+- Zone group naming conventions
 - User creation with uniqueness checks
 """
 
@@ -23,188 +23,188 @@ from nexus.storage.models import (
 # ==============================================================================
 
 
-def tenant_group_id(tenant_id: str) -> str:
-    """Generate tenant group ID from tenant_id.
+def zone_group_id(zone_id: str) -> str:
+    """Generate zone group ID from zone_id.
 
     Args:
-        tenant_id: Tenant identifier
+        zone_id: Zone identifier
 
     Returns:
-        Group ID in format: tenant-{tenant_id}
+        Group ID in format: zone-{zone_id}
 
     Example:
-        tenant_group_id("acme") → "tenant-acme"
+        zone_group_id("acme") -> "zone-acme"
     """
-    return f"tenant-{tenant_id}"
+    return f"zone-{zone_id}"
 
 
-def parse_tenant_from_group(group_id: str) -> str | None:
-    """Extract tenant_id from group ID.
+def parse_zone_from_group(group_id: str) -> str | None:
+    """Extract zone_id from group ID.
 
     Args:
-        group_id: Group ID (e.g., "tenant-acme")
+        group_id: Group ID (e.g., "zone-acme")
 
     Returns:
-        Tenant ID or None if not a tenant group
+        Zone ID or None if not a zone group
 
     Example:
-        parse_tenant_from_group("tenant-acme") → "acme"
-        parse_tenant_from_group("engineering") → None
+        parse_zone_from_group("zone-acme") -> "acme"
+        parse_zone_from_group("engineering") -> None
     """
-    if group_id.startswith("tenant-"):
-        return group_id[len("tenant-") :]
+    if group_id.startswith("zone-"):
+        return group_id[len("zone-") :]
     return None
 
 
-def is_tenant_group(group_id: str) -> bool:
-    """Check if group ID is a tenant group.
+def is_zone_group(group_id: str) -> bool:
+    """Check if group ID is a zone group.
 
     Args:
         group_id: Group ID to check
 
     Returns:
-        True if group ID is a tenant group (starts with "tenant-")
+        True if group ID is a zone group (starts with "zone-")
     """
-    return group_id.startswith("tenant-")
+    return group_id.startswith("zone-")
 
 
-def is_tenant_owner(
+def is_zone_owner(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
 ) -> bool:
-    """Check if user is owner of tenant.
+    """Check if user is owner of zone.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID to check
-        tenant_id: Tenant ID to check
+        zone_id: Zone ID to check
 
     Returns:
-        True if user is member of group:tenant-{tenant_id}-owners
+        True if user is member of group:zone-{zone_id}-owners
 
     Example:
-        if is_tenant_owner(rebac_mgr, "alice", "acme"):
-            # Alice can delete tenant, remove any user, etc.
+        if is_zone_owner(rebac_mgr, "alice", "acme"):
+            # Alice can delete zone, remove any user, etc.
     """
-    owner_group_id = f"{tenant_group_id(tenant_id)}-owners"
+    owner_group_id = f"{zone_group_id(zone_id)}-owners"
     return bool(
         rebac_manager.rebac_check(
             subject=("user", user_id),
             permission="member",
             object=("group", owner_group_id),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
     )
 
 
-def is_tenant_admin(
+def is_zone_admin(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
 ) -> bool:
-    """Check if user is admin or owner of tenant.
+    """Check if user is admin or owner of zone.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID to check
-        tenant_id: Tenant ID to check
+        zone_id: Zone ID to check
 
     Returns:
-        True if user is member of tenant-{tenant_id}-admins or -owners
+        True if user is member of zone-{zone_id}-admins or -owners
 
     Example:
-        if is_tenant_admin(rebac_mgr, "alice", "acme"):
+        if is_zone_admin(rebac_mgr, "alice", "acme"):
             # Alice can invite users, manage settings, etc.
     """
     # Check owner first (owners have all admin capabilities)
-    if is_tenant_owner(rebac_manager, user_id, tenant_id):
+    if is_zone_owner(rebac_manager, user_id, zone_id):
         return True
 
     # Check admin group
-    admin_group_id = f"{tenant_group_id(tenant_id)}-admins"
+    admin_group_id = f"{zone_group_id(zone_id)}-admins"
     return bool(
         rebac_manager.rebac_check(
             subject=("user", user_id),
             permission="member",
             object=("group", admin_group_id),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
     )
 
 
-def can_invite_to_tenant(
+def can_invite_to_zone(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
 ) -> bool:
-    """Check if user can invite others to tenant (admin or owner).
+    """Check if user can invite others to zone (admin or owner).
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID to check
-        tenant_id: Tenant ID to check
+        zone_id: Zone ID to check
 
     Returns:
         True if user is admin or owner
 
     Example:
-        if can_invite_to_tenant(rebac_mgr, "alice", "acme"):
-            # Alice can call add_user_to_tenant()
+        if can_invite_to_zone(rebac_mgr, "alice", "acme"):
+            # Alice can call add_user_to_zone()
     """
-    return is_tenant_admin(rebac_manager, user_id, tenant_id)
+    return is_zone_admin(rebac_manager, user_id, zone_id)
 
 
-def add_user_to_tenant(
+def add_user_to_zone(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     role: str = "member",
     caller_user_id: str | None = None,
 ) -> str:
-    """Add user to tenant via ReBAC group.
+    """Add user to zone via ReBAC group.
 
-    SECURITY: Only tenant admins/owners can invite users.
+    SECURITY: Only zone admins/owners can invite users.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID to add
-        tenant_id: Tenant ID
-        role: Role in tenant ("owner", "admin", or "member")
+        zone_id: Zone ID
+        role: Role in zone ("owner", "admin", or "member")
         caller_user_id: Optional user ID of caller (for permission check)
 
     Returns:
         ReBAC tuple ID
 
     Raises:
-        PermissionError: If caller is not tenant admin/owner
+        PermissionError: If caller is not zone admin/owner
         ValueError: If role is invalid
 
     Example:
         # Add user as member (requires admin/owner)
-        add_user_to_tenant(rebac_mgr, "bob", "acme", "member", caller_user_id="alice")
+        add_user_to_zone(rebac_mgr, "bob", "acme", "member", caller_user_id="alice")
 
         # Add user as admin (requires admin/owner)
-        add_user_to_tenant(rebac_mgr, "bob", "acme", "admin", caller_user_id="alice")
+        add_user_to_zone(rebac_mgr, "bob", "acme", "admin", caller_user_id="alice")
 
         # Add user as owner (requires owner)
-        add_user_to_tenant(rebac_mgr, "bob", "acme", "owner", caller_user_id="alice")
+        add_user_to_zone(rebac_mgr, "bob", "acme", "owner", caller_user_id="alice")
     """
     # SECURITY: Check if caller can invite users
     if caller_user_id:
         # Only owners can add other owners
         if role == "owner":
-            if not is_tenant_owner(rebac_manager, caller_user_id, tenant_id):
+            if not is_zone_owner(rebac_manager, caller_user_id, zone_id):
                 raise PermissionError(
-                    f"Only tenant owners can add other owners. "
-                    f"User '{caller_user_id}' is not owner of tenant '{tenant_id}'"
+                    f"Only zone owners can add other owners. "
+                    f"User '{caller_user_id}' is not owner of zone '{zone_id}'"
                 )
         else:
             # Admins and owners can add admins/members
-            if not can_invite_to_tenant(rebac_manager, caller_user_id, tenant_id):
+            if not can_invite_to_zone(rebac_manager, caller_user_id, zone_id):
                 raise PermissionError(
-                    f"Only tenant admins/owners can invite users. "
-                    f"User '{caller_user_id}' is not admin/owner of tenant '{tenant_id}'"
+                    f"Only zone admins/owners can invite users. "
+                    f"User '{caller_user_id}' is not admin/owner of zone '{zone_id}'"
                 )
 
     # Validate role
@@ -212,7 +212,7 @@ def add_user_to_tenant(
         raise ValueError(f"Invalid role '{role}'. Must be 'owner', 'admin', or 'member'")
 
     # Determine group ID based on role
-    group_id = tenant_group_id(tenant_id)
+    group_id = zone_group_id(zone_id)
     if role == "owner":
         group_id = f"{group_id}-owners"
     elif role == "admin":
@@ -223,23 +223,23 @@ def add_user_to_tenant(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
-        tenant_id=tenant_id,
+        zone_id=zone_id,
     )
     return tuple_id
 
 
-def remove_user_from_tenant(
+def remove_user_from_zone(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     role: str | None = None,
 ) -> None:
-    """Remove user from tenant via ReBAC group.
+    """Remove user from zone via ReBAC group.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID
-        tenant_id: Tenant ID
+        zone_id: Zone ID
         role: Optional role to remove ("owner", "admin", or "member"). If None, removes all.
 
     Note:
@@ -252,10 +252,10 @@ def remove_user_from_tenant(
         for r in ["owner", "admin", "member"]:
             # Ignore errors if tuple doesn't exist
             with contextlib.suppress(Exception):
-                remove_user_from_tenant(rebac_manager, user_id, tenant_id, r)
+                remove_user_from_zone(rebac_manager, user_id, zone_id, r)
         return
 
-    group_id = tenant_group_id(tenant_id)
+    group_id = zone_group_id(zone_id)
     if role == "owner":
         group_id = f"{group_id}-owners"
     elif role == "admin":
@@ -266,22 +266,22 @@ def remove_user_from_tenant(
         subject=("user", user_id),
         relation="member",
         object=("group", group_id),
-        tenant_id=tenant_id,
+        zone_id=zone_id,
     )
 
 
-def get_user_tenants(rebac_manager: Any, user_id: str) -> list[str]:
-    """Get list of tenant IDs that user belongs to.
+def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
+    """Get list of zone IDs that user belongs to.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID
 
     Returns:
-        List of tenant IDs
+        List of zone IDs
 
     Example:
-        tenants = get_user_tenants(rebac_mgr, "user-123")
+        zones = get_user_zones(rebac_mgr, "user-123")
         # Returns: ["acme", "techcorp"]
     """
     # Query ReBAC for user's group memberships
@@ -291,33 +291,33 @@ def get_user_tenants(rebac_manager: Any, user_id: str) -> list[str]:
         object_type="group",
     )
 
-    # Extract tenant IDs from tenant groups
-    tenant_ids = []
+    # Extract zone IDs from zone groups
+    zone_ids = []
     for t in tuples:
-        tenant_id = parse_tenant_from_group(t.object.entity_id)
-        if tenant_id and tenant_id not in tenant_ids:
+        zone_id = parse_zone_from_group(t.object.entity_id)
+        if zone_id and zone_id not in zone_ids:
             # Remove role suffixes if present
-            if tenant_id.endswith("-owners"):
-                tenant_id = tenant_id[: -len("-owners")]
-            elif tenant_id.endswith("-admins"):
-                tenant_id = tenant_id[: -len("-admins")]
-            tenant_ids.append(tenant_id)
+            if zone_id.endswith("-owners"):
+                zone_id = zone_id[: -len("-owners")]
+            elif zone_id.endswith("-admins"):
+                zone_id = zone_id[: -len("-admins")]
+            zone_ids.append(zone_id)
 
-    return tenant_ids
+    return zone_ids
 
 
-def user_belongs_to_tenant(rebac_manager: Any, user_id: str, tenant_id: str) -> bool:
-    """Check if user belongs to tenant.
+def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
+    """Check if user belongs to zone.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID
-        tenant_id: Tenant ID
+        zone_id: Zone ID
 
     Returns:
-        True if user belongs to tenant
+        True if user belongs to zone
     """
-    return tenant_id in get_user_tenants(rebac_manager, user_id)
+    return zone_id in get_user_zones(rebac_manager, user_id)
 
 
 # ==============================================================================
@@ -514,17 +514,17 @@ def validate_user_uniqueness(
 
 
 # ==============================================================================
-# Default Tenant Selection
+# Default Zone Selection
 # ==============================================================================
 
 
-def get_user_default_tenant(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
-    """Get user's default tenant.
+def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
+    """Get user's default zone.
 
     Priority:
     1. User's session preference (stored in session/cookie) - TODO: implement
-    2. First tenant in membership list
-    3. None if user has no tenants
+    2. First zone in membership list
+    3. None if user has no zones
 
     Args:
         rebac_manager: ReBAC manager instance
@@ -532,64 +532,64 @@ def get_user_default_tenant(rebac_manager: Any, user_id: str, _session: Session)
         session: Database session (for future session preference lookup)
 
     Returns:
-        Tenant ID or None if user has no tenant memberships
+        Zone ID or None if user has no zone memberships
     """
-    # Get user's tenant memberships
-    tenant_ids = get_user_tenants(rebac_manager, user_id)
+    # Get user's zone memberships
+    zone_ids = get_user_zones(rebac_manager, user_id)
 
-    if not tenant_ids:
+    if not zone_ids:
         return None
 
     # TODO: Add session preference lookup here
-    # For now, return first tenant
-    return tenant_ids[0]
+    # For now, return first zone
+    return zone_ids[0]
 
 
-def require_tenant_context(
+def require_zone_context(
     rebac_manager: Any,
     user_id: str,
-    tenant_id: str | None,
+    zone_id: str | None,
     session: Session,
     auto_create: bool = False,
 ) -> str:
-    """Require tenant context for operation.
+    """Require zone context for operation.
 
-    If tenant_id not provided, use default tenant.
-    If no default tenant, raise error or create default.
+    If zone_id not provided, use default zone.
+    If no default zone, raise error or create default.
 
     Args:
         rebac_manager: ReBAC manager instance
         user_id: User ID
-        tenant_id: Optional tenant ID from request
+        zone_id: Optional zone ID from request
         session: Database session
-        auto_create: If True, create default tenant if user has none
+        auto_create: If True, create default zone if user has none
 
     Returns:
-        Tenant ID (guaranteed to be set)
+        Zone ID (guaranteed to be set)
 
     Raises:
-        ValueError: If user has no tenant memberships and auto_create=False
+        ValueError: If user has no zone memberships and auto_create=False
     """
-    if tenant_id:
-        # Verify user belongs to this tenant
-        if not user_belongs_to_tenant(rebac_manager, user_id, tenant_id):
-            raise ValueError(f"User {user_id} does not belong to tenant {tenant_id}")
-        return tenant_id
+    if zone_id:
+        # Verify user belongs to this zone
+        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
+            raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
+        return zone_id
 
-    # Get default tenant
-    default_tenant = get_user_default_tenant(rebac_manager, user_id, session)
-    if default_tenant:
-        return default_tenant
+    # Get default zone
+    default_zone = get_user_default_zone(rebac_manager, user_id, session)
+    if default_zone:
+        return default_zone
 
-    # No tenant - create default or error
+    # No zone - create default or error
     if auto_create:
-        # TODO: Implement default tenant creation
+        # TODO: Implement default zone creation
         # For now, raise error
         raise ValueError(
-            f"User {user_id} has no tenant memberships. Auto-create not yet implemented."
+            f"User {user_id} has no zone memberships. Auto-create not yet implemented."
         )
     else:
-        raise ValueError(f"User {user_id} has no tenant memberships")
+        raise ValueError(f"User {user_id} has no zone memberships")
 
 
 # ==============================================================================

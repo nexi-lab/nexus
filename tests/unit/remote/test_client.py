@@ -124,7 +124,7 @@ class TestRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "tenant_id": "default",
+            "zone_id": "default",
             "subject_type": "user",
             "subject_id": "admin",
         }
@@ -132,7 +132,7 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info()
 
-        assert remote_client._tenant_id == "default"
+        assert remote_client._zone_id == "default"
         assert remote_client._agent_id is None
 
     def test_fetch_auth_info_agent(self, remote_client):
@@ -141,7 +141,7 @@ class TestRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "tenant_id": "default",
+            "zone_id": "default",
             "subject_type": "agent",
             "subject_id": "agent-123",
         }
@@ -149,7 +149,7 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info()
 
-        assert remote_client._tenant_id == "default"
+        assert remote_client._zone_id == "default"
         assert remote_client._agent_id == "agent-123"
 
     def test_fetch_auth_info_not_authenticated(self, remote_client):
@@ -161,7 +161,7 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info()
 
-        assert remote_client._tenant_id is None
+        assert remote_client._zone_id is None
         assert remote_client._agent_id is None
 
     def test_fetch_auth_info_http_error(self, remote_client):
@@ -173,7 +173,7 @@ class TestRemoteNexusFSAuth:
         remote_client._fetch_auth_info()
 
         # Should not raise, just log warning
-        assert remote_client._tenant_id is None
+        assert remote_client._zone_id is None
 
     def test_fetch_auth_info_exception(self, remote_client):
         """Test auth info fetch with exception."""
@@ -192,13 +192,13 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info.assert_called_once()
 
-    def test_tenant_id_property(self, remote_client):
-        """Test tenant_id property."""
-        remote_client._tenant_id = "test-tenant"
-        assert remote_client.tenant_id == "test-tenant"
+    def test_zone_id_property(self, remote_client):
+        """Test zone_id property."""
+        remote_client._zone_id = "test-zone"
+        assert remote_client.zone_id == "test-zone"
 
-        remote_client.tenant_id = "new-tenant"
-        assert remote_client._tenant_id == "new-tenant"
+        remote_client.zone_id = "new-zone"
+        assert remote_client._zone_id == "new-zone"
 
     def test_agent_id_property(self, remote_client):
         """Test agent_id property."""
@@ -215,7 +215,7 @@ class TestRemoteNexusFSRPCCalls:
     def test_call_rpc_success(self, remote_client):
         """Test successful RPC call."""
         remote_client._ensure_initialized = Mock()
-        remote_client._tenant_id = "default"
+        remote_client._zone_id = "default"
         remote_client._agent_id = None
 
         mock_response = Mock()
@@ -240,7 +240,7 @@ class TestRemoteNexusFSRPCCalls:
     def test_call_rpc_with_agent_id(self, remote_client):
         """Test RPC call with agent ID header."""
         remote_client._ensure_initialized = Mock()
-        remote_client._tenant_id = "default"
+        remote_client._zone_id = "default"
         remote_client._agent_id = "agent-123"
 
         mock_response = Mock()
@@ -256,7 +256,7 @@ class TestRemoteNexusFSRPCCalls:
             # Verify X-Agent-ID header was set
             call_kwargs = remote_client._client.post.call_args[1]
             assert call_kwargs["headers"]["X-Agent-ID"] == "agent-123"
-            assert call_kwargs["headers"]["X-Tenant-ID"] == "default"
+            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "default"
 
     def test_call_rpc_custom_timeout(self, remote_client):
         """Test RPC call with custom timeout."""

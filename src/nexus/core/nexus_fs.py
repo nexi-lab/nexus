@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.core.entity_registry import EntityRegistry
     from nexus.core.memory_api import Memory
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -28,7 +29,6 @@ from nexus.core.export_import import (
     ImportResult,
 )
 from nexus.core.filesystem import NexusFilesystem
-from nexus.core.metadata import FileMetadata
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_events import NexusFSEventsMixin
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
@@ -55,8 +55,9 @@ from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.version_service import VersionService
+from nexus.storage import RaftMetadataStore
 from nexus.storage.content_cache import ContentCache
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.database import get_engine, get_session_factory
 
 
 class NexusFS(  # type: ignore[misc]
@@ -92,7 +93,7 @@ class NexusFS(  # type: ignore[misc]
         backend: Backend,
         db_path: str | Path | None = None,
         is_admin: bool = False,
-        tenant_id: str | None = None,  # Default tenant ID for operations
+        zone_id: str | None = None,  # Default zone ID for operations
         agent_id: str | None = None,  # Default agent ID for operations
         custom_namespaces: list[NamespaceConfig] | None = None,
         enable_metadata_cache: bool = True,
@@ -109,7 +110,7 @@ class NexusFS(  # type: ignore[misc]
         enforce_permissions: bool = True,  # P0-6: ENABLED by default for security
         inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
         allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
-        enforce_tenant_isolation: bool = True,  # P0-2: Enable tenant isolation (DEFAULT ON for security)
+        enforce_zone_isolation: bool = True,  # P0-2: Enable zone isolation (DEFAULT ON for security)
         audit_strict_mode: bool = True,  # P0 COMPLIANCE: Fail writes if audit logging fails (DEFAULT ON)
         enable_workflows: bool = True,  # v0.7.0: Enable automatic workflow triggering (DEFAULT ON)
         workflow_engine: Any
@@ -132,7 +133,7 @@ class NexusFS(  # type: ignore[misc]
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
             db_path: Path to SQLite metadata database (auto-generated if None)
             is_admin: Whether this instance has admin privileges (default: False)
-            tenant_id: DEPRECATED - Default tenant ID (for embedded mode only). Server mode should pass via context parameter.
+            zone_id: DEPRECATED - Default zone ID (for embedded mode only). Server mode should pass via context parameter.
             agent_id: DEPRECATED - Default agent ID (for embedded mode only). Server mode should pass via context parameter.
             custom_namespaces: Additional custom namespace configurations (optional)
             enable_metadata_cache: Enable in-memory metadata caching (default: True)
@@ -150,32 +151,32 @@ class NexusFS(  # type: ignore[misc]
             enforce_permissions: Enable permission enforcement on file operations (default: True)
             inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
             allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
-            enforce_tenant_isolation: Enable tenant isolation to prevent cross-tenant access (default: True for security, P0-2)
+            enforce_zone_isolation: Enable zone isolation to prevent cross-zone access (default: True for security, P0-2)
             enable_workflows: Enable automatic workflow triggering on file operations (default: True, v0.7.0)
             workflow_engine: Optional workflow engine instance. If None and enable_workflows=True, auto-creates engine (v0.7.0)
 
         Note:
-            When tenant_id or agent_id are provided, they set the default context for all operations.
+            When zone_id or agent_id are provided, they set the default context for all operations.
             Individual operations can still override context by passing context parameter.
 
         Warning:
-            Using tenant_id/agent_id in __init__ is DEPRECATED and unsafe for server mode!
-            In server/multi-tenant mode, these should ALWAYS be None and passed via context parameter.
+            Using zone_id/agent_id in __init__ is DEPRECATED and unsafe for server mode!
+            In server/multi-zone mode, these should ALWAYS be None and passed via context parameter.
 
             IMPORTANT: These parameters should ONLY be used in embedded/CLI mode where a single
             NexusFS instance serves one user. In server mode, a shared NexusFS instance serves
-            multiple users/tenants, so instance-level tenant_id/agent_id creates security risks!
+            multiple users/zones, so instance-level zone_id/agent_id creates security risks!
         """
         # Warn about deprecated parameters
-        if tenant_id is not None or agent_id is not None:
+        if zone_id is not None or agent_id is not None:
             import warnings
 
             warnings.warn(
-                "tenant_id and agent_id parameters in NexusFS.__init__() are DEPRECATED. "
+                "zone_id and agent_id parameters in NexusFS.__init__() are DEPRECATED. "
                 "They should only be used in embedded/CLI mode where a single NexusFS instance "
                 "serves one user. For server mode (shared NexusFS instance serving multiple users), "
                 "these MUST be None and context must be passed to each method call instead. "
-                "Using instance-level tenant_id/agent_id in server mode creates SECURITY RISKS!",
+                "Using instance-level zone_id/agent_id in server mode creates SECURITY RISKS!",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -208,19 +209,22 @@ class NexusFS(  # type: ignore[misc]
         # When False: Write operations succeed but log at CRITICAL level
         self._audit_strict_mode = audit_strict_mode
 
-        # Initialize metadata store (using new SQLAlchemy-based store)
+        # Initialize metadata store (using Raft-based sled store)
         if db_path is None:
             # Default to current directory
-            db_path = Path("./nexus-metadata.db")
-        self.metadata = SQLAlchemyMetadataStore(
-            db_path=db_path,
-            enable_cache=enable_metadata_cache,
-            cache_path_size=cache_path_size,
-            cache_list_size=cache_list_size,
-            cache_kv_size=cache_kv_size,
-            cache_exists_size=cache_exists_size,
-            cache_ttl_seconds=cache_ttl_seconds,
-        )
+            db_path = Path("./nexus-data")
+        metadata_path = Path(db_path) / "metadata"
+        self.metadata = RaftMetadataStore.local(str(metadata_path))
+
+        # Initialize SQLAlchemy database for other models (users, permissions, etc.)
+        # File metadata uses sled (RaftMetadataStore), SQLAlchemy is for relational data
+        sql_db_path = Path(db_path) / "nexus.db"
+        self._sql_engine = get_engine(db_path=sql_db_path)
+        self._db_session_factory = get_session_factory(db_path=sql_db_path)
+
+        # Compatibility: expose SessionLocal for code that expects it on self.metadata
+        # TODO: Migrate all callers to use self._db_session_factory directly
+        self.SessionLocal = self._db_session_factory
 
         # Initialize path router with default namespaces
         self.router = PathRouter()
@@ -276,14 +280,14 @@ class NexusFS(  # type: ignore[misc]
         # P0 Fixes: Use OperationContext for GA features
         from nexus.core.permissions import OperationContext
 
-        # Create default context using provided tenant_id/agent_id
-        # If tenant_id is None, default to "default" for multi-tenant compatibility
+        # Create default context using provided zone_id/agent_id
+        # If zone_id is None, default to "default" for multi-zone compatibility
         # This prevents warnings during cache warming and other internal operations
-        effective_tenant_id = tenant_id if tenant_id is not None else "default"
+        effective_zone_id = zone_id if zone_id is not None else "default"
         self._default_context = OperationContext(
             user="anonymous",
             groups=[],
-            tenant_id=effective_tenant_id,
+            zone_id=effective_zone_id,
             agent_id=agent_id,
             is_admin=is_admin,
             is_system=False,  # SECURITY: Prevent privilege escalation
@@ -294,10 +298,10 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
         self._rebac_manager = EnhancedReBACManager(
-            engine=self.metadata.engine,  # Use SQLAlchemy engine (supports SQLite + PostgreSQL)
+            engine=self._sql_engine,  # SQLAlchemy engine for ReBAC (file metadata uses RaftMetadataStore)
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
-            enforce_tenant_isolation=enforce_tenant_isolation,  # P0-2: Tenant scoping (configurable)
+            enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone scoping (configurable)
             enable_graph_limits=True,  # P0-5: DoS protection
             enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
         )
@@ -316,20 +320,18 @@ class NexusFS(  # type: ignore[misc]
         # This ensures cache is invalidated when permissions change
         self._rebac_manager.register_dir_visibility_invalidator(
             "nexusfs",
-            lambda tenant_id, path: self._dir_visibility_cache.invalidate_for_resource(
-                path, tenant_id
-            ),
+            lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
         )
 
         # P0-4: Initialize AuditStore for admin bypass logging
         from nexus.core.permissions_enhanced import AuditStore
 
-        self._audit_store = AuditStore(engine=self.metadata.engine)
+        self._audit_store = AuditStore(engine=self._sql_engine)
 
         # v0.5.0 ACE: Initialize EntityRegistry early for agent permission inheritance
         from nexus.core.entity_registry import EntityRegistry
 
-        self._entity_registry: EntityRegistry | None = EntityRegistry(self.metadata.SessionLocal)
+        self._entity_registry: EntityRegistry | None = EntityRegistry(self.SessionLocal)
 
         # P0 Fixes: Initialize PermissionEnforcer with audit logging
         from nexus.core.permissions import PermissionEnforcer
@@ -349,9 +351,9 @@ class NexusFS(  # type: ignore[misc]
         # Set enforce_permissions=True in init to enable permission checks
         self._enforce_permissions = enforce_permissions
 
-        # P0-2: Tenant isolation enforcement
-        # Set enforce_tenant_isolation=False ONLY for single-tenant environments
-        self._enforce_tenant_isolation = enforce_tenant_isolation
+        # P0-2: Zone isolation enforcement
+        # Set enforce_zone_isolation=False ONLY for single-zone environments
+        self._enforce_zone_isolation = enforce_zone_isolation
 
         # P0-3: Initialize HierarchyManager for automatic parent tuple creation
         from nexus.core.hierarchy_manager import HierarchyManager
@@ -381,12 +383,13 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_registry = WorkspaceRegistry(
             metadata=self.metadata,
             rebac_manager=self._rebac_manager,  # v0.5.0: Auto-grant ownership on registration
+            session_factory=self._db_session_factory,
         )
 
         # Initialize mount manager for persistent mount configurations
         from nexus.core.mount_manager import MountManager
 
-        self.mount_manager = MountManager(self.metadata.SessionLocal)
+        self.mount_manager = MountManager(self._db_session_factory)
 
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
@@ -404,8 +407,9 @@ class NexusFS(  # type: ignore[misc]
             metadata=self.metadata,
             backend=self.backend,
             rebac_manager=self._rebac_manager,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             agent_id=agent_id,
+            session_factory=self._db_session_factory,
         )
 
         # Initialize semantic search - lazy initialization
@@ -417,7 +421,7 @@ class NexusFS(  # type: ignore[misc]
         # Note: _entity_registry initialized earlier for agent permission inheritance
         # Store config for lazy init
         self._memory_config: dict[str, str | None] = {
-            "tenant_id": None,
+            "zone_id": None,
             "user_id": None,
             "agent_id": None,
         }
@@ -464,35 +468,24 @@ class NexusFS(  # type: ignore[misc]
                 logger = logging.getLogger(__name__)
 
                 # Coordination URL (noeviction) - required for locks
-                coordination_url_resolved = coordination_url or os.getenv(
-                    "NEXUS_DRAGONFLY_COORDINATION_URL"
-                )
+                coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
 
                 # Event URL - can fallback to cache URL (has PG SSOT backup)
                 event_url_resolved = coordination_url_resolved or os.getenv(
                     "NEXUS_DRAGONFLY_CACHE_URL"
                 )
 
-                # Initialize lock manager if enabled (requires noeviction)
+                # Initialize lock manager if enabled (uses Raft via metadata store)
                 if enable_distributed_locks:
-                    if not coordination_url_resolved:
-                        # Graceful degradation: log warning and skip distributed lock setup
-                        logger.warning(
-                            "⚠️ Distributed locks disabled: NEXUS_DRAGONFLY_COORDINATION_URL not set. "
-                            "Multi-node write coordination will use local locks only."
-                        )
-                    else:
-                        from nexus.core.distributed_lock import (
-                            RedisLockManager,
-                            set_distributed_lock_manager,
-                        )
+                    from nexus.core.distributed_lock import (
+                        RaftLockManager,
+                        set_distributed_lock_manager,
+                    )
 
-                        self._coordination_client = DragonflyClient(url=coordination_url_resolved)
-                        self._lock_manager = RedisLockManager(self._coordination_client)
-                        set_distributed_lock_manager(self._lock_manager)
-                        logger.info(
-                            f"🔐 Distributed lock manager initialized (coordination: {coordination_url_resolved})"
-                        )
+                    # Locks use Raft consensus via RaftMetadataStore (no Redis needed)
+                    self._lock_manager = RaftLockManager(self.metadata)
+                    set_distributed_lock_manager(self._lock_manager)
+                    logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
 
                 # Initialize event bus if enabled (can use evictable dragonfly)
                 if enable_distributed_events and event_url_resolved:
@@ -510,7 +503,7 @@ class NexusFS(  # type: ignore[misc]
                     # Pass metadata session for PG SSOT persistence
                     self._event_bus = RedisEventBus(
                         self._event_client,
-                        session_factory=self.metadata.SessionLocal,
+                        session_factory=self.SessionLocal,
                     )
                     set_global_event_bus(self._event_bus)
                     logger.info(
@@ -530,8 +523,8 @@ class NexusFS(  # type: ignore[misc]
                 from nexus.workflows.storage import WorkflowStore
 
                 workflow_store = WorkflowStore(
-                    session_factory=self.metadata.SessionLocal,
-                    tenant_id=tenant_id or "default",
+                    session_factory=self.SessionLocal,
+                    zone_id=zone_id or "default",
                 )
 
                 # Use init_engine to set the global engine so WorkflowAPI uses the same instance
@@ -685,7 +678,7 @@ class NexusFS(  # type: ignore[misc]
                 "1",
                 "yes",
             ) and hasattr(self, "warm_tiger_cache"):
-                entries = self.warm_tiger_cache(tenant_id=self._default_context.tenant_id)
+                entries = self.warm_tiger_cache(zone_id=self._default_context.zone_id)
                 if entries > 0:
                     logger.info(f"Warmed Tiger Cache with {entries} entries")
 
@@ -755,7 +748,7 @@ class NexusFS(  # type: ignore[misc]
 
                 for meta in batch:
                     # Register resource in the map (idempotent operation)
-                    # Note: tenant_id removed from resource map (Issue #xyz)
+                    # Note: zone_id removed from resource map (Issue #xyz)
                     resource_map.get_or_create_int_id(
                         resource_type="file",
                         resource_id=meta.path,
@@ -930,15 +923,15 @@ class NexusFS(  # type: ignore[misc]
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
-                self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+                self._entity_registry = EntityRegistry(self.SessionLocal)
 
             # Create a session from SessionLocal
-            session = self.metadata.SessionLocal()
+            session = self.SessionLocal()
 
             self._memory_api = Memory(
                 session=session,
                 backend=self.backend,
-                tenant_id=self._memory_config.get("tenant_id"),
+                zone_id=self._memory_config.get("zone_id"),
                 user_id=self._memory_config.get("user_id"),
                 agent_id=self._memory_config.get("agent_id"),
                 entity_registry=self._entity_registry,
@@ -985,7 +978,7 @@ class NexusFS(  # type: ignore[misc]
     def _get_routing_params(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
-        """Extract tenant_id, agent_id, and is_admin from context for router.route().
+        """Extract zone_id, agent_id, and is_admin from context for router.route().
 
         This is the critical fix for multi-tenancy: extract values from per-request context
         instead of using instance fields (which are shared across all requests in server mode).
@@ -994,40 +987,40 @@ class NexusFS(  # type: ignore[misc]
             context: Operation context with per-request values
 
         Returns:
-            Tuple of (tenant_id, agent_id, is_admin)
+            Tuple of (zone_id, agent_id, is_admin)
         """
         if context is None:
             # Use default context values for embedded mode
             return (
-                self._default_context.tenant_id,
+                self._default_context.zone_id,
                 self._default_context.agent_id,
                 self._default_context.is_admin,
             )
 
         # Extract from OperationContext object
         if not isinstance(context, dict):
-            return context.tenant_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
+            return context.zone_id, context.agent_id, getattr(context, "is_admin", self.is_admin)
 
         # Extract from dict (legacy)
         if isinstance(context, dict):
             return (
-                context.get("tenant_id", self._default_context.tenant_id),
+                context.get("zone_id", self._default_context.zone_id),
                 context.get("agent_id", self._default_context.agent_id),
                 context.get("is_admin", self.is_admin),
             )
 
         # Fallback to default context
         return (
-            self._default_context.tenant_id,
+            self._default_context.zone_id,
             self._default_context.agent_id,
             self._default_context.is_admin,
         )
 
     # Backward compatibility properties for deprecated instance fields
     @property
-    def tenant_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default tenant_id for embedded mode."""
-        return self._default_context.tenant_id
+    def zone_id(self) -> str | None:
+        """DEPRECATED: Access via context parameter instead. Returns default zone_id for embedded mode."""
+        return self._default_context.zone_id
 
     @property
     def agent_id(self) -> str | None:
@@ -1043,7 +1036,7 @@ class NexusFS(  # type: ignore[misc]
         """Get Memory API instance with context-specific configuration.
 
         Args:
-            context: Optional context dict with tenant_id, user_id, agent_id
+            context: Optional context dict with zone_id, user_id, agent_id
 
         Returns:
             Memory API instance
@@ -1053,10 +1046,10 @@ class NexusFS(  # type: ignore[misc]
 
         # Get or create entity registry
         if self._entity_registry is None:
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
         # Create a session
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
 
         # Parse context properly
         ctx = self._parse_context(context)
@@ -1064,7 +1057,7 @@ class NexusFS(  # type: ignore[misc]
         return Memory(
             session=session,
             backend=self.backend,
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            zone_id=ctx.zone_id or self._default_context.zone_id,
             user_id=ctx.user or self._default_context.user,
             agent_id=ctx.agent_id or self._default_context.agent_id,
             entity_registry=self._entity_registry,
@@ -1074,7 +1067,7 @@ class NexusFS(  # type: ignore[misc]
         """Parse context dict or OperationContext into OperationContext.
 
         Args:
-            context: Optional context dict or OperationContext with user_id, groups, tenant_id, etc.
+            context: Optional context dict or OperationContext with user_id, groups, zone_id, etc.
 
         Returns:
             OperationContext instance
@@ -1091,7 +1084,7 @@ class NexusFS(  # type: ignore[misc]
         return OperationContext(
             user=context.get("user_id", "system"),
             groups=context.get("groups", []),
-            tenant_id=context.get("tenant_id"),
+            zone_id=context.get("zone_id"),
             agent_id=context.get("agent_id"),
             is_admin=context.get("is_admin", False),
             is_system=context.get("is_system", False),
@@ -1265,29 +1258,29 @@ class NexusFS(  # type: ignore[misc]
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
 
-        # P0-4: Tenant boundary security check (Issue #819)
-        # Even admins need tenant boundary checks (unless they have MANAGE_TENANTS capability)
+        # P0-4: Zone boundary security check (Issue #819)
+        # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
             from nexus.core.permissions_enhanced import AdminCapability
 
-            # Extract tenant from path (format: /tenant:{tenant_id}/...)
-            path_tenant_id = None
-            if path.startswith("/tenant:"):
-                parts = path[8:].split("/", 1)  # Remove "/tenant:" prefix
+            # Extract zone from path (format: /zone/{zone_id}/...)
+            path_zone_id = None
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)  # Remove "/zone/" prefix
                 if parts:
-                    path_tenant_id = parts[0]
+                    path_zone_id = parts[0]
 
-            # Check if admin is attempting cross-tenant access without MANAGE_TENANTS
+            # Check if admin is attempting cross-zone access without MANAGE_ZONES
             if (
-                path_tenant_id
-                and ctx.tenant_id
-                and path_tenant_id != ctx.tenant_id
-                and AdminCapability.MANAGE_TENANTS not in ctx.admin_capabilities
+                path_zone_id
+                and ctx.zone_id
+                and path_zone_id != ctx.zone_id
+                and AdminCapability.MANAGE_ZONES not in ctx.admin_capabilities
             ):
-                # Cross-tenant access requires MANAGE_TENANTS capability
+                # Cross-zone access requires MANAGE_ZONES capability
                 raise PermissionError(
-                    f"Access denied: Cross-tenant access requires MANAGE_TENANTS capability. "
-                    f"Context tenant: {ctx.tenant_id}, Path tenant: {path_tenant_id}"
+                    f"Access denied: Cross-zone access requires MANAGE_ZONES capability. "
+                    f"Context zone: {ctx.zone_id}, Path zone: {path_zone_id}"
                 )
 
         # Skip permission checks for admin/system users during provisioning
@@ -1299,7 +1292,7 @@ class NexusFS(  # type: ignore[misc]
             return
 
         logger.debug(
-            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, tenant={getattr(ctx, 'tenant_id', None)}"
+            f"_check_permission: path={path}, permission={permission.name}, user={ctx.user}, zone={getattr(ctx, 'zone_id', None)}"
         )
 
         # Fix #332: Virtual parsed views (e.g., report_parsed.pdf.md) should inherit
@@ -1350,7 +1343,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             path: Virtual path to directory
-            context: Operation context (for tenant_id and created_by)
+            context: Operation context (for zone_id and created_by)
         """
         now = datetime.now(UTC)
 
@@ -1376,7 +1369,7 @@ class NexusFS(  # type: ignore[misc]
             modified_at=now,
             version=1,
             created_by=self._get_created_by(context),  # Track who created this directory
-            tenant_id=ctx.tenant_id or "default",  # P0 SECURITY: Set tenant_id
+            zone_id=ctx.zone_id or "default",  # P0 SECURITY: Set zone_id
         )
 
         self.metadata.put(metadata)
@@ -1398,14 +1391,14 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual path to directory
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            context: Operation context with user, permissions, zone info (uses default if None)
 
         Raises:
             FileExistsError: If directory exists and exist_ok=False
             FileNotFoundError: If parent doesn't exist and parents=False
             InvalidPathError: If path is invalid
             BackendError: If operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only or user doesn't have write permission on parent
         """
         path = self._validate_path(path)
@@ -1431,7 +1424,7 @@ class NexusFS(  # type: ignore[misc]
         # Route to backend with write access check (mkdir requires write permission)
         route = self.router.route(
             path,
-            tenant_id=ctx.tenant_id,
+            zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
@@ -1488,7 +1481,7 @@ class NexusFS(  # type: ignore[misc]
                             f"mkdir: Creating parent tuples for intermediate dir: {parent_dir}"
                         )
                         self._hierarchy_manager.ensure_parent_tuples(
-                            parent_dir, tenant_id=ctx.tenant_id or "default"
+                            parent_dir, zone_id=ctx.zone_id or "default"
                         )
                     except Exception as e:
                         # Don't fail mkdir if parent tuple creation fails
@@ -1515,10 +1508,10 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_hierarchy_manager"):
             try:
                 logger.debug(
-                    f"mkdir: Calling ensure_parent_tuples for {path}, tenant_id={ctx.tenant_id or 'default'}"
+                    f"mkdir: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                 )
                 created_count = self._hierarchy_manager.ensure_parent_tuples(
-                    path, tenant_id=ctx.tenant_id or "default"
+                    path, zone_id=ctx.zone_id or "default"
                 )
                 logger.debug(f"mkdir: Created {created_count} parent tuples for {path}")
                 if created_count > 0:
@@ -1543,7 +1536,7 @@ class NexusFS(  # type: ignore[misc]
                     subject=("user", ctx.user),
                     relation="direct_owner",
                     object=("file", path),
-                    tenant_id=ctx.tenant_id or "default",
+                    zone_id=ctx.zone_id or "default",
                 )
                 logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
             except Exception as e:
@@ -1556,7 +1549,7 @@ class NexusFS(  # type: ignore[misc]
         recursive: bool = False,
         subject: tuple[str, str] | None = None,
         context: OperationContext | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         is_admin: bool | None = None,
     ) -> None:
@@ -1568,7 +1561,7 @@ class NexusFS(  # type: ignore[misc]
             recursive: Remove non-empty directory (like rm -rf)
             subject: Subject performing the operation as (type, id) tuple
             context: Operation context (DEPRECATED, use subject instead)
-            tenant_id: Legacy tenant ID (DEPRECATED)
+            zone_id: Legacy zone ID (DEPRECATED)
             agent_id: Legacy agent ID (DEPRECATED)
             is_admin: Admin override flag
 
@@ -1577,7 +1570,7 @@ class NexusFS(  # type: ignore[misc]
             NexusFileNotFoundError: If directory doesn't exist
             InvalidPathError: If path is invalid
             BackendError: If operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If path is read-only
         """
         import errno
@@ -1594,7 +1587,7 @@ class NexusFS(  # type: ignore[misc]
                 else OperationContext(
                     user=context.user,
                     groups=context.groups,
-                    tenant_id=context.tenant_id or tenant_id,
+                    zone_id=context.zone_id or zone_id,
                     agent_id=context.agent_id or agent_id,
                     is_admin=context.is_admin if is_admin is None else is_admin,
                     is_system=context.is_system,
@@ -1605,7 +1598,7 @@ class NexusFS(  # type: ignore[misc]
             ctx = OperationContext(
                 user=subject[1],
                 groups=[],
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 agent_id=agent_id,
                 is_admin=is_admin or False,
                 is_system=False,
@@ -1618,7 +1611,7 @@ class NexusFS(  # type: ignore[misc]
                 else OperationContext(
                     user=self._default_context.user,
                     groups=self._default_context.groups,
-                    tenant_id=tenant_id or self._default_context.tenant_id,
+                    zone_id=zone_id or self._default_context.zone_id,
                     agent_id=agent_id or self._default_context.agent_id,
                     is_admin=(is_admin if is_admin is not None else self._default_context.is_admin),
                     is_system=self._default_context.is_system,
@@ -1639,7 +1632,7 @@ class NexusFS(  # type: ignore[misc]
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
             path,
-            tenant_id=ctx.tenant_id,
+            zone_id=ctx.zone_id,
             agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
@@ -1763,14 +1756,14 @@ class NexusFS(  # type: ignore[misc]
             Permission.TRAVERSE: "traverse",
         }
         rebac_permission = permission_map.get(permission, "read")
-        tenant_id = context.tenant_id or "default"
+        zone_id = context.zone_id or "default"
 
         # =============================================================
         # Issue #919 OPTIMIZATION 1: Check DirectoryVisibilityCache (O(1))
         # =============================================================
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             cached_visible = self._dir_visibility_cache.is_visible(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 subject_type=context.subject_type,
                 subject_id=subject_id,
                 dir_path=path,
@@ -1797,7 +1790,7 @@ class NexusFS(  # type: ignore[misc]
                     and self._dir_visibility_cache is not None
                 ):
                     self._dir_visibility_cache.set_visible(
-                        tenant_id,
+                        zone_id,
                         context.subject_type,
                         subject_id,
                         path,
@@ -1815,13 +1808,13 @@ class NexusFS(  # type: ignore[misc]
             subject=subject_tuple,
             permission=rebac_permission,
             object=("file", path),
-            tenant_id=context.tenant_id,
+            zone_id=context.zone_id,
         )
         if direct_access:
             # Cache this positive result
             if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
                 self._dir_visibility_cache.set_visible(
-                    tenant_id, context.subject_type, subject_id, path, True, "direct_rebac_access"
+                    zone_id, context.subject_type, subject_id, path, True, "direct_rebac_access"
                 )
             return True
 
@@ -1833,7 +1826,7 @@ class NexusFS(  # type: ignore[misc]
         # =============================================================
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             bitmap_result = self._dir_visibility_cache.compute_from_tiger_bitmap(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 subject_type=context.subject_type,
                 subject_id=subject_id,
                 dir_path=path,
@@ -1870,7 +1863,7 @@ class NexusFS(  # type: ignore[misc]
                     subject=subject_tuple,
                     permission=rebac_permission,
                     resource_type="file",
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 if accessible_ids:
                     # Check if any descendant is in the accessible set
@@ -1900,7 +1893,7 @@ class NexusFS(  # type: ignore[misc]
             try:
                 # Perform bulk permission check
                 results = self._rebac_manager.rebac_check_bulk(
-                    checks, tenant_id=context.tenant_id or "default"
+                    checks, zone_id=context.zone_id or "default"
                 )
 
                 # OPTIMIZATION 5: Early exit on first accessible descendant
@@ -1915,7 +1908,7 @@ class NexusFS(  # type: ignore[misc]
                             and self._dir_visibility_cache is not None
                         ):
                             self._dir_visibility_cache.set_visible(
-                                tenant_id,
+                                zone_id,
                                 context.subject_type,
                                 subject_id,
                                 path,
@@ -1931,7 +1924,7 @@ class NexusFS(  # type: ignore[misc]
                     and self._dir_visibility_cache is not None
                 ):
                     self._dir_visibility_cache.set_visible(
-                        tenant_id,
+                        zone_id,
                         context.subject_type,
                         subject_id,
                         path,
@@ -1952,7 +1945,7 @@ class NexusFS(  # type: ignore[misc]
                 subject=subject_tuple,
                 permission=rebac_permission,
                 object=("file", meta.path),
-                tenant_id=context.tenant_id,
+                zone_id=context.zone_id,
             )
             if descendant_access:
                 # Found accessible descendant! User can see this parent
@@ -1962,7 +1955,7 @@ class NexusFS(  # type: ignore[misc]
                     and self._dir_visibility_cache is not None
                 ):
                     self._dir_visibility_cache.set_visible(
-                        tenant_id,
+                        zone_id,
                         context.subject_type,
                         subject_id,
                         path,
@@ -1974,7 +1967,7 @@ class NexusFS(  # type: ignore[misc]
         # No accessible descendants found - cache negative result
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             self._dir_visibility_cache.set_visible(
-                tenant_id, context.subject_type, subject_id, path, False, "fallback:no_descendants"
+                zone_id, context.subject_type, subject_id, path, False, "fallback:no_descendants"
             )
         return False
 
@@ -2121,7 +2114,7 @@ class NexusFS(  # type: ignore[misc]
         # PHASE 2: Perform ONE bulk permission check for everything
         try:
             results = self._rebac_manager.rebac_check_bulk(
-                all_checks, tenant_id=context.tenant_id or "default"
+                all_checks, zone_id=context.zone_id or "default"
             )
         except Exception as e:
             logger.warning(f"_has_descendant_access_bulk: Bulk check failed, falling back: {e}")
@@ -2163,7 +2156,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             path: Virtual path to check
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
             True if path is a directory, False otherwise
@@ -2204,7 +2197,7 @@ class NexusFS(  # type: ignore[misc]
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                tenant_id=ctx.tenant_id,  # v0.6.0: from context
+                zone_id=ctx.zone_id,  # v0.6.0: from context
                 agent_id=ctx.agent_id,  # v0.6.0: from context
                 is_admin=ctx.is_admin,  # v0.6.0: from context
                 check_write=False,
@@ -2223,7 +2216,7 @@ class NexusFS(  # type: ignore[misc]
         Get list of available namespace directories.
 
         Returns the built-in namespaces that should appear at root level.
-        Filters based on admin context only - tenant filtering happens
+        Filters based on admin context only - zone filtering happens
         when accessing files within namespaces, not for listing directories.
 
         Returns:
@@ -2249,8 +2242,8 @@ class NexusFS(  # type: ignore[misc]
 
         for name, config in self.router._namespaces.items():
             # Include namespace if it's not admin-only OR user is admin
-            # Note: We show all namespaces regardless of tenant_id.
-            # Tenant filtering happens when accessing files within the namespace.
+            # Note: We show all namespaces regardless of zone_id.
+            # Zone filtering happens when accessing files within the namespace.
             if not config.admin_only or self.is_admin:
                 namespaces.append(name)
 
@@ -2275,7 +2268,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             path: Virtual file path
-            context: Operation context with user, permissions, tenant info
+            context: Operation context with user, permissions, zone info
 
         Returns:
             Metadata dict with keys: path, size, mime_type, created_at, modified_at,
@@ -2397,10 +2390,10 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                tenant_id, agent_id, is_admin = self._get_routing_params(context)
+                zone_id, agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
@@ -2455,7 +2448,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             output_path: Path to output JSONL file
-            filter: Export filter options (tenant_id, path_prefix, after_time, include_deleted)
+            filter: Export filter options (zone_id, path_prefix, after_time, include_deleted)
             prefix: (Deprecated) Path prefix filter for backward compatibility
 
         Returns:
@@ -2471,7 +2464,7 @@ class NexusFS(  # type: ignore[misc]
             filter = ExportFilter(
                 path_prefix="/workspace",
                 after_time=datetime(2024, 1, 1),
-                tenant_id="acme-corp"
+                zone_id="acme-corp"
             )
             count = fs.export_metadata("backup.jsonl", filter=filter)
         """
@@ -2505,9 +2498,9 @@ class NexusFS(  # type: ignore[misc]
                 if file_time < filter_time:
                     continue
 
-            # Note: include_deleted and tenant_id filtering would require
+            # Note: include_deleted and zone_id filtering would require
             # database-level support. For now, we skip these filters.
-            # TODO: Add deleted_at column support and tenant filtering
+            # TODO: Add deleted_at column support and zone filtering
 
             filtered_files.append(file_meta)
 
@@ -2538,10 +2531,10 @@ class NexusFS(  # type: ignore[misc]
                 # Try to get custom metadata for this file (if any)
                 # Note: This is optional - files may not have custom metadata
                 try:
-                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
+                    if isinstance(self.metadata, RaftMetadataStore):
                         # Get all custom metadata keys for this path
                         # We need to query the database directly for all keys
-                        with self.metadata.SessionLocal() as session:
+                        with self.SessionLocal() as session:
                             from nexus.storage.models import FileMetadataModel, FilePathModel
 
                             # Get path_id
@@ -2982,9 +2975,7 @@ class NexusFS(  # type: ignore[misc]
         # Auto-parse is a system operation that should not be subject to user permissions
         from nexus.core.permissions import OperationContext
 
-        parse_ctx = OperationContext(
-            user="system_parser", groups=[], tenant_id=None, is_system=True
-        )
+        parse_ctx = OperationContext(user="system_parser", groups=[], zone_id=None, is_system=True)
         content = self.read(path, context=parse_ctx)
 
         # Type narrowing: when return_metadata=False (default), result is bytes
@@ -3065,7 +3056,7 @@ class NexusFS(  # type: ignore[misc]
                 DeprecationWarning,
                 stacklevel=2,
             )
-            # Auto-construct path from agent_id (simple format, no tenant in path)
+            # Auto-construct path from agent_id (simple format, no zone in path)
             workspace_path = f"/workspace/{agent_id}"
 
             # Auto-register if not exists
@@ -3085,7 +3076,7 @@ class NexusFS(  # type: ignore[misc]
                 f"Workspace not registered: {workspace_path}. Use register_workspace() first."
             )
 
-        # v0.5.0: Extract user_id, agent_id, and tenant_id from context (set by RPC authentication)
+        # v0.5.0: Extract user_id, agent_id, and zone_id from context (set by RPC authentication)
         ctx = self._parse_context(context)
 
         return self._workspace_manager.create_snapshot(
@@ -3096,8 +3087,7 @@ class NexusFS(  # type: ignore[misc]
             user_id=ctx.user
             or self._default_context.user,  # v0.5.0: Pass user_id for permission check
             agent_id=ctx.agent_id or self._default_context.agent_id,
-            tenant_id=ctx.tenant_id
-            or self._default_context.tenant_id,  # v0.5.0: Use context tenant_id
+            zone_id=ctx.zone_id or self._default_context.zone_id,  # v0.5.0: Use context zone_id
         )
 
     @rpc_expose(description="Restore workspace snapshot")
@@ -3114,7 +3104,7 @@ class NexusFS(  # type: ignore[misc]
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
             Restore operation result
@@ -3160,7 +3150,7 @@ class NexusFS(  # type: ignore[misc]
             snapshot_number=snapshot_number,
             user_id=ctx.user,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            zone_id=ctx.zone_id or self._default_context.zone_id,
         )
 
     @rpc_expose(description="List workspace snapshots")
@@ -3177,7 +3167,7 @@ class NexusFS(  # type: ignore[misc]
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
             List of snapshot metadata dicts (most recent first)
@@ -3223,7 +3213,7 @@ class NexusFS(  # type: ignore[misc]
             limit=limit,
             user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            zone_id=ctx.zone_id or self._default_context.zone_id,
         )
 
     @rpc_expose(description="Compare workspace snapshots")
@@ -3242,7 +3232,7 @@ class NexusFS(  # type: ignore[misc]
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
             agent_id: DEPRECATED - Use workspace_path instead
-            context: Operation context with user, permissions, tenant info (uses default if None)
+            context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
             Diff dict with added, removed, modified files
@@ -3291,7 +3281,7 @@ class NexusFS(  # type: ignore[misc]
             limit=1000,
             user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            zone_id=ctx.zone_id or self._default_context.zone_id,
         )
 
         snap_1_id = None
@@ -3318,7 +3308,7 @@ class NexusFS(  # type: ignore[misc]
             snap_2_id,
             user_id=ctx.user or self._default_context.user,  # v0.5.0: Pass user_id from context
             agent_id=ctx.agent_id or self._default_context.agent_id,
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id,
+            zone_id=ctx.zone_id or self._default_context.zone_id,
         )
 
     # ===== Workspace Registry Management =====
@@ -3543,12 +3533,12 @@ class NexusFS(  # type: ignore[misc]
         # Filter by current user if context is available
         if context is not None:
             user_id = getattr(context, "user_id", None)
-            tenant_id = getattr(context, "tenant_id", None)
+            zone_id = getattr(context, "zone_id", None)
 
-            if user_id and tenant_id:
+            if user_id and zone_id:
                 # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /tenant:{tenant_id}/user:{user_id}/workspace/...
-                user_prefix = f"/tenant:{tenant_id}/user:{user_id}/workspace/"
+                # Workspace paths follow pattern: /zone/{zone_id}/user:{user_id}/workspace/...
+                user_prefix = f"/zone/{zone_id}/user:{user_id}/workspace/"
                 configs = [c for c in configs if c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
@@ -3695,13 +3685,13 @@ class NexusFS(  # type: ignore[misc]
 
     # ===== Agent Management (v0.5.0) =====
 
-    def _extract_tenant_id(self, context: dict | Any | None) -> str | None:
-        """Extract tenant_id from context (dict or OperationContext)."""
+    def _extract_zone_id(self, context: dict | Any | None) -> str | None:
+        """Extract zone_id from context (dict or OperationContext)."""
         if not context:
             return None
         if isinstance(context, dict):
-            return context.get("tenant_id")
-        return getattr(context, "tenant_id", None)
+            return context.get("zone_id")
+        return getattr(context, "zone_id", None)
 
     def _extract_user_id(self, context: dict | Any | None) -> str | None:
         """Extract user_id from context (dict or OperationContext)."""
@@ -3777,7 +3767,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Grant ReBAC permissions
             if self._rebac_manager:
-                tenant_id = self._extract_tenant_id(context) or "default"
+                zone_id = self._extract_zone_id(context) or "default"
 
                 # Grant direct_owner to the agent itself
                 try:
@@ -3788,7 +3778,7 @@ class NexusFS(  # type: ignore[misc]
                         subject=("agent", agent_id),
                         relation="direct_owner",
                         object=("file", agent_dir),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                     logger.debug(f"register_agent: Granted direct_owner to agent {agent_id}")
                 except Exception as e:
@@ -3801,7 +3791,7 @@ class NexusFS(  # type: ignore[misc]
                         subject=("user", user_id),
                         relation="direct_owner",
                         object=("file", agent_dir),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to grant owner permission to user for {agent_dir}: {e}")
@@ -3863,8 +3853,8 @@ class NexusFS(  # type: ignore[misc]
         """Create API key for agent and return the raw key."""
         from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
-        tenant_id = self._extract_tenant_id(context)
-        session = self.metadata.SessionLocal()
+        zone_id = self._extract_zone_id(context)
+        session = self.SessionLocal()
 
         try:
             # Determine expiration based on owner's key
@@ -3877,7 +3867,7 @@ class NexusFS(  # type: ignore[misc]
                 name=agent_id,  # Use agent_id format: <user_id>,<agent_name>
                 subject_type="agent",
                 subject_id=agent_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 expires_at=expires_at,
             )
             session.commit()
@@ -3931,17 +3921,17 @@ class NexusFS(  # type: ignore[misc]
 
         logger = logging.getLogger(__name__)
 
-        # Extract user_id and tenant_id from context
+        # Extract user_id and zone_id from context
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to register agent")
 
-        tenant_id = self._extract_tenant_id(context) or "default"
+        zone_id = self._extract_zone_id(context) or "default"
 
         # Check if agent config already exists BEFORE modifying entity registry
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         try:
@@ -3959,14 +3949,14 @@ class NexusFS(  # type: ignore[misc]
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
         # Register agent entity (always without API key first)
         agent = register_agent(
             user_id=user_id,
             agent_id=agent_id,
             name=name,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             metadata={"description": description} if description else None,
             entity_registry=self._entity_registry,
         )
@@ -3999,7 +3989,7 @@ class NexusFS(  # type: ignore[misc]
                 subject=("agent", agent_id),
                 relation="viewer",
                 object=("file", agent_dir),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 context=context,
             )
             logger.info(f"Granted viewer permission to agent {agent_id} on {agent_dir}")
@@ -4082,16 +4072,16 @@ class NexusFS(  # type: ignore[misc]
 
         logger = logging.getLogger(__name__)
 
-        # Extract user_id and tenant_id from context
+        # Extract user_id and zone_id from context
         user_id = self._extract_user_id(context)
         if not user_id:
             raise ValueError("user_id required in context to update agent")
 
-        tenant_id = self._extract_tenant_id(context) or "default"
+        zone_id = self._extract_zone_id(context) or "default"
 
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         # Check if agent config exists
@@ -4183,7 +4173,7 @@ class NexusFS(  # type: ignore[misc]
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
         entities = self._entity_registry.get_entities_by_type("agent")
         result = []
@@ -4193,7 +4183,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.storage.models import APIKeyModel
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             # Get all agent API keys
             agent_keys_stmt = select(APIKeyModel).where(
@@ -4240,10 +4230,8 @@ class NexusFS(  # type: ignore[misc]
                     # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
                     if "," in e.entity_id:
                         user_id, agent_name = e.entity_id.split(",", 1)
-                        # Try to read from config.yaml (use default tenant for now)
-                        config_path = (
-                            f"/tenant:default/user:{user_id}/agent/{agent_name}/config.yaml"
-                        )
+                        # Try to read from config.yaml (use default zone for now)
+                        config_path = f"/zone/default/user:{user_id}/agent/{agent_name}/config.yaml"
                         try:
                             config_content = self.read(
                                 config_path, context=self._parse_context(_context)
@@ -4288,7 +4276,7 @@ class NexusFS(  # type: ignore[misc]
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
         entity = self._entity_registry.get_entity("agent", agent_id)
         if not entity:
@@ -4320,7 +4308,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.storage.models import APIKeyModel
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             # Check if agent has an API key in database
             agent_key_stmt = select(APIKeyModel).where(
@@ -4339,11 +4327,11 @@ class NexusFS(  # type: ignore[misc]
                     # Extract user_id and agent_name from agent_id (format: user_id,agent_name)
                     if "," in entity.entity_id:
                         user_id, agent_name = entity.entity_id.split(",", 1)
-                        # Get tenant_id from context
+                        # Get zone_id from context
                         ctx = self._parse_context(_context)
-                        tenant_id = self._extract_tenant_id(_context) or "default"
+                        zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4402,9 +4390,9 @@ class NexusFS(  # type: ignore[misc]
                     if "," in entity.entity_id:
                         user_id, agent_name = entity.entity_id.split(",", 1)
                         ctx = self._parse_context(_context)
-                        tenant_id = self._extract_tenant_id(_context) or "default"
+                        zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4476,9 +4464,9 @@ class NexusFS(  # type: ignore[misc]
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
-        # Get agent info before deletion to extract user_id and tenant_id
+        # Get agent info before deletion to extract user_id and zone_id
         import logging
 
         logger = logging.getLogger(__name__)
@@ -4487,10 +4475,10 @@ class NexusFS(  # type: ignore[misc]
             # Agent ID format: user_id,agent_name
             if "," in agent_id:
                 user_id, agent_name_part = agent_id.split(",", 1)
-                # Get tenant_id from context or use default
-                tenant_id = self._extract_tenant_id(_context) or "default"
-                # Use new namespace convention: /tenant:<tenant_id>/user:<user_id>/agent/<agent_id>
-                agent_dir = f"/tenant:{tenant_id}/user:{user_id}/agent/{agent_name_part}"
+                # Get zone_id from context or use default
+                zone_id = self._extract_zone_id(_context) or "default"
+                # Use new namespace convention: /zone/{zone_id}/user:{user_id}/agent/{agent_id}
+                agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
 
                 # Delete agent directory and config
                 try:
@@ -4502,7 +4490,7 @@ class NexusFS(  # type: ignore[misc]
                     logger.warning(f"Failed to delete agent directory {agent_dir}: {e}")
 
                 # Delete ALL API keys associated with this agent
-                session = self.metadata.SessionLocal()
+                session = self.SessionLocal()
                 try:
                     from sqlalchemy import update
 
@@ -4588,8 +4576,8 @@ class NexusFS(  # type: ignore[misc]
         user_id: str,
         email: str,
         display_name: str | None = None,
-        tenant_id: str | None = None,
-        tenant_name: str | None = None,
+        zone_id: str | None = None,
+        zone_name: str | None = None,
         create_api_key: bool = True,
         api_key_name: str | None = None,
         api_key_expires_at: datetime | None = None,
@@ -4601,21 +4589,21 @@ class NexusFS(  # type: ignore[misc]
 
         Creates:
         - User record (UserModel) in database
-        - Tenant record (TenantModel) if it doesn't exist
-        - All user directories under /tenant:{tenant_id}/user:{user_id}/
+        - Zone record (ZoneModel) if it doesn't exist
+        - All user directories under /zone/{zone_id}/user:{user_id}/
         - Default workspace
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
         - API key (if create_api_key=True)
-        - ReBAC permissions (user as tenant owner)
+        - ReBAC permissions (user as zone owner)
         - Entity registry entries
 
         Args:
             user_id: Unique user identifier
             email: User email address
             display_name: Optional display name
-            tenant_id: Tenant ID (extracted from email if not provided)
-            tenant_name: Optional custom tenant name (default: "{tenant_id} Organization")
+            zone_id: Zone ID (extracted from email if not provided)
+            zone_name: Optional custom zone name (default: "{zone_id} Organization")
             create_api_key: Whether to create API key for user
             api_key_name: Optional custom name for API key (default: "Primary key for {email}")
             api_key_expires_at: Optional expiry datetime for API key (default: None = no expiry)
@@ -4626,7 +4614,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             {
                 "user_id": str,
-                "tenant_id": str,
+                "zone_id": str,
                 "api_key": str | None,
                 "key_id": str | None,
                 "workspace_path": str,
@@ -4641,7 +4629,7 @@ class NexusFS(  # type: ignore[misc]
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /tenant:alice/user:alice/workspace/ws_personal_abc123
+            /zone/alice/user:alice/workspace/ws_personal_abc123
         """
         import logging
         from datetime import UTC, datetime
@@ -4654,26 +4642,26 @@ class NexusFS(  # type: ignore[misc]
         if not email or "@" not in email:
             raise ValueError("Valid email required")
 
-        # Extract tenant_id from email if not provided
-        if not tenant_id:
-            tenant_id = email.split("@")[0]
-            if not tenant_id:
-                raise ValueError("Could not extract tenant_id from email")
+        # Extract zone_id from email if not provided
+        if not zone_id:
+            zone_id = email.split("@")[0]
+            if not zone_id:
+                raise ValueError("Could not extract zone_id from email")
 
-        logger.info(f"Provisioning user {user_id} (email={email}, tenant={tenant_id})")
+        logger.info(f"Provisioning user {user_id} (email={email}, zone={zone_id})")
 
         # Use admin context for provisioning
         admin_context = context or OperationContext(
             user=user_id,
             groups=[],
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             is_admin=True,
         )
 
         # Track created resources
         created_resources: dict[str, Any] = {
             "user": False,
-            "tenant": False,
+            "zone": False,
             "directories": [],
             "workspace": None,
             "agents": [],
@@ -4684,36 +4672,36 @@ class NexusFS(  # type: ignore[misc]
         if not self._entity_registry:
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry = EntityRegistry(self.metadata.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         api_key = None
         key_id = None
 
         try:
-            # 1. Create/update TenantModel (idempotent)
-            from nexus.storage.models import TenantModel, UserModel
+            # 1. Create/update ZoneModel (idempotent)
+            from nexus.storage.models import UserModel, ZoneModel
 
-            tenant = session.query(TenantModel).filter_by(tenant_id=tenant_id).first()
-            if not tenant:
-                tenant = TenantModel(
-                    tenant_id=tenant_id,
-                    name=tenant_name or f"{tenant_id} Organization",
+            zone = session.query(ZoneModel).filter_by(zone_id=zone_id).first()
+            if not zone:
+                zone = ZoneModel(
+                    zone_id=zone_id,
+                    name=zone_name or f"{zone_id} Organization",
                     is_active=1,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )
-                session.add(tenant)
+                session.add(zone)
                 session.commit()
-                logger.info(f"Created tenant: {tenant_id}")
-                created_resources["tenant"] = True
+                logger.info(f"Created zone: {zone_id}")
+                created_resources["zone"] = True
             else:
-                logger.debug(f"Tenant already exists: {tenant_id}")
+                logger.debug(f"Zone already exists: {zone_id}")
 
-            # 2. Register tenant in entity registry (idempotent)
-            if not self._entity_registry.get_entity("tenant", tenant_id):
-                self._entity_registry.register_entity("tenant", tenant_id)
-                logger.info(f"Registered tenant in entity registry: {tenant_id}")
+            # 2. Register zone in entity registry (idempotent)
+            if not self._entity_registry.get_entity("zone", zone_id):
+                self._entity_registry.register_entity("zone", zone_id)
+                logger.info(f"Registered zone in entity registry: {zone_id}")
 
             # 3. Create/update UserModel (idempotent)
             user = session.query(UserModel).filter_by(user_id=user_id).first()
@@ -4731,7 +4719,7 @@ class NexusFS(  # type: ignore[misc]
                     email=email,
                     username=user_id,
                     display_name=display_name or user_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     primary_auth_method="api_key",
                     is_active=1,
                     is_global_admin=0,
@@ -4747,7 +4735,7 @@ class NexusFS(  # type: ignore[misc]
             # 4. Register user in entity registry (idempotent)
             if not self._entity_registry.get_entity("user", user_id):
                 self._entity_registry.register_entity(
-                    "user", user_id, parent_type="tenant", parent_id=tenant_id
+                    "user", user_id, parent_type="zone", parent_id=zone_id
                 )
                 logger.info(f"Registered user in entity registry: {user_id}")
 
@@ -4788,7 +4776,7 @@ class NexusFS(  # type: ignore[misc]
                         session,
                         user_id=user_id,
                         name=key_name,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=False,
                         expires_at=api_key_expires_at,  # Use provided expiry or None
                     )
@@ -4806,7 +4794,7 @@ class NexusFS(  # type: ignore[misc]
 
         # 6. Create user directories
         try:
-            dir_paths = self._create_user_directories(user_id, tenant_id, admin_context)
+            dir_paths = self._create_user_directories(user_id, zone_id, admin_context)
             created_resources["directories"] = dir_paths
             logger.info(f"Created {len(dir_paths)} directories for user {user_id}")
         except Exception as e:
@@ -4821,7 +4809,7 @@ class NexusFS(  # type: ignore[misc]
             # Generate workspace ID: ws_personal_{12-char-uuid}
             uuid_suffix = str(uuid.uuid4()).replace("-", "")[:12]
             workspace_id = f"ws_personal_{uuid_suffix}"
-            workspace_path = f"/tenant:{tenant_id}/user:{user_id}/workspace/{workspace_id}"
+            workspace_path = f"/zone/{zone_id}/user:{user_id}/workspace/{workspace_id}"
 
             if not self.exists(workspace_path, context=admin_context):
                 self.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
@@ -4864,7 +4852,7 @@ class NexusFS(  # type: ignore[misc]
             def _import_skills_async() -> None:
                 try:
                     logger.info(f"[ASYNC] Starting background skill import for user {user_id}")
-                    imported_paths = self._import_user_skills(tenant_id, user_id, admin_context)
+                    imported_paths = self._import_user_skills(zone_id, user_id, admin_context)
                     logger.info(
                         f"[ASYNC] Background skill import completed for {user_id}: "
                         f"{len(imported_paths)} skills imported"
@@ -4877,7 +4865,7 @@ class NexusFS(  # type: ignore[misc]
                                 grant_skill_builder_permissions,
                             )
 
-                            granted = grant_skill_builder_permissions(self, user_id, tenant_id)
+                            granted = grant_skill_builder_permissions(self, user_id, zone_id)
                             logger.info(
                                 f"[ASYNC] Granted {granted} permissions to SkillBuilder agent for user {user_id}"
                             )
@@ -4898,27 +4886,27 @@ class NexusFS(  # type: ignore[misc]
             logger.info(f"Skill import started in background for user {user_id}")
             created_resources["skills"] = "importing"  # Placeholder to indicate async import
 
-        # 10. Grant ReBAC permissions (tenant owner)
+        # 10. Grant ReBAC permissions (zone owner)
         try:
             self.rebac_create(
                 subject=("user", user_id),
                 relation="member",
-                object=("group", f"tenant_owners:{tenant_id}"),
-                tenant_id=tenant_id,
+                object=("group", f"zone_owners:{zone_id}"),
+                zone_id=zone_id,
                 context=admin_context,
             )
-            logger.info(f"Granted tenant owner permissions to user {user_id}")
+            logger.info(f"Granted zone owner permissions to user {user_id}")
         except Exception as e:
             if "already exists" in str(e).lower():
-                logger.debug(f"User already has tenant owner permissions: {user_id}")
+                logger.debug(f"User already has zone owner permissions: {user_id}")
             else:
-                logger.warning(f"Failed to grant tenant owner permissions: {e}")
+                logger.warning(f"Failed to grant zone owner permissions: {e}")
 
         logger.info(f"Successfully provisioned user {user_id}")
 
         return {
             "user_id": user_id,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "api_key": api_key,
             "key_id": key_id,
             "workspace_path": workspace_path,
@@ -4931,7 +4919,7 @@ class NexusFS(  # type: ignore[misc]
     def deprovision_user(
         self,
         user_id: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         delete_user_record: bool = False,
         force: bool = False,
         context: OperationContext | None = None,
@@ -4953,7 +4941,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             user_id: User ID to deprovision
-            tenant_id: Tenant ID (looked up from user if not provided)
+            zone_id: Zone ID (looked up from user if not provided)
             delete_user_record: If True, soft-deletes UserModel record
             force: Bypass safety checks (e.g., allow deprovisioning admin users)
             context: Operation context
@@ -4961,7 +4949,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             {
                 "user_id": str,
-                "tenant_id": str,
+                "zone_id": str,
                 "deleted_directories": list[str],
                 "deleted_api_keys": int,
                 "deleted_oauth_api_keys": int,
@@ -4974,11 +4962,11 @@ class NexusFS(  # type: ignore[misc]
         Example:
             >>> result = nx.deprovision_user(
             ...     user_id="alice",
-            ...     tenant_id="example",
+            ...     zone_id="example",
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/tenant:example/user:alice/workspace', ...]
+            ['/zone/example/user:alice/workspace', ...]
         """
         import logging
         from datetime import UTC, datetime
@@ -4995,14 +4983,14 @@ class NexusFS(  # type: ignore[misc]
         admin_context = context or OperationContext(
             user="system",
             groups=[],
-            tenant_id=tenant_id or "system",
+            zone_id=zone_id or "system",
             is_admin=True,
         )
 
         # Track deleted resources
         result: dict[str, Any] = {
             "user_id": user_id,
-            "tenant_id": None,
+            "zone_id": None,
             "deleted_directories": [],
             "deleted_api_keys": 0,
             "deleted_oauth_api_keys": 0,
@@ -5013,7 +5001,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Look up user in database
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             from nexus.storage.models import UserModel
 
@@ -5023,10 +5011,10 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(f"User not found in database: {user_id}")
                 # Continue with cleanup even if user doesn't exist
             else:
-                # Get tenant_id from user if not provided
-                if not tenant_id:
-                    tenant_id = user.tenant_id
-                result["tenant_id"] = tenant_id
+                # Get zone_id from user if not provided
+                if not zone_id:
+                    zone_id = user.zone_id
+                result["zone_id"] = zone_id
 
                 # Safety check: prevent deprovisioning global admin
                 if user.is_global_admin and not force:
@@ -5036,22 +5024,22 @@ class NexusFS(  # type: ignore[misc]
                     )
 
                 logger.info(
-                    f"Found user {user_id} (email={user.email}, tenant={tenant_id}, "
+                    f"Found user {user_id} (email={user.email}, zone={zone_id}, "
                     f"is_admin={user.is_global_admin})"
                 )
 
-            # Update context with proper tenant_id
-            if tenant_id:
+            # Update context with proper zone_id
+            if zone_id:
                 admin_context = OperationContext(
                     user="system",
                     groups=[],
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     is_admin=True,
                 )
 
             # 1. Delete user directories
-            if tenant_id:
-                user_base_path = f"/tenant:{tenant_id}/user:{user_id}"
+            if zone_id:
+                user_base_path = f"/zone/{zone_id}/user:{user_id}"
                 logger.info(f"Deleting user directories under {user_base_path}")
 
                 ALL_RESOURCE_TYPES = [
@@ -5262,7 +5250,7 @@ class NexusFS(  # type: ignore[misc]
             # Clean up metadata for the directory and all children
             if hasattr(self, "metadata"):
                 try:
-                    session = self.metadata.SessionLocal()
+                    session = self.SessionLocal()
                     try:
                         from nexus.storage.models import FilePathModel
 
@@ -5285,7 +5273,7 @@ class NexusFS(  # type: ignore[misc]
                     # Query tuples where resource path starts with dir_path
                     from nexus.storage.models import ReBACTupleModel
 
-                    session = self.metadata.SessionLocal()
+                    session = self.SessionLocal()
                     try:
                         deleted_tuples = (
                             session.query(ReBACTupleModel)
@@ -5411,13 +5399,13 @@ class NexusFS(  # type: ignore[misc]
         return had_content or directory_removed
 
     def _create_user_directories(
-        self, user_id: str, tenant_id: str, context: OperationContext
+        self, user_id: str, zone_id: str, context: OperationContext
     ) -> list[str]:
         """Create all user directories with proper permissions.
 
         Args:
             user_id: User ID
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             context: Operation context
 
         Returns:
@@ -5431,7 +5419,7 @@ class NexusFS(  # type: ignore[misc]
         created_paths = []
 
         for resource_type in ALL_RESOURCE_TYPES:
-            folder_path = f"/tenant:{tenant_id}/user:{user_id}/{resource_type}"
+            folder_path = f"/zone/{zone_id}/user:{user_id}/{resource_type}"
 
             try:
                 # Create directory (idempotent)
@@ -5443,7 +5431,7 @@ class NexusFS(  # type: ignore[misc]
                         subject=("user", user_id),
                         relation="direct_owner",
                         object=("file", folder_path),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         context=context,
                     )
                 except Exception as e:
@@ -5459,12 +5447,12 @@ class NexusFS(  # type: ignore[misc]
         return created_paths
 
     def _import_user_skills(
-        self, _tenant_id: str, _user_id: str, context: OperationContext
+        self, _zone_id: str, _user_id: str, context: OperationContext
     ) -> list[str]:
         """Import all default skills from data/skills/ directory.
 
         Args:
-            _tenant_id: Tenant ID (unused, for future use)
+            _zone_id: Zone ID (unused, for future use)
             _user_id: User ID (unused, for future use)
             context: Operation context
 
@@ -5739,7 +5727,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from nexus.core.ace.trajectory import TrajectoryManager
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             ctx = self._parse_context(context)
             traj_mgr = TrajectoryManager(
@@ -5747,7 +5735,7 @@ class NexusFS(  # type: ignore[misc]
                 self.backend,
                 ctx.user or "system",
                 ctx.agent_id or self._default_context.agent_id,
-                ctx.tenant_id or self._default_context.tenant_id,
+                ctx.zone_id or self._default_context.zone_id,
             )
             return traj_mgr.query_trajectories(
                 agent_id=ctx.agent_id or self._default_context.agent_id,
@@ -5771,7 +5759,7 @@ class NexusFS(  # type: ignore[misc]
         Args:
             name: Playbook name
             description: Optional description
-            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            scope: Scope level ('agent', 'user', 'zone', 'global')
             context: Operation context
 
         Returns:
@@ -5779,7 +5767,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from nexus.core.ace.playbook import PlaybookManager
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             ctx = self._parse_context(context)
             playbook_mgr = PlaybookManager(
@@ -5787,7 +5775,7 @@ class NexusFS(  # type: ignore[misc]
                 self.backend,
                 ctx.user or "system",
                 ctx.agent_id or self._default_context.agent_id,
-                ctx.tenant_id or self._default_context.tenant_id,
+                ctx.zone_id or self._default_context.zone_id,
             )
             playbook_id = playbook_mgr.create_playbook(name, description, scope)  # type: ignore
             return {"playbook_id": playbook_id}
@@ -5807,7 +5795,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from nexus.core.ace.playbook import PlaybookManager
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             ctx = self._parse_context(context)
             playbook_mgr = PlaybookManager(
@@ -5815,7 +5803,7 @@ class NexusFS(  # type: ignore[misc]
                 self.backend,
                 ctx.user or "system",
                 ctx.agent_id or self._default_context.agent_id,
-                ctx.tenant_id or self._default_context.tenant_id,
+                ctx.zone_id or self._default_context.zone_id,
             )
             return playbook_mgr.get_playbook(playbook_id)
         finally:
@@ -5840,7 +5828,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from nexus.core.ace.playbook import PlaybookManager
 
-        session = self.metadata.SessionLocal()
+        session = self.SessionLocal()
         try:
             ctx = self._parse_context(context)
             playbook_mgr = PlaybookManager(
@@ -5848,7 +5836,7 @@ class NexusFS(  # type: ignore[misc]
                 self.backend,
                 ctx.user or "system",
                 ctx.agent_id or self._default_context.agent_id,
-                ctx.tenant_id or self._default_context.tenant_id,
+                ctx.zone_id or self._default_context.zone_id,
             )
             return playbook_mgr.query_playbooks(
                 agent_id=ctx.agent_id or self._default_context.agent_id,
@@ -5870,7 +5858,7 @@ class NexusFS(  # type: ignore[misc]
             from nexus.core.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
-            session = self.metadata.SessionLocal()
+            session = self.SessionLocal()
             # Pass config if available (needed for Docker provider initialization)
             config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
@@ -5945,7 +5933,7 @@ class NexusFS(  # type: ignore[misc]
             ttl_minutes: Idle timeout in minutes (default: 10)
             provider: Sandbox provider ("docker", "e2b", etc.). If None, auto-selects based on environment.
             template_id: Provider template ID (optional)
-            context: Operation context with user/agent/tenant info
+            context: Operation context with user/agent/zone info
 
         Returns:
             Sandbox metadata dict with sandbox_id, name, status, etc.
@@ -5960,7 +5948,7 @@ class NexusFS(  # type: ignore[misc]
         result: dict[Any, Any] = await self._sandbox_manager.create_sandbox(
             name=name,
             user_id=ctx.user or "system",
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+            zone_id=ctx.zone_id or self._default_context.zone_id or "default",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
             provider=provider,
@@ -6102,7 +6090,7 @@ class NexusFS(  # type: ignore[misc]
         context: dict | None = None,
         verify_status: bool = False,
         user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         agent_id: str | None = None,
         status: str | None = None,
     ) -> dict:
@@ -6112,7 +6100,7 @@ class NexusFS(  # type: ignore[misc]
             context: Operation context
             verify_status: If True, verify status with provider (slower but accurate)
             user_id: Filter by user_id (admin only)
-            tenant_id: Filter by tenant_id (admin only)
+            zone_id: Filter by zone_id (admin only)
             agent_id: Filter by agent_id
             status: Filter by status (e.g., 'active', 'stopped', 'paused')
 
@@ -6129,12 +6117,12 @@ class NexusFS(  # type: ignore[misc]
         # If explicit filter parameters are provided and user is admin, use them
         # Otherwise filter by authenticated user
         filter_user_id = user_id if (user_id is not None and ctx.is_admin) else ctx.user
-        filter_tenant_id = tenant_id if (tenant_id is not None and ctx.is_admin) else ctx.tenant_id
+        filter_zone_id = zone_id if (zone_id is not None and ctx.is_admin) else ctx.zone_id
         filter_agent_id = agent_id if agent_id is not None else ctx.agent_id
 
         sandboxes = await self._sandbox_manager.list_sandboxes(
             user_id=filter_user_id,
-            tenant_id=filter_tenant_id,
+            zone_id=filter_zone_id,
             agent_id=filter_agent_id,
             status=status,
             verify_status=verify_status,
@@ -6182,7 +6170,7 @@ class NexusFS(  # type: ignore[misc]
             provider: Sandbox provider ("docker", "e2b", etc.)
             template_id: Provider template ID (optional)
             verify_status: If True, verify with provider that sandbox is running (default: True)
-            context: Operation context with user/agent/tenant info
+            context: Operation context with user/agent/zone info
 
         Returns:
             Sandbox metadata dict (either existing or newly created)
@@ -6204,7 +6192,7 @@ class NexusFS(  # type: ignore[misc]
         result: dict[Any, Any] = await self._sandbox_manager.get_or_create_sandbox(
             name=name,
             user_id=ctx.user or "system",
-            tenant_id=ctx.tenant_id or self._default_context.tenant_id or "default",
+            zone_id=ctx.zone_id or self._default_context.zone_id or "default",
             agent_id=ctx.agent_id,
             ttl_minutes=ttl_minutes,
             provider=provider,
@@ -6365,7 +6353,7 @@ class NexusFS(  # type: ignore[misc]
     def backfill_directory_index(
         self,
         prefix: str = "/",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         _context: Any = None,  # noqa: ARG002 - RPC interface requires context param
     ) -> dict[str, Any]:
         """Backfill sparse directory index from existing files.
@@ -6376,14 +6364,14 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             prefix: Path prefix to backfill (default: "/" for all)
-            tenant_id: Tenant ID to backfill (None for all tenants)
+            zone_id: Zone ID to backfill (None for all zones)
             context: Operation context (admin required)
 
         Returns:
             Dict with entries_created count
         """
         # TODO: Add admin check when context is provided
-        created = self.metadata.backfill_directory_index(prefix=prefix, tenant_id=tenant_id)
+        created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
 
     # =========================================================================
@@ -6554,7 +6542,7 @@ class NexusFS(  # type: ignore[misc]
         relation: str,
         object: tuple[str, str],
         expires_at: Any = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,
         column_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -6567,7 +6555,7 @@ class NexusFS(  # type: ignore[misc]
             relation: Relation name e.g., "owner", "can-read", "member"
             object: Object tuple (type, id) e.g., ("file", "/doc.txt")
             expires_at: Optional expiration datetime
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             context: Operation context for permission checks
             column_config: Optional column-level permissions for dynamic_viewer relation
 
@@ -6579,7 +6567,7 @@ class NexusFS(  # type: ignore[misc]
             relation=relation,
             object=object,
             expires_at=expires_at,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
             column_config=column_config,
         )
@@ -6590,7 +6578,7 @@ class NexusFS(  # type: ignore[misc]
         permission: str,
         object: tuple[str, str],
         context: Any = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object - delegates to ReBACService.
 
@@ -6601,7 +6589,7 @@ class NexusFS(  # type: ignore[misc]
             permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
             context: Optional ABAC context for condition evaluation
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
 
         Returns:
             True if permission granted, False otherwise
@@ -6611,14 +6599,14 @@ class NexusFS(  # type: ignore[misc]
             permission=permission,
             object=object,
             context=context,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     async def arebac_expand(
         self,
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 100,
     ) -> list[tuple[str, str]]:
         """Find all subjects with permission on object - delegates to ReBACService.
@@ -6628,7 +6616,7 @@ class NexusFS(  # type: ignore[misc]
         Args:
             permission: Permission to check e.g., "read", "write", "owner"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             limit: Maximum results
 
         Returns:
@@ -6637,7 +6625,7 @@ class NexusFS(  # type: ignore[misc]
         return await self.rebac_service.rebac_expand(
             permission=permission,
             object=object,
-            _tenant_id=tenant_id,
+            _zone_id=zone_id,
             _limit=limit,
         )
 
@@ -6646,7 +6634,7 @@ class NexusFS(  # type: ignore[misc]
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,
     ) -> dict[str, Any]:
         """Explain why subject has/doesn't have permission - delegates to ReBACService.
@@ -6657,7 +6645,7 @@ class NexusFS(  # type: ignore[misc]
             subject: Subject tuple e.g., ("user", "alice")
             permission: Permission to explain e.g., "read", "write"
             object: Object tuple e.g., ("file", "/doc.txt")
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             context: Operation context
 
         Returns:
@@ -6667,14 +6655,14 @@ class NexusFS(  # type: ignore[misc]
             subject=subject,
             permission=permission,
             object=object,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
 
     async def arebac_check_batch(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> list[bool]:
         """Check multiple permissions in batch - delegates to ReBACService.
 
@@ -6682,14 +6670,14 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             checks: List of (subject, permission, object) tuples
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             List of boolean results (same order as input)
         """
         return await self.rebac_service.rebac_check_batch(
             checks=checks,
-            _tenant_id=tenant_id,
+            _zone_id=zone_id,
         )
 
     async def arebac_delete(self, tuple_id: str) -> bool:
@@ -6711,7 +6699,7 @@ class NexusFS(  # type: ignore[misc]
         relation: str | None = None,
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -6724,7 +6712,7 @@ class NexusFS(  # type: ignore[misc]
             relation: Filter by relation (optional)
             object: Filter by object (optional)
             relation_in: Filter by multiple relations (optional)
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             limit: Maximum results
             offset: Pagination offset
 
@@ -6736,7 +6724,7 @@ class NexusFS(  # type: ignore[misc]
             relation=relation,
             object=object,
             relation_in=relation_in,
-            _tenant_id=tenant_id,
+            _zone_id=zone_id,
             _limit=limit,
             _offset=offset,
         )
@@ -7106,7 +7094,7 @@ class NexusFS(  # type: ignore[misc]
             state: CSRF state token from authorization request
             redirect_uri: OAuth redirect URI
             code_verifier: PKCE code verifier (required for PKCE providers)
-            context: Operation context for tenant isolation
+            context: Operation context for zone isolation
 
         Returns:
             Dictionary containing:
@@ -7150,7 +7138,7 @@ class NexusFS(  # type: ignore[misc]
         Args:
             provider: Optional provider filter
             include_revoked: Include revoked credentials (default: False)
-            context: Operation context for user/tenant identification
+            context: Operation context for user/zone identification
 
         Returns:
             List of credential dictionaries containing:
@@ -7377,7 +7365,7 @@ class NexusFS(  # type: ignore[misc]
         priority: int = 0,
         readonly: bool = False,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         description: str | None = None,
         context: OperationContext | None = None,
     ) -> str:
@@ -7389,7 +7377,7 @@ class NexusFS(  # type: ignore[misc]
             priority=priority,
             readonly=readonly,
             owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             description=description,
             context=context,
         )
@@ -7397,13 +7385,13 @@ class NexusFS(  # type: ignore[misc]
     async def alist_saved_mounts(
         self,
         owner_user_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """List saved mount configurations - delegates to MountService."""
         return await self.mount_service.list_saved_mounts(
             owner_user_id=owner_user_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
 

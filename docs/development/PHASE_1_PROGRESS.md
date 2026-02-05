@@ -268,9 +268,9 @@ Documented all deprecated features organized by category:
    - acl_store parameter - Soft deprecated
 
 2. **Context & Identity Management** (3 items)
-   - tenant_id/agent_id in NexusFS.__init__() - SECURITY RISK in server mode
-   - Backward compatibility properties (tenant_id, agent_id, user_id)
-   - tenant_id in cache classes
+   - zone_id/agent_id in NexusFS.__init__() - SECURITY RISK in server mode
+   - Backward compatibility properties (zone_id, agent_id, user_id)
+   - zone_id in cache classes
 
 3. **API Parameter Changes** (7 items)
    - agent_id → workspace_path
@@ -309,11 +309,11 @@ Documented all deprecated features organized by category:
 - 🟡 **Soft Deprecated (warnings):** 20+ features
   - Still functional but show DeprecationWarning
   - Planned removal in v0.7.0 or v0.8.0
-  - Include tenant_id/agent_id, custom_parsers, static API keys, etc.
+  - Include zone_id/agent_id, custom_parsers, static API keys, etc.
 
 **Critical Security Issue:**
-- Using instance-level `tenant_id`/`agent_id` in server mode creates SECURITY RISKS
-- Can lead to privilege escalation in multi-tenant environments
+- Using instance-level `zone_id`/`agent_id` in server mode creates SECURITY RISKS
+- Can lead to privilege escalation in multi-zone environments
 - MUST use per-request context in server deployments
 
 **Most Impactful Deprecations:**
@@ -369,7 +369,7 @@ python scripts/migrate/update_parameters.py --fix
 - ✅ Clear migration paths for each deprecated feature
 - ✅ Version removal timeline established
 - ✅ Migration strategies and tools documented
-- ✅ Security warnings highlighted (tenant_id/agent_id risks)
+- ✅ Security warnings highlighted (zone_id/agent_id risks)
 - ✅ Code examples for all replacements
 - ✅ Version support matrix created
 
@@ -387,7 +387,7 @@ Audit covered **254 Python files** across modules:
 ### Removal Timeline
 
 **v0.7.0 (Q2 2026):** 10 removals
-- acl_store, tenant_id/agent_id, agent_id, custom_parsers, overwrite/skip_existing, keyword_weight/semantic_weight, l1_cache_quantization_interval, cache methods, sync(), db_session
+- acl_store, zone_id/agent_id, agent_id, custom_parsers, overwrite/skip_existing, keyword_weight/semantic_weight, l1_cache_quantization_interval, cache methods, sync(), db_session
 
 **v0.8.0 (Q4 2026):** 3 removals
 - content_binary column, static API keys, db_path
@@ -441,7 +441,7 @@ Audit covered **254 Python files** across modules:
 - 100+ deprecated features documented
 - 11 hard deprecated (removed) methods
 - 20+ soft deprecated (warnings) features
-- Critical security issue identified: tenant_id/agent_id in server mode
+- Critical security issue identified: zone_id/agent_id in server mode
 - Migration paths documented for all features
 
 ### Lessons Learned

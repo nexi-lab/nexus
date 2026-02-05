@@ -34,7 +34,7 @@ base_slug, tenant_name_base, domain, is_personal = get_tenant_strategy_from_emai
 
 **Result**:
 ```python
-tenant_id = "alice"                    # Email username
+zone_id = "alice"                    # Email username
 name = "Alice's Workspace"             # First name + "'s Workspace"
 domain = "gmail.com"                   # Email domain
 role = "admin"                         # Admin of personal workspace
@@ -53,7 +53,7 @@ is_personal = True
 
 **Result**:
 ```python
-tenant_id = "bob-jones"                # Normalized email username
+zone_id = "bob-jones"                # Normalized email username
 name = "Bob's Workspace"               # First name + "'s Workspace"
 domain = "outlook.com"
 role = "admin"
@@ -67,7 +67,7 @@ is_personal = True
 
 **Result**:
 ```python
-tenant_id = "acme-com"                 # Domain as slug
+zone_id = "acme-com"                 # Domain as slug
 name = "Acme"                          # Company name from domain
 domain = "acme.com"                    # Email domain
 role = "member"                        # Regular member
@@ -86,7 +86,7 @@ is_personal = False
 
 **Result**:
 ```python
-tenant_id = "acme-com"                 # SAME tenant (shared)
+zone_id = "acme-com"                 # SAME tenant (shared)
 name = "Acme"                          # Existing tenant name
 domain = "acme.com"
 role = "member"
@@ -107,7 +107,7 @@ is_personal = False
 
 **Result**:
 ```python
-tenant_id = "eng-techcorp-io"          # Full domain as slug
+zone_id = "eng-techcorp-io"          # Full domain as slug
 name = "Eng"                           # Subdomain as company name
 domain = "eng.techcorp.io"
 role = "member"
@@ -121,7 +121,7 @@ is_personal = False
 
 **Result**:
 ```python
-tenant_id = "david"
+zone_id = "david"
 name = "david's Workspace"             # Fallback to email username
 domain = "gmail.com"
 role = "admin"
@@ -130,7 +130,7 @@ is_personal = True
 
 ## Comparison Table
 
-| User Email | Display Name | tenant_id | Tenant Name | Role | Type |
+| User Email | Display Name | zone_id | Tenant Name | Role | Type |
 |------------|-------------|-----------|-------------|------|------|
 | alice@gmail.com | Alice Smith | `alice` | Alice's Workspace | admin | Personal |
 | bob@outlook.com | Bob Jones | `bob` | Bob's Workspace | admin | Personal |

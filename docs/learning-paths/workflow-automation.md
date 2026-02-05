@@ -931,7 +931,7 @@ Now that you've mastered workflow automation, explore more:
 
 ### 🔍 Recommended Next Steps
 
-1. **[Multi-Tenant SaaS](multi-tenant-saas.md)** (30 min)
+1. **[Multi-Tenant SaaS](multi-zone-saas.md)** (30 min)
    Build isolated workflows per tenant
 
 2. **[AI Agent Memory](ai-agent-memory.md)** (15 min)
@@ -974,6 +974,6 @@ Now that you've mastered workflow automation, explore more:
 
 ---
 
-**Next:** [Multi-Tenant SaaS →](multi-tenant-saas.md)
+**Next:** [Multi-Tenant SaaS →](multi-zone-saas.md)
 
 **Questions?** Check our [API Reference](../api/workflows.md) or [GitHub Discussions](https://github.com/nexi-lab/nexus/discussions)

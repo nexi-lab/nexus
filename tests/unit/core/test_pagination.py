@@ -16,7 +16,7 @@ class TestCursorEncoding:
 
     def test_encode_decode_roundtrip(self):
         """Cursor should survive encode/decode cycle."""
-        filters = {"prefix": "/workspace/", "recursive": True, "tenant_id": "org_123"}
+        filters = {"prefix": "/workspace/", "recursive": True, "zone_id": "org_123"}
 
         cursor = encode_cursor(
             last_path="/workspace/file999.txt",
@@ -31,7 +31,7 @@ class TestCursorEncoding:
 
     def test_encode_decode_with_none_path_id(self):
         """Cursor should work with None path_id."""
-        filters = {"prefix": "/", "recursive": True, "tenant_id": None}
+        filters = {"prefix": "/", "recursive": True, "zone_id": None}
 
         cursor = encode_cursor(
             last_path="/file.txt",
@@ -46,30 +46,30 @@ class TestCursorEncoding:
 
     def test_decode_detects_filter_tampering(self):
         """Cursor should reject if query filters changed."""
-        original_filters = {"prefix": "/a/", "recursive": True, "tenant_id": None}
+        original_filters = {"prefix": "/a/", "recursive": True, "zone_id": None}
         cursor = encode_cursor("/a/file.txt", "id1", original_filters)
 
-        tampered_filters = {"prefix": "/b/", "recursive": True, "tenant_id": None}
+        tampered_filters = {"prefix": "/b/", "recursive": True, "zone_id": None}
 
         with pytest.raises(CursorError, match="filters mismatch"):
             decode_cursor(cursor, tampered_filters)
 
     def test_decode_detects_recursive_change(self):
         """Cursor should reject if recursive flag changed."""
-        original_filters = {"prefix": "/a/", "recursive": True, "tenant_id": None}
+        original_filters = {"prefix": "/a/", "recursive": True, "zone_id": None}
         cursor = encode_cursor("/a/file.txt", "id1", original_filters)
 
-        changed_filters = {"prefix": "/a/", "recursive": False, "tenant_id": None}
+        changed_filters = {"prefix": "/a/", "recursive": False, "zone_id": None}
 
         with pytest.raises(CursorError, match="filters mismatch"):
             decode_cursor(cursor, changed_filters)
 
-    def test_decode_detects_tenant_change(self):
-        """Cursor should reject if tenant_id changed."""
-        original_filters = {"prefix": "/a/", "recursive": True, "tenant_id": "org1"}
+    def test_decode_detects_zone_change(self):
+        """Cursor should reject if zone_id changed."""
+        original_filters = {"prefix": "/a/", "recursive": True, "zone_id": "org1"}
         cursor = encode_cursor("/a/file.txt", "id1", original_filters)
 
-        changed_filters = {"prefix": "/a/", "recursive": True, "tenant_id": "org2"}
+        changed_filters = {"prefix": "/a/", "recursive": True, "zone_id": "org2"}
 
         with pytest.raises(CursorError, match="filters mismatch"):
             decode_cursor(cursor, changed_filters)
@@ -112,7 +112,7 @@ class TestCursorEncoding:
 
     def test_cursor_is_url_safe(self):
         """Cursor should be URL-safe base64."""
-        filters = {"prefix": "/path/with/slashes/", "recursive": True, "tenant_id": None}
+        filters = {"prefix": "/path/with/slashes/", "recursive": True, "zone_id": None}
         cursor = encode_cursor("/path/with/slashes/file.txt", "uuid", filters)
 
         # Should not contain +, /, or = (URL-unsafe chars in standard base64)
@@ -123,7 +123,7 @@ class TestCursorEncoding:
 
     def test_cursor_with_unicode_path(self):
         """Cursor should handle unicode paths."""
-        filters = {"prefix": "/文档/", "recursive": True, "tenant_id": None}
+        filters = {"prefix": "/文档/", "recursive": True, "zone_id": None}
         cursor = encode_cursor("/文档/文件.txt", "uuid", filters)
 
         decoded = decode_cursor(cursor, filters)
@@ -131,7 +131,7 @@ class TestCursorEncoding:
 
     def test_cursor_with_special_chars(self):
         """Cursor should handle special characters in path."""
-        filters = {"prefix": "/test/", "recursive": True, "tenant_id": None}
+        filters = {"prefix": "/test/", "recursive": True, "zone_id": None}
         path = "/test/file with spaces & symbols!.txt"
         cursor = encode_cursor(path, "uuid", filters)
 
@@ -165,7 +165,7 @@ class TestFilterHashing:
 
     def test_hash_length(self):
         """Hash should be truncated to 16 characters."""
-        filters = {"prefix": "/test/", "recursive": True, "tenant_id": "org123"}
+        filters = {"prefix": "/test/", "recursive": True, "zone_id": "org123"}
         hash_result = _hash_filters(filters)
 
         assert len(hash_result) == 16
@@ -180,14 +180,14 @@ class TestFilterHashing:
 
     def test_hash_with_none_values(self):
         """Hash should handle None values."""
-        filters1 = {"prefix": "/", "tenant_id": None}
-        filters2 = {"prefix": "/", "tenant_id": None}
+        filters1 = {"prefix": "/", "zone_id": None}
+        filters2 = {"prefix": "/", "zone_id": None}
 
         assert _hash_filters(filters1) == _hash_filters(filters2)
 
     def test_hash_none_vs_missing(self):
         """Hash should differ for None vs missing key."""
-        filters1 = {"prefix": "/", "tenant_id": None}
+        filters1 = {"prefix": "/", "zone_id": None}
         filters2 = {"prefix": "/"}
 
         assert _hash_filters(filters1) != _hash_filters(filters2)

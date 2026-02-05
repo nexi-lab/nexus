@@ -124,13 +124,13 @@ class TestRebacCreate:
         assert isinstance(result, dict)
         assert isinstance(result["tuple_id"], str)
 
-    def test_rebac_create_with_tenant(self, nx: NexusFS) -> None:
-        """Test creating relationship with tenant_id."""
+    def test_rebac_create_with_zone(self, nx: NexusFS) -> None:
+        """Test creating relationship with zone_id."""
         tuple_id = nx.rebac_create(
             subject=("user", "alice"),
             relation="viewer-of",
             object=("file", "/test.txt"),
-            tenant_id="acme",
+            zone_id="acme",
         )
 
         assert tuple_id is not None
@@ -192,21 +192,21 @@ class TestRebacCheck:
 
     def test_rebac_check_direct_permission(self, nx: NexusFS) -> None:
         """Test checking a direct permission."""
-        # Create a direct_owner relationship with tenant_id
+        # Create a direct_owner relationship with zone_id
         # direct_owner is a standard relation that grants read access
         nx.rebac_create(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
-        # Check permission with tenant_id
+        # Check permission with zone_id
         has_permission = nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert has_permission is True
@@ -217,7 +217,7 @@ class TestRebacCheck:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/secret.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert has_permission is False
@@ -240,31 +240,31 @@ class TestRebacCheck:
                 object="invalid",  # type: ignore[arg-type]
             )
 
-    def test_rebac_check_with_tenant_isolation(self, nx: NexusFS) -> None:
-        """Test that tenant isolation works."""
-        # Create permission in tenant "acme"
+    def test_rebac_check_with_zone_isolation(self, nx: NexusFS) -> None:
+        """Test that zone isolation works."""
+        # Create permission in zone "acme"
         nx.rebac_create(
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
-            tenant_id="acme",
+            zone_id="acme",
         )
 
-        # Check in same tenant
+        # Check in same zone
         has_permission = nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            tenant_id="acme",
+            zone_id="acme",
         )
         assert has_permission is True
 
-        # Check in different tenant (should not have access)
+        # Check in different zone (should not have access)
         has_permission = nx.rebac_check(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            tenant_id="other",
+            zone_id="other",
         )
         assert has_permission is False
 
@@ -274,18 +274,18 @@ class TestRebacExpand:
 
     def test_rebac_expand_basic(self, nx: NexusFS) -> None:
         """Test expanding permissions to find all subjects."""
-        # Create some relationships with tenant_id using direct_owner relation
+        # Create some relationships with zone_id using direct_owner relation
         nx.rebac_create(
             subject=("user", "expand_alice"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "expand_bob"),
             relation="direct_owner",
             object=("file", "/expand_test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Expand to find all subjects with read permission
@@ -354,14 +354,14 @@ class TestRebacExplain:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         explanation = nx.rebac_explain(
             subject=("user", "alice"),
             permission="read",
             object=("file", "/test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert isinstance(explanation, dict)
@@ -374,7 +374,7 @@ class TestRebacExplain:
             subject=("user", "bob"),
             permission="write",
             object=("file", "/test.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert isinstance(explanation, dict)
@@ -396,21 +396,21 @@ class TestRebacCheckBatch:
 
     def test_rebac_check_batch_basic(self, nx: NexusFS) -> None:
         """Test batch permission checks."""
-        # Create some relationships with tenant_id using direct_owner relation
+        # Create some relationships with zone_id using direct_owner relation
         nx.rebac_create(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file1.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         nx.rebac_create(
             subject=("user", "batch_alice"),
             relation="direct_owner",
             object=("file", "/batch_file2.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
-        # Batch check - note: rebac_check_batch may not accept tenant_id
+        # Batch check - note: rebac_check_batch may not accept zone_id
         checks = [
             (("user", "batch_alice"), "read", ("file", "/batch_file1.txt")),
             (("user", "batch_alice"), "write", ("file", "/batch_file2.txt")),
@@ -659,7 +659,7 @@ class TestConsentAndPrivacy:
         tuple_id = nx.grant_consent(
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert tuple_id is not None
@@ -672,7 +672,7 @@ class TestConsentAndPrivacy:
             from_subject=("profile", "alice"),
             to_subject=("user", "bob"),
             expires_at=expires,
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert tuple_id is not None
@@ -683,7 +683,7 @@ class TestConsentAndPrivacy:
         tuple_id = nx.grant_consent(
             from_subject=("profile", "consent_alice"),
             to_subject=("user", "consent_bob"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         assert tuple_id is not None
@@ -693,7 +693,7 @@ class TestConsentAndPrivacy:
             revoked = nx.revoke_consent(
                 from_subject=("profile", "consent_alice"),
                 to_subject=("user", "consent_bob"),
-                tenant_id="default",
+                zone_id="default",
             )
             assert isinstance(revoked, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -707,7 +707,7 @@ class TestConsentAndPrivacy:
             revoked = nx.revoke_consent(
                 from_subject=("profile", "nonexistent_charlie"),
                 to_subject=("user", "nonexistent_dave"),
-                tenant_id="default",
+                zone_id="default",
             )
             assert isinstance(revoked, bool)
         except (ValueError, RuntimeError, TypeError):
@@ -716,17 +716,17 @@ class TestConsentAndPrivacy:
 
     def test_make_public(self, nx: NexusFS) -> None:
         """Test making a resource publicly discoverable."""
-        tuple_id = nx.make_public(("profile", "public_alice"), tenant_id="default")
+        tuple_id = nx.make_public(("profile", "public_alice"), zone_id="default")
         assert tuple_id is not None
 
     def test_make_private(self, nx: NexusFS) -> None:
         """Test making a resource private."""
         # Make public first
-        nx.make_public(("profile", "private_alice"), tenant_id="default")
+        nx.make_public(("profile", "private_alice"), zone_id="default")
 
         # Make private - implementation varies
         try:
-            made_private = nx.make_private(("profile", "private_alice"), tenant_id="default")
+            made_private = nx.make_private(("profile", "private_alice"), zone_id="default")
             assert isinstance(made_private, bool)
         except (ValueError, RuntimeError, TypeError):
             # Some implementations may raise if public relation doesn't exist
@@ -735,7 +735,7 @@ class TestConsentAndPrivacy:
     def test_make_private_already_private(self, nx: NexusFS) -> None:
         """Test making already private resource."""
         try:
-            made_private = nx.make_private(("profile", "already_private_bob"), tenant_id="default")
+            made_private = nx.make_private(("profile", "already_private_bob"), zone_id="default")
             assert isinstance(made_private, bool)
         except (ValueError, RuntimeError, TypeError):
             # Some implementations may raise if public relation doesn't exist
@@ -748,7 +748,7 @@ class TestConsentAndPrivacy:
             subject=("user", "privacy_alice"),
             relation="direct_owner",
             object=("file", "/privacy_doc.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Without privacy filtering
@@ -848,7 +848,7 @@ class TestRebacIntegration:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/protected.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # This tests that the permission check works
@@ -856,7 +856,7 @@ class TestRebacIntegration:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/protected.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert has_read is True
 
@@ -865,7 +865,7 @@ class TestRebacIntegration:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/protected.txt"),
-            tenant_id="default",
+            zone_id="default",
         )
         assert has_read is False
 
@@ -876,7 +876,7 @@ class TestRebacIntegration:
             subject=("user", "group_alice"),
             relation="member",
             object=("group", "group_developers"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Developers group has direct_owner access to file
@@ -884,7 +884,7 @@ class TestRebacIntegration:
             subject=("group", "group_developers"),
             relation="direct_owner",
             object=("file", "/project/group_code.py"),
-            tenant_id="default",
+            zone_id="default",
         )
 
         # Test that the relationships were created

@@ -311,7 +311,7 @@ class TestWorkspaceRegistry:
     def test_register_workspace_with_context_dict(self, registry: WorkspaceRegistry) -> None:
         """Test workspace registration with context as dict."""
         with patch.object(registry, "_save_workspace_to_db"):
-            context = {"user_id": "alice", "tenant_id": "default"}
+            context = {"user_id": "alice", "zone_id": "default"}
             config = registry.register_workspace(
                 path="/workspace",
                 context=context,
@@ -330,7 +330,7 @@ class TestWorkspaceRegistry:
     def test_register_memory_with_context_dict(self, registry: WorkspaceRegistry) -> None:
         """Test memory registration with context as dict."""
         with patch.object(registry, "_save_memory_to_db"):
-            context = {"user_id": "bob", "tenant_id": "team1"}
+            context = {"user_id": "bob", "zone_id": "team1"}
             config = registry.register_memory(
                 path="/memory",
                 context=context,

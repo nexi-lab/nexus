@@ -90,7 +90,7 @@ def main() -> int:
 
     test_user_id = "test_deprovision_user"
     test_email = "test_deprovision@example.com"
-    test_tenant_id = "test_tenant"
+    test_zone_id = "test_zone"
 
     try:
         # Step 1: Provision user
@@ -102,7 +102,7 @@ def main() -> int:
                 "user_id": test_user_id,
                 "email": test_email,
                 "display_name": "Test Deprovision User",
-                "tenant_id": test_tenant_id,
+                "zone_id": test_zone_id,
                 "create_api_key": True,
                 "create_agents": False,  # Skip agents for faster test
                 "import_skills": False,
@@ -112,7 +112,7 @@ def main() -> int:
 
         print("✓ User provisioned successfully!")
         print(f"  - user_id: {provision_result.get('user_id')}")
-        print(f"  - tenant_id: {provision_result.get('tenant_id')}")
+        print(f"  - zone_id: {provision_result.get('zone_id')}")
         api_key = provision_result.get("api_key")
         if api_key:
             print(f"  - api_key: {api_key[:30]}...")
@@ -130,7 +130,7 @@ def main() -> int:
             "deprovision_user",
             {
                 "user_id": test_user_id,
-                "tenant_id": test_tenant_id,
+                "zone_id": test_zone_id,
                 "delete_user_record": True,
                 "force": False,
             },
@@ -141,7 +141,7 @@ def main() -> int:
         print()
         print("Results:")
         print(f"  - user_id: {deprovision_result['user_id']}")
-        print(f"  - tenant_id: {deprovision_result['tenant_id']}")
+        print(f"  - zone_id: {deprovision_result['zone_id']}")
         print(
             f"  - deleted_directories: {len(deprovision_result['deleted_directories'])} directories"
         )

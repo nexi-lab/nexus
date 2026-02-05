@@ -414,7 +414,7 @@ class CompactFileMetadata:
         created_at_ts: Creation timestamp as Unix epoch (float)
         modified_at_ts: Modification timestamp as Unix epoch (float)
         version: File version number
-        tenant_id: Tenant identifier (could be interned in future)
+        zone_id: Tenant identifier (could be interned in future)
         created_by: Creator identifier
         is_directory: Whether this represents a directory
     """
@@ -428,7 +428,7 @@ class CompactFileMetadata:
     created_at_ts: float | None = None  # Unix timestamp instead of datetime
     modified_at_ts: float | None = None  # Unix timestamp instead of datetime
     version: int = 1
-    tenant_id: str | None = None
+    zone_id: str | None = None
     created_by: str | None = None
     is_directory: bool = False
 
@@ -456,7 +456,7 @@ class CompactFileMetadata:
         """
         from datetime import datetime
 
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         if interner is None:
             interner = get_path_interner()
@@ -479,7 +479,7 @@ class CompactFileMetadata:
             created_at=created_at,
             modified_at=modified_at,
             version=self.version,
-            tenant_id=self.tenant_id,
+            zone_id=self.zone_id,
             created_by=self.created_by,
             is_directory=self.is_directory,
         )
@@ -522,7 +522,7 @@ class CompactFileMetadata:
             created_at_ts=created_at_ts,
             modified_at_ts=modified_at_ts,
             version=metadata.version,
-            tenant_id=metadata.tenant_id,
+            zone_id=metadata.zone_id,
             created_by=metadata.created_by,
             is_directory=metadata.is_directory,
         )
@@ -530,4 +530,4 @@ class CompactFileMetadata:
 
 # Import FileMetadata for type checking
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.core._metadata_generated import FileMetadata

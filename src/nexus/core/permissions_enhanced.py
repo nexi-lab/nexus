@@ -56,8 +56,8 @@ class AdminCapability:
     # ReBAC management
     MANAGE_REBAC = "admin:rebac:*"  # Manage permissions
 
-    # Tenant management
-    MANAGE_TENANTS = "admin:tenants:*"  # Manage tenant isolation
+    # Zone management
+    MANAGE_ZONES = "admin:zones:*"  # Manage zone isolation
 
     @staticmethod
     def get_required_capability(path: str, permission: str) -> str:
@@ -88,7 +88,7 @@ class AuditLogEntry:
     timestamp: str
     request_id: str
     user: str
-    tenant_id: str | None
+    zone_id: str | None
     path: str
     permission: str
     bypass_type: str  # "system" or "admin"
@@ -102,7 +102,7 @@ class AuditLogEntry:
             "timestamp": self.timestamp,
             "request_id": self.request_id,
             "user": self.user,
-            "tenant_id": self.tenant_id,
+            "zone_id": self.zone_id,
             "path": self.path,
             "permission": self.permission,
             "bypass_type": self.bypass_type,
@@ -150,7 +150,7 @@ class AuditStore:
                                     timestamp DATETIME NOT NULL,
                                     request_id TEXT NOT NULL,
                                     user_id TEXT NOT NULL,
-                                    tenant_id TEXT,
+                                    zone_id TEXT,
                                     path TEXT NOT NULL,
                                     permission TEXT NOT NULL,
                                     bypass_type TEXT NOT NULL,
@@ -172,7 +172,7 @@ class AuditStore:
                         )
                         conn.execute(
                             text(
-                                "CREATE INDEX idx_audit_tenant_timestamp ON admin_bypass_audit(tenant_id, timestamp)"
+                                "CREATE INDEX idx_audit_zone_timestamp ON admin_bypass_audit(zone_id, timestamp)"
                             )
                         )
                         conn.commit()
@@ -191,7 +191,7 @@ class AuditStore:
                                     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
                                     request_id VARCHAR(36) NOT NULL,
                                     user_id VARCHAR(255) NOT NULL,
-                                    tenant_id VARCHAR(255),
+                                    zone_id VARCHAR(255),
                                     path TEXT NOT NULL,
                                     permission VARCHAR(50) NOT NULL,
                                     bypass_type VARCHAR(20) NOT NULL,
@@ -213,7 +213,7 @@ class AuditStore:
                         )
                         conn.execute(
                             text(
-                                "CREATE INDEX idx_audit_tenant_timestamp ON admin_bypass_audit(tenant_id, timestamp)"
+                                "CREATE INDEX idx_audit_zone_timestamp ON admin_bypass_audit(zone_id, timestamp)"
                             )
                         )
                         conn.commit()
@@ -297,7 +297,7 @@ class AuditStore:
                 self._fix_sql_placeholders(
                     """
                     INSERT INTO admin_bypass_audit (
-                        id, timestamp, request_id, user_id, tenant_id, path,
+                        id, timestamp, request_id, user_id, zone_id, path,
                         permission, bypass_type, allowed, capabilities, denial_reason
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -308,7 +308,7 @@ class AuditStore:
                     entry.timestamp,
                     entry.request_id,
                     entry.user,
-                    entry.tenant_id,
+                    entry.zone_id,
                     entry.path,
                     entry.permission,
                     entry.bypass_type,
@@ -322,7 +322,7 @@ class AuditStore:
     def query_bypasses(
         self,
         user: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         start_time: datetime | None = None,
         end_time: datetime | None = None,
         limit: int = 100,
@@ -331,7 +331,7 @@ class AuditStore:
 
         Args:
             user: Filter by user ID
-            tenant_id: Filter by tenant ID
+            zone_id: Filter by zone ID
             start_time: Filter by start timestamp
             end_time: Filter by end timestamp
             limit: Max results to return
@@ -349,9 +349,9 @@ class AuditStore:
                 where_clauses.append("user_id = ?")
                 params.append(user)
 
-            if tenant_id:
-                where_clauses.append("tenant_id = ?")
-                params.append(tenant_id)
+            if zone_id:
+                where_clauses.append("zone_id = ?")
+                params.append(zone_id)
 
             if start_time:
                 where_clauses.append("timestamp >= ?")
@@ -366,7 +366,7 @@ class AuditStore:
             cursor.execute(
                 self._fix_sql_placeholders(
                     f"""
-                    SELECT id, timestamp, request_id, user_id, tenant_id, path,
+                    SELECT id, timestamp, request_id, user_id, zone_id, path,
                            permission, bypass_type, allowed, capabilities, denial_reason
                     FROM admin_bypass_audit
                     WHERE {where_clause}
@@ -385,7 +385,7 @@ class AuditStore:
                         "timestamp": row["timestamp"],
                         "request_id": row["request_id"],
                         "user_id": row["user_id"],
-                        "tenant_id": row["tenant_id"],
+                        "zone_id": row["zone_id"],
                         "path": row["path"],
                         "permission": row["permission"],
                         "bypass_type": row["bypass_type"],

@@ -19,7 +19,7 @@ This document clearly distinguishes between:
 | **Deny Semantics** | ✅ ENFORCED | Yes | Via exclusion operator |
 | **Exception Override** | ✅ ENFORCED | Yes | exception_viewer overrides deny |
 | **ABAC Conditions** | ✅ ENFORCED | Yes | Time, IP, device evaluated |
-| **Multi-Tenant Isolation** | ✅ ENFORCED | Data scoping | Via tenant_id filtering |
+| **Multi-Tenant Isolation** | ✅ ENFORCED | Data scoping | Via zone_id filtering |
 | **Batch Operations** | ✅ ENFORCED | Yes | rebac_check_batch |
 | **Explainability** | ✅ ENFORCED | Yes | rebac_explain with proof paths |
 
@@ -599,7 +599,7 @@ print_info("To enforce: Add tupleToUserset for delegates-to relation")
 **Strong Foundation:**
 - ✅ Core ReBAC features are production-ready
 - ✅ ABAC fully implemented
-- ✅ Multi-tenant working
+- ✅ Multi-zone working
 - ✅ Performance optimized
 
 **Educational Value:**

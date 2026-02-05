@@ -28,7 +28,7 @@ class TestRateLimitKey:
         assert key == "192.168.1.100"
 
     def test_bearer_token_sk_format_extracts_user(self) -> None:
-        """sk- format tokens should extract tenant and user."""
+        """sk- format tokens should extract zone and user."""
         request = MagicMock(spec=Request)
         request.headers = {"Authorization": "Bearer sk-acme_alice_123_abc123"}
         request.client = MagicMock()

@@ -218,7 +218,7 @@ Nexus provides enterprise-grade access control:
 
 - **Operation Contexts** - User/group-based permissions
 - **ReBAC (Relationship-Based Access Control)** - Fine-grained authorization
-- **Tenant Isolation** - Multi-tenant security
+- **Tenant Isolation** - Multi-zone security
 - **Directory Inheritance** - Automatic permission propagation
 
 See [Permissions](permissions.md) for complete security documentation.

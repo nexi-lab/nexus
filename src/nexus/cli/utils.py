@@ -86,11 +86,11 @@ SUBJECT_OPTION = click.option(
     help="Subject for operation in format 'type:id' (e.g., 'user:alice', 'agent:bot1'). Can also be set via NEXUS_SUBJECT env var.",
 )
 
-TENANT_ID_OPTION = click.option(
-    "--tenant-id",
+ZONE_ID_OPTION = click.option(
+    "--zone-id",
     type=str,
     default=None,
-    help="Tenant ID for multi-tenant isolation (e.g., 'org_acme'). Can also be set via NEXUS_TENANT_ID env var.",
+    help="Zone ID for multi-zone isolation (e.g., 'org_acme'). Can also be set via NEXUS_ZONE_ID env var.",
 )
 
 IS_ADMIN_OPTION = click.option(
@@ -185,7 +185,7 @@ def get_filesystem(
     enforce_permissions: bool | None = None,
     force_local: bool = False,
     allow_admin_bypass: bool | None = None,
-    enforce_tenant_isolation: bool | None = None,
+    enforce_zone_isolation: bool | None = None,
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 
@@ -194,7 +194,7 @@ def get_filesystem(
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
         force_local: If True, always use local NexusFS even if NEXUS_URL is set (for server mode)
         allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
-        enforce_tenant_isolation: Whether to enforce tenant isolation (None = use default True)
+        enforce_zone_isolation: Whether to enforce zone isolation (None = use default True)
 
     Returns:
         NexusFilesystem instance
@@ -223,8 +223,8 @@ def get_filesystem(
                     config_dict["enforce_permissions"] = enforce_permissions
                 if allow_admin_bypass is not None:
                     config_dict["allow_admin_bypass"] = allow_admin_bypass
-                if enforce_tenant_isolation is not None:
-                    config_dict["enforce_tenant_isolation"] = enforce_tenant_isolation
+                if enforce_zone_isolation is not None:
+                    config_dict["enforce_zone_isolation"] = enforce_zone_isolation
                 nx_fs = nexus.connect(config=config_dict)
                 # Store full config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
@@ -254,8 +254,8 @@ def get_filesystem(
                 config["enforce_permissions"] = enforce_permissions
             if allow_admin_bypass is not None:
                 config["allow_admin_bypass"] = allow_admin_bypass
-            if enforce_tenant_isolation is not None:
-                config["enforce_tenant_isolation"] = enforce_tenant_isolation
+            if enforce_zone_isolation is not None:
+                config["enforce_zone_isolation"] = enforce_zone_isolation
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
@@ -269,8 +269,8 @@ def get_filesystem(
                 config["enforce_permissions"] = enforce_permissions
             if allow_admin_bypass is not None:
                 config["allow_admin_bypass"] = allow_admin_bypass
-            if enforce_tenant_isolation is not None:
-                config["enforce_tenant_isolation"] = enforce_tenant_isolation
+            if enforce_zone_isolation is not None:
+                config["enforce_zone_isolation"] = enforce_zone_isolation
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
@@ -479,23 +479,23 @@ def parse_subject(subject_str: str | None) -> tuple[str, str] | None:
     return (parts[0], parts[1])
 
 
-def get_tenant_id(tenant_id: str | None) -> str | None:
-    """Get tenant ID from parameter or environment.
+def get_zone_id(zone_id: str | None) -> str | None:
+    """Get zone ID from parameter or environment.
 
     Args:
-        tenant_id: Tenant ID from CLI parameter
+        zone_id: Zone ID from CLI parameter
 
     Returns:
-        Tenant ID or None
+        Zone ID or None
     """
-    if tenant_id:
-        return tenant_id
-    return os.getenv("NEXUS_TENANT_ID")
+    if zone_id:
+        return zone_id
+    return os.getenv("NEXUS_ZONE_ID")
 
 
 def create_operation_context(
     subject: str | None = None,
-    tenant_id: str | None = None,
+    zone_id: str | None = None,
     is_admin: bool = False,
     is_system: bool = False,
     admin_capabilities: tuple[str, ...] = (),
@@ -508,7 +508,7 @@ def create_operation_context(
 
     Args:
         subject: Subject string in format 'type:id'
-        tenant_id: Tenant ID
+        zone_id: Zone ID
         is_admin: Whether operation has admin privileges
         is_system: Whether operation is system-level
         admin_capabilities: Admin capabilities
@@ -519,8 +519,8 @@ def create_operation_context(
     # Parse subject
     subject_tuple = parse_subject(subject)
 
-    # Get tenant_id
-    tenant_id = get_tenant_id(tenant_id)
+    # Get zone_id
+    zone_id = get_zone_id(zone_id)
 
     # Build context
     context: dict[str, Any] = {}
@@ -528,8 +528,8 @@ def create_operation_context(
     if subject_tuple:
         context["subject"] = subject_tuple
 
-    if tenant_id:
-        context["tenant"] = tenant_id  # NexusFS methods use 'tenant' not 'tenant_id'
+    if zone_id:
+        context["zone"] = zone_id  # Zone ID for multi-zone isolation
 
     if is_admin:
         context["is_admin"] = True
@@ -546,7 +546,7 @@ def create_operation_context(
 def add_context_options(func: Any) -> Any:
     """Decorator to add enhanced context options to a command.
 
-    Adds --subject, --tenant-id, --is-admin, --is-system, --admin-capability
+    Adds --subject, --zone-id, --is-admin, --is-system, --admin-capability
     options to commands.
     """
     import functools
@@ -554,12 +554,12 @@ def add_context_options(func: Any) -> Any:
     @ADMIN_CAPABILITIES_OPTION
     @IS_SYSTEM_OPTION
     @IS_ADMIN_OPTION
-    @TENANT_ID_OPTION
+    @ZONE_ID_OPTION
     @SUBJECT_OPTION
     @functools.wraps(func)
     def wrapper(
         subject: str | None,
-        tenant_id: str | None,
+        zone_id: str | None,
         is_admin: bool,
         is_system: bool,
         admin_capabilities: tuple[str, ...],
@@ -568,7 +568,7 @@ def add_context_options(func: Any) -> Any:
         # Create context and pass to function
         context = create_operation_context(
             subject=subject,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             is_admin=is_admin,
             is_system=is_system,
             admin_capabilities=admin_capabilities,

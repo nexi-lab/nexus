@@ -12,25 +12,25 @@ def sample_api_keys():
         "sk-alice-secret-key": {
             "subject_type": "user",
             "subject_id": "alice",
-            "tenant_id": "org_acme",
+            "zone_id": "org_acme",
             "is_admin": True,
         },
         "sk-agent-secret-key": {
             "subject_type": "agent",
             "subject_id": "agent_claude_001",
-            "tenant_id": "org_acme",
+            "zone_id": "org_acme",
             "is_admin": False,
         },
         "sk-service-backup-key": {
             "subject_type": "service",
             "subject_id": "backup_service",
-            "tenant_id": None,
+            "zone_id": None,
             "is_admin": True,
             "metadata": {"purpose": "backup"},
         },
         "sk-legacy-user-key": {
             "user_id": "bob",  # Old format without subject_type
-            "tenant_id": "org_xyz",
+            "zone_id": "org_xyz",
             "is_admin": False,
         },
     }
@@ -50,7 +50,7 @@ async def test_authenticate_valid_user(auth_provider):
     assert result.authenticated is True
     assert result.subject_type == "user"
     assert result.subject_id == "alice"
-    assert result.tenant_id == "org_acme"
+    assert result.zone_id == "org_acme"
     assert result.is_admin is True
 
 
@@ -62,7 +62,7 @@ async def test_authenticate_valid_agent(auth_provider):
     assert result.authenticated is True
     assert result.subject_type == "agent"
     assert result.subject_id == "agent_claude_001"
-    assert result.tenant_id == "org_acme"
+    assert result.zone_id == "org_acme"
     assert result.is_admin is False
 
 
@@ -74,7 +74,7 @@ async def test_authenticate_valid_service(auth_provider):
     assert result.authenticated is True
     assert result.subject_type == "service"
     assert result.subject_id == "backup_service"
-    assert result.tenant_id is None
+    assert result.zone_id is None
     assert result.is_admin is True
     assert result.metadata == {"purpose": "backup"}
 
@@ -87,7 +87,7 @@ async def test_authenticate_legacy_format(auth_provider):
     assert result.authenticated is True
     assert result.subject_type == "user"  # defaults to user
     assert result.subject_id == "bob"  # falls back to user_id
-    assert result.tenant_id == "org_xyz"
+    assert result.zone_id == "org_xyz"
     assert result.is_admin is False
 
 

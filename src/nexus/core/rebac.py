@@ -15,9 +15,9 @@ Relationship Types:
     - viewer-of: Subject can view object (read-only)
     - editor-of: Subject can edit object (read/write)
     - parent-of: Hierarchical relationship (e.g., folder → file)
-    - shared-viewer: Cross-tenant read access
-    - shared-editor: Cross-tenant read/write access
-    - shared-owner: Cross-tenant full access
+    - shared-viewer: Cross-zone read access
+    - shared-editor: Cross-zone read/write access
+    - shared-owner: Cross-zone full access
 
 Example:
     # Direct relationship
@@ -44,13 +44,13 @@ from typing import Any
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 
-# Relations that are allowed to cross tenant boundaries
-# These relations can link subjects and objects from different tenants
-CROSS_TENANT_ALLOWED_RELATIONS = frozenset(
+# Relations that are allowed to cross zone boundaries
+# These relations can link subjects and objects from different zones
+CROSS_ZONE_ALLOWED_RELATIONS = frozenset(
     {
-        "shared-viewer",  # Read access via cross-tenant share
-        "shared-editor",  # Read + Write access via cross-tenant share
-        "shared-owner",  # Full access via cross-tenant share
+        "shared-viewer",  # Read access via cross-zone share
+        "shared-editor",  # Read + Write access via cross-zone share
+        "shared-owner",  # Full access via cross-zone share
     }
 )
 
@@ -63,7 +63,7 @@ class RelationType(StrEnum):
     VIEWER_OF = "viewer-of"
     EDITOR_OF = "editor-of"
     PARENT_OF = "parent-of"
-    # Cross-tenant sharing relations
+    # Cross-zone sharing relations
     SHARED_VIEWER = "shared-viewer"
     SHARED_EDITOR = "shared-editor"
     SHARED_OWNER = "shared-owner"
@@ -76,7 +76,7 @@ class EntityType(StrEnum):
     The Entity dataclass accepts any string for entity_type to allow flexibility.
 
     Usage:
-    - EntityRegistry: Enforces strict types (tenant, user, agent) for identity hierarchy
+    - EntityRegistry: Enforces strict types (zone, user, agent) for identity hierarchy
     - ReBAC: Accepts any string, including these predefined types for permission tuples
     """
 
@@ -85,7 +85,7 @@ class EntityType(StrEnum):
     GROUP = "group"
     FILE = "file"
     WORKSPACE = "workspace"
-    TENANT = "tenant"
+    ZONE = "zone"
     PLAYBOOK = "playbook"  # v0.5.0 ACE
     TRAJECTORY = "trajectory"  # v0.5.0 ACE
     SKILL = "skill"  # v0.5.0 Skills System
@@ -592,12 +592,12 @@ DEFAULT_FILE_NAMESPACE = NamespaceConfig(
             "group_viewer": {
                 "tupleToUserset": {"tupleset": "direct_viewer", "computedUserset": "member"}
             },
-            # Cross-tenant sharing relations (PR #645)
-            # These enable share_with_user() to grant access across tenant boundaries
+            # Cross-zone sharing relations (PR #645)
+            # These enable share_with_user() to grant access across zone boundaries
             # Inheritance works via parent_* relations checking viewer/editor/owner unions
-            "shared-viewer": {},  # Read access via cross-tenant share
-            "shared-editor": {},  # Read + Write access via cross-tenant share
-            "shared-owner": {},  # Full access via cross-tenant share
+            "shared-viewer": {},  # Read access via cross-zone share
+            "shared-editor": {},  # Read + Write access via cross-zone share
+            "shared-owner": {},  # Full access via cross-zone share
             # Computed relations (union of direct + parent + group + shared)
             # HYBRID: Keep unions for better memoization caching
             # Permission checks → 3 unions (viewer, editor, owner) instead of 9 relations
@@ -735,10 +735,10 @@ DEFAULT_SKILL_NAMESPACE = NamespaceConfig(
             "owner": {},  # Full control over skill
             "editor": {},  # Can modify skill content
             "viewer": {},  # Can read and fork skill
-            # Tenant membership for skill access
-            "tenant": {},  # Skill belongs to this tenant
-            "tenant_member": {  # Inherit viewer from tenant membership
-                "tupleToUserset": {"tupleset": "tenant", "computedUserset": "member"}
+            # Zone membership for skill access
+            "zone": {},  # Skill belongs to this zone
+            "zone_member": {  # Inherit viewer from zone membership
+                "tupleToUserset": {"tupleset": "zone", "computedUserset": "member"}
             },
             # Public/system skill access
             "public": {},  # Globally readable (system skills)
@@ -747,10 +747,10 @@ DEFAULT_SKILL_NAMESPACE = NamespaceConfig(
         },
         # P0-1: Explicit permission-to-userset mapping
         "permissions": {
-            "read": ["viewer", "editor", "owner", "tenant_member", "public"],
+            "read": ["viewer", "editor", "owner", "zone_member", "public"],
             "write": ["editor", "owner"],
             "delete": ["owner"],
-            "fork": ["viewer", "editor", "owner", "tenant_member", "public"],
+            "fork": ["viewer", "editor", "owner", "zone_member", "public"],
             "publish": ["owner"],  # Requires ownership (+ approval in workflow)
             "approve": ["approver"],  # Can approve for publication
         },

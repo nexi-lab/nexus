@@ -68,8 +68,8 @@ def backend(tmp_path):
 def entity_registry(session):
     """Create and populate entity registry."""
     registry = EntityRegistry(session)
-    registry.register_entity("tenant", "acme")
-    registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
+    registry.register_entity("zone", "acme")
+    registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     return registry
 
@@ -80,7 +80,7 @@ def memory_api(session, backend, entity_registry):
     return Memory(
         session=session,
         backend=backend,
-        tenant_id="acme",
+        zone_id="acme",
         user_id="alice",
         agent_id="agent1",
         entity_registry=entity_registry,
@@ -369,7 +369,7 @@ class TestPostgreSQLTimestampPrecision:
         # Create memories with microsecond differences
         mem1 = MemoryModel(
             content_hash="hash_micro1",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             scope="user",
@@ -378,7 +378,7 @@ class TestPostgreSQLTimestampPrecision:
         )
         mem2 = MemoryModel(
             content_hash="hash_micro2",
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             scope="user",
@@ -393,7 +393,7 @@ class TestPostgreSQLTimestampPrecision:
 
         # Query with precise timestamp (should only get mem2)
         after_precise = now - timedelta(microseconds=300000)
-        results = router.query_memories(tenant_id="acme", after=after_precise)
+        results = router.query_memories(zone_id="acme", after=after_precise)
 
         micro_results = [r for r in results if r.content_hash.startswith("hash_micro")]
         assert len(micro_results) == 1

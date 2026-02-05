@@ -53,7 +53,7 @@ class TestHotspotEntry:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            tenant_id="default",
+            zone_id="default",
             access_count=100,
             last_access=time.time(),
         )
@@ -69,13 +69,13 @@ class TestHotspotEntry:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            tenant_id="tenant1",
+            zone_id="zone1",
             access_count=50,
             last_access=time.time(),
         )
 
         key = entry.cache_key_tuple()
-        assert key == ("user", "alice", "read", "file", "tenant1")
+        assert key == ("user", "alice", "read", "file", "zone1")
 
 
 class TestHotspotDetector:
@@ -90,7 +90,7 @@ class TestHotspotDetector:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            tenant_id="default",
+            zone_id="default",
         )
 
         count = detector.get_access_count(
@@ -98,7 +98,7 @@ class TestHotspotDetector:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            tenant_id="default",
+            zone_id="default",
         )
         assert count == 1
 
@@ -402,15 +402,15 @@ class TestIntegration:
         # Simulate access pattern
         # Power user: 100 accesses
         for _ in range(100):
-            detector.record_access("user", "power_user", "file", "read", "tenant1")
+            detector.record_access("user", "power_user", "file", "read", "zone1")
 
         # Regular user: 20 accesses
         for _ in range(20):
-            detector.record_access("user", "regular_user", "file", "read", "tenant1")
+            detector.record_access("user", "regular_user", "file", "read", "zone1")
 
         # Casual user: 3 accesses (below threshold)
         for _ in range(3):
-            detector.record_access("user", "casual_user", "file", "read", "tenant1")
+            detector.record_access("user", "casual_user", "file", "read", "zone1")
 
         # Check hot entries
         hot = detector.get_hot_entries()

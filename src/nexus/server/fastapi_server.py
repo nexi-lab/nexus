@@ -100,7 +100,7 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     enforce_permissions: bool | None = None
-    enforce_tenant_isolation: bool | None = None
+    enforce_zone_isolation: bool | None = None
     has_auth: bool | None = None
 
 
@@ -110,7 +110,7 @@ class WhoamiResponse(BaseModel):
     authenticated: bool
     subject_type: str | None = None
     subject_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     is_admin: bool = False
     inherit_permissions: bool = True  # v0.5.1: Whether agent inherits owner's permissions
     user: str | None = None
@@ -193,13 +193,13 @@ def _get_rate_limit_key(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        # Parse sk-<tenant>_<user>_<id>_<random> format
+        # Parse sk-<zone>_<user>_<id>_<random> format
         if token.startswith("sk-"):
             parts = token[3:].split("_")
             if len(parts) >= 2:
-                tenant = parts[0] or "default"
+                zone = parts[0] or "default"
                 user = parts[1] or "unknown"
-                return f"user:{tenant}:{user}"
+                return f"user:{zone}:{user}"
         # For other tokens, use hash as key
         return f"token:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 
@@ -392,33 +392,33 @@ def _get_stream_secret() -> bytes:
     return _STREAM_SECRET
 
 
-def _sign_stream_token(path: str, expires_in: int, tenant_id: str = "default") -> str:
+def _sign_stream_token(path: str, expires_in: int, zone_id: str = "default") -> str:
     """Generate a signed token for streaming access to a file.
 
     Token format: {expires_at}.{signature}
-    Where signature = HMAC-SHA256(path:expires_at:tenant_id)[:16]
+    Where signature = HMAC-SHA256(path:expires_at:zone_id)[:16]
 
     Args:
         path: Virtual file path
         expires_in: Token validity in seconds
-        tenant_id: Tenant ID for isolation
+        zone_id: Zone ID for isolation
 
     Returns:
         Signed token string
     """
     expires_at = int(time.time()) + expires_in
-    payload = f"{path}:{expires_at}:{tenant_id}"
+    payload = f"{path}:{expires_at}:{zone_id}"
     signature = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
     return f"{expires_at}.{signature}"
 
 
-def _verify_stream_token(token: str, path: str, tenant_id: str = "default") -> bool:
+def _verify_stream_token(token: str, path: str, zone_id: str = "default") -> bool:
     """Verify a stream token is valid and not expired.
 
     Args:
         token: Token string from _sign_stream_token
         path: Virtual file path (must match token)
-        tenant_id: Tenant ID (must match token)
+        zone_id: Zone ID (must match token)
 
     Returns:
         True if token is valid, False otherwise
@@ -436,7 +436,7 @@ def _verify_stream_token(token: str, path: str, tenant_id: str = "default") -> b
             return False
 
         # Verify signature
-        payload = f"{path}:{expires_at}:{tenant_id}"
+        payload = f"{path}:{expires_at}:{zone_id}"
         expected_sig = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
 
         return hmac.compare_digest(signature, expected_sig)
@@ -485,7 +485,7 @@ async def get_auth_result(
     authorization: str | None = Header(None, alias="Authorization"),
     x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
     x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
-    x_nexus_tenant_id: str | None = Header(None, alias="X-Nexus-Tenant-ID"),
+    x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
 ) -> dict[str, Any] | None:
     """Validate authentication and return auth result.
 
@@ -495,7 +495,7 @@ async def get_auth_result(
         authorization: Bearer token from Authorization header
         x_agent_id: Optional agent ID header
         x_nexus_subject: Optional identity hint header (e.g., "user:alice")
-        x_nexus_tenant_id: Optional tenant hint header
+        x_nexus_zone_id: Optional zone hint header
 
     Returns:
         Auth result dict or None if not authenticated
@@ -516,22 +516,22 @@ async def get_auth_result(
         # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
         subject_type: str | None = None
         subject_id: str | None = None
-        tenant_id: str | None = x_nexus_tenant_id
+        zone_id: str | None = x_nexus_zone_id
 
         if x_nexus_subject:
             st, sid = _parse_subject_header(x_nexus_subject)
             subject_type, subject_id = st, sid
         elif authorization and authorization.startswith("Bearer "):
             token = authorization[7:]
-            # Best-effort: infer tenant/user from DatabaseAPIKeyAuth format
-            # Format: sk-<tenant>_<user>_<id>_<random-hex>
+            # Best-effort: infer zone/user from DatabaseAPIKeyAuth format
+            # Format: sk-<zone>_<user>_<id>_<random-hex>
             if token.startswith("sk-"):
                 remainder = token[len("sk-") :]
                 parts = remainder.split("_")
                 if len(parts) >= 2:
-                    inferred_tenant = parts[0] or None
+                    inferred_zone = parts[0] or None
                     inferred_user = parts[1] or None
-                    tenant_id = tenant_id or inferred_tenant
+                    zone_id = zone_id or inferred_zone
                     subject_type = "user"
                     subject_id = inferred_user
 
@@ -540,7 +540,7 @@ async def get_auth_result(
             "is_admin": False,
             "subject_type": subject_type,
             "subject_id": subject_id,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "inherit_permissions": True,  # Open access mode always inherits
             "metadata": {"open_access": True},
             "x_agent_id": x_agent_id,
@@ -580,7 +580,7 @@ async def get_auth_result(
             "is_admin": result.is_admin,
             "subject_type": result.subject_type,
             "subject_id": result.subject_id,
-            "tenant_id": result.tenant_id,
+            "zone_id": result.zone_id,
             "inherit_permissions": result.inherit_permissions
             if hasattr(result, "inherit_permissions")
             else True,
@@ -634,7 +634,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    tenant_id = auth_result.get("tenant_id") or "default"
+    zone_id = auth_result.get("zone_id") or "default"
     is_admin = auth_result.get("is_admin", False)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id
@@ -667,7 +667,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         agent_id=agent_id,
         subject_type=subject_type,
         subject_id=subject_id,
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=is_admin,
         groups=[],
         admin_capabilities=admin_capabilities,
@@ -907,11 +907,11 @@ async def lifespan(_app: FastAPI) -> Any:
 
                 for prefix in ["/skills", "/sessions"]:
                     try:
-                        # Backfill without tenant filter to include NULL tenant files
+                        # Backfill without zone filter to include NULL zone files
                         created = await asyncio.to_thread(
                             _nexus_fs.metadata.backfill_directory_index,
                             prefix=prefix,
-                            tenant_id=None,
+                            zone_id=None,
                         )
                         if created > 0:
                             logger.info(f"Sparse index backfill: {created} entries for {prefix}")
@@ -1100,13 +1100,13 @@ def create_app(
 
     # Initialize subscription manager if we have a metadata store
     try:
-        if hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
+        if hasattr(nexus_fs, "SessionLocal"):
             from nexus.server.subscriptions import (
                 SubscriptionManager,
                 set_subscription_manager,
             )
 
-            _app_state.subscription_manager = SubscriptionManager(nexus_fs.metadata.SessionLocal)
+            _app_state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
             # Inject into NexusFS for automatic event broadcasting
             nexus_fs.subscription_manager = _app_state.subscription_manager
             # Set global singleton for FUSE event firing (Issue #1115)
@@ -1375,7 +1375,7 @@ async def _graph_enhanced_search(
     try:
         async with async_session_factory() as session:
             # Initialize components
-            graph_store = GraphStore(session, tenant_id="default")
+            graph_store = GraphStore(session, zone_id="default")
 
             # Create a wrapper for SemanticSearch that uses the search daemon
             class DaemonSemanticSearchWrapper:
@@ -1460,14 +1460,12 @@ def _register_routes(app: FastAPI) -> None:
     async def health_check() -> HealthResponse:
         # Include configuration status for debugging
         enforce_permissions = None
-        enforce_tenant_isolation = None
+        enforce_zone_isolation = None
         has_auth = None
 
         if _app_state.nexus_fs:
             enforce_permissions = getattr(_app_state.nexus_fs, "_enforce_permissions", None)
-            enforce_tenant_isolation = getattr(
-                _app_state.nexus_fs, "_enforce_tenant_isolation", None
-            )
+            enforce_zone_isolation = getattr(_app_state.nexus_fs, "_enforce_zone_isolation", None)
 
         # Check if authentication is configured
         has_auth = bool(_app_state.api_key or _app_state.auth_provider)
@@ -1476,7 +1474,7 @@ def _register_routes(app: FastAPI) -> None:
             status="healthy",
             service="nexus-rpc",
             enforce_permissions=enforce_permissions,
-            enforce_tenant_isolation=enforce_tenant_isolation,
+            enforce_zone_isolation=enforce_zone_isolation,
             has_auth=has_auth,
         )
 
@@ -1527,7 +1525,7 @@ def _register_routes(app: FastAPI) -> None:
                 "current_connections": ws_stats["current_connections"],
                 "total_connections": ws_stats["total_connections"],
                 "total_messages_sent": ws_stats["total_messages_sent"],
-                "connections_by_tenant": ws_stats["connections_by_tenant"],
+                "connections_by_zone": ws_stats["connections_by_zone"],
             }
         else:
             health["components"]["websocket"] = {"status": "disabled"}
@@ -1725,7 +1723,7 @@ def _register_routes(app: FastAPI) -> None:
             authenticated=True,
             subject_type=auth_result.get("subject_type"),
             subject_id=auth_result.get("subject_id"),
-            tenant_id=auth_result.get("tenant_id"),
+            zone_id=auth_result.get("zone_id"),
             is_admin=auth_result.get("is_admin", False),
             inherit_permissions=auth_result.get("inherit_permissions", True),
             user=auth_result.get("subject_id"),
@@ -2076,7 +2074,7 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/memory/query", tags=["memory"])
     async def memory_query(
-        scope: str | None = Query(None, description="Filter by scope (agent/user/tenant/global)"),
+        scope: str | None = Query(None, description="Filter by scope (agent/user/zone/global)"),
         memory_type: str | None = Query(None, description="Filter by memory type"),
         state: str = Query("active", description="Filter by state (inactive/active/all)"),
         after: str | None = Query(
@@ -2378,7 +2376,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
@@ -2387,7 +2385,7 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 try:
                     async with async_session_factory() as session:
-                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        graph_store = GraphStore(session, zone_id=zone_id)
                         entity = await graph_store.get_entity(entity_id)
                         return entity.to_dict() if entity else None
                 finally:
@@ -2432,7 +2430,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_neighbors() -> list[dict[str, Any]]:
                 engine = create_async_engine(async_url)
@@ -2441,7 +2439,7 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 try:
                     async with async_session_factory() as session:
-                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        graph_store = GraphStore(session, zone_id=zone_id)
                         neighbors = await graph_store.get_neighbors(
                             entity_id, hops=hops, direction=direction
                         )
@@ -2498,7 +2496,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_subgraph() -> dict[str, Any]:
                 engine = create_async_engine(async_url)
@@ -2507,7 +2505,7 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 try:
                     async with async_session_factory() as session:
-                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        graph_store = GraphStore(session, zone_id=zone_id)
                         subgraph = await graph_store.get_subgraph(entity_ids, max_hops=max_hops)
                         return subgraph.to_dict()
                 finally:
@@ -2552,7 +2550,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            tenant_id = getattr(_app_state.nexus_fs, "tenant_id", None) or "default"
+            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
 
             async def _find_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
@@ -2561,7 +2559,7 @@ def _register_routes(app: FastAPI) -> None:
                 )
                 try:
                     async with async_session_factory() as session:
-                        graph_store = GraphStore(session, tenant_id=tenant_id)
+                        graph_store = GraphStore(session, zone_id=zone_id)
                         entity = await graph_store.find_entity(
                             name=name, entity_type=entity_type, fuzzy=fuzzy
                         )
@@ -2639,7 +2637,7 @@ def _register_routes(app: FastAPI) -> None:
                 "subject_id": e.subject_id,
                 "resource_type": e.resource_type,
                 "permission": e.permission,
-                "tenant_id": e.tenant_id,
+                "zone_id": e.zone_id,
                 "access_count": e.access_count,
                 "last_access": e.last_access,
             }
@@ -2683,7 +2681,7 @@ def _register_routes(app: FastAPI) -> None:
         depth = body.get("depth", 2)
         include_content = body.get("include_content", False)
         max_files = body.get("max_files", 1000)
-        tenant_id = auth_result.get("tenant_id", "default")
+        zone_id = auth_result.get("zone_id", "default")
 
         config = WarmupConfig(
             max_files=max_files,
@@ -2707,7 +2705,7 @@ def _register_routes(app: FastAPI) -> None:
                 user=user,
                 hours=hours,
                 max_files=max_files,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         elif path:
             stats = await warmer.warmup_directory(
@@ -2715,7 +2713,7 @@ def _register_routes(app: FastAPI) -> None:
                 depth=depth,
                 include_content=include_content,
                 max_files=max_files,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         else:
             raise HTTPException(
@@ -2797,14 +2795,14 @@ def _register_routes(app: FastAPI) -> None:
         """
         from nexus.core.cache_warmer import get_file_access_tracker
 
-        tenant_id = auth_result.get("tenant_id", "default")
+        zone_id = auth_result.get("zone_id", "default")
         tracker = get_file_access_tracker()
-        hot_files = tracker.get_hot_files(tenant_id=tenant_id, limit=limit)
+        hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 
         return [
             {
                 "path": f.path,
-                "tenant_id": f.tenant_id,
+                "zone_id": f.zone_id,
                 "access_count": f.access_count,
                 "last_access": f.last_access,
                 "total_bytes": f.total_bytes,
@@ -2832,11 +2830,11 @@ def _register_routes(app: FastAPI) -> None:
 
         body = await request.json()
         data = SubscriptionCreate(**body)
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
         created_by = auth_result.get("subject_id")
 
         subscription = _app_state.subscription_manager.create(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             data=data,
             created_by=created_by,
         )
@@ -2849,13 +2847,13 @@ def _register_routes(app: FastAPI) -> None:
         offset: int = 0,
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
-        """List webhook subscriptions for the current tenant."""
+        """List webhook subscriptions for the current zone."""
         if not _app_state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
         subscriptions = _app_state.subscription_manager.list_subscriptions(
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             enabled_only=enabled_only,
             limit=limit,
             offset=offset,
@@ -2873,8 +2871,8 @@ def _register_routes(app: FastAPI) -> None:
         if not _app_state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
-        tenant_id = auth_result.get("tenant_id") or "default"
-        subscription = _app_state.subscription_manager.get(subscription_id, tenant_id)
+        zone_id = auth_result.get("zone_id") or "default"
+        subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
         if subscription is None:
             raise HTTPException(status_code=404, detail="Subscription not found")
         return JSONResponse(content=subscription.model_dump(mode="json"))
@@ -2893,11 +2891,11 @@ def _register_routes(app: FastAPI) -> None:
 
         body = await request.json()
         data = SubscriptionUpdate(**body)
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         subscription = _app_state.subscription_manager.update(
             subscription_id=subscription_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             data=data,
         )
         if subscription is None:
@@ -2913,8 +2911,8 @@ def _register_routes(app: FastAPI) -> None:
         if not _app_state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
-        tenant_id = auth_result.get("tenant_id") or "default"
-        deleted = _app_state.subscription_manager.delete(subscription_id, tenant_id)
+        zone_id = auth_result.get("zone_id") or "default"
+        deleted = _app_state.subscription_manager.delete(subscription_id, zone_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Subscription not found")
         return JSONResponse(content={"deleted": True})
@@ -2928,8 +2926,8 @@ def _register_routes(app: FastAPI) -> None:
         if not _app_state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
-        tenant_id = auth_result.get("tenant_id") or "default"
-        result = await _app_state.subscription_manager.test(subscription_id, tenant_id)
+        zone_id = auth_result.get("zone_id") or "default"
+        result = await _app_state.subscription_manager.test(subscription_id, zone_id)
         return JSONResponse(content=result)
 
     # =========================================================================
@@ -3275,7 +3273,7 @@ def _register_routes(app: FastAPI) -> None:
             )
             return
 
-        tenant_id = (auth_result or {}).get("tenant_id") or "default"
+        zone_id = (auth_result or {}).get("zone_id") or "default"
         user_id = (auth_result or {}).get("subject_id")
 
         # Lookup subscription to get patterns and event types
@@ -3283,7 +3281,7 @@ def _register_routes(app: FastAPI) -> None:
         event_types: list[str] = []
 
         if _app_state.subscription_manager and subscription_id != "all":
-            subscription = _app_state.subscription_manager.get(subscription_id, tenant_id)
+            subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
             if subscription:
                 patterns = subscription.patterns or []
                 event_types = subscription.event_types or []
@@ -3299,7 +3297,7 @@ def _register_routes(app: FastAPI) -> None:
         # Connect
         _conn_info = await _app_state.websocket_manager.connect(
             websocket=websocket,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             connection_id=connection_id,
             user_id=user_id,
             subscription_id=subscription_id if subscription_id != "all" else None,
@@ -3312,7 +3310,7 @@ def _register_routes(app: FastAPI) -> None:
             {
                 "type": "connected",
                 "connection_id": connection_id,
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
                 "patterns": patterns,
                 "event_types": event_types,
             }
@@ -3333,9 +3331,9 @@ def _register_routes(app: FastAPI) -> None:
         websocket: WebSocket,
         token: str = Query(None, description="Authentication token"),
     ) -> None:
-        """WebSocket endpoint for all tenant events (no subscription filter).
+        """WebSocket endpoint for all zone events (no subscription filter).
 
-        Same as /ws/events/{subscription_id} but receives all events for the tenant.
+        Same as /ws/events/{subscription_id} but receives all events for the zone.
         """
         # Redirect to the subscription handler with "all" as subscription_id
         await websocket_events(websocket, "all", token)
@@ -3451,7 +3449,7 @@ def _register_routes(app: FastAPI) -> None:
     async def stream_file(
         path: str,
         token: str = Query(..., description="Signed stream token"),
-        tenant_id: str = Query("default", description="Tenant ID"),
+        zone_id: str = Query("default", description="Zone ID"),
     ) -> StreamingResponse:
         """Stream file content directly via HTTP for memory-efficient large file downloads.
 
@@ -3462,7 +3460,7 @@ def _register_routes(app: FastAPI) -> None:
         Args:
             path: Virtual file path (URL-encoded)
             token: Signed stream token from _sign_stream_token()
-            tenant_id: Tenant ID for token verification
+            zone_id: Zone ID for token verification
 
         Returns:
             StreamingResponse with file content
@@ -3473,7 +3471,7 @@ def _register_routes(app: FastAPI) -> None:
             HTTPException 500: Backend error
         """
         # Verify token
-        if not _verify_stream_token(token, f"/{path}", tenant_id):
+        if not _verify_stream_token(token, f"/{path}", zone_id):
             raise HTTPException(status_code=403, detail="Invalid or expired stream token")
 
         nexus_fs = _app_state.nexus_fs
@@ -3490,7 +3488,7 @@ def _register_routes(app: FastAPI) -> None:
             context = OperationContext(
                 user="system",
                 groups=[],
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 subject_type="system",
                 subject_id="stream",
             )
@@ -3680,19 +3678,19 @@ def _register_routes(app: FastAPI) -> None:
         # Get the file path and read permissions from access result
         data = access_result.data or {}
         file_path = data.get("path")
-        tenant_id = data.get("tenant_id", "default")
+        zone_id = data.get("zone_id", "default")
 
         if not file_path:
             raise HTTPException(status_code=500, detail="Share link missing file path")
 
         try:
-            # Create context for file access (system context with the link's tenant)
+            # Create context for file access (system context with the link's zone)
             from nexus.core.permissions import OperationContext
 
             stream_context = OperationContext(
                 user="share_link",
                 groups=[],
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 subject_type="share_link",
                 subject_id=link_id,
                 is_admin=True,  # Bypass ReBAC - link already validated
@@ -4052,7 +4050,7 @@ async def _fire_rpc_event(
     Args:
         event_type: Event type (file_write, file_delete, etc.)
         path: File/directory path
-        context: Request context with tenant info
+        context: Request context with zone info
         old_path: Old path for rename operations
         size: File size for write operations
     """
@@ -4060,7 +4058,7 @@ async def _fire_rpc_event(
         return
 
     try:
-        tenant_id = getattr(context, "tenant_id", None) or "default"
+        zone_id = getattr(context, "zone_id", None) or "default"
         data: dict[str, Any] = {"file_path": path}
         if old_path:
             data["old_path"] = old_path
@@ -4069,7 +4067,7 @@ async def _fire_rpc_event(
 
         # Await broadcast to ensure webhook delivery before response
         # This adds slight latency but ensures reliable event delivery
-        await _app_state.subscription_manager.broadcast(event_type, data, tenant_id)
+        await _app_state.subscription_manager.broadcast(event_type, data, zone_id)
     except Exception as e:
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
 
@@ -4459,13 +4457,13 @@ def _generate_download_url(
         from nexus.backends.local import LocalBackend
 
         if isinstance(backend, LocalBackend) and hasattr(backend, "stream_content"):
-            # Get tenant_id from context
-            tenant_id = "default"
-            if context and hasattr(context, "tenant_id"):
-                tenant_id = context.tenant_id or "default"
+            # Get zone_id from context
+            zone_id = "default"
+            if context and hasattr(context, "zone_id"):
+                zone_id = context.zone_id or "default"
 
             # Generate signed token for streaming access
-            token = _sign_stream_token(path, expires_in, tenant_id)
+            token = _sign_stream_token(path, expires_in, zone_id)
 
             # URL-encode the path (remove leading slash for URL construction)
             from urllib.parse import quote
@@ -4473,7 +4471,7 @@ def _generate_download_url(
             encoded_path = quote(path.lstrip("/"), safe="")
 
             return {
-                "download_url": f"/api/stream/{encoded_path}?token={token}&tenant_id={tenant_id}",
+                "download_url": f"/api/stream/{encoded_path}?token={token}&zone_id={zone_id}",
                 "expires_in": expires_in,
                 "method": "GET",
                 "backend": "local",
@@ -5104,8 +5102,8 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
         entity_registry.register_entity(
             entity_type="user",
             entity_id=user_id,
-            parent_type="tenant",
-            parent_id=params.tenant_id,
+            parent_type="zone",
+            parent_id=params.zone_id,
         )
 
     # Calculate expiry if specified
@@ -5121,7 +5119,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
             name=params.name,
             subject_type=params.subject_type,
             subject_id=params.subject_id,
-            tenant_id=params.tenant_id,
+            zone_id=params.zone_id,
             is_admin=params.is_admin,
             expires_at=expires_at,
         )
@@ -5134,7 +5132,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
             "name": params.name,
             "subject_type": params.subject_type,
             "subject_id": params.subject_id or user_id,
-            "tenant_id": params.tenant_id,
+            "zone_id": params.zone_id,
             "is_admin": params.is_admin,
             "expires_at": expires_at.isoformat() if expires_at else None,
         }
@@ -5163,8 +5161,8 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
         # Apply all filters in SQL for performance
         if params.user_id:
             stmt = stmt.where(APIKeyModel.user_id == params.user_id)
-        if params.tenant_id:
-            stmt = stmt.where(APIKeyModel.tenant_id == params.tenant_id)
+        if params.zone_id:
+            stmt = stmt.where(APIKeyModel.zone_id == params.zone_id)
         if params.is_admin is not None:
             stmt = stmt.where(APIKeyModel.is_admin == int(params.is_admin))
         if not params.include_revoked:
@@ -5198,7 +5196,7 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
                     "subject_type": key.subject_type,
                     "subject_id": key.subject_id,
                     "name": key.name,
-                    "tenant_id": key.tenant_id,
+                    "zone_id": key.zone_id,
                     "is_admin": bool(key.is_admin),
                     "created_at": key.created_at.isoformat() if key.created_at else None,
                     "expires_at": key.expires_at.isoformat() if key.expires_at else None,
@@ -5237,7 +5235,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
             "subject_type": api_key.subject_type,
             "subject_id": api_key.subject_id,
             "name": api_key.name,
-            "tenant_id": api_key.tenant_id,
+            "zone_id": api_key.zone_id,
             "is_admin": bool(api_key.is_admin),
             "created_at": api_key.created_at.isoformat() if api_key.created_at else None,
             "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,

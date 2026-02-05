@@ -84,7 +84,7 @@ Before wiring into NexusFS, manually test each service:
 ### 🔴 High Risk (Complex Logic)
 - **OAuthService**:
   - PKCE flow with state management (340-line `mcp_connect()`)
-  - Multi-tenant credential isolation
+  - Multi-zone credential isolation
   - Provider name mapping
 
 **Recommendation:** Focus testing on OAuthService first.

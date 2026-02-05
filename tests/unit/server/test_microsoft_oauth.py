@@ -13,8 +13,8 @@ from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError
 class TestMicrosoftOAuthProvider:
     """Tests for MicrosoftOAuthProvider."""
 
-    def test_init_with_default_tenant(self):
-        """Test provider initialization with default tenant."""
+    def test_init_with_default_zone(self):
+        """Test provider initialization with default zone."""
         provider = MicrosoftOAuthProvider(
             client_id="test-client-id",
             client_secret="test-secret",
@@ -25,12 +25,12 @@ class TestMicrosoftOAuthProvider:
 
         assert provider.client_id == "test-client-id"
         assert provider.client_secret == "test-secret"
-        assert provider.tenant_id == "common"
+        assert provider.zone_id == "common"
         assert "common" in provider.authorization_endpoint
         assert "common" in provider.token_endpoint
 
-    def test_init_uses_common_tenant(self):
-        """Test provider initialization always uses common tenant."""
+    def test_init_uses_common_zone(self):
+        """Test provider initialization always uses common zone."""
         provider = MicrosoftOAuthProvider(
             client_id="test-id",
             client_secret="secret",
@@ -39,7 +39,7 @@ class TestMicrosoftOAuthProvider:
             provider_name="microsoft-onedrive",
         )
 
-        assert provider.tenant_id == "common"
+        assert provider.zone_id == "common"
         assert "common" in provider.authorization_endpoint
         assert "common" in provider.token_endpoint
 

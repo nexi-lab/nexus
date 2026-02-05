@@ -29,7 +29,7 @@ Most commands support these global options:
 - `--data-dir PATH`: Path to Nexus data directory (can also use `NEXUS_DATA_DIR` env var) - **All commands**
 - `--remote-url URL`: Remote Nexus server URL (e.g., http://localhost:2026) - **File, directory, search, versions, metadata, rebac, mounts, operations commands**
 - `--remote-api-key KEY`: API key for remote authentication - **Same as --remote-url**
-- `--tenant-id TEXT`: Tenant ID for multi-tenant isolation (can also use `NEXUS_TENANT_ID` env var)
+- `--tenant-id TEXT`: Zone ID for multi-zone isolation (can also use `NEXUS_TENANT_ID` env var)
 - `--subject TEXT`: Subject in format 'type:id' (e.g., 'user:alice') (can also use `NEXUS_SUBJECT` env var)
 - `--is-admin`: Run operation with admin privileges
 - `--admin-capability TEXT`: Grant specific admin capability (can specify multiple times)
@@ -881,7 +881,7 @@ export NEXUS_API_KEY=your-api-key
 # Local mode - Data directory
 export NEXUS_DATA_DIR=/path/to/data
 
-# Tenant ID
+# Zone ID
 export NEXUS_TENANT_ID=org_acme
 
 # Subject identity
@@ -917,8 +917,8 @@ backend:
   gcs_bucket: my-bucket
   gcs_project: my-project
 
-# Multi-tenant
-tenant_id: org_acme
+# Multi-zone
+zone_id: org_acme
 
 # Subject identity
 subject: user:alice

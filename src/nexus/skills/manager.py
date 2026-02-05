@@ -90,7 +90,7 @@ class SkillManager:
         subject_id: str,
         permission: str,
         object_name: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on skill object.
 
@@ -99,7 +99,7 @@ class SkillManager:
             subject_id: ID of subject
             permission: Permission to check (read, write, publish, etc.)
             object_name: Skill name
-            tenant_id: Optional tenant ID for scoping
+            zone_id: Optional zone ID for scoping
 
         Returns:
             True if permission granted, False otherwise
@@ -113,7 +113,7 @@ class SkillManager:
                 subject=(subject_type, subject_id),
                 permission=permission,
                 object=("skill", object_name),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         except Exception as e:
             logger.warning(f"ReBAC check failed: {e}")
@@ -126,7 +126,7 @@ class SkillManager:
         owner_type: str,
         owner_id: str,
         tier: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
     ) -> None:
         """Create ReBAC permission tuples for a skill based on tier.
@@ -142,7 +142,7 @@ class SkillManager:
             owner_type: Type of owner (agent, user)
             owner_id: ID of owner
             tier: Skill tier (agent, user, tenant, system)
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             context: Operation context for additional info
         """
         if not self._rebac:
@@ -150,8 +150,8 @@ class SkillManager:
             return
 
         try:
-            # Get tenant_id from context if not provided
-            effective_tenant_id = tenant_id or (context.tenant_id if context else None) or "default"
+            # Get zone_id from context if not provided
+            effective_zone_id = zone_id or (context.zone_id if context else None) or "default"
 
             # For user-level skills: Owner gets direct_owner on the skill directory
             # This allows them full control (read, write, delete)
@@ -160,21 +160,21 @@ class SkillManager:
                     subject=(owner_type, owner_id),
                     relation="direct_owner",
                     object=("file", skill_dir.rstrip("/")),
-                    tenant_id=effective_tenant_id,
+                    zone_id=effective_zone_id,
                 )
                 logger.debug(f"Created owner permission for {owner_type}:{owner_id} on {skill_dir}")
 
-            # For tenant-level skills: Grant viewer access to all tenant members
-            elif tier == "tenant":
-                # Grant viewer access to the tenant (all members inherit read access)
+            # For zone-level skills: Grant viewer access to all zone members
+            elif tier == "zone":
+                # Grant viewer access to the zone (all members inherit read access)
                 self._rebac.rebac_write(
-                    subject=("tenant", effective_tenant_id),
+                    subject=("zone", effective_zone_id),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    tenant_id=effective_tenant_id,
+                    zone_id=effective_zone_id,
                 )
                 logger.debug(
-                    f"Created tenant viewer permission for tenant:{effective_tenant_id} on {skill_dir}"
+                    f"Created zone viewer permission for zone:{effective_zone_id} on {skill_dir}"
                 )
 
             # For system-level skills: Grant viewer access to everyone
@@ -184,7 +184,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    tenant_id="default",  # System skills use default tenant
+                    zone_id="default",  # System skills use default tenant
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 
@@ -205,7 +205,7 @@ class SkillManager:
         version: str = "1.0.0",
         creator_id: str | None = None,
         creator_type: str = "agent",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: OperationContext | None = None,
         **kwargs: str,
     ) -> str:
@@ -220,8 +220,8 @@ class SkillManager:
             version: Initial version (default: 1.0.0)
             creator_id: ID of the creating agent/user (for ReBAC)
             creator_type: Type of creator (agent, user) - default: agent
-            tenant_id: Tenant ID for scoping (for ReBAC)
-            context: Operation context with user_id, tenant_id for path resolution
+            zone_id: Zone ID for scoping (for ReBAC)
+            context: Operation context with user_id, zone_id for path resolution
             **kwargs: Additional template variables
 
         Returns:
@@ -340,7 +340,7 @@ class SkillManager:
             owner_type=owner_type,
             owner_id=owner_id,
             tier=tier,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
 
@@ -370,7 +370,7 @@ class SkillManager:
             version: Initial version (default: 1.0.0)
             source_url: Optional source URL (for tracking origin)
             metadata: Optional additional metadata
-            context: Operation context with user_id, tenant_id for path resolution
+            context: Operation context with user_id, zone_id for path resolution
 
         Returns:
             Path to created SKILL.md file
@@ -475,7 +475,7 @@ class SkillManager:
             owner_type=owner_type,
             owner_id=owner_id,
             tier=tier,
-            tenant_id=context.tenant_id if context else None,
+            zone_id=context.zone_id if context else None,
             context=context,
         )
 
@@ -490,7 +490,7 @@ class SkillManager:
         author: str | None = None,
         creator_id: str | None = None,
         creator_type: str = "user",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> str:
         """Fork an existing skill with lineage tracking.
 
@@ -507,7 +507,7 @@ class SkillManager:
             author: Optional author name for the fork
             creator_id: ID of the creating agent/user (for ReBAC)
             creator_type: Type of creator (agent, user) - default: agent
-            tenant_id: Tenant ID for scoping (for ReBAC)
+            zone_id: Zone ID for scoping (for ReBAC)
 
         Returns:
             Path to forked SKILL.md file
@@ -532,7 +532,7 @@ class SkillManager:
 
         # Check read permission on source skill
         if creator_id and not await self._check_permission(
-            creator_type, creator_id, "fork", source_name, tenant_id
+            creator_type, creator_id, "fork", source_name, zone_id
         ):
             raise PermissionDeniedError(
                 f"No permission to fork skill '{source_name}'. "
@@ -632,7 +632,7 @@ class SkillManager:
             owner_type=creator_type,
             owner_id=owner_id,
             tier=tier,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=None,  # fork_skill doesn't take context parameter
         )
 
@@ -646,10 +646,10 @@ class SkillManager:
         self,
         name: str,
         source_tier: str = "agent",
-        target_tier: str = "tenant",
+        target_tier: str = "zone",
         publisher_id: str | None = None,
         publisher_type: str = "agent",
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> str:
         """Publish a skill to a wider audience (e.g., agent -> tenant).
 
@@ -661,7 +661,7 @@ class SkillManager:
             target_tier: Target tier (default: tenant)
             publisher_id: ID of the publishing agent/user (for ReBAC)
             publisher_type: Type of publisher (agent, user) - default: agent
-            tenant_id: Tenant ID for scoping (for ReBAC)
+            zone_id: Zone ID for scoping (for ReBAC)
 
         Returns:
             Path to published SKILL.md file
@@ -672,11 +672,11 @@ class SkillManager:
             PermissionDeniedError: If publisher lacks publish permission
 
         Example:
-            >>> # Publish agent skill to tenant library
+            >>> # Publish agent skill to zone library
             >>> path = await manager.publish_skill("my-skill")
             >>>
-            >>> # Publish tenant skill to system library
-            >>> path = await manager.publish_skill("shared-skill", "tenant", "system")
+            >>> # Publish zone skill to system library
+            >>> path = await manager.publish_skill("shared-skill", "zone", "system")
         """
         # Validate tiers
         if source_tier not in SkillRegistry.TIER_PATHS:
@@ -708,7 +708,7 @@ class SkillManager:
 
         # Check publish permission
         if publisher_id and not await self._check_permission(
-            publisher_type, publisher_id, "publish", name, tenant_id
+            publisher_type, publisher_id, "publish", name, zone_id
         ):
             raise PermissionDeniedError(
                 f"No permission to publish skill '{name}'. "
@@ -781,7 +781,7 @@ class SkillManager:
 
         # Update ReBAC permissions for the published skill
         # When publishing to a different tier, update the tenant association
-        if self._rebac and tenant_id:
+        if self._rebac and zone_id:
             try:
                 # For system tier, add public access
                 if target_tier == "system":
@@ -789,19 +789,19 @@ class SkillManager:
                         subject=("*", "*"),
                         relation="public",
                         object=("skill", name),
-                        tenant_id=None,  # System skills are global
+                        zone_id=None,  # System skills are global
                     )
                     logger.debug(f"Added public access for system skill '{name}'")
 
-                # For tenant tier, update tenant association
-                elif target_tier == "tenant":
+                # For zone tier, update zone association
+                elif target_tier == "zone":
                     self._rebac.rebac_write(
-                        subject=("tenant", tenant_id),
-                        relation="tenant",
+                        subject=("zone", zone_id),
+                        relation="zone",
                         object=("skill", name),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
-                    logger.debug(f"Updated tenant association for skill '{name}'")
+                    logger.debug(f"Updated zone association for skill '{name}'")
 
             except Exception as e:
                 logger.warning(
@@ -839,8 +839,8 @@ class SkillManager:
             >>> for skill_name, score in results:
             ...     print(f"{skill_name}: {score:.2f}")
             >>>
-            >>> # Search only in tenant skills
-            >>> results = await manager.search_skills("data processing", tier="tenant")
+            >>> # Search only in zone skills
+            >>> results = await manager.search_skills("data processing", tier="zone")
         """
         # Ensure registry has discovered skills
         if not self._registry._metadata_index:

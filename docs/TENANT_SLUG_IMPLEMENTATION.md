@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implemented slug-based `tenant_id` system following industry best practices (GitHub, Slack, Notion, etc.). Tenants now use human-readable, URL-friendly identifiers instead of UUIDs or email addresses.
+Implemented slug-based `zone_id` system following industry best practices (GitHub, Slack, Notion, etc.). Tenants now use human-readable, URL-friendly identifiers instead of UUIDs or email addresses.
 
 ## Changes Summary
 
@@ -14,7 +14,7 @@ Added new `TenantModel` table to store tenant metadata:
 
 ```python
 class TenantModel(Base):
-    tenant_id: str          # Primary key: user-provided slug (e.g., "acme", "techcorp")
+    zone_id: str          # Primary key: user-provided slug (e.g., "acme", "techcorp")
     name: str               # Display name: "Acme Corporation"
     domain: str | None      # Unique domain: "acme.com"
     description: str | None # Optional description
@@ -26,7 +26,7 @@ class TenantModel(Base):
 ```
 
 **Key Features**:
-- `tenant_id` is a URL-friendly slug (3-63 chars, lowercase alphanumeric + hyphens)
+- `zone_id` is a URL-friendly slug (3-63 chars, lowercase alphanumeric + hyphens)
 - `domain` is unique (for company identification)
 - Soft delete support
 - Timestamps for audit trail
@@ -39,16 +39,16 @@ class TenantModel(Base):
 
 **Functions**:
 
-#### `validate_tenant_id(tenant_id: str) -> tuple[bool, str | None]`
-Validates tenant_id format:
+#### `validate_zone_id(zone_id: str) -> tuple[bool, str | None]`
+Validates zone_id format:
 - Length: 3-63 characters
 - Format: `^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`
 - Cannot be reserved name (`admin`, `api`, `system`, etc.)
 
 ```python
-validate_tenant_id("acme")        # (True, None)
-validate_tenant_id("admin")       # (False, "Tenant ID 'admin' is reserved")
-validate_tenant_id("a")           # (False, "Must be 3-63 characters")
+validate_zone_id("acme")        # (True, None)
+validate_zone_id("admin")       # (False, "Zone ID 'admin' is reserved")
+validate_zone_id("a")           # (False, "Must be 3-63 characters")
 ```
 
 #### `normalize_to_slug(name: str) -> str`
@@ -59,18 +59,18 @@ normalize_to_slug("Acme Corporation")    # "acme-corporation"
 normalize_to_slug("Tech@Startup!!! Inc") # "tech-startup-inc"
 ```
 
-#### `suggest_tenant_id(base_name: str, session: Session) -> str`
-Suggests available tenant_id:
+#### `suggest_zone_id(base_name: str, session: Session) -> str`
+Suggests available zone_id:
 
 ```python
-suggest_tenant_id("acme", session)  # "acme" (if available)
-suggest_tenant_id("acme", session)  # "acme-2" (if "acme" is taken)
+suggest_zone_id("acme", session)  # "acme" (if available)
+suggest_zone_id("acme", session)  # "acme-2" (if "acme" is taken)
 ```
 
 #### `create_tenant(...)`
 Creates tenant with validation.
 
-#### Reserved tenant_id values:
+#### Reserved zone_id values:
 ```python
 RESERVED_TENANT_IDS = {
     "admin", "system", "default", "tenant", "user", "agent", "group", "root",
@@ -88,7 +88,7 @@ RESERVED_TENANT_IDS = {
 
 **Before**:
 ```python
-tenant_id = user.email  # ❌ "alice@example.com"
+zone_id = user.email  # ❌ "alice@example.com"
 ```
 
 **After**:
@@ -96,12 +96,12 @@ tenant_id = user.email  # ❌ "alice@example.com"
 # Generate slug from user info
 email_username = user.email.split("@")[0]  # "alice"
 suggested_slug = normalize_to_slug(user.display_name or email_username)
-tenant_id = suggest_tenant_id(suggested_slug, session)  # "alice"
+zone_id = suggest_zone_id(suggested_slug, session)  # "alice"
 
 # Create tenant metadata
 create_tenant(
     session=session,
-    tenant_id=tenant_id,
+    zone_id=zone_id,
     name=user.display_name or user.email,
     domain=user.email.split("@")[1],  # "example.com"
     description=f"Personal workspace for {user.display_name}"
@@ -111,7 +111,7 @@ create_tenant(
 add_user_to_tenant(
     rebac_manager=rebac_manager,
     user_id=user.user_id,
-    tenant_id=tenant_id,
+    zone_id=zone_id,
     role="admin"  # User is admin of their personal tenant
 )
 ```
@@ -125,7 +125,7 @@ add_user_to_tenant(
 #### `POST /api/tenants` - Create tenant
 ```json
 {
-  "tenant_id": "acme",  // Optional, auto-generated if not provided
+  "zone_id": "acme",  // Optional, auto-generated if not provided
   "name": "Acme Corporation",
   "domain": "acme.com",
   "description": "Enterprise software company"
@@ -135,7 +135,7 @@ add_user_to_tenant(
 Response:
 ```json
 {
-  "tenant_id": "acme",
+  "zone_id": "acme",
   "name": "Acme Corporation",
   "domain": "acme.com",
   "description": "Enterprise software company",
@@ -145,7 +145,7 @@ Response:
 }
 ```
 
-#### `GET /api/tenants/{tenant_id}` - Get tenant
+#### `GET /api/tenants/{zone_id}` - Get tenant
 #### `GET /api/tenants` - List tenants
 
 ### 5. FastAPI Integration
@@ -160,12 +160,12 @@ logger.info("Tenant management routes registered at /api/tenants")
 
 ## Architecture Decisions
 
-### tenant_id = Slug (User-provided)
+### zone_id = Slug (User-provided)
 
-**Why slug for tenant_id?**
+**Why slug for zone_id?**
 - Human-readable: `nexus.com/acme/dashboard` ✅ vs `nexus.com/550e8400.../dashboard` ❌
 - Professional: Brand identity in URLs
-- Memorable: Easy to communicate ("tenant ID is 'acme'")
+- Memorable: Easy to communicate ("zone ID is 'acme'")
 - Industry standard: GitHub, Slack, Notion all use slugs
 
 ### user_id = UUID (Auto-generated) ✅
@@ -208,7 +208,7 @@ curl -X POST http://localhost:8000/api/tenants \
 Response:
 ```json
 {
-  "tenant_id": "acme-corporation",
+  "zone_id": "acme-corporation",
   "name": "Acme Corporation",
   "domain": "acme.com",
   ...
@@ -220,9 +220,9 @@ Response:
 When user signs in with Google OAuth:
 1. Extract email: `alice@example.com`
 2. Generate slug: `alice`
-3. Create tenant: `tenant_id="alice"`, `domain="example.com"`
+3. Create tenant: `zone_id="alice"`, `domain="example.com"`
 4. Add user to tenant: `(user:alice, admin-of, group:tenant-alice)`
-5. Create API key with `tenant_id="alice"`
+5. Create API key with `zone_id="alice"`
 
 ### 3. Get user's tenants
 
@@ -230,12 +230,12 @@ When user signs in with Google OAuth:
 from nexus.server.auth.user_helpers import get_user_tenants
 from nexus.storage.models import TenantModel
 
-# Get tenant IDs from ReBAC
-tenant_ids = get_user_tenants(rebac_manager, user_id)  # ["acme", "techcorp"]
+# Get zone IDs from ReBAC
+zone_ids = get_user_tenants(rebac_manager, user_id)  # ["acme", "techcorp"]
 
 # Get tenant metadata
 tenants = session.query(TenantModel).filter(
-    TenantModel.tenant_id.in_(tenant_ids)
+    TenantModel.zone_id.in_(zone_ids)
 ).all()
 
 for tenant in tenants:
@@ -256,33 +256,33 @@ alembic upgrade head
 
 ### Migrating Existing Data
 
-If you have existing users with email-based `tenant_id`, migrate them:
+If you have existing users with email-based `zone_id`, migrate them:
 
 ```python
 from nexus.server.auth.tenant_helpers import normalize_to_slug, create_tenant
 from nexus.storage.models import UserModel, TenantModel
 
-# For each user with old email-based tenant_id
-for user in session.query(UserModel).filter(UserModel.tenant_id.like("%@%")).all():
-    old_tenant_id = user.tenant_id  # "alice@example.com"
+# For each user with old email-based zone_id
+for user in session.query(UserModel).filter(UserModel.zone_id.like("%@%")).all():
+    old_zone_id = user.zone_id  # "alice@example.com"
 
     # Generate new slug
-    new_tenant_id = normalize_to_slug(user.username or old_tenant_id.split("@")[0])
+    new_zone_id = normalize_to_slug(user.username or old_zone_id.split("@")[0])
 
     # Create tenant metadata
     create_tenant(
         session=session,
-        tenant_id=new_tenant_id,
+        zone_id=new_zone_id,
         name=user.display_name or user.email,
-        domain=old_tenant_id.split("@")[1] if "@" in old_tenant_id else None
+        domain=old_zone_id.split("@")[1] if "@" in old_zone_id else None
     )
 
-    # Update user's tenant_id
-    user.tenant_id = new_tenant_id
+    # Update user's zone_id
+    user.zone_id = new_zone_id
 
     # Update API keys
     for api_key in user.api_keys:
-        api_key.tenant_id = new_tenant_id
+        api_key.zone_id = new_zone_id
 
     session.commit()
 ```

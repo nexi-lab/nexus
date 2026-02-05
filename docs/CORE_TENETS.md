@@ -271,7 +271,7 @@ This document defines the foundational principles that guide all design decision
 - Maintainable (clear errors, health checks)
 
 **Examples:**
-- ✅ Structured logging with context (tenant_id, agent_id, operation)
+- ✅ Structured logging with context (zone_id, agent_id, operation)
 - ✅ Health check endpoints for monitoring
 - ✅ Prometheus metrics for operations (read/write latency, cache hit rate)
 - ✅ Operation audit logs (who did what when)
@@ -403,7 +403,7 @@ These tenets guide us, but they're not absolute. Here are real examples where we
 **Decision:** Hosted mode requires PostgreSQL, not SQLite.
 
 **Why We Bent It:**
-- SQLite doesn't scale to multi-tenant production
+- SQLite doesn't scale to multi-zone production
 - Row-level security requires PostgreSQL features
 - Concurrency at scale needs real ACID transactions
 
@@ -425,7 +425,7 @@ These tenets guide us, but they're not absolute. Here are real examples where we
 **Why We Bent It:**
 - Need structured queries ("show me all writes by agent X")
 - Need efficient retention policies (auto-delete after 30 days)
-- Need multi-tenant isolation at database level
+- Need multi-zone isolation at database level
 
 **Mitigation:**
 - Logs are exportable to JSONL files

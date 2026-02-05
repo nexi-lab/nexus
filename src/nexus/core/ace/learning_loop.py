@@ -36,7 +36,7 @@ class LearningLoop:
         llm_provider: LLMProvider,
         user_id: str,
         agent_id: str | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         context: Any = None,
     ):
         """Initialize learning loop.
@@ -47,7 +47,7 @@ class LearningLoop:
             llm_provider: LLM provider for reflection
             user_id: User ID for ownership
             agent_id: Optional agent ID
-            tenant_id: Optional tenant ID
+            zone_id: Optional zone ID
             context: Optional operation context for permission checks
         """
         self.session = session
@@ -55,22 +55,22 @@ class LearningLoop:
         self.llm_provider = llm_provider
         self.user_id = user_id
         self.agent_id = agent_id
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.context = context
 
         # Initialize components with context for permission checks
         self.trajectory_manager = TrajectoryManager(
-            session, backend, user_id, agent_id, tenant_id, context
+            session, backend, user_id, agent_id, zone_id, context
         )
         self.playbook_manager = PlaybookManager(
-            session, backend, user_id, agent_id, tenant_id, context
+            session, backend, user_id, agent_id, zone_id, context
         )
         self.reflector = Reflector(
-            session, backend, llm_provider, self.trajectory_manager, user_id, agent_id, tenant_id
+            session, backend, llm_provider, self.trajectory_manager, user_id, agent_id, zone_id
         )
         self.curator = Curator(session, backend, self.playbook_manager)
         self.consolidation_engine = ConsolidationEngine(
-            session, backend, llm_provider, user_id, agent_id, tenant_id
+            session, backend, llm_provider, user_id, agent_id, zone_id
         )
         self.feedback_manager = FeedbackManager(session)
 

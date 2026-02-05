@@ -38,7 +38,7 @@ def admin_context():
     return OperationContext(
         user="system",
         groups=[],
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         is_admin=True,
     )
 
@@ -60,7 +60,7 @@ class TestOAuthProvisionIntegration:
             user_id="oauth_user_1",
             email="oauth1@example.com",
             display_name="OAuth User 1",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=True,
             api_key_name="OAuth Auto-generated Key",
             api_key_expires_at=expiry_date,
@@ -71,7 +71,7 @@ class TestOAuthProvisionIntegration:
 
         # Verify result structure
         assert result["user_id"] == "oauth_user_1"
-        assert result["tenant_id"] == "test_tenant"
+        assert result["zone_id"] == "test_zone"
         assert result["api_key"] is not None
         assert result["key_id"] is not None
         assert result["api_key"].startswith("sk-")
@@ -103,7 +103,7 @@ class TestOAuthProvisionIntegration:
             user_id="oauth_user_2",
             email="oauth2@example.com",
             display_name="OAuth User 2",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=True,
             api_key_name="OAuth Auto-generated Key",
             api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
@@ -147,7 +147,7 @@ class TestOAuthProvisionIntegration:
             user_id="regular_user",
             email="regular@example.com",
             display_name="Regular User",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=True,
             create_agents=False,
             import_skills=False,
@@ -169,7 +169,7 @@ class TestOAuthProvisionIntegration:
             user_id="custom_user",
             email="custom@example.com",
             display_name="Custom User",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=True,
             api_key_name="Custom Key Name",
             create_agents=False,
@@ -194,7 +194,7 @@ class TestOAuthProvisionIntegration:
             user_id="oauth_user_complete",
             email="complete@example.com",
             display_name="Complete OAuth User",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=True,
             api_key_name="OAuth Auto-generated Key",
             api_key_expires_at=expiry_date,
@@ -257,7 +257,7 @@ class TestOAuthProvisionIntegration:
             user_id="no_key_user",
             email="nokey@example.com",
             display_name="No Key User",
-            tenant_id="test_tenant",
+            zone_id="test_zone",
             create_api_key=False,
             create_agents=False,
             import_skills=False,

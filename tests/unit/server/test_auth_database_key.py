@@ -54,14 +54,14 @@ async def test_create_key_basic(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_create_key_with_tenant(session_factory):
-    """Test creating an API key with tenant."""
+async def test_create_key_with_zone(session_factory):
+    """Test creating an API key with zone."""
     with session_factory() as session:
         key_id, raw_key = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="alice",
             name="Test Key",
-            tenant_id="org_acme",
+            zone_id="org_acme",
             is_admin=True,
         )
         session.commit()
@@ -96,7 +96,7 @@ async def test_authenticate_valid_key(auth_provider, session_factory):
             session,
             user_id="alice",
             name="Test Key",
-            tenant_id="org_acme",
+            zone_id="org_acme",
             is_admin=True,
         )
         session.commit()
@@ -106,7 +106,7 @@ async def test_authenticate_valid_key(auth_provider, session_factory):
 
     assert result.authenticated is True
     assert result.subject_id == "alice"
-    assert result.tenant_id == "org_acme"
+    assert result.zone_id == "org_acme"
     assert result.is_admin is True
     assert result.metadata["key_id"] == key_id
     assert result.metadata["key_name"] == "Test Key"

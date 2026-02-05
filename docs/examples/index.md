@@ -98,7 +98,7 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     ---
 
-    Build multi-tenant applications with workspace isolation and session tracking.
+    Build multi-zone applications with workspace isolation and session tracking.
 
     [:octicons-arrow-right-24: View Example](workspace-session.md)
 
@@ -155,7 +155,7 @@ Explore Nexus through hands-on examples that demonstrate key features and real-w
 
     nx.workspace.create(
         "/tenant/acme-corp",
-        tenant_id="acme-123",
+        zone_id="acme-123",
         metadata={"company": "Acme Corp", "plan": "enterprise"}
     )
 
@@ -228,7 +228,7 @@ All examples include runnable shell scripts that demonstrate the full workflow:
 | File Operations | `examples/cli/file_operations_demo.sh` | Write, read, copy, move, delete with metadata |
 | Directory Operations | `examples/cli/directory_operations_demo.sh` | Create directories with permission inheritance |
 | Permissions | `examples/cli/permissions_demo_enhanced.sh` | ReBAC permissions, groups, and inheritance |
-| Workspace & Sessions | `examples/cli/workspace_session_demo.sh` | Multi-tenant isolation and session tracking |
+| Workspace & Sessions | `examples/cli/workspace_session_demo.sh` | Multi-zone isolation and session tracking |
 | Advanced Usage | `examples/cli/advanced_usage_demo.sh` | Mounts, versioning, and advanced features |
 | ACE Learning Agent | `examples/ace/demo_3_data_validator.py` | Agent learns validation rules from experience |
 | DeepAgents Workflows | `examples/deepagents/research/demo_2_workflows.py` | Autonomous agents with event-driven memory consolidation |

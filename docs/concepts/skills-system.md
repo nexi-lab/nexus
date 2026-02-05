@@ -165,7 +165,7 @@ path = await manager.create_skill(
     author="Alice",
     creator_id="alice-id",
     creator_type="agent",
-    tenant_id="org-1"
+    zone_id="org-1"
 )
 
 print(path)  # /workspace/.nexus/skills/my-skill/SKILL.md
@@ -398,7 +398,7 @@ await gov.approve_skill(
     reviewed_by="bob",
     comments="Looks great!",
     reviewer_type="user",
-    tenant_id="org-1"
+    zone_id="org-1"
 )
 
 # Check approval status
@@ -449,7 +449,7 @@ await manager.publish_skill(
     target_tier="tenant",
     publisher_id="alice-id",
     publisher_type="agent",
-    tenant_id="org-1"
+    zone_id="org-1"
 )
 ```
 
@@ -484,7 +484,7 @@ rebac.write(
     subject=("agent", "alice"),
     relation="owner-of",
     object=("skill", "my-analyzer"),
-    tenant_id="org-1"
+    zone_id="org-1"
 )
 
 # Make system skill public
@@ -492,7 +492,7 @@ rebac.write(
     subject=("*", "*"),        # Wildcard = everyone
     relation="public",
     object=("skill", "base-parser"),
-    tenant_id=None             # Global scope
+    zone_id=None             # Global scope
 )
 
 # Grant tenant access
@@ -500,7 +500,7 @@ rebac.write(
     subject=("tenant", "org-1"),
     relation="tenant",
     object=("skill", "shared-analyzer"),
-    tenant_id="org-1"
+    zone_id="org-1"
 )
 ```
 
@@ -664,7 +664,7 @@ tracker = SkillAnalyticsTracker()
 await tracker.track_usage(
     skill_name="analyze-code",
     agent_id="agent-1",
-    tenant_id="org-1",
+    zone_id="org-1",
     execution_time=2.5,
     success=True
 )
@@ -698,7 +698,7 @@ class AuditLogEntry:
     skill_name: str
     action: AuditAction  # CREATED, EXECUTED, FORKED, PUBLISHED, DELETED
     agent_id: str
-    tenant_id: str
+    zone_id: str
     details: dict
     timestamp: datetime
 ```

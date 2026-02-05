@@ -38,8 +38,8 @@ def entity_registry(session):
     """Create and populate entity registry."""
     registry = EntityRegistry(session)
     # Register test entities
-    registry.register_entity("tenant", "acme")
-    registry.register_entity("user", "alice", parent_type="tenant", parent_id="acme")
+    registry.register_entity("zone", "acme")
+    registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     registry.register_entity("agent", "agent2", parent_type="user", parent_id="alice")
     return registry
@@ -51,7 +51,7 @@ def memory_api(session, backend, entity_registry):
     return Memory(
         session=session,
         backend=backend,
-        tenant_id="acme",
+        zone_id="acme",
         user_id="alice",
         agent_id="agent1",
         entity_registry=entity_registry,
@@ -183,7 +183,7 @@ class TestPhase5BackwardCompatibility:
         memory_api = Memory(
             session=session,
             backend=backend,
-            tenant_id="acme",
+            zone_id="acme",
             user_id=None,  # Not provided
             agent_id="agent1",
             entity_registry=entity_registry,
@@ -203,7 +203,7 @@ class TestPhase5BackwardCompatibility:
         memory_api1 = Memory(
             session=session,
             backend=backend,
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             entity_registry=entity_registry,
@@ -219,7 +219,7 @@ class TestPhase5BackwardCompatibility:
         memory_api2 = Memory(
             session=session,
             backend=backend,
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent2",
             entity_registry=entity_registry,
@@ -235,7 +235,7 @@ class TestPhase5BackwardCompatibility:
         _memory_api1 = Memory(
             session=session,
             backend=backend,
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             entity_registry=entity_registry,
@@ -246,7 +246,7 @@ class TestPhase5BackwardCompatibility:
         content_hash = backend.write_content(b"Private to agent1").unwrap()
         memory = memory_router.create_memory(
             content_hash=content_hash,
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent1",
             scope="agent",
@@ -257,7 +257,7 @@ class TestPhase5BackwardCompatibility:
         memory_api2 = Memory(
             session=session,
             backend=backend,
-            tenant_id="acme",
+            zone_id="acme",
             user_id="alice",
             agent_id="agent2",
             entity_registry=entity_registry,

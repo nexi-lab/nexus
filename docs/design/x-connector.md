@@ -509,7 +509,7 @@ CREATE TABLE oauth_tokens (
     id SERIAL PRIMARY KEY,
     provider VARCHAR(50) NOT NULL,      -- 'twitter' or 'x'
     user_email VARCHAR(255) NOT NULL,
-    tenant_id VARCHAR(255) NOT NULL DEFAULT 'default',
+    zone_id VARCHAR(255) NOT NULL DEFAULT 'default',
 
     -- OAuth tokens (encrypted)
     access_token TEXT NOT NULL,
@@ -527,7 +527,7 @@ CREATE TABLE oauth_tokens (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
 
-    UNIQUE(provider, user_email, tenant_id)
+    UNIQUE(provider, user_email, zone_id)
 );
 ```
 
@@ -1452,12 +1452,12 @@ class XConnectorBackend(Backend):
             )
 
         # Get OAuth token
-        tenant_id = context.tenant_id if context else "default"
+        zone_id = context.zone_id if context else "default"
         access_token = asyncio.run(
             self.token_manager.get_valid_token(
                 provider=self.provider,
                 user_email=user_email,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
         )
 

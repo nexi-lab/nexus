@@ -308,7 +308,7 @@ async def hotspot_prefetch_task(
                             subject_id=entry.subject_id,
                             permission=entry.permission,
                             resource_type=entry.resource_type,
-                            tenant_id=entry.tenant_id,
+                            zone_id=entry.zone_id,
                             priority=1,  # High priority for hot entries
                         )
                         prefetched += 1

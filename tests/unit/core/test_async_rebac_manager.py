@@ -109,7 +109,7 @@ class TestAsyncReBACManagerCacheOps:
     def test_l1_cache_direct_get_miss(self, manager_with_cache: AsyncReBACManager) -> None:
         """Test L1 cache miss using direct cache access."""
         assert manager_with_cache._l1_cache is not None
-        # Cache uses positional args: subject_type, subject_id, permission, object_type, object_id, tenant_id
+        # Cache uses positional args: subject_type, subject_id, permission, object_type, object_id, zone_id
         result = manager_with_cache._l1_cache.get(
             "user", "alice", "read", "file", "/test.txt", "default"
         )
@@ -120,7 +120,7 @@ class TestAsyncReBACManagerCacheOps:
         """Test L1 cache set and get using direct cache access."""
         assert manager_with_cache._l1_cache is not None
 
-        # Set cache entry (positional args: subject_type, subject_id, permission, object_type, object_id, result, tenant_id)
+        # Set cache entry (positional args: subject_type, subject_id, permission, object_type, object_id, result, zone_id)
         manager_with_cache._l1_cache.set(
             "user", "alice", "read", "file", "/test.txt", True, "default"
         )

@@ -463,12 +463,12 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             # Cache the result
             if self._has_caching():
                 try:
-                    tenant_id = getattr(context, "tenant_id", None)
+                    zone_id = getattr(context, "zone_id", None)
                     self._write_to_cache(
                         path=cache_path,
                         content=content,
                         backend_version=None,  # No versioning for HN
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to cache {path}: {e}")
@@ -769,12 +769,12 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                                     else f"/{backend_path}"
                                 )
 
-                                tenant_id = getattr(context, "tenant_id", None)
+                                zone_id = getattr(context, "zone_id", None)
                                 self._write_to_cache(
                                     path=virtual_path,
                                     content=content,
                                     backend_version=None,
-                                    tenant_id=tenant_id,
+                                    zone_id=zone_id,
                                 )
 
                             result.files_synced += 1

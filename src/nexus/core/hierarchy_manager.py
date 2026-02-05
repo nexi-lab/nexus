@@ -11,7 +11,7 @@ Usage:
     manager = HierarchyManager(rebac_manager, enable_inheritance=True)
 
     # Automatically creates parent tuples when writing files
-    manager.ensure_parent_tuples("/workspace/sales/report.pdf", tenant_id="org_123")
+    manager.ensure_parent_tuples("/workspace/sales/report.pdf", zone_id="org_123")
 
     # Now granting access to directory works:
     # rebac.write(("user", "alice"), "owner", ("file", "/workspace/sales"))
@@ -57,7 +57,7 @@ class HierarchyManager:
     def ensure_parent_tuples(
         self,
         path: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Ensure parent relationship tuples exist for path (P0-3).
 
@@ -68,7 +68,7 @@ class HierarchyManager:
 
         Args:
             path: File or directory path
-            tenant_id: Tenant ID for tuple scoping
+            zone_id: Zone ID for tuple scoping
 
         Returns:
             Number of parent tuples created
@@ -95,12 +95,12 @@ class HierarchyManager:
             parent_path = "/" + "/".join(parts[: i - 1])
 
             # Check if parent tuple already exists
-            if self._has_parent_tuple(child_path, parent_path, tenant_id):
+            if self._has_parent_tuple(child_path, parent_path, zone_id):
                 # Parent tuple exists, assume rest of chain exists too
                 break
 
             # Create parent tuple
-            self._create_parent_tuple(child_path, parent_path, tenant_id)
+            self._create_parent_tuple(child_path, parent_path, zone_id)
             created_count += 1
 
         # If we created any parent tuples, we need to invalidate related caches
@@ -116,7 +116,7 @@ class HierarchyManager:
         self,
         child_path: str,
         parent_path: str,
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> bool:
         """Check if parent tuple already exists.
 
@@ -125,7 +125,7 @@ class HierarchyManager:
         Args:
             child_path: Child file path
             parent_path: Parent directory path
-            tenant_id: Tenant ID for tuple scoping
+            zone_id: Zone ID for tuple scoping
 
         Returns:
             True if parent tuple exists
@@ -141,19 +141,19 @@ class HierarchyManager:
 
         # BUGFIX: Check child -> parent direction (child is subject, parent is object)
         # This matches _create_parent_tuple which creates (child, "parent", parent)
-        # BUGFIX: Pass tenant_id to ensure proper scoping and prevent duplicate tuples
+        # BUGFIX: Pass zone_id to ensure proper scoping and prevent duplicate tuples
         return self.rebac_manager._has_direct_relation(
             subject=child_entity,
             relation="parent",
             obj=parent_entity,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def _create_parent_tuple(
         self,
         child_path: str,
         parent_path: str,
-        tenant_id: str | None,
+        zone_id: str | None,
     ) -> None:
         """Create parent relationship tuple.
 
@@ -164,11 +164,11 @@ class HierarchyManager:
         Args:
             child_path: Child file path
             parent_path: Parent directory path
-            tenant_id: Tenant ID
+            zone_id: Zone ID
         """
-        # Check if rebac_manager supports tenant_id parameter
+        # Check if rebac_manager supports zone_id parameter
         # (EnhancedReBACManager does, basic ReBACManager doesn't)
-        if hasattr(self.rebac_manager, "rebac_write") and tenant_id:
+        if hasattr(self.rebac_manager, "rebac_write") and zone_id:
             try:
                 # Try tenant-aware write
                 # IMPORTANT: child is SUBJECT, parent is OBJECT (child -> parent direction)
@@ -177,10 +177,10 @@ class HierarchyManager:
                     subject=("file", child_path),
                     relation="parent",
                     object=("file", parent_path),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
             except TypeError:
-                # Fallback for basic ReBACManager (no tenant_id support)
+                # Fallback for basic ReBACManager (no zone_id support)
                 self.rebac_manager.rebac_write(
                     subject=("file", child_path),
                     relation="parent",
@@ -308,7 +308,7 @@ class HierarchyManager:
     def remove_parent_tuples(
         self,
         path: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Remove parent relationship tuples for path.
 
@@ -316,7 +316,7 @@ class HierarchyManager:
 
         Args:
             path: File or directory path
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of parent tuples removed
@@ -334,7 +334,7 @@ class HierarchyManager:
         try:
             cursor = self.rebac_manager._create_cursor(conn)
 
-            if tenant_id:
+            if zone_id:
                 # Tenant-aware query
                 cursor.execute(
                     self.rebac_manager._fix_sql_placeholders(
@@ -343,10 +343,10 @@ class HierarchyManager:
                         FROM rebac_tuples
                         WHERE subject_type = ? AND subject_id = ?
                           AND relation = ?
-                          AND tenant_id = ?
+                          AND zone_id = ?
                         """
                     ),
-                    ("file", path, "parent", tenant_id),
+                    ("file", path, "parent", zone_id),
                 )
             else:
                 # Non-tenant query
@@ -378,7 +378,7 @@ class HierarchyManager:
     def rebuild_hierarchy(
         self,
         paths: list[str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Rebuild parent tuples for a list of paths (batch operation).
 
@@ -388,7 +388,7 @@ class HierarchyManager:
 
         Args:
             paths: List of file/directory paths
-            tenant_id: Tenant ID for all paths
+            zone_id: Zone ID for all paths
 
         Returns:
             Total number of parent tuples created
@@ -399,7 +399,7 @@ class HierarchyManager:
         total_created = 0
 
         for path in paths:
-            created = self.ensure_parent_tuples(path, tenant_id)
+            created = self.ensure_parent_tuples(path, zone_id)
             total_created += created
 
         return total_created
@@ -407,7 +407,7 @@ class HierarchyManager:
     def ensure_parent_tuples_batch(
         self,
         paths: list[str],
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         batch_size: int = 1000,
     ) -> int:
         """Ensure parent tuples exist for multiple paths (batch operation).
@@ -417,7 +417,7 @@ class HierarchyManager:
 
         Args:
             paths: List of file/directory paths
-            tenant_id: Tenant ID for all paths
+            zone_id: Zone ID for all paths
             batch_size: Maximum tuples to process per batch (default: 1000)
 
         Returns:
@@ -427,7 +427,7 @@ class HierarchyManager:
             >>> manager.ensure_parent_tuples_batch([
             ...     "/workspace/file1.txt",
             ...     "/workspace/subdir/file2.txt",
-            ... ], tenant_id="org_123")
+            ... ], zone_id="org_123")
             4  # Created 4 parent tuples total
         """
         if not self.enable_inheritance:
@@ -478,7 +478,7 @@ class HierarchyManager:
                     f"tuples {i + 1}-{batch_end} of {len(unique_tuples)}"
                 )
 
-            created = self._create_parent_tuples_batch(batch, tenant_id)
+            created = self._create_parent_tuples_batch(batch, zone_id)
             total_created += created
 
             # Log batch completion for large operations
@@ -498,13 +498,13 @@ class HierarchyManager:
     def _create_parent_tuples_batch(
         self,
         tuples: list[tuple[str, str]],  # (child_path, parent_path)
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> int:
         """Create multiple parent tuples in a single transaction.
 
         Args:
             tuples: List of (child_path, parent_path) tuples to create
-            tenant_id: Tenant ID
+            zone_id: Zone ID
 
         Returns:
             Number of tuples created (excluding duplicates)
@@ -518,7 +518,7 @@ class HierarchyManager:
                 "subject": ("file", child_path),
                 "relation": "parent",
                 "object": ("file", parent_path),
-                "tenant_id": tenant_id,
+                "zone_id": zone_id,
             }
             for child_path, parent_path in tuples
         ]

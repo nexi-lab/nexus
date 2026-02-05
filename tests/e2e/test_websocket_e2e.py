@@ -48,7 +48,7 @@ class TestWebSocketHealthIntegration:
 
             assert data["type"] == "connected"
             assert "connection_id" in data
-            assert data["tenant_id"] == "default"
+            assert data["zone_id"] == "default"
 
     def test_websocket_ping_pong(self, nexus_fs) -> None:
         """Test ping/pong heartbeat mechanism."""

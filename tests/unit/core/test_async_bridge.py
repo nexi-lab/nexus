@@ -76,7 +76,7 @@ class TestAsyncReBACBridge:
         with pytest.raises(RuntimeError, match="not started"):
             bridge.rebac_check_bulk(
                 checks=[(("user", "alice"), "read", ("file", "/test.txt"))],
-                tenant_id="default",
+                zone_id="default",
             )
 
     def test_write_tuple_without_start_raises(self) -> None:

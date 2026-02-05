@@ -11,14 +11,14 @@ def test_auth_result_basic():
         authenticated=True,
         subject_type="user",
         subject_id="alice",
-        tenant_id="org_acme",
+        zone_id="org_acme",
         is_admin=False,
     )
 
     assert result.authenticated is True
     assert result.subject_type == "user"
     assert result.subject_id == "alice"
-    assert result.tenant_id == "org_acme"
+    assert result.zone_id == "org_acme"
     assert result.is_admin is False
     assert result.metadata is None
 
@@ -46,7 +46,7 @@ def test_auth_result_failed():
     assert result.authenticated is False
     assert result.subject_type == "user"  # default
     assert result.subject_id is None
-    assert result.tenant_id is None
+    assert result.zone_id is None
     assert result.is_admin is False
 
 
@@ -54,7 +54,7 @@ def test_auth_result_different_subject_types():
     """Test AuthResult with different subject types."""
     # User
     user_result = AuthResult(
-        authenticated=True, subject_type="user", subject_id="alice", tenant_id="org_acme"
+        authenticated=True, subject_type="user", subject_id="alice", zone_id="org_acme"
     )
     assert user_result.subject_type == "user"
 
@@ -63,7 +63,7 @@ def test_auth_result_different_subject_types():
         authenticated=True,
         subject_type="agent",
         subject_id="agent_claude_001",
-        tenant_id="org_acme",
+        zone_id="org_acme",
     )
     assert agent_result.subject_type == "agent"
 
@@ -82,7 +82,7 @@ def test_auth_result_different_subject_types():
         authenticated=True,
         subject_type="session",
         subject_id="session_xyz",
-        tenant_id="org_acme",
+        zone_id="org_acme",
     )
     assert session_result.subject_type == "session"
 

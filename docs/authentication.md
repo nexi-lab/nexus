@@ -81,14 +81,14 @@ Simple configuration file-based authentication. API keys are defined in YAML and
 api_keys:
   sk-alice-secret-key:
     user_id: "alice"
-    tenant_id: null  # Self-hosted, no multi-tenancy
+    zone_id: null  # Self-hosted, no multi-tenancy
     is_admin: true
     metadata:
       email: "alice@example.com"
 
   sk-bob-secret-key:
     user_id: "bob"
-    tenant_id: null
+    zone_id: null
     is_admin: false
     metadata:
       email: "bob@example.com"
@@ -103,13 +103,13 @@ auth_config = {
     "api_keys": {
         "sk-alice-secret-key": {
             "user_id": "alice",
-            "tenant_id": None,
+            "zone_id": None,
             "is_admin": True,
             "metadata": {"email": "alice@example.com"}
         },
         "sk-bob-secret-key": {
             "user_id": "bob",
-            "tenant_id": None,
+            "zone_id": None,
             "is_admin": False,
             "metadata": {"email": "bob@example.com"}
         }
@@ -252,7 +252,7 @@ auth_config = {
             "password_hash": "$2b$12$...",  # bcrypt hash
             "subject_type": "user",
             "subject_id": "alice",
-            "tenant_id": "org_acme",
+            "zone_id": "org_acme",
             "is_admin": False
         }
     }
@@ -313,11 +313,11 @@ auth_provider = create_auth_provider("multi-oidc", auth_config)
 The authentication system is designed for easy migration:
 
 **Self-hosted** (v0.4):
-- `tenant_id = None` (single tenant)
+- `zone_id = None` (single tenant)
 - Simple API keys or database keys
 
 **SaaS** (v0.5+):
-- `tenant_id = "acme"` (multi-tenant isolation)
+- `zone_id = "acme"` (multi-zone isolation)
 - SSO/OIDC integration
 - Organization-level permissions
 
@@ -328,7 +328,7 @@ Example database key for future SaaS:
 key_id, raw_key = DatabaseAPIKeyAuth.create_key(
     session,
     user_id="alice",
-    tenant_id=None,  # No multi-tenancy
+    zone_id=None,  # No multi-tenancy
     is_admin=True
 )
 
@@ -336,7 +336,7 @@ key_id, raw_key = DatabaseAPIKeyAuth.create_key(
 key_id, raw_key = DatabaseAPIKeyAuth.create_key(
     session,
     user_id="alice@acme.com",
-    tenant_id="acme",  # Multi-tenant isolation
+    zone_id="acme",  # Multi-zone isolation
     is_admin=False  # Tenant-scoped admin
 )
 ```
@@ -394,7 +394,7 @@ class AuthProvider(ABC):
 class AuthResult:
     authenticated: bool
     user_id: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     is_admin: bool = False
     metadata: dict[str, Any] | None = None
 ```

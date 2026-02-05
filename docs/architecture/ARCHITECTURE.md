@@ -200,7 +200,7 @@ Nexus is an AI-native distributed filesystem providing a unified API across mult
 - Automatic permission inheritance via parent relationships
 - Time-limited access with expiration timestamps
 - Multi-level organization hierarchies (tenant → workspace → user → agent)
-- Multi-tenant isolation with tenant-aware permission checks
+- Multi-zone isolation with tenant-aware permission checks
 - Centralized permission management in client-server deployments
 - Graph-based permission checking with caching for performance
 
@@ -239,7 +239,7 @@ Relations:
 
 **Storage Structure:**
 - **Entity Registry**: Tracks tenant/user/agent relationships and hierarchies
-- **Memories Table**: Stores memory content with identity metadata (tenant_id, user_id, agent_id, scope, visibility)
+- **Memories Table**: Stores memory content with identity metadata (zone_id, user_id, agent_id, scope, visibility)
 - **Virtual Router**: Maps flexible paths to canonical memory IDs
 
 **Memory Path Patterns (all equivalent):**
@@ -284,7 +284,7 @@ Alice's two agents share user-scoped memories. Agent1 creates memory → Agent2 
 from nexus.core.rpc_decorator import rpc_expose
 
 @rpc_expose(description="Create ReBAC relationship")
-def rebac_create(self, subject, relation, object, tenant_id=None) -> bool:
+def rebac_create(self, subject, relation, object, zone_id=None) -> bool:
     """Create a ReBAC relationship tuple."""
     # Implementation
 ```
@@ -362,7 +362,7 @@ def rebac_create(self, subject, relation, object, tenant_id=None) -> bool:
 | `/external` | External integrations | No | No | No |
 | `/system` | System configuration | Yes | Yes | No |
 
-**Visibility:** Namespaces are automatically filtered based on user context (tenant_id, is_admin).
+**Visibility:** Namespaces are automatically filtered based on user context (zone_id, is_admin).
 
 **FUSE Integration:** When mounting via FUSE, namespace directories appear at root level dynamically based on access rights.
 
@@ -447,7 +447,7 @@ User Undo → Load Operation → Extract Undo State → Reverse Operation → Lo
 - **Permissions**: read, write, execute (mapped from relations)
 - **Relations**: owner, editor, viewer (with direct_ variants)
 - **Inheritance**: Directory → file inheritance via parent relationships
-- **Multi-tenant**: Complete tenant isolation in permission checks
+- **Multi-zone**: Complete tenant isolation in permission checks
 
 ### Data Security
 - SHA-256 content hashing for integrity

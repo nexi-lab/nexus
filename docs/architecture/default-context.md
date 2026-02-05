@@ -27,14 +27,14 @@ self._default_context = OperationContext(
 # OLD API (v0.4.x and earlier)
 nx = NexusFS(
     backend,
-    tenant_id="org_acme",  # ← Configured at init
+    zone_id="org_acme",  # ← Configured at init
     agent_id="bot1",       # ← Configured at init
     user_id="alice"        # ← Configured at init
 )
 
 # Operations used instance-level identity
-nx.write("/file.txt", content)  # Implicitly uses nx.tenant_id, nx.user_id
-nx.read("/file.txt")             # Implicitly uses nx.tenant_id, nx.user_id
+nx.write("/file.txt", content)  # Implicitly uses nx.zone_id, nx.user_id
+nx.read("/file.txt")             # Implicitly uses nx.zone_id, nx.user_id
 ```
 
 **Problem:** One NexusFS instance = one user. Can't handle multiple users.
@@ -83,11 +83,11 @@ The comment says:
 
 ```python
 # Note:
-#     v0.5.0 BREAKING CHANGE: Removed tenant_id, user_id, and agent_id parameters.
+#     v0.5.0 BREAKING CHANGE: Removed zone_id, user_id, and agent_id parameters.
 #     Use the subject parameter in individual operations instead:
 #
 #         # Old way (v0.4.x - NO LONGER WORKS):
-#         nx = NexusFS(backend, tenant_id="acme", agent_id="bot")
+#         nx = NexusFS(backend, zone_id="acme", agent_id="bot")
 #         nx.read("/file.txt")
 #
 #         # New way (v0.5.0+):

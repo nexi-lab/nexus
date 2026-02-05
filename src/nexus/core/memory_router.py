@@ -123,8 +123,8 @@ class MemoryViewRouter:
         # Use OR logic for flexibility - match on any provided ID
         filters = []
 
-        if "tenant_id" in ids:
-            filters.append(MemoryModel.tenant_id == ids["tenant_id"])
+        if "zone_id" in ids:
+            filters.append(MemoryModel.zone_id == ids["zone_id"])
 
         if "user_id" in ids:
             filters.append(MemoryModel.user_id == ids["user_id"])
@@ -161,7 +161,7 @@ class MemoryViewRouter:
 
     def query_memories(
         self,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         scope: str | None = None,
@@ -182,7 +182,7 @@ class MemoryViewRouter:
         """Query memories by relationships and metadata.
 
         Args:
-            tenant_id: Filter by tenant.
+            zone_id: Filter by tenant.
             user_id: Filter by user.
             agent_id: Filter by agent.
             scope: Filter by scope ('agent', 'user', 'tenant', 'global').
@@ -205,8 +205,8 @@ class MemoryViewRouter:
         """
         stmt = select(MemoryModel)
 
-        if tenant_id:
-            stmt = stmt.where(MemoryModel.tenant_id == tenant_id)
+        if zone_id:
+            stmt = stmt.where(MemoryModel.zone_id == zone_id)
 
         if user_id:
             stmt = stmt.where(MemoryModel.user_id == user_id)
@@ -324,7 +324,7 @@ class MemoryViewRouter:
     def create_memory(
         self,
         content_hash: str,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
         scope: str = "agent",
@@ -354,7 +354,7 @@ class MemoryViewRouter:
 
         Args:
             content_hash: SHA-256 hash of content (CAS reference).
-            tenant_id: Tenant ID.
+            zone_id: Zone ID.
             user_id: User ID (owner). If not provided, defaults to agent_id for backward compatibility.
             agent_id: Agent ID (creator).
             scope: Scope ('agent', 'user', 'tenant', 'global').
@@ -391,8 +391,8 @@ class MemoryViewRouter:
                 MemoryModel.user_id == user_id,  # Scope to same user
             )
             # Filter by tenant if provided
-            if tenant_id:
-                stmt = stmt.where(MemoryModel.tenant_id == tenant_id)
+            if zone_id:
+                stmt = stmt.where(MemoryModel.zone_id == zone_id)
             existing_memory = self.session.execute(stmt).scalar_one_or_none()
 
         if existing_memory:
@@ -412,8 +412,8 @@ class MemoryViewRouter:
             existing_memory.memory_type = memory_type
             existing_memory.importance = importance
             # Update other fields if provided
-            if tenant_id is not None:
-                existing_memory.tenant_id = tenant_id
+            if zone_id is not None:
+                existing_memory.zone_id = zone_id
             if user_id is not None:
                 existing_memory.user_id = user_id
             if agent_id is not None:
@@ -477,7 +477,7 @@ class MemoryViewRouter:
             # Create new memory
             memory = MemoryModel(
                 content_hash=content_hash,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 user_id=user_id,
                 agent_id=agent_id,
                 scope=scope,
@@ -536,7 +536,7 @@ class MemoryViewRouter:
                     subject=("user", user_id),
                     relation="owner",
                     object=("memory", memory.memory_id),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
             return memory
@@ -683,25 +683,13 @@ class MemoryViewRouter:
         paths.append(f"/objs/memory/{memory.memory_id}")
 
         # Workspace paths (all permutations if IDs exist)
-        if memory.tenant_id and memory.user_id and memory.agent_id:
-            paths.append(
-                f"/workspace/{memory.tenant_id}/{memory.user_id}/{memory.agent_id}/memory/"
-            )
-            paths.append(
-                f"/workspace/{memory.tenant_id}/{memory.agent_id}/{memory.user_id}/memory/"
-            )
-            paths.append(
-                f"/workspace/{memory.user_id}/{memory.tenant_id}/{memory.agent_id}/memory/"
-            )
-            paths.append(
-                f"/workspace/{memory.user_id}/{memory.agent_id}/{memory.tenant_id}/memory/"
-            )
-            paths.append(
-                f"/workspace/{memory.agent_id}/{memory.user_id}/{memory.tenant_id}/memory/"
-            )
-            paths.append(
-                f"/workspace/{memory.agent_id}/{memory.tenant_id}/{memory.user_id}/memory/"
-            )
+        if memory.zone_id and memory.user_id and memory.agent_id:
+            paths.append(f"/workspace/{memory.zone_id}/{memory.user_id}/{memory.agent_id}/memory/")
+            paths.append(f"/workspace/{memory.zone_id}/{memory.agent_id}/{memory.user_id}/memory/")
+            paths.append(f"/workspace/{memory.user_id}/{memory.zone_id}/{memory.agent_id}/memory/")
+            paths.append(f"/workspace/{memory.user_id}/{memory.agent_id}/{memory.zone_id}/memory/")
+            paths.append(f"/workspace/{memory.agent_id}/{memory.user_id}/{memory.zone_id}/memory/")
+            paths.append(f"/workspace/{memory.agent_id}/{memory.zone_id}/{memory.user_id}/memory/")
 
         elif memory.user_id and memory.agent_id:
             paths.append(f"/workspace/{memory.user_id}/{memory.agent_id}/memory/")
@@ -716,7 +704,7 @@ class MemoryViewRouter:
             paths.append(f"/memory/by-agent/{memory.agent_id}/")
 
         # By-tenant path
-        if memory.tenant_id:
-            paths.append(f"/memory/by-tenant/{memory.tenant_id}/")
+        if memory.zone_id:
+            paths.append(f"/memory/by-tenant/{memory.zone_id}/")
 
         return paths

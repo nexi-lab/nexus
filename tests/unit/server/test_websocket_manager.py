@@ -85,13 +85,13 @@ class TestWebSocketManager:
 
         conn_info = await manager.connect(
             websocket=mock_websocket,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
             user_id="user1",
         )
 
         assert mock_websocket.accepted
-        assert conn_info.tenant_id == "tenant1"
+        assert conn_info.zone_id == "zone1"
         assert conn_info.user_id == "user1"
         assert manager.get_connection_count() == 1
 
@@ -109,7 +109,7 @@ class TestWebSocketManager:
 
         conn_info = await manager.connect(
             websocket=mock_websocket,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
             patterns=["/workspace/**/*.py"],
             event_types=["file_write", "file_delete"],
@@ -129,7 +129,7 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=mock_websocket,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
 
@@ -151,7 +151,7 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=mock_websocket,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
 
@@ -177,8 +177,8 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_broadcast_to_tenant(self, manager: WebSocketManager) -> None:
-        """Test broadcasting events to tenant connections."""
+    async def test_broadcast_to_zone(self, manager: WebSocketManager) -> None:
+        """Test broadcasting events to zone connections."""
         await manager.start()
 
         # Create mock event
@@ -196,17 +196,17 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=ws1,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
         await manager.connect(
             websocket=ws2,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn2",
         )
 
         # Broadcast event
-        sent = await manager.broadcast_to_tenant("tenant1", mock_event)
+        sent = await manager.broadcast_to_zone("zone1", mock_event)
 
         assert sent == 2
         assert len(ws1.sent_messages) == 1
@@ -236,19 +236,19 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=ws1,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
             patterns=["/workspace/**/*.py"],  # Matches
         )
         await manager.connect(
             websocket=ws2,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn2",
             patterns=["/inbox/**/*"],  # Doesn't match
         )
 
         # Broadcast event
-        sent = await manager.broadcast_to_tenant("tenant1", mock_event)
+        sent = await manager.broadcast_to_zone("zone1", mock_event)
 
         assert sent == 1  # Only one client matches
         assert len(ws1.sent_messages) == 1
@@ -276,19 +276,19 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=ws1,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
             event_types=["file_write", "file_delete"],  # Matches
         )
         await manager.connect(
             websocket=ws2,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn2",
             event_types=["file_write"],  # Doesn't match
         )
 
         # Broadcast event
-        sent = await manager.broadcast_to_tenant("tenant1", mock_event)
+        sent = await manager.broadcast_to_zone("zone1", mock_event)
 
         assert sent == 1  # Only one client matches
         assert len(ws1.sent_messages) == 1
@@ -305,7 +305,7 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=mock_websocket,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
 
@@ -313,7 +313,7 @@ class TestWebSocketManager:
 
         assert stats["total_connections"] == 1
         assert stats["current_connections"] == 1
-        assert stats["connections_by_tenant"] == {"tenant1": 1}
+        assert stats["connections_by_zone"] == {"zone1": 1}
 
         await manager.disconnect("conn1")
 
@@ -325,37 +325,37 @@ class TestWebSocketManager:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_tenant_isolation(self, manager: WebSocketManager) -> None:
-        """Test that events are isolated by tenant."""
+    async def test_zone_isolation(self, manager: WebSocketManager) -> None:
+        """Test that events are isolated by zone."""
         await manager.start()
 
-        # Create mock event for tenant1
+        # Create mock event for zone1
         mock_event = MagicMock()
         mock_event.type = "file_write"
         mock_event.path = "/workspace/main.py"
         mock_event.to_dict.return_value = {"type": "file_write", "path": "/workspace/main.py"}
 
-        # Connect clients to different tenants
+        # Connect clients to different zones
         ws1 = MockWebSocket()
         ws2 = MockWebSocket()
 
         await manager.connect(
             websocket=ws1,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
         await manager.connect(
             websocket=ws2,  # type: ignore
-            tenant_id="tenant2",
+            zone_id="zone2",
             connection_id="conn2",
         )
 
-        # Broadcast to tenant1 only
-        sent = await manager.broadcast_to_tenant("tenant1", mock_event)
+        # Broadcast to zone1 only
+        sent = await manager.broadcast_to_zone("zone1", mock_event)
 
         assert sent == 1
         assert len(ws1.sent_messages) == 1
-        assert len(ws2.sent_messages) == 0  # tenant2 should not receive
+        assert len(ws2.sent_messages) == 0  # zone2 should not receive
 
         await manager.stop()
 
@@ -369,12 +369,12 @@ class TestWebSocketManager:
 
         await manager.connect(
             websocket=ws1,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             connection_id="conn1",
         )
         await manager.connect(
             websocket=ws2,  # type: ignore
-            tenant_id="tenant2",
+            zone_id="zone2",
             connection_id="conn2",
         )
 
@@ -394,12 +394,12 @@ class TestConnectionInfo:
         ws = MockWebSocket()
         conn = ConnectionInfo(
             websocket=ws,  # type: ignore
-            tenant_id="tenant1",
+            zone_id="zone1",
             subscription_id=None,
             user_id=None,
         )
 
-        assert conn.tenant_id == "tenant1"
+        assert conn.zone_id == "zone1"
         assert conn.subscription_id is None
         assert conn.user_id is None
         assert conn.patterns == []
@@ -424,12 +424,12 @@ class TestPatternMatching:
         event = FileEvent(
             type="file_write",
             path="/workspace/main.py",
-            tenant_id="test",
+            zone_id="test",
         )
 
         conn = ConnectionInfo(
             websocket=MagicMock(),
-            tenant_id="test",
+            zone_id="test",
             subscription_id=None,
             user_id=None,
             patterns=["/workspace/*.py"],
@@ -444,12 +444,12 @@ class TestPatternMatching:
         event = FileEvent(
             type="file_write",
             path="/workspace/src/main.py",
-            tenant_id="test",
+            zone_id="test",
         )
 
         conn = ConnectionInfo(
             websocket=MagicMock(),
-            tenant_id="test",
+            zone_id="test",
             subscription_id=None,
             user_id=None,
             patterns=["/workspace/**/*.py"],
@@ -464,12 +464,12 @@ class TestPatternMatching:
         event = FileEvent(
             type="file_write",
             path="/any/path/file.txt",
-            tenant_id="test",
+            zone_id="test",
         )
 
         conn = ConnectionInfo(
             websocket=MagicMock(),
-            tenant_id="test",
+            zone_id="test",
             subscription_id=None,
             user_id=None,
             patterns=[],  # No patterns = match all
@@ -484,12 +484,12 @@ class TestPatternMatching:
         event = FileEvent(
             type="file_delete",
             path="/workspace/main.py",
-            tenant_id="test",
+            zone_id="test",
         )
 
         conn_matches = ConnectionInfo(
             websocket=MagicMock(),
-            tenant_id="test",
+            zone_id="test",
             subscription_id=None,
             user_id=None,
             event_types=["file_delete"],
@@ -497,7 +497,7 @@ class TestPatternMatching:
 
         conn_no_match = ConnectionInfo(
             websocket=MagicMock(),
-            tenant_id="test",
+            zone_id="test",
             subscription_id=None,
             user_id=None,
             event_types=["file_write"],

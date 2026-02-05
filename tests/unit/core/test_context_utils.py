@@ -1,7 +1,7 @@
 """Unit tests for context_utils module.
 
 Tests cover utility functions for extracting and resolving context information:
-- get_tenant_id: Extract tenant_id from context with defaults
+- get_zone_id: Extract zone_id from context with defaults
 - get_user_identity: Extract user identity (type, id) from context
 - get_database_url: Resolve database URLs with environment variable priority
 - resolve_skill_base_path: Determine skill base path based on context
@@ -15,53 +15,53 @@ import pytest
 
 from nexus.core.context_utils import (
     get_database_url,
-    get_tenant_id,
     get_user_identity,
+    get_zone_id,
     resolve_skill_base_path,
 )
 
 
-class TestGetTenantId:
-    """Tests for get_tenant_id function."""
+class TestGetZoneId:
+    """Tests for get_zone_id function."""
 
-    def test_get_tenant_id_with_tenant_id(self):
-        """Test extracting tenant_id from context with tenant_id attribute."""
+    def test_get_zone_id_with_zone_id(self):
+        """Test extracting zone_id from context with zone_id attribute."""
         context = Mock()
-        context.tenant_id = "acme_corp"
+        context.zone_id = "acme_corp"
 
-        result = get_tenant_id(context)
+        result = get_zone_id(context)
         assert result == "acme_corp"
 
-    def test_get_tenant_id_with_none_tenant_id(self):
-        """Test that None tenant_id defaults to 'default'."""
+    def test_get_zone_id_with_none_zone_id(self):
+        """Test that None zone_id defaults to 'default'."""
         context = Mock()
-        context.tenant_id = None
+        context.zone_id = None
 
-        result = get_tenant_id(context)
+        result = get_zone_id(context)
         assert result == "default"
 
-    def test_get_tenant_id_without_tenant_id_attribute(self):
-        """Test that missing tenant_id attribute defaults to 'default'."""
+    def test_get_zone_id_without_zone_id_attribute(self):
+        """Test that missing zone_id attribute defaults to 'default'."""
 
-        # Use a simple object without tenant_id attribute
+        # Use a simple object without zone_id attribute
         class SimpleContext:
             pass
 
         context = SimpleContext()
-        result = get_tenant_id(context)
+        result = get_zone_id(context)
         assert result == "default"
 
-    def test_get_tenant_id_with_none_context(self):
+    def test_get_zone_id_with_none_context(self):
         """Test that None context defaults to 'default'."""
-        result = get_tenant_id(None)
+        result = get_zone_id(None)
         assert result == "default"
 
-    def test_get_tenant_id_with_empty_string(self):
-        """Test that empty string tenant_id defaults to 'default'."""
+    def test_get_zone_id_with_empty_string(self):
+        """Test that empty string zone_id defaults to 'default'."""
         context = Mock()
-        context.tenant_id = ""
+        context.zone_id = ""
 
-        result = get_tenant_id(context)
+        result = get_zone_id(context)
         assert result == "default"
 
 
@@ -286,25 +286,25 @@ class TestResolveSkillBasePath:
         """Test that user_id takes priority for skill base path."""
         context = Mock()
         context.user_id = "alice"
-        context.tenant_id = "acme"
+        context.zone_id = "acme"
 
         result = resolve_skill_base_path(context)
         assert result == "/skills/users/alice/"
 
-    def test_resolve_skill_base_path_with_tenant_id_only(self):
-        """Test that tenant_id is used when user_id is not available."""
+    def test_resolve_skill_base_path_with_zone_id_only(self):
+        """Test that zone_id is used when user_id is not available."""
         context = Mock()
         context.user_id = None
-        context.tenant_id = "acme"
+        context.zone_id = "acme"
 
         result = resolve_skill_base_path(context)
         assert result == "/skills/tenants/acme/"
 
     def test_resolve_skill_base_path_defaults_to_system(self):
-        """Test that system path is returned when no user_id or tenant_id."""
+        """Test that system path is returned when no user_id or zone_id."""
         context = Mock()
         context.user_id = None
-        context.tenant_id = None
+        context.zone_id = None
 
         result = resolve_skill_base_path(context)
         assert result == "/skills/system/"
@@ -315,22 +315,22 @@ class TestResolveSkillBasePath:
         assert result == "/skills/system/"
 
     def test_resolve_skill_base_path_without_user_id_attribute(self):
-        """Test that missing user_id attribute falls back to tenant_id."""
+        """Test that missing user_id attribute falls back to zone_id."""
 
-        # Use a simple object with only tenant_id
+        # Use a simple object with only zone_id
         class SimpleContext:
             def __init__(self):
-                self.tenant_id = "acme"
+                self.zone_id = "acme"
 
         context = SimpleContext()
         result = resolve_skill_base_path(context)
         assert result == "/skills/tenants/acme/"
 
-    def test_resolve_skill_base_path_user_id_overrides_tenant_id(self):
-        """Test that user_id takes priority even when tenant_id is present."""
+    def test_resolve_skill_base_path_user_id_overrides_zone_id(self):
+        """Test that user_id takes priority even when zone_id is present."""
         context = Mock()
         context.user_id = "bob"
-        context.tenant_id = "acme"
+        context.zone_id = "acme"
 
         result = resolve_skill_base_path(context)
         assert result == "/skills/users/bob/"

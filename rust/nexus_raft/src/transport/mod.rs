@@ -64,17 +64,36 @@ mod client;
 mod server;
 
 #[cfg(feature = "grpc")]
-pub use client::*;
+pub use client::{
+    AppendEntriesResponseLocal, ClientConfig, LogEntry, RaftClient, RaftClientPool,
+    VoteResponseLocal,
+};
 #[cfg(feature = "grpc")]
-pub use server::*;
+pub use server::{RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState};
 
 // Re-export generated types when grpc feature is enabled
 #[cfg(feature = "grpc")]
 pub mod proto {
     //! Generated protobuf types and gRPC services.
     //!
-    //! This module contains the Rust types generated from `proto/raft.proto`.
-    include!(concat!(env!("OUT_DIR"), "/nexus.raft.rs"));
+    //! This module contains the Rust types generated from proto files.
+    //! Structure mirrors the proto package hierarchy:
+    //!   - nexus::core - FileMetadata, PaginatedResult
+    //!   - nexus::raft - RaftService, commands, transport messages
+
+    /// Core types (FileMetadata, etc.)
+    pub mod nexus {
+        pub mod core {
+            include!(concat!(env!("OUT_DIR"), "/nexus.core.rs"));
+        }
+        pub mod raft {
+            include!(concat!(env!("OUT_DIR"), "/nexus.raft.rs"));
+        }
+    }
+
+    // Re-export for convenience
+    pub use nexus::core::*;
+    pub use nexus::raft::*;
 }
 
 /// Transport error types.

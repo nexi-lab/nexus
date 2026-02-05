@@ -89,19 +89,19 @@ class SkillImporter:
 
         Args:
             zip_data: ZIP file bytes
-            tier: Target tier (personal/tenant/system)
+            tier: Target tier (personal/zone/system)
             allow_overwrite: Allow overwriting existing skills
-            context: Operation context with user_id, tenant_id
+            context: Operation context with user_id, zone_id
 
         Returns:
             {
                 "imported_skills": ["skill-name"],
                 "skill_paths": [
-                    "/tenant:<tid>/user:<uid>/skill/<skill-name>/" for personal,
-                    "/tenant:<tid>/skill/<skill-name>/" for tenant,
-                    "/skill/<skill-name>/" for system
+                    "/zone/{tid}/user:{uid}/skill/{skill-name}/" for personal,
+                    "/zone/{tid}/skill/{skill-name}/" for zone,
+                    "/skill/{skill-name}/" for system
                 ],
-                "tier": "personal" | "tenant" | "system"
+                "tier": "personal" | "zone" | "system"
             }
 
         Raises:
@@ -360,33 +360,33 @@ class SkillImporter:
 
         Args:
             skill_name: Name of skill
-            tier: Target tier (personal/tenant/system)
-            context: Operation context with tenant_id and user_id
+            tier: Target tier (personal/zone/system)
+            context: Operation context with zone_id and user_id
 
         Returns:
             Target path string:
-            - personal: /tenant:<tid>/user:<uid>/skill/<skill_name>/
-            - tenant: /tenant:<tid>/skill/<skill_name>/
-            - system: /skill/<skill_name>/
+            - personal: /zone/{tid}/user:{uid}/skill/{skill_name}/
+            - zone: /zone/{tid}/skill/{skill_name}/
+            - system: /skill/{skill_name}/
         """
         if tier == "system":
             return f"/skill/{skill_name}/"
 
         if not context:
-            raise ValueError("Context required for personal/tenant tier skills")
+            raise ValueError("Context required for personal/zone tier skills")
 
-        tenant_id = context.tenant_id or "default"
+        zone_id = context.zone_id or "default"
 
         if tier == "personal":
-            # Personal: /tenant:<tid>/user:<uid>/skill/<skill_name>/
+            # Personal: /zone/{tid}/user:{uid}/skill/{skill_name}/
             user_id = context.user_id or getattr(context, "user", None)
             if not user_id:
                 raise ValueError("user_id required for personal tier skills")
-            return f"/tenant:{tenant_id}/user:{user_id}/skill/{skill_name}/"
+            return f"/zone/{zone_id}/user:{user_id}/skill/{skill_name}/"
 
-        if tier == "tenant":
-            # Tenant: /tenant:<tid>/skill/<skill_name>/
-            return f"/tenant:{tenant_id}/skill/{skill_name}/"
+        if tier == "zone":
+            # Zone: /zone/{tid}/skill/{skill_name}/
+            return f"/zone/{zone_id}/skill/{skill_name}/"
 
         # Legacy user tier support (for backward compatibility)
         if tier == "user":
@@ -395,7 +395,7 @@ class SkillImporter:
                 return f"/skills/users/{user_id}/{skill_name}/"
             return f"/skills/user/{skill_name}/"
 
-        raise ValueError(f"Unknown tier: {tier}. Must be 'personal', 'tenant', or 'system'")
+        raise ValueError(f"Unknown tier: {tier}. Must be 'personal', 'zone', or 'system'")
 
     def _find_skill_directory(self, extracted_path: Path, skill_name: str) -> Path | None:
         """Find skill directory in extracted ZIP.

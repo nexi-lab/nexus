@@ -45,7 +45,7 @@ def rebac() -> None:
 @click.argument("object_type", type=str)
 @click.argument("object_id", type=str)
 @click.option("--expires", type=str, default=None, help="Expiration time (ISO format)")
-# Note: --tenant-id is provided by @add_context_options decorator
+# Note: --zone-id is provided by @add_context_options decorator
 @click.option(
     "--subject-relation",
     type=str,
@@ -81,7 +81,7 @@ def rebac_create(
     """Create a relationship tuple.
 
     Creates a (subject, relation, object) tuple representing a relationship.
-    Supports multi-tenant isolation via --tenant-id or NEXUS_TENANT_ID env var.
+    Supports multi-zone isolation via --zone-id or NEXUS_ZONE_ID env var.
 
     Advanced Features:
         --subject-relation: Grant to entire groups (userset-as-subject)
@@ -92,8 +92,8 @@ def rebac_create(
         # Basic: Alice is member of eng-team
         nexus rebac create agent alice member-of group eng-team
 
-        # Multi-tenant: Eng-team owns file123
-        nexus rebac create group eng-team owner-of file file123 --tenant-id org_acme
+        # Multi-zone: Eng-team owns file123
+        nexus rebac create group eng-team owner-of file file123 --zone-id org_acme
 
         # Userset-as-subject: Grant all eng-team members editor access
         nexus rebac create group eng-team editor-of file readme.txt --subject-relation member
@@ -123,8 +123,8 @@ def rebac_create(
                 nx.close()
                 sys.exit(1)
 
-        # Get tenant_id from operation_context (set by @add_context_options)
-        tenant = operation_context.get("tenant")
+        # Get zone_id from operation_context (set by @add_context_options)
+        tenant = operation_context.get("zone")
 
         # Parse column_config JSON if provided
         column_config_dict = None
@@ -161,7 +161,7 @@ def rebac_create(
             relation=relation,
             object=(object_type, object_id),
             expires_at=expires_at,
-            tenant_id=tenant,
+            zone_id=tenant,
             column_config=column_config_dict,
             context=operation_context,
         )
@@ -180,7 +180,7 @@ def rebac_create(
         console.print(f"  Relation: [magenta]{relation}[/magenta]")
         console.print(f"  Object: [yellow]{object_type}:{object_id}[/yellow]")
         if tenant:
-            console.print(f"  Tenant: [blue]{tenant}[/blue]")
+            console.print(f"  Zone: [blue]{tenant}[/blue]")
         if expires_at:
             console.print(f"  Expires: [dim]{expires_at.isoformat()}[/dim]")
         if column_config_dict:
@@ -296,7 +296,7 @@ def rebac_list_cmd(
             table.add_column("Subject", style="yellow")
             table.add_column("Relation", style="magenta")
             table.add_column("Object", style="cyan")
-            table.add_column("Tenant", style="blue")
+            table.add_column("Zone", style="blue")
 
             for t in tuples:
                 # Format subject
@@ -317,7 +317,7 @@ def rebac_list_cmd(
                     subj,
                     t["relation"],
                     obj_str,
-                    t.get("tenant_id") or "-",
+                    t.get("zone_id") or "-",
                 )
 
             console.print(table)

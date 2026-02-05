@@ -44,7 +44,7 @@ class MockMemoryModel:
         parent_memory_id: str | None = None,
         child_memory_ids: str | None = None,
         is_archived: bool = False,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ):
         self.memory_id = memory_id
         self.embedding = json.dumps(embedding) if embedding else None
@@ -55,7 +55,7 @@ class MockMemoryModel:
         self.parent_memory_id = parent_memory_id
         self.child_memory_ids = child_memory_ids
         self.is_archived = is_archived
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
 
 
 def create_mock_memories(count: int = 5) -> list[MockMemoryModel]:
@@ -182,7 +182,7 @@ class TestHierarchicalMemoryManager:
         return HierarchicalMemoryManager(
             consolidation_engine=mock_consolidation_engine,
             session=mock_session,
-            tenant_id="test-tenant",
+            zone_id="test-zone",
         )
 
     def test_init(self, mock_consolidation_engine, mock_session):
@@ -190,12 +190,12 @@ class TestHierarchicalMemoryManager:
         manager = HierarchicalMemoryManager(
             consolidation_engine=mock_consolidation_engine,
             session=mock_session,
-            tenant_id="my-tenant",
+            zone_id="my-zone",
         )
 
         assert manager.engine == mock_consolidation_engine
         assert manager.session == mock_session
-        assert manager.tenant_id == "my-tenant"
+        assert manager.zone_id == "my-zone"
 
     @pytest.mark.asyncio
     async def test_build_hierarchy_no_memories(self, manager):
@@ -484,7 +484,7 @@ class TestBuildHierarchySyncWrapper:
                 consolidation_engine=engine,
                 session=session,
                 memories=memories,  # type: ignore
-                tenant_id="test",
+                zone_id="test",
             )
 
         assert result.total_memories == 2

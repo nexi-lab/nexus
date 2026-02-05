@@ -23,17 +23,17 @@ class StaticAPIKeyAuth(AuthProvider):
           "sk-alice-secret-key":
             subject_type: "user"
             subject_id: "alice"
-            tenant_id: "org_acme"  # Organization (metadata only)
+            zone_id: "org_acme"  # Organization (metadata only)
             is_admin: true
           "sk-agent-secret-key":
             subject_type: "agent"
             subject_id: "agent_claude_001"
-            tenant_id: "org_acme"
+            zone_id: "org_acme"
             is_admin: false
           "sk-service-backup-key":
             subject_type: "service"
             subject_id: "backup_service"
-            tenant_id: null  # System-level service
+            zone_id: null  # System-level service
             is_admin: true
 
     Security considerations:
@@ -51,7 +51,7 @@ class StaticAPIKeyAuth(AuthProvider):
                 {
                     "api-key-string": {
                         "user_id": "username",
-                        "tenant_id": "tenant" or None,
+                        "zone_id": "zone_name" or None,
                         "is_admin": bool,
                         "metadata": {}  # Optional
                     }
@@ -93,7 +93,7 @@ class StaticAPIKeyAuth(AuthProvider):
             authenticated=True,
             subject_type=subject_type,
             subject_id=subject_id,
-            tenant_id=user_info.get("tenant_id"),
+            zone_id=user_info.get("zone_id"),
             is_admin=user_info.get("is_admin", False),
             metadata=user_info.get("metadata"),
         )

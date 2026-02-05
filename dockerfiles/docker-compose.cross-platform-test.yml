@@ -1,110 +1,201 @@
-# Cross-Platform Integration Test Environment
+# Distributed Raft Consensus Test Environment
 # Usage: docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
 #
-# This setup enables testing distributed locks and events across:
-# - Windows host (pytest runner)
-# - Linux container (NexusFS node)
-# With shared PostgreSQL (SSOT) and Dragonfly (coordination)
+# This setup enables testing Raft consensus and distributed operations:
+# - 3-node Raft cluster (2 full members + 1 witness for cost-effective HA)
+# - Network partition simulation via `docker network disconnect`
+# - Leader election and failover testing
+# - Cross-zone coordination via Dragonfly
 #
-# Test Matrix (Issue #1141):
-# - Win holds lock -> Linux waits
-# - Linux holds lock -> Win waits
-# - Cross-platform atomic_update()
-# - startup_sync reconciliation
-# - Lock TTL expiry and crash recovery
-
-version: "3.8"
+# Test Scenarios:
+# - Raft leader election: stop raft-1, verify raft-2 becomes leader
+# - Network partition: disconnect raft-3 (witness), verify cluster still works
+# - Witness quorum: witness participates in voting but doesn't serve reads
+# - Cross-platform locks: Win/Linux/Mac nodes coordinate via Dragonfly
+#
+# Architecture:
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │  Raft Cluster (2 full + 1 witness)                          │
+#   │                                                             │
+#   │  ┌──────────┐   ┌──────────┐   ┌──────────┐               │
+#   │  │ raft-1   │   │ raft-2   │   │ raft-3   │               │
+#   │  │ (Leader) │◄─►│(Follower)│◄─►│(Witness) │               │
+#   │  │ sled+gRPC│   │ sled+gRPC│   │ log only │               │
+#   │  │ :2026    │   │ :2027    │   │ :2028    │               │
+#   │  └──────────┘   └──────────┘   └──────────┘               │
+#   └─────────────────────────────────────────────────────────────┘
+#                              │
+#                              ▼
+#   ┌─────────────────────────────────────────────────────────────┐
+#   │  Cross-Zone Coordination (Dragonfly)                        │
+#   │  - Cross-zone distributed locks                             │
+#   │  - Event pub/sub for file notifications                     │
+#   └─────────────────────────────────────────────────────────────┘
 
 services:
-  # PostgreSQL - Single Source of Truth (SSOT)
-  postgres:
-    image: postgres:17
-    container_name: nexus-test-postgres
+  # ==========================================================================
+  # Raft Node 1 - Initial Leader
+  # ==========================================================================
+  nexus-raft-1:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-server
+    container_name: nexus-raft-1
+    hostname: raft-1
     environment:
-      POSTGRES_USER: nexus
-      POSTGRES_PASSWORD: nexus_test_pass
-      POSTGRES_DB: nexus_test
+      - NEXUS_NODE_ID=1
+      - NEXUS_BIND_ADDR=0.0.0.0:2026
+      - NEXUS_DATA_DIR=/home/nexus/data
+      - RUST_LOG=info,nexus_raft=debug
     ports:
-      - "5432:5432"
+      - "2026:2026"  # gRPC for Raft
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - raft1_data:/home/nexus/data
+    networks:
+      - raft-network
+    depends_on:
+      dragonfly:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_test"]
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
       interval: 5s
-      timeout: 5s
-      retries: 5
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
-  # Dragonfly for Coordination (noeviction policy for locks)
-  dragonfly-coordination:
+  # ==========================================================================
+  # Raft Node 2 - Follower (can become Leader)
+  # ==========================================================================
+  nexus-raft-2:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-server
+    container_name: nexus-raft-2
+    hostname: raft-2
+    environment:
+      - NEXUS_NODE_ID=2
+      - NEXUS_BIND_ADDR=0.0.0.0:2026
+      - NEXUS_DATA_DIR=/home/nexus/data
+      - RUST_LOG=info,nexus_raft=debug
+    ports:
+      - "2027:2026"
+    volumes:
+      - raft2_data:/home/nexus/data
+    networks:
+      - raft-network
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ==========================================================================
+  # Raft Node 3 - Witness (votes but doesn't store state machine)
+  # ==========================================================================
+  nexus-raft-3:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-witness
+    container_name: nexus-raft-3
+    hostname: raft-3
+    environment:
+      - NEXUS_NODE_ID=3
+      - NEXUS_BIND_ADDR=0.0.0.0:2028
+      - NEXUS_DATA_DIR=/home/nexus/data
+      - RUST_LOG=info,nexus_raft=debug
+    ports:
+      - "2028:2028"
+    volumes:
+      - raft3_data:/home/nexus/data
+    networks:
+      - raft-network
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:2028/", "||", "exit", "0"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # ==========================================================================
+  # Dragonfly - Cross-Zone Coordination
+  # ==========================================================================
+  dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: nexus-test-dragonfly-coordination
-    command: dragonfly --maxmemory=512mb --proactor_threads=2 --logtostderr
+    container_name: nexus-dragonfly
+    hostname: dragonfly
+    command: >
+      dragonfly
+      --maxmemory=512mb
+      --proactor_threads=2
+      --logtostderr
+      --cache_mode=false
     ports:
       - "6379:6379"
     volumes:
-      - dragonfly_coordination_data:/data
+      - dragonfly_data:/data
+    networks:
+      - raft-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      interval: 3s
+      timeout: 3s
+      retries: 10
 
-  # Dragonfly for Cache (can use eviction, has PG backup)
-  dragonfly-cache:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: nexus-test-dragonfly-cache
-    command: dragonfly --maxmemory=512mb --proactor_threads=2 --logtostderr
-    ports:
-      - "6380:6379"
-    volumes:
-      - dragonfly_cache_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+# ==========================================================================
+# Networks
+# ==========================================================================
+networks:
+  raft-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+    # Enable manual IP assignment for partition simulation
+    # docker network disconnect raft-network nexus-raft-3
 
-  # Linux NexusFS Node (for cross-platform tests)
-  nexus-linux:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    container_name: nexus-test-linux
-    environment:
-      - NEXUS_DATABASE_URL=postgresql://nexus:nexus_test_pass@postgres:5432/nexus_test
-      - NEXUS_DRAGONFLY_COORDINATION_URL=redis://dragonfly-coordination:6379
-      - NEXUS_DRAGONFLY_CACHE_URL=redis://dragonfly-cache:6379
-      - NEXUS_HOST=0.0.0.0
-      - NEXUS_PORT=2026
-    ports:
-      - "2027:2026"  # Linux node on host port 2027
-    depends_on:
-      postgres:
-        condition: service_healthy
-      dragonfly-coordination:
-        condition: service_healthy
-      dragonfly-cache:
-        condition: service_healthy
-    volumes:
-      - nexus_linux_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
+# ==========================================================================
+# Volumes (persistent sled data for each node)
+# ==========================================================================
 volumes:
-  postgres_data:
-  dragonfly_coordination_data:
-  dragonfly_cache_data:
-  nexus_linux_data:
+  raft1_data:
+    name: nexus-raft1-data
+  raft2_data:
+    name: nexus-raft2-data
+  raft3_data:
+    name: nexus-raft3-data
+  dragonfly_data:
+    name: nexus-dragonfly-data
 
-# Windows host configuration (for pytest runner):
-# Set these environment variables on Windows:
-#   NEXUS_DATABASE_URL=postgresql://nexus:nexus_test_pass@localhost:5432/nexus_test
-#   NEXUS_DRAGONFLY_COORDINATION_URL=redis://localhost:6379
-#   NEXUS_DRAGONFLY_CACHE_URL=redis://localhost:6380
+# ==========================================================================
+# Test Commands
+# ==========================================================================
 #
-# Then run tests:
-#   pytest tests/integration/test_distributed_lock_cross_platform.py -v
-#   pytest tests/integration/test_startup_sync.py -v
+# Start cluster:
+#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#
+# View logs:
+#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
+#
+# Simulate leader failure (test failover):
+#   docker stop nexus-raft-1
+#   # raft-2 should become leader within election timeout
+#
+# Simulate network partition:
+#   docker network disconnect raft-network nexus-raft-3
+#   # Cluster should still work (2/3 quorum)
+#   docker network connect raft-network nexus-raft-3
+#   # Node rejoins and syncs
+#
+# Run integration tests from host:
+#   export NEXUS_RAFT_ENDPOINTS=localhost:2026,localhost:2027,localhost:2028
+#   pytest tests/integration/test_raft_distributed.py -v
+#
+# Cleanup:
+#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v

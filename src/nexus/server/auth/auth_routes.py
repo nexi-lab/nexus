@@ -167,15 +167,15 @@ class OAuthConfirmRequest(BaseModel):
     """OAuth confirmation request."""
 
     pending_token: str = Field(..., description="Pending token from OAuth check")
-    tenant_name: str | None = Field(None, description="Optional tenant name for new user")
-    tenant_slug: str | None = Field(None, description="Optional tenant slug for new user")
+    zone_name: str | None = Field(None, description="Optional zone name for new user")
+    zone_slug: str | None = Field(None, description="Optional zone slug for new user")
 
 
-class TenantSetupRequest(BaseModel):
-    """Tenant setup request for password users."""
+class ZoneSetupRequest(BaseModel):
+    """Zone setup request for password users."""
 
-    tenant_name: str | None = Field(None, description="Optional tenant name")
-    tenant_slug: str | None = Field(None, description="Optional tenant slug")
+    zone_name: str | None = Field(None, description="Optional zone name")
+    zone_slug: str | None = Field(None, description="Optional zone slug")
 
 
 class UserResponse(BaseModel):
@@ -244,7 +244,7 @@ class OAuthCheckResponseExisting(BaseModel):
     user: UserResponse
     is_new_user: bool
     api_key: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     message: str = "OAuth authentication successful"
 
 
@@ -254,7 +254,7 @@ class OAuthCheckResponseNew(BaseModel):
     needs_confirmation: bool = True
     pending_token: str
     user_info: dict[str, Any]
-    tenant_info: dict[str, Any]
+    zone_info: dict[str, Any]
     message: str = "Please confirm your account details"
 
 
@@ -265,17 +265,17 @@ class OAuthConfirmResponse(BaseModel):
     user: UserResponse
     is_new_user: bool
     api_key: str | None = None
-    tenant_id: str | None = None
+    zone_id: str | None = None
     message: str = "OAuth authentication confirmed"
 
 
-class TenantSetupResponse(BaseModel):
-    """Tenant setup response."""
+class ZoneSetupResponse(BaseModel):
+    """Zone setup response."""
 
     user: UserResponse
     api_key: str
-    tenant_id: str
-    message: str = "Tenant created successfully"
+    zone_id: str
+    message: str = "Zone created successfully"
 
 
 # ==============================================================================
@@ -310,8 +310,8 @@ async def register(
             display_name=request.display_name,
         )
 
-        # Don't create API key yet - user needs to create tenant first
-        # Frontend will redirect to tenant creation page, then user can create API key
+        # Don't create API key yet - user needs to create zone first
+        # Frontend will redirect to zone creation page, then user can create API key
         api_key = None
 
         # User email should never be None after registration
@@ -356,7 +356,7 @@ async def login(
         assert user.email is not None, "User email cannot be None after login"
 
         # Try to retrieve encrypted API key for returning users
-        # If user has already created tenant, they'll have an encrypted API key stored
+        # If user has already created zone, they'll have an encrypted API key stored
         api_key = None
         oauth_provider = get_oauth_provider()
 
@@ -416,29 +416,29 @@ async def login(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e)) from e
 
 
-@router.post("/setup-tenant", response_model=TenantSetupResponse)
-async def setup_tenant(
-    request: TenantSetupRequest,
+@router.post("/setup-zone", response_model=ZoneSetupResponse)
+async def setup_zone(
+    request: ZoneSetupRequest,
     user_info: tuple[str, str] = Depends(get_authenticated_user),
     auth: DatabaseLocalAuth = Depends(get_auth_provider),
-) -> TenantSetupResponse:
-    """Create tenant and API key for password-authenticated users.
+) -> ZoneSetupResponse:
+    """Create zone and API key for password-authenticated users.
 
     This endpoint is for password users who have already registered and logged in
-    but don't have a tenant yet. It creates a tenant and generates an API key.
+    but don't have a zone yet. It creates a zone and generates an API key.
 
     Args:
-        request: Tenant setup request with optional tenant_name and tenant_slug
+        request: Zone setup request with optional zone_name and zone_slug
         user_info: Authenticated user information from JWT token
         auth: Authentication provider
 
     Returns:
-        User information, API key, and tenant_id
+        User information, API key, and zone_id
 
     Raises:
         401: Not authenticated or invalid token
         400: Invalid request data
-        500: Server error during tenant creation
+        500: Server error during zone creation
     """
     user_id, email = user_info
 
@@ -457,9 +457,9 @@ async def setup_tenant(
                 )
 
             if not user.email:
-                raise ValueError("User email is required for tenant setup")
+                raise ValueError("User email is required for zone setup")
 
-            # Generate tenant_id based on email type
+            # Generate zone_id based on email type
             # For personal emails (gmail, outlook, etc): use username
             # For work emails: use full domain (e.g., multifi.ai)
             email_username, email_domain = (
@@ -476,23 +476,23 @@ async def setup_tenant(
             ]
             is_personal = email_domain.lower() in personal_domains
 
-            # Calculate default tenant_id and name
+            # Calculate default zone_id and name
             if is_personal:
-                default_tenant_id = email_username
+                default_zone_id = email_username
                 first_name = (
                     user.display_name.split()[0]
                     if user.display_name
                     else email_username.capitalize()
                 )
-                default_tenant_name = f"{first_name}'s Org"
+                default_zone_name = f"{first_name}'s Org"
             else:
-                # Remove dots from domain for tenant_id (e.g., multifi.ai -> multifiai)
-                default_tenant_id = email_domain.replace(".", "")
-                default_tenant_name = email_domain
+                # Remove dots from domain for zone_id (e.g., multifi.ai -> multifiai)
+                default_zone_id = email_domain.replace(".", "")
+                default_zone_name = email_domain
 
-            # Use custom tenant_slug and tenant_name from request if provided
-            tenant_id = request.tenant_slug if request.tenant_slug else default_tenant_id
-            tenant_name = request.tenant_name if request.tenant_name else default_tenant_name
+            # Use custom zone_slug and zone_name from request if provided
+            zone_id = request.zone_slug if request.zone_slug else default_zone_id
+            zone_name = request.zone_name if request.zone_name else default_zone_name
 
             # Make user detached so we can access it after session closes
             session.expunge(user)
@@ -514,7 +514,7 @@ async def setup_tenant(
             admin_context = OperationContext(
                 user="system",
                 groups=[],
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 is_admin=True,
             )
 
@@ -523,8 +523,8 @@ async def setup_tenant(
                 user_id=user_id,
                 email=user.email,
                 display_name=user.display_name,
-                tenant_id=tenant_id,
-                tenant_name=tenant_name,
+                zone_id=zone_id,
+                zone_name=zone_name,
                 create_api_key=True,
                 api_key_name="Password Auth Auto-generated Key",
                 api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
@@ -578,7 +578,7 @@ async def setup_tenant(
             logger.error(f"Failed to encrypt and store API key: {e}")
             # Don't fail the request - user still got the API key, just can't retrieve it later
 
-        return TenantSetupResponse(
+        return ZoneSetupResponse(
             user=UserResponse(
                 user_id=user.user_id,
                 email=user.email,
@@ -589,17 +589,17 @@ async def setup_tenant(
                 primary_auth_method=user.primary_auth_method,
             ),
             api_key=api_key_value,
-            tenant_id=tenant_id,
-            message="Tenant created successfully",
+            zone_id=zone_id,
+            message="Zone created successfully",
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Tenant setup failed: {e}")
+        logger.error(f"Zone setup failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tenant setup failed: {e}",
+            detail=f"Zone setup failed: {e}",
         ) from e
 
 
@@ -859,13 +859,13 @@ async def oauth_check(
                 user_info_dict = {
                     "subject_type": "user",
                     "subject_id": user.user_id,
-                    "tenant_id": None,
+                    "zone_id": None,
                     "is_admin": user.is_global_admin == 1,
                     "name": user.display_name or user.username or user.email,
                 }
                 token = oauth_provider.local_auth.create_token(user.email, user_info_dict)
 
-                # Generate tenant_id based on email type
+                # Generate zone_id based on email type
                 # For personal emails (gmail, outlook, etc): use username
                 # For work emails: use full domain (e.g., multifi.ai)
                 if user.email:
@@ -882,13 +882,13 @@ async def oauth_check(
                         "protonmail.com",
                     ]
                     if email_domain.lower() in personal_domains:
-                        tenant_id = email_username  # Use username for personal emails (e.g., "joe")
+                        zone_id = email_username  # Use username for personal emails (e.g., "joe")
                     else:
-                        tenant_id = (
+                        zone_id = (
                             email_domain  # Use full domain for work emails (e.g., "multifi.ai")
                         )
                 else:
-                    tenant_id = f"user_{user.user_id[:8]}"
+                    zone_id = f"user_{user.user_id[:8]}"
 
                 # Try to retrieve encrypted API key from oauth_api_keys table
                 from nexus.storage.models import OAuthAPIKeyModel
@@ -932,12 +932,12 @@ async def oauth_check(
                 # Only create a NEW API key if user has NO oauth_api_keys entries at all
                 # (First OAuth login for this user)
                 if not oauth_api_keys:
-                    # Create new API key (90 days expiry) with proper tenant_id
+                    # Create new API key (90 days expiry) with proper zone_id
                     key_id, api_key_value = DatabaseAPIKeyAuth.create_key(
                         session,
                         user_id=user.user_id,
                         name="OAuth Auto-generated Key",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=user.is_global_admin == 1,
                         expires_at=datetime.now(UTC) + timedelta(days=90),
                     )
@@ -974,7 +974,7 @@ async def oauth_check(
                     ),
                     is_new_user=False,
                     api_key=api_key_value,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
 
             # Check if email already exists (can auto-link if both verified)
@@ -984,7 +984,7 @@ async def oauth_check(
 
             if existing_user and existing_user.email_verified == 1:
                 # Email verified on both sides - auto-link and login
-                # Note: Existing users will go through frontend tenant creation flow
+                # Note: Existing users will go through frontend zone creation flow
                 user, token = await oauth_provider.handle_google_callback(
                     code=request.code, _state=request.state, redirect_uri=request.redirect_uri
                 )
@@ -1004,8 +1004,8 @@ async def oauth_check(
                         primary_auth_method="oauth",
                     ),
                     is_new_user=False,
-                    api_key=None,  # Frontend will guide through tenant creation
-                    tenant_id=None,  # Frontend will create tenant via UX
+                    api_key=None,  # Frontend will guide through zone creation
+                    zone_id=None,  # Frontend will create zone via UX
                 )
 
         # New user - create pending registration with OAuth credential
@@ -1020,7 +1020,7 @@ async def oauth_check(
             oauth_credential=oauth_credential,  # Store the credential, not the code
         )
 
-        # Calculate smart tenant_id and tenant_name for preview
+        # Calculate smart zone_id and zone_name for preview
         if provider_email:
             email_username, email_domain = (
                 provider_email.split("@") if "@" in provider_email else (provider_email, "")
@@ -1036,19 +1036,19 @@ async def oauth_check(
             ]
             is_personal = email_domain.lower() in personal_domains
 
-            # Calculate proposed tenant_id and name
+            # Calculate proposed zone_id and name
             if is_personal:
-                proposed_tenant_id = email_username
+                proposed_zone_id = email_username
                 first_name = name.split()[0] if name else email_username.capitalize()
-                proposed_tenant_name = f"{first_name}'s Org"
+                proposed_zone_name = f"{first_name}'s Org"
             else:
-                # Remove dots from domain for tenant_id (e.g., multifi.ai -> multifiai)
-                proposed_tenant_id = email_domain.replace(".", "")
-                proposed_tenant_name = email_domain
+                # Remove dots from domain for zone_id (e.g., multifi.ai -> multifiai)
+                proposed_zone_id = email_domain.replace(".", "")
+                proposed_zone_name = email_domain
         else:
             is_personal = True
-            proposed_tenant_id = ""
-            proposed_tenant_name = ""
+            proposed_zone_id = ""
+            proposed_zone_name = ""
 
         return OAuthCheckResponseNew(
             needs_confirmation=True,
@@ -1060,9 +1060,9 @@ async def oauth_check(
                 "oauth_provider": "google",
                 "email_verified": email_verified,
             },
-            tenant_info={
-                "tenant_id": proposed_tenant_id,
-                "name": proposed_tenant_name,
+            zone_info={
+                "zone_id": proposed_zone_id,
+                "name": proposed_zone_name,
                 "domain": email_domain if provider_email else None,
                 "description": None,
                 "is_personal": is_personal,
@@ -1139,7 +1139,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     raise ValueError("Existing user email is required")
                 # User exists but not linked to OAuth - auto-link them
                 user_id = existing_user.user_id
-                tenant_id = "default"  # Use their existing tenant
+                zone_id = "default"  # Use their existing zone
 
                 with session.begin():
                     # Create OAuth account link
@@ -1159,7 +1159,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                         session,
                         user_id=user_id,
                         name="OAuth Auto-generated Key",
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=existing_user.is_global_admin == 1,
                         expires_at=datetime.now(UTC) + timedelta(days=90),
                     )
@@ -1167,7 +1167,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 user_info_dict = {
                     "subject_type": "user",
                     "subject_id": user_id,
-                    "tenant_id": tenant_id,
+                    "zone_id": zone_id,
                     "is_admin": existing_user.is_global_admin == 1,
                     "name": existing_user.display_name
                     or existing_user.username
@@ -1192,14 +1192,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     ),
                     is_new_user=False,
                     api_key=api_key_value,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     message="OAuth linked to existing account",
                 )
 
-        # New user - create tenant, user, and OAuth account
+        # New user - create zone, user, and OAuth account
         user_id = str(uuid.uuid4())
 
-        # Generate tenant_id based on email type (same logic as existing users)
+        # Generate zone_id based on email type (same logic as existing users)
         # For personal emails: use username, for work emails: use full domain
         if registration.provider_email:
             email_username, email_domain = (
@@ -1217,11 +1217,11 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 "protonmail.com",
             ]
             # Use email username for personal domains, domain for org domains
-            default_tenant_id = (
+            default_zone_id = (
                 email_username if email_domain.lower() in personal_domains else email_domain
             )
 
-            # Calculate smart tenant name based on email type
+            # Calculate smart zone name based on email type
             if email_domain.lower() in personal_domains:
                 # Personal: extract first name from display_name
                 first_name = (
@@ -1229,17 +1229,17 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     if registration.name
                     else email_username.capitalize()
                 )
-                default_tenant_name = f"{first_name}'s Org"
+                default_zone_name = f"{first_name}'s Org"
             else:
                 # Work: use domain
-                default_tenant_name = email_domain
+                default_zone_name = email_domain
         else:
-            default_tenant_id = f"user_{user_id[:8]}"
-            default_tenant_name = f"User {user_id[:8]} Organization"
+            default_zone_id = f"user_{user_id[:8]}"
+            default_zone_name = f"User {user_id[:8]} Organization"
 
-        # Use custom tenant_slug and tenant_name from frontend if provided, otherwise use defaults
-        tenant_id = request.tenant_slug if request.tenant_slug else default_tenant_id
-        tenant_name = request.tenant_name if request.tenant_name else default_tenant_name
+        # Use custom zone_slug and zone_name from frontend if provided, otherwise use defaults
+        zone_id = request.zone_slug if request.zone_slug else default_zone_id
+        zone_name = request.zone_name if request.zone_name else default_zone_name
 
         # Ensure provider email exists for new user creation
         if not registration.provider_email:
@@ -1295,7 +1295,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                 admin_context = OperationContext(
                     user="system",
                     groups=[],
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     is_admin=True,
                 )
 
@@ -1304,8 +1304,8 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     user_id=user_id,
                     email=user.email,
                     display_name=user.display_name,
-                    tenant_id=tenant_id,
-                    tenant_name=tenant_name,
+                    zone_id=zone_id,
+                    zone_name=zone_name,
                     create_api_key=True,
                     api_key_name="OAuth Auto-generated Key",
                     api_key_expires_at=datetime.now(UTC) + timedelta(days=90),
@@ -1352,14 +1352,14 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         user_info_dict = {
             "subject_type": "user",
             "subject_id": user.user_id,
-            "tenant_id": tenant_id,
+            "zone_id": zone_id,
             "is_admin": False,
             "name": user.display_name or user.username or user.email,
         }
         token = oauth_provider.local_auth.create_token(user.email, user_info_dict)
 
         logger.info(
-            f"OAuth registration confirmed: {registration.provider_email} (user_id={user_id}, tenant={tenant_id})"
+            f"OAuth registration confirmed: {registration.provider_email} (user_id={user_id}, zone={zone_id})"
         )
 
         return OAuthConfirmResponse(
@@ -1375,7 +1375,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
             ),
             is_new_user=True,
             api_key=api_key_value,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             message="OAuth authentication confirmed and account created",
         )
     except HTTPException:

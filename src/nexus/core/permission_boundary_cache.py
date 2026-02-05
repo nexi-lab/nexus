@@ -53,7 +53,7 @@ class PermissionBoundaryCache:
     Thread-safe implementation using TTLCache with automatic expiration.
 
     Key structure:
-        Primary key: (tenant_id, subject_type, subject_id, permission)
+        Primary key: (zone_id, subject_type, subject_id, permission)
         Value: dict[path → boundary_path]
 
     Example:
@@ -107,7 +107,7 @@ class PermissionBoundaryCache:
 
     def get_boundary(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         permission: str,
@@ -118,7 +118,7 @@ class PermissionBoundaryCache:
         Checks if there's a cached boundary for this path or any ancestor.
 
         Args:
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             subject_type: Type of subject (e.g., "user", "agent")
             subject_id: Subject identifier
             permission: Permission type (e.g., "read", "write")
@@ -127,7 +127,7 @@ class PermissionBoundaryCache:
         Returns:
             Boundary path if found (e.g., "/workspace/"), None if not cached
         """
-        key = (tenant_id or "default", subject_type, subject_id, permission)
+        key = (zone_id or "default", subject_type, subject_id, permission)
         normalized_path = self._normalize_path(path)
 
         with self._lock:
@@ -185,7 +185,7 @@ class PermissionBoundaryCache:
 
     def set_boundary(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         permission: str,
@@ -195,14 +195,14 @@ class PermissionBoundaryCache:
         """Cache the boundary for this path.
 
         Args:
-            tenant_id: Tenant ID for multi-tenant isolation
+            zone_id: Zone ID for multi-zone isolation
             subject_type: Type of subject (e.g., "user", "agent")
             subject_id: Subject identifier
             permission: Permission type (e.g., "read", "write")
             path: File path that was checked
             boundary_path: The ancestor path where grant was found
         """
-        key = (tenant_id or "default", subject_type, subject_id, permission)
+        key = (zone_id or "default", subject_type, subject_id, permission)
         normalized_path = self._normalize_path(path)
         normalized_boundary = self._normalize_path(boundary_path)
 
@@ -228,7 +228,7 @@ class PermissionBoundaryCache:
 
     def invalidate_subject(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
     ) -> int:
@@ -237,14 +237,14 @@ class PermissionBoundaryCache:
         Called when a subject's permissions are modified (grant/revoke).
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Type of subject
             subject_id: Subject identifier
 
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = tenant_id or "default"
+        effective_tenant = zone_id or "default"
         count = 0
 
         with self._lock:
@@ -273,7 +273,7 @@ class PermissionBoundaryCache:
 
     def invalidate_path_prefix(
         self,
-        tenant_id: str,
+        zone_id: str,
         path_prefix: str,
     ) -> int:
         """Invalidate boundaries under a path (permission grant changed).
@@ -284,13 +284,13 @@ class PermissionBoundaryCache:
         2. Point to the path_prefix (dependents)
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             path_prefix: Path where permission changed (e.g., "/workspace/")
 
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = tenant_id or "default"
+        effective_tenant = zone_id or "default"
         # Normalize path prefix for consistent matching
         normalized_prefix = path_prefix.rstrip("/")
         if not normalized_prefix:
@@ -339,7 +339,7 @@ class PermissionBoundaryCache:
 
     def invalidate_permission_change(
         self,
-        tenant_id: str,
+        zone_id: str,
         subject_type: str,
         subject_id: str,
         permission: str,
@@ -351,7 +351,7 @@ class PermissionBoundaryCache:
         Used when we know exactly which permission changed.
 
         Args:
-            tenant_id: Tenant ID
+            zone_id: Zone ID
             subject_type: Type of subject
             subject_id: Subject identifier
             permission: Permission that changed
@@ -360,7 +360,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_tenant = tenant_id or "default"
+        effective_tenant = zone_id or "default"
         key = (effective_tenant, subject_type, subject_id, permission)
         normalized_path = object_path.rstrip("/") or "/"
         count = 0

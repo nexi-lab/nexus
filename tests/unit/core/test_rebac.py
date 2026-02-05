@@ -600,75 +600,75 @@ def test_max_depth_limit(rebac_manager):
     assert result is False
 
 
-def test_cross_tenant_relationship_blocked(rebac_manager):
-    """Test that cross-tenant relationships are blocked (tenant isolation security).
+def test_cross_zone_relationship_blocked(rebac_manager):
+    """Test that cross-zone relationships are blocked (zone isolation security).
 
-    SECURITY: This test verifies the fix for the tenant isolation bypass vulnerability
-    where validation could be bypassed by passing None for tenant IDs.
+    SECURITY: This test verifies the fix for the zone isolation bypass vulnerability
+    where validation could be bypassed by passing None for zone IDs.
     """
-    # Try to create cross-tenant relationship with mismatched subject_tenant_id
-    with pytest.raises(ValueError, match="Cross-tenant relationship not allowed.*subject tenant"):
+    # Try to create cross-zone relationship with mismatched subject_zone_id
+    with pytest.raises(ValueError, match="Cross-zone relationship not allowed.*subject zone"):
         rebac_manager.rebac_write(
             subject=("user", "alice"),
             relation="viewer",
             object=("file", "doc1"),
-            tenant_id="tenant_a",
-            subject_tenant_id="tenant_b",  # Mismatch!
-            object_tenant_id="tenant_a",
+            zone_id="zone_a",
+            subject_zone_id="zone_b",  # Mismatch!
+            object_zone_id="zone_a",
         )
 
-    # Try to create cross-tenant relationship with mismatched object_tenant_id
-    with pytest.raises(ValueError, match="Cross-tenant relationship not allowed.*object tenant"):
+    # Try to create cross-zone relationship with mismatched object_zone_id
+    with pytest.raises(ValueError, match="Cross-zone relationship not allowed.*object zone"):
         rebac_manager.rebac_write(
             subject=("user", "alice"),
             relation="viewer",
             object=("file", "doc1"),
-            tenant_id="tenant_a",
-            subject_tenant_id="tenant_a",
-            object_tenant_id="tenant_b",  # Mismatch!
+            zone_id="zone_a",
+            subject_zone_id="zone_a",
+            object_zone_id="zone_b",  # Mismatch!
         )
 
 
-def test_cross_tenant_validation_with_none_tenant_ids(rebac_manager):
-    """Test that providing None for tenant IDs doesn't bypass validation.
+def test_cross_zone_validation_with_none_zone_ids(rebac_manager):
+    """Test that providing None for zone IDs doesn't bypass validation.
 
     SECURITY: This tests the fix for CVE-like vulnerability where None could bypass
     the "if A and B and C" validation logic.
     """
-    # Create a tuple with tenant_id but None for subject_tenant_id
-    # This should be ALLOWED (no validation when subject_tenant_id is None)
+    # Create a tuple with zone_id but None for subject_zone_id
+    # This should be ALLOWED (no validation when subject_zone_id is None)
     tuple_id = rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="viewer",
         object=("file", "doc1"),
-        tenant_id="tenant_a",
-        subject_tenant_id=None,  # No subject tenant validation
-        object_tenant_id="tenant_a",
+        zone_id="zone_a",
+        subject_zone_id=None,  # No subject zone validation
+        object_zone_id="zone_a",
     )
     assert tuple_id is not None
 
-    # If we later provide a mismatched tenant, it should be blocked
-    with pytest.raises(ValueError, match="Cross-tenant relationship"):
+    # If we later provide a mismatched zone, it should be blocked
+    with pytest.raises(ValueError, match="Cross-zone relationship"):
         rebac_manager.rebac_write(
             subject=("user", "bob"),
             relation="viewer",
             object=("file", "doc2"),
-            tenant_id="tenant_a",
-            subject_tenant_id="tenant_b",  # This MUST be validated and blocked
-            object_tenant_id="tenant_a",
+            zone_id="zone_a",
+            subject_zone_id="zone_b",  # This MUST be validated and blocked
+            object_zone_id="zone_a",
         )
 
 
-def test_same_tenant_relationships_allowed(rebac_manager):
-    """Test that same-tenant relationships are allowed."""
-    # Create relationship with matching tenant IDs - should succeed
+def test_same_zone_relationships_allowed(rebac_manager):
+    """Test that same-zone relationships are allowed."""
+    # Create relationship with matching zone IDs - should succeed
     tuple_id = rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="direct_editor",
         object=("file", "doc1"),
-        tenant_id="tenant_a",
-        subject_tenant_id="tenant_a",
-        object_tenant_id="tenant_a",
+        zone_id="zone_a",
+        subject_zone_id="zone_a",
+        object_zone_id="zone_a",
     )
     assert tuple_id is not None
 
@@ -678,7 +678,7 @@ def test_same_tenant_relationships_allowed(rebac_manager):
         subject=("user", "alice"),
         permission="editor",
         object=("file", "doc1"),
-        tenant_id="tenant_a",
+        zone_id="zone_a",
     )
     assert result is True
 
@@ -690,8 +690,8 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     inherited by group members through tupleToUserset traversal.
 
     Scenario (from Issue #338):
-    - user 'joe' is a member of group 'tenant_users'
-    - file '/workspace/shared' has group 'tenant_users' as direct_editor
+    - user 'joe' is a member of group 'zone_users'
+    - file '/workspace/shared' has group 'zone_users' as direct_editor
     - user 'joe' should inherit write permission on the file
 
     This tests the fix for Issue #338 where group membership was not being
@@ -702,28 +702,28 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     This allows _find_related_objects to find groups that have editor permission.
     """
     # Step 1: Create group membership relationships
-    # [user, joe] --[member]--> [group, tenant_users]
+    # [user, joe] --[member]--> [group, zone_users]
     joe_membership_id = rebac_manager.rebac_write(
         subject=("user", "joe"),
         relation="member",
-        object=("group", "tenant_users"),
+        object=("group", "zone_users"),
     )
 
     # Also add alice to the group for later testing
     rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="member",
-        object=("group", "tenant_users"),
+        object=("group", "zone_users"),
     )
 
     # Step 2: Grant group permission on file
     # For tupleToUserset to work correctly, we need:
-    # [file, /workspace/shared] --[direct_editor]--> [group, tenant_users]
+    # [file, /workspace/shared] --[direct_editor]--> [group, zone_users]
     # This way, _find_related_objects(file, "direct_editor") will find the group
     rebac_manager.rebac_write(
         subject=("file", "/workspace/shared"),
         relation="direct_editor",
-        object=("group", "tenant_users"),
+        object=("group", "zone_users"),
     )
 
     # Step 3: Verify user inherits write permission via group membership
@@ -754,7 +754,7 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     rebac_manager.rebac_write(
         subject=("file", "/workspace/public"),
         relation="direct_viewer",
-        object=("group", "tenant_users"),
+        object=("group", "zone_users"),
     )
 
     result = rebac_manager.rebac_check(
@@ -776,7 +776,7 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     rebac_manager.rebac_write(
         subject=("file", "/workspace/owned"),
         relation="direct_owner",
-        object=("group", "tenant_users"),
+        object=("group", "zone_users"),
     )
 
     # Owner should have all permissions
@@ -802,7 +802,7 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     assert result is True, "User should inherit read permission via group owner role"
 
     # Step 8: Test permission revocation when removing group membership
-    # Remove joe from the tenant_users group
+    # Remove joe from the zone_users group
     result = rebac_manager.rebac_delete(joe_membership_id)
     assert result is True, "Should successfully delete joe's group membership"
 
@@ -969,26 +969,26 @@ def test_list_objects_direct_permission(enhanced_rebac_manager):
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/workspace/file1.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
     enhanced_rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/workspace/file2.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
     enhanced_rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="direct_viewer",
         object=("file", "/workspace/file3.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
     # Bob has access to different file
     enhanced_rebac_manager.rebac_write(
         subject=("user", "bob"),
         relation="direct_owner",
         object=("file", "/workspace/bob_file.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # List objects alice can read
@@ -996,7 +996,7 @@ def test_list_objects_direct_permission(enhanced_rebac_manager):
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Alice should see her 3 files but not bob's
@@ -1014,19 +1014,19 @@ def test_list_objects_with_path_prefix(enhanced_rebac_manager):
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/workspace/project1/file.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
     enhanced_rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/workspace/project2/file.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
     enhanced_rebac_manager.rebac_write(
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/shared/doc.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # List only files in /workspace/project1/
@@ -1034,7 +1034,7 @@ def test_list_objects_with_path_prefix(enhanced_rebac_manager):
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         path_prefix="/workspace/project1/",
     )
 
@@ -1051,7 +1051,7 @@ def test_list_objects_pagination(enhanced_rebac_manager):
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", f"/workspace/file{i:02d}.txt"),
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
 
     # Get first page (5 items)
@@ -1059,7 +1059,7 @@ def test_list_objects_pagination(enhanced_rebac_manager):
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         limit=5,
         offset=0,
     )
@@ -1070,7 +1070,7 @@ def test_list_objects_pagination(enhanced_rebac_manager):
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         limit=5,
         offset=5,
     )
@@ -1093,7 +1093,7 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
         subject=("user", "alice"),
         relation="member",
         object=("group", "developers"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Developers group members have access to project files
@@ -1102,7 +1102,7 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
         subject=("group", "developers", "member"),
         relation="direct_viewer",
         object=("file", "/workspace/project/code.py"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Alice also has direct access to her personal file
@@ -1110,7 +1110,7 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
         subject=("user", "alice"),
         relation="direct_owner",
         object=("file", "/workspace/alice/notes.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # List all objects alice can read
@@ -1118,7 +1118,7 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     object_ids = [obj_id for _, obj_id in objects]
@@ -1134,7 +1134,7 @@ def test_list_objects_empty_result(enhanced_rebac_manager):
         subject=("user", "charlie"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     assert len(objects) == 0
@@ -1148,14 +1148,14 @@ def test_list_objects_sorted_by_path(enhanced_rebac_manager):
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", path),
-            tenant_id="test_tenant",
+            zone_id="test_zone",
         )
 
     objects = enhanced_rebac_manager.rebac_list_objects(
         subject=("user", "alice"),
         permission="read",
         object_type="file",
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     object_ids = [obj_id for _, obj_id in objects]

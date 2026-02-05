@@ -14,7 +14,7 @@ A PostgreSQL-based content caching layer for Nexus connectors (GCS, X/Twitter, G
 | **Sync mode** | On-demand | No auto-sync; call `connector.sync()` explicitly |
 | **Indexing** | During sync | Embeddings generated when sync() called, not auto on file change |
 | **Version checking** | Writes only | Optimistic locking for write operations |
-| **Multi-tenancy** | Filtering | `tenant_id` column with WHERE clause (same as existing tables) |
+| **Multi-tenancy** | Filtering | `zone_id` column with WHERE clause (same as existing tables) |
 
 ## What Changes
 
@@ -64,7 +64,7 @@ CREATE TABLE content_cache (
 
     -- References
     path_id UUID NOT NULL REFERENCES file_paths(path_id) ON DELETE CASCADE,
-    tenant_id VARCHAR(255),
+    zone_id VARCHAR(255),
 
     -- Content
     content_text TEXT,              -- Searchable text (parsed or raw)
@@ -96,7 +96,7 @@ CREATE TABLE content_cache (
 );
 
 -- Indexes
-CREATE INDEX idx_content_cache_tenant ON content_cache(tenant_id);
+CREATE INDEX idx_content_cache_tenant ON content_cache(zone_id);
 CREATE INDEX idx_content_cache_stale ON content_cache(stale) WHERE stale = TRUE;
 ```
 

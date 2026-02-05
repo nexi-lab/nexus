@@ -10,7 +10,7 @@ Example:
 
     # Create subscription
     sub = await manager.create(
-        tenant_id="acme",
+        zone_id="acme",
         url="https://my-app.com/webhooks/nexus",
         event_types=["file_write", "file_delete"],
         patterns=["/workspace/**/*"],
@@ -21,7 +21,7 @@ Example:
     await manager.broadcast(
         event_type="file_write",
         data={"file_path": "/workspace/doc.txt", ...},
-        tenant_id="acme"
+        zone_id="acme"
     )
 """
 

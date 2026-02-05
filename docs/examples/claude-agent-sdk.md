@@ -317,12 +317,12 @@ Each agent gets its own isolated workspace:
 ```python
 # Agent 1: Researcher
 nx1 = nexus.connect()
-nx1.tenant_id = "research-team"
+nx1.zone_id = "research-team"
 nx1.agent_id = "researcher-001"
 
 # Agent 2: Writer
 nx2 = nexus.connect()
-nx2.tenant_id = "research-team"
+nx2.zone_id = "research-team"
 nx2.agent_id = "writer-001"
 
 # Agents can share files in /shared/ but have private workspaces

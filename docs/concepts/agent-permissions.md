@@ -96,7 +96,7 @@ register_agent(
     user_id="alice",
     agent_id="alice_research",
     name="Research Agent",
-    tenant_id="default",
+    zone_id="default",
     entity_registry=registry
 )
 ```
@@ -208,7 +208,7 @@ if (
             subject=("user", parent.entity_id),
             permission=permission_name,
             object=(object_type, object_id),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
         if user_result:
             # ✅ Agent inherits user's permission
@@ -558,7 +558,7 @@ register_agent(
     user_id="alice",
     agent_id="crewai_researcher",
     name="CrewAI Research Agent",
-    tenant_id="default",
+    zone_id="default",
     entity_registry=nx.entity_registry
 )
 
@@ -567,7 +567,7 @@ nx.rebac.create(
     subject=("agent", "crewai_researcher"),
     relation="direct_editor",
     object=("file", "/workspace/research/"),
-    tenant_id="default"
+    zone_id="default"
 )
 
 # Create CrewAI agent with Nexus tools

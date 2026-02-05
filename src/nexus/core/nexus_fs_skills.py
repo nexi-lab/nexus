@@ -69,14 +69,14 @@ class NexusFSSkillsMixin:
         """Grant read permission on a skill.
 
         Args:
-            skill_path: Path to the skill (e.g., /tenant:acme/user:alice/skill/code-review/)
+            skill_path: Path to the skill (e.g., /zone/acme/user:alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make skill visible to everyone
-                - "tenant" - Share with all users in current tenant
+                - "zone" - Share with all users in current zone
                 - "group:<name>" - Share with a group
                 - "user:<id>" - Share with a specific user
                 - "agent:<id>" - Share with a specific agent
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with success, tuple_id, skill_path, share_with
@@ -102,7 +102,7 @@ class NexusFSSkillsMixin:
         Args:
             skill_path: Path to the skill
             unshare_from: Target to unshare from (same format as share_with)
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with success, skill_path, unshare_from
@@ -133,7 +133,7 @@ class NexusFSSkillsMixin:
                 - "public" - Only public skills
                 - "subscribed" - Only skills in user's library
                 - "owned" - Only skills owned by user
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with skills list and count
@@ -155,7 +155,7 @@ class NexusFSSkillsMixin:
 
         Args:
             skill_path: Path to the skill to subscribe to
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with success, skill_path, already_subscribed
@@ -178,7 +178,7 @@ class NexusFSSkillsMixin:
 
         Args:
             skill_path: Path to the skill to unsubscribe from
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with success, skill_path, was_subscribed
@@ -205,7 +205,7 @@ class NexusFSSkillsMixin:
 
         Args:
             max_skills: Maximum number of skills to include (default: 50)
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with xml, skills, count, token_estimate
@@ -224,7 +224,7 @@ class NexusFSSkillsMixin:
 
         Args:
             skill_path: Path to the skill to load
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with name, path, owner, description, content, metadata
@@ -255,7 +255,7 @@ class NexusFSSkillsMixin:
             output_path: Optional path to write .skill file. If None, returns bytes.
             format: Export format ('generic' or 'claude')
             include_dependencies: Whether to include dependent skills
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with success, path (if written), or bytes (base64 if not written)
@@ -274,7 +274,7 @@ class NexusFSSkillsMixin:
             if context is None:
                 raise ValidationError("context is required")
             # Search for skill by name in user's skills
-            user_skill_dir = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            user_skill_dir = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
             skill_path = f"{user_skill_dir}{skill_name}/"
             # Also check if it exists in subscribed skills
             if not service._gw.exists(skill_path, context=context):
@@ -385,7 +385,7 @@ class NexusFSSkillsMixin:
         """Import a skill from .skill (ZIP) format.
 
         Skills are always imported to the user's skill directory:
-        /tenant:{tenant_id}/user:{user_id}/skill/{skill_name}/
+        /zone/{zone_id}/user:{user_id}/skill/{skill_name}/
 
         Args:
             source_path: Path to .skill file to import (either this or zip_bytes/zip_data)
@@ -393,7 +393,7 @@ class NexusFSSkillsMixin:
             zip_data: Alias for zip_bytes (base64 encoded string)
             target_path: Target path for the skill. If None, uses user's skill directory.
             allow_overwrite: Whether to overwrite existing skill
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with imported_skills, skill_paths
@@ -436,7 +436,7 @@ class NexusFSSkillsMixin:
             # Always import to user's skill directory
             if context is None:
                 raise ValidationError("context is required")
-            base_path = f"/tenant:{context.tenant_id}/user:{context.user_id}/skill/"
+            base_path = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
 
             # Detect ZIP structure: flat (SKILL.md at root) or nested (skill-name/SKILL.md)
             file_list = zf.namelist()
@@ -493,7 +493,7 @@ class NexusFSSkillsMixin:
                 if rel_path and not rel_path.endswith("/"):  # Skip empty paths and folder entries
                     file_path = f"{target_path}{rel_path}"
                     logger.info(
-                        f"[skills_import] Writing file: {file_path}, context.user_id={context.user_id if context else None}, context.tenant_id={context.tenant_id if context else None}"
+                        f"[skills_import] Writing file: {file_path}, context.user_id={context.user_id if context else None}, context.zone_id={context.zone_id if context else None}"
                     )
                     try:
                         service._gw.write(file_path, content, context=context)
@@ -547,7 +547,7 @@ class NexusFSSkillsMixin:
             source_path: Path to .skill file to validate
             zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
             zip_data: Alias for zip_bytes (base64 encoded string)
-            context: Operation context with user_id and tenant_id
+            context: Operation context with user_id and zone_id
 
         Returns:
             Dict with valid, skills_found, errors, warnings

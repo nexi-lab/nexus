@@ -21,7 +21,7 @@ class TestGetReadyWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
                 "backend1",  # backend_id
                 "/physical/path",  # physical_path
@@ -75,7 +75,7 @@ class TestGetReadyWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/test/path",  # virtual_path
                 "backend1",  # backend_id
                 "/physical/path",  # physical_path
@@ -124,7 +124,7 @@ class TestGetPendingWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/pending/path",  # virtual_path
                 "backend1",  # backend_id
                 "/physical/path",  # physical_path
@@ -190,7 +190,7 @@ class TestGetBlockedWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/blocked/path",  # virtual_path
                 "backend1",  # backend_id
                 "/physical/path",  # physical_path
@@ -257,7 +257,7 @@ class TestGetInProgressWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
                 "backend1",  # backend_id
                 "file",  # file_type
@@ -307,7 +307,7 @@ class TestGetInProgressWork:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/progress/path",  # virtual_path
                 "backend1",  # backend_id
                 "file",  # file_type
@@ -355,7 +355,7 @@ class TestGetWorkByPriority:
         mock_rows = [
             (
                 uuid.uuid4(),  # path_id
-                uuid.uuid4(),  # tenant_id
+                uuid.uuid4(),  # zone_id
                 "/priority/path",  # virtual_path
                 "backend1",  # backend_id
                 "file",  # file_type

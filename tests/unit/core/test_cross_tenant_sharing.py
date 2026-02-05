@@ -1,11 +1,11 @@
-"""Unit tests for Cross-Tenant Sharing feature.
+"""Unit tests for Cross-Zone Sharing feature.
 
 Tests cover:
-- share_with_user API (same and cross-tenant)
+- share_with_user API (same and cross-zone)
 - revoke_share API
 - list_incoming_shares and list_outgoing_shares
-- Permission checks with cross-tenant shares
-- Tuple fetching includes cross-tenant shares
+- Permission checks with cross-zone shares
+- Tuple fetching includes cross-zone shares
 """
 
 from datetime import UTC, datetime, timedelta
@@ -13,8 +13,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.rebac import CROSS_TENANT_ALLOWED_RELATIONS
-from nexus.core.rebac_manager_tenant_aware import TenantAwareReBACManager, TenantIsolationError
+from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.core.rebac_manager_zone_aware import ZoneAwareReBACManager, ZoneIsolationError
 from nexus.storage.models import Base
 
 
@@ -27,178 +27,178 @@ def engine():
 
 
 @pytest.fixture
-def tenant_aware_manager(engine):
-    """Create a tenant-aware ReBAC manager for testing.
+def zone_aware_manager(engine):
+    """Create a zone-aware ReBAC manager for testing.
 
     Uses cache_ttl_seconds=0 to disable caching for predictable test behavior.
     """
-    manager = TenantAwareReBACManager(
+    manager = ZoneAwareReBACManager(
         engine=engine,
         cache_ttl_seconds=0,  # Disable cache for predictable tests
         max_depth=10,
-        enforce_tenant_isolation=True,
+        enforce_zone_isolation=True,
     )
     yield manager
     manager.close()
 
 
-class TestCrossTenantAllowedRelations:
-    """Tests for CROSS_TENANT_ALLOWED_RELATIONS configuration."""
+class TestCrossZoneAllowedRelations:
+    """Tests for CROSS_ZONE_ALLOWED_RELATIONS configuration."""
 
-    def test_shared_viewer_is_cross_tenant_allowed(self):
+    def test_shared_viewer_is_cross_zone_allowed(self):
         """Verify shared-viewer relation is in the allowed list."""
-        assert "shared-viewer" in CROSS_TENANT_ALLOWED_RELATIONS
+        assert "shared-viewer" in CROSS_ZONE_ALLOWED_RELATIONS
 
-    def test_shared_editor_is_cross_tenant_allowed(self):
+    def test_shared_editor_is_cross_zone_allowed(self):
         """Verify shared-editor relation is in the allowed list."""
-        assert "shared-editor" in CROSS_TENANT_ALLOWED_RELATIONS
+        assert "shared-editor" in CROSS_ZONE_ALLOWED_RELATIONS
 
-    def test_shared_owner_is_cross_tenant_allowed(self):
+    def test_shared_owner_is_cross_zone_allowed(self):
         """Verify shared-owner relation is in the allowed list."""
-        assert "shared-owner" in CROSS_TENANT_ALLOWED_RELATIONS
+        assert "shared-owner" in CROSS_ZONE_ALLOWED_RELATIONS
 
-    def test_regular_relations_not_cross_tenant_allowed(self):
+    def test_regular_relations_not_cross_zone_allowed(self):
         """Verify regular relations are NOT in the allowed list."""
-        assert "viewer" not in CROSS_TENANT_ALLOWED_RELATIONS
-        assert "editor" not in CROSS_TENANT_ALLOWED_RELATIONS
-        assert "owner" not in CROSS_TENANT_ALLOWED_RELATIONS
-        assert "member-of" not in CROSS_TENANT_ALLOWED_RELATIONS
+        assert "viewer" not in CROSS_ZONE_ALLOWED_RELATIONS
+        assert "editor" not in CROSS_ZONE_ALLOWED_RELATIONS
+        assert "owner" not in CROSS_ZONE_ALLOWED_RELATIONS
+        assert "member-of" not in CROSS_ZONE_ALLOWED_RELATIONS
 
 
-class TestCrossTenantSharingWrite:
-    """Tests for creating cross-tenant shares."""
+class TestCrossZoneSharingWrite:
+    """Tests for creating cross-zone shares."""
 
-    def test_shared_viewer_allows_cross_tenant(self, tenant_aware_manager):
-        """Test that shared-viewer relation allows cross-tenant relationships."""
-        # This should succeed - shared-viewer is allowed to cross tenants
-        tuple_id = tenant_aware_manager.rebac_write(
+    def test_shared_viewer_allows_cross_zone(self, zone_aware_manager):
+        """Test that shared-viewer relation allows cross-zone relationships."""
+        # This should succeed - shared-viewer is allowed to cross zones
+        tuple_id = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",  # Different tenant!
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",  # Different zone!
+            object_zone_id="acme-zone",
         )
         assert tuple_id is not None
 
-    def test_shared_editor_allows_cross_tenant(self, tenant_aware_manager):
-        """Test that shared-editor relation allows cross-tenant relationships."""
-        tuple_id = tenant_aware_manager.rebac_write(
+    def test_shared_editor_allows_cross_zone(self, zone_aware_manager):
+        """Test that shared-editor relation allows cross-zone relationships."""
+        tuple_id = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-editor",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
         assert tuple_id is not None
 
-    def test_regular_relation_blocks_cross_tenant(self, tenant_aware_manager):
-        """Test that regular relations still block cross-tenant."""
-        # This should fail - viewer is NOT allowed to cross tenants
-        with pytest.raises(TenantIsolationError, match="Cannot create cross-tenant"):
-            tenant_aware_manager.rebac_write(
+    def test_regular_relation_blocks_cross_zone(self, zone_aware_manager):
+        """Test that regular relations still block cross-zone."""
+        # This should fail - viewer is NOT allowed to cross zones
+        with pytest.raises(ZoneIsolationError, match="Cannot create cross-zone"):
+            zone_aware_manager.rebac_write(
                 subject=("user", "bob@partner.com"),
-                relation="viewer",  # NOT in CROSS_TENANT_ALLOWED_RELATIONS
+                relation="viewer",  # NOT in CROSS_ZONE_ALLOWED_RELATIONS
                 object=("file", "/project/doc.txt"),
-                tenant_id="acme-tenant",
-                subject_tenant_id="partner-tenant",
-                object_tenant_id="acme-tenant",
+                zone_id="acme-zone",
+                subject_zone_id="partner-zone",
+                object_zone_id="acme-zone",
             )
 
-    def test_same_tenant_shared_viewer_allowed(self, tenant_aware_manager):
-        """Test that shared-viewer also works for same-tenant sharing."""
-        # Same-tenant sharing should work too
-        tuple_id = tenant_aware_manager.rebac_write(
+    def test_same_zone_shared_viewer_allowed(self, zone_aware_manager):
+        """Test that shared-viewer also works for same-zone sharing."""
+        # Same-zone sharing should work too
+        tuple_id = zone_aware_manager.rebac_write(
             subject=("user", "alice@acme.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="acme-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="acme-zone",
+            object_zone_id="acme-zone",
         )
         assert tuple_id is not None
 
-    def test_cross_tenant_share_stored_with_object_tenant(self, tenant_aware_manager):
-        """Test that cross-tenant shares are stored with object's tenant_id."""
-        # Create cross-tenant share
-        tuple_id = tenant_aware_manager.rebac_write(
+    def test_cross_zone_share_stored_with_object_zone(self, zone_aware_manager):
+        """Test that cross-zone shares are stored with object's zone_id."""
+        # Create cross-zone share
+        tuple_id = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
         assert tuple_id is not None  # Verify share was created
 
         # Verify tuple exists by checking permission
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
 
-class TestCrossTenantSharingPermissionCheck:
-    """Tests for permission checks with cross-tenant shares."""
+class TestCrossZoneSharingPermissionCheck:
+    """Tests for permission checks with cross-zone shares."""
 
-    def test_cross_tenant_user_can_check_shared_resource(self, tenant_aware_manager):
-        """Test that cross-tenant user can check permission on shared resource."""
-        # Create cross-tenant share
-        tenant_aware_manager.rebac_write(
+    def test_cross_zone_user_can_check_shared_resource(self, zone_aware_manager):
+        """Test that cross-zone user can check permission on shared resource."""
+        # Create cross-zone share
+        zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # Check permission - bob should have shared-viewer on the file
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
-    def test_unshared_cross_tenant_user_denied(self, tenant_aware_manager):
-        """Test that cross-tenant users without shares are denied."""
+    def test_unshared_cross_zone_user_denied(self, zone_aware_manager):
+        """Test that cross-zone users without shares are denied."""
         # No share created for charlie
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "charlie@other.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is False
 
 
-class TestCrossTenantMultipleShares:
-    """Tests for multiple cross-tenant shares."""
+class TestCrossZoneMultipleShares:
+    """Tests for multiple cross-zone shares."""
 
-    def test_multiple_cross_tenant_shares(self, tenant_aware_manager):
-        """Test creating shares to multiple cross-tenant users."""
-        # Create shares from two different tenants
-        tuple_id_1 = tenant_aware_manager.rebac_write(
+    def test_multiple_cross_zone_shares(self, zone_aware_manager):
+        """Test creating shares to multiple cross-zone users."""
+        # Create shares from two different zones
+        tuple_id_1 = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/acme/doc1.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
-        tuple_id_2 = tenant_aware_manager.rebac_write(
+        tuple_id_2 = zone_aware_manager.rebac_write(
             subject=("user", "charlie@other.com"),
             relation="shared-editor",
             object=("file", "/acme/doc2.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="other-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="other-zone",
+            object_zone_id="acme-zone",
         )
 
         # Both shares should exist
@@ -206,150 +206,150 @@ class TestCrossTenantMultipleShares:
         assert tuple_id_2 is not None
 
         # Both users should have access
-        result_bob = tenant_aware_manager.rebac_check(
+        result_bob = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/acme/doc1.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
-        result_charlie = tenant_aware_manager.rebac_check(
+        result_charlie = zone_aware_manager.rebac_check(
             subject=("user", "charlie@other.com"),
             permission="shared-editor",
             object=("file", "/acme/doc2.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result_bob is True
         assert result_charlie is True
 
-    def test_user_with_multiple_shares_from_different_tenants(self, tenant_aware_manager):
-        """Test that a user can receive shares from multiple tenants."""
-        # Bob receives shares from two different tenants
-        tenant_aware_manager.rebac_write(
+    def test_user_with_multiple_shares_from_different_zones(self, zone_aware_manager):
+        """Test that a user can receive shares from multiple zones."""
+        # Bob receives shares from two different zones
+        zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
-        tenant_aware_manager.rebac_write(
+        zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/xyz/doc.txt"),
-            tenant_id="xyz-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="xyz-tenant",
+            zone_id="xyz-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="xyz-zone",
         )
 
-        # Bob should have access to both resources (checking each in its own tenant)
-        result_acme = tenant_aware_manager.rebac_check(
+        # Bob should have access to both resources (checking each in its own zone)
+        result_acme = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
-        result_xyz = tenant_aware_manager.rebac_check(
+        result_xyz = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/xyz/doc.txt"),
-            tenant_id="xyz-tenant",
+            zone_id="xyz-zone",
         )
         assert result_acme is True
         assert result_xyz is True
 
 
-class TestCrossTenantSharingRevoke:
-    """Tests for revoking cross-tenant shares."""
+class TestCrossZoneSharingRevoke:
+    """Tests for revoking cross-zone shares."""
 
-    def test_revoke_cross_tenant_share(self, tenant_aware_manager):
-        """Test revoking a cross-tenant share."""
-        # Create cross-tenant share
-        tuple_id = tenant_aware_manager.rebac_write(
+    def test_revoke_cross_zone_share(self, zone_aware_manager):
+        """Test revoking a cross-zone share."""
+        # Create cross-zone share
+        tuple_id = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # Verify share exists
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
         # Revoke share
-        deleted = tenant_aware_manager.rebac_delete(tuple_id)
+        deleted = zone_aware_manager.rebac_delete(tuple_id)
         assert deleted is True
 
         # Verify share is gone
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is False
 
 
-class TestCrossTenantSharingWithExpiration:
-    """Tests for cross-tenant shares with expiration."""
+class TestCrossZoneSharingWithExpiration:
+    """Tests for cross-zone shares with expiration."""
 
-    def test_expired_cross_tenant_share_denied(self, tenant_aware_manager):
-        """Test that expired cross-tenant shares are denied."""
+    def test_expired_cross_zone_share_denied(self, zone_aware_manager):
+        """Test that expired cross-zone shares are denied."""
         # Create share that expires in the past
-        tenant_aware_manager.rebac_write(
+        zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
             expires_at=datetime.now(UTC) - timedelta(hours=1),  # Already expired
         )
 
         # Permission check should fail (expired)
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is False
 
-    def test_non_expired_cross_tenant_share_allowed(self, tenant_aware_manager):
-        """Test that non-expired cross-tenant shares are allowed."""
+    def test_non_expired_cross_zone_share_allowed(self, zone_aware_manager):
+        """Test that non-expired cross-zone shares are allowed."""
         # Create share that expires in the future
-        tenant_aware_manager.rebac_write(
+        zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
             expires_at=datetime.now(UTC) + timedelta(days=7),  # Expires in a week
         )
 
         # Permission check should succeed
-        result = tenant_aware_manager.rebac_check(
+        result = zone_aware_manager.rebac_check(
             subject=("user", "bob@partner.com"),
             permission="shared-viewer",
             object=("file", "/project/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
 
-class TestCrossTenantRustPathFix:
-    """Tests for cross-tenant sharing in Rust acceleration path.
+class TestCrossZoneRustPathFix:
+    """Tests for cross-zone sharing in Rust acceleration path.
 
-    These tests verify that cross-tenant shares work when using the Rust
+    These tests verify that cross-zone shares work when using the Rust
     path for permission checks. The key fix is in _fetch_tuples_for_rust()
-    which now includes cross-tenant tuples for the subject.
+    which now includes cross-zone tuples for the subject.
     """
 
     @pytest.fixture
@@ -361,66 +361,64 @@ class TestCrossTenantRustPathFix:
             engine=engine,
             cache_ttl_seconds=0,
             max_depth=10,
-            enforce_tenant_isolation=True,
+            enforce_zone_isolation=True,
         )
         yield manager
         manager.close()
 
-    def test_fetch_tuples_for_rust_includes_cross_tenant(self, enhanced_manager):
-        """Test that _fetch_tuples_for_rust includes cross-tenant tuples."""
+    def test_fetch_tuples_for_rust_includes_cross_zone(self, enhanced_manager):
+        """Test that _fetch_tuples_for_rust includes cross-zone tuples."""
         from nexus.core.rebac import Entity
 
-        # Create cross-tenant share: partner-tenant user gets access to acme-tenant file
+        # Create cross-zone share: partner-zone user gets access to acme-zone file
         enhanced_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-editor",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
-        # Fetch tuples from partner-tenant (Bob's home tenant) WITH subject
+        # Fetch tuples from partner-zone (Bob's home zone) WITH subject
         subject = Entity("user", "bob@partner.com")
-        tuples = enhanced_manager._fetch_tuples_for_rust(
-            tenant_id="partner-tenant", subject=subject
-        )
+        tuples = enhanced_manager._fetch_tuples_for_rust(zone_id="partner-zone", subject=subject)
 
-        # Should include the cross-tenant share even though it's stored in acme-tenant
-        cross_tenant_tuples = [
+        # Should include the cross-zone share even though it's stored in acme-zone
+        cross_zone_tuples = [
             t
             for t in tuples
             if t["relation"] == "shared-editor" and t["subject_id"] == "bob@partner.com"
         ]
-        assert len(cross_tenant_tuples) == 1
-        assert cross_tenant_tuples[0]["object_id"] == "/acme/doc.txt"
+        assert len(cross_zone_tuples) == 1
+        assert cross_zone_tuples[0]["object_id"] == "/acme/doc.txt"
 
-    def test_fetch_tuples_for_rust_without_subject_excludes_cross_tenant(self, enhanced_manager):
-        """Test that _fetch_tuples_for_rust without subject excludes cross-tenant."""
-        # Create cross-tenant share
+    def test_fetch_tuples_for_rust_without_subject_excludes_cross_zone(self, enhanced_manager):
+        """Test that _fetch_tuples_for_rust without subject excludes cross-zone."""
+        # Create cross-zone share
         enhanced_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-editor",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
-        # Fetch tuples from partner-tenant WITHOUT subject (backward compatibility)
-        tuples = enhanced_manager._fetch_tuples_for_rust(tenant_id="partner-tenant")
+        # Fetch tuples from partner-zone WITHOUT subject (backward compatibility)
+        tuples = enhanced_manager._fetch_tuples_for_rust(zone_id="partner-zone")
 
-        # Should NOT include cross-tenant share (stored in acme-tenant)
-        cross_tenant_tuples = [
+        # Should NOT include cross-zone share (stored in acme-zone)
+        cross_zone_tuples = [
             t
             for t in tuples
             if t["relation"] == "shared-editor" and t["subject_id"] == "bob@partner.com"
         ]
-        assert len(cross_tenant_tuples) == 0
+        assert len(cross_zone_tuples) == 0
 
 
-class TestCrossTenantPermissionExpansion:
-    """Tests for permission expansion with cross-tenant shares.
+class TestCrossZonePermissionExpansion:
+    """Tests for permission expansion with cross-zone shares.
 
     These tests verify that shared-* relations properly grant permissions
     through the namespace union configuration:
@@ -434,11 +432,11 @@ class TestCrossTenantPermissionExpansion:
         """Create manager with file namespace for permission expansion."""
         from nexus.core.rebac import DEFAULT_FILE_NAMESPACE
 
-        manager = TenantAwareReBACManager(
+        manager = ZoneAwareReBACManager(
             engine=engine,
             cache_ttl_seconds=0,
             max_depth=10,
-            enforce_tenant_isolation=True,
+            enforce_zone_isolation=True,
         )
         manager.create_namespace(DEFAULT_FILE_NAMESPACE)
         yield manager
@@ -446,14 +444,14 @@ class TestCrossTenantPermissionExpansion:
 
     def test_shared_editor_grants_read_permission(self, manager_with_namespace):
         """Test that shared-editor grants read permission via namespace union."""
-        # Create cross-tenant share with shared-editor
+        # Create cross-zone share with shared-editor
         manager_with_namespace.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-editor",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # Check read permission - should be granted via:
@@ -462,7 +460,7 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             permission="read",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
@@ -472,9 +470,9 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             relation="shared-editor",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # Check write permission - should be granted via:
@@ -483,7 +481,7 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             permission="write",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert result is True
 
@@ -493,9 +491,9 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # Read should be granted
@@ -503,7 +501,7 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             permission="read",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert read_result is True
 
@@ -512,7 +510,7 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             permission="write",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
+            zone_id="acme-zone",
         )
         assert write_result is False
 
@@ -522,9 +520,9 @@ class TestCrossTenantPermissionExpansion:
             subject=("user", "bob@partner.com"),
             relation="shared-owner",
             object=("file", "/acme/doc.txt"),
-            tenant_id="acme-tenant",
-            subject_tenant_id="partner-tenant",
-            object_tenant_id="acme-tenant",
+            zone_id="acme-zone",
+            subject_zone_id="partner-zone",
+            object_zone_id="acme-zone",
         )
 
         # All permissions should be granted
@@ -533,6 +531,6 @@ class TestCrossTenantPermissionExpansion:
                 subject=("user", "bob@partner.com"),
                 permission=permission,
                 object=("file", "/acme/doc.txt"),
-                tenant_id="acme-tenant",
+                zone_id="acme-zone",
             )
             assert result is True, f"Expected {permission} to be granted"

@@ -558,7 +558,7 @@ class ReadaheadManager:
         read_func: Callable[[str, int, int], bytes],
         local_disk_cache: LocalDiskCache | None = None,
         content_hash_func: Callable[[str], str | None] | None = None,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ):
         """Initialize readahead manager.
 
@@ -567,13 +567,13 @@ class ReadaheadManager:
             read_func: Function to read data: (path, offset, size) -> bytes
             local_disk_cache: Optional L2 cache for persistent prefetch
             content_hash_func: Function to get content hash for a path
-            tenant_id: Tenant ID for multi-tenant cache isolation
+            zone_id: Zone ID for multi-zone cache isolation
         """
         self._config = config
         self._read_func = read_func
         self._local_disk_cache = local_disk_cache
         self._content_hash_func = content_hash_func
-        self._tenant_id = tenant_id
+        self._zone_id = zone_id
 
         # Session tracking: fh -> ReadSession
         self._sessions: dict[int, ReadSession] = {}
@@ -942,7 +942,7 @@ class ReadaheadManager:
                     self._local_disk_cache.put(
                         block_hash,
                         data,
-                        tenant_id=self._tenant_id,
+                        zone_id=self._zone_id,
                         priority=1,  # Higher priority for prefetched data
                     )
 

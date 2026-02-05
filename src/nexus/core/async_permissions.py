@@ -89,12 +89,12 @@ class AsyncPermissionEnforcer:
         permission_name = self._permission_to_name(permission)
 
         # Check ReBAC permission
-        tenant_id = context.tenant_id or "default"
+        zone_id = context.zone_id or "default"
         subject = context.get_subject()
 
         logger.debug(
             f"[ASYNC-PERM] Checking: subject={subject}, permission={permission_name}, "
-            f"object=({object_type}, {path}), tenant={tenant_id}"
+            f"object=({object_type}, {path}), tenant={zone_id}"
         )
 
         start_time = time.perf_counter()
@@ -104,7 +104,7 @@ class AsyncPermissionEnforcer:
             subject=subject,
             permission=permission_name,
             object=(object_type, path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         if result:
@@ -130,7 +130,7 @@ class AsyncPermissionEnforcer:
                 subject=subject,
                 permission=permission_name,
                 object=(object_type, parent_path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
             )
 
             if parent_result:
@@ -142,14 +142,14 @@ class AsyncPermissionEnforcer:
 
         # 3. For agents: check if owner user has permission
         if context.agent_id:
-            parent = await self._get_agent_owner(context.agent_id, tenant_id)
+            parent = await self._get_agent_owner(context.agent_id, zone_id)
             if parent and parent[0] == "user":
                 logger.debug(f"[ASYNC-PERM] Checking agent owner: {parent}")
                 user_result = await self.rebac_manager.rebac_check(
                     subject=("user", parent[1]),
                     permission=permission_name,
                     object=(object_type, path),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                 )
                 if user_result:
                     elapsed = (time.perf_counter() - start_time) * 1000
@@ -186,7 +186,7 @@ class AsyncPermissionEnforcer:
         if not self.rebac_manager:
             return paths
 
-        tenant_id = context.tenant_id or "default"
+        zone_id = context.zone_id or "default"
         subject = context.get_subject()
 
         # Build bulk check requests
@@ -198,7 +198,7 @@ class AsyncPermissionEnforcer:
         start_time = time.perf_counter()
 
         # Perform bulk permission check
-        results = await self.rebac_manager.rebac_check_bulk(checks, tenant_id=tenant_id)
+        results = await self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
 
         elapsed = (time.perf_counter() - start_time) * 1000
 
@@ -217,7 +217,7 @@ class AsyncPermissionEnforcer:
     async def _get_agent_owner(
         self,
         agent_id: str,  # noqa: ARG002
-        tenant_id: str,  # noqa: ARG002
+        zone_id: str,  # noqa: ARG002
     ) -> tuple[str, str] | None:
         """Get the owner of an agent (async)."""
         # Check ReBAC for agent ownership relation

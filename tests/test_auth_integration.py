@@ -425,7 +425,7 @@ def test_oauth_callback_race_condition():
             simulating PostgreSQL's SELECT ... FOR UPDATE behavior.
             """
             try:
-                tenant_id = test_email
+                zone_id = test_email
 
                 # Acquire lock to ensure exclusive access during check-then-create
                 # This simulates PostgreSQL's FOR UPDATE row-level locking
@@ -443,7 +443,7 @@ def test_oauth_callback_race_condition():
                             name="Personal API Key",
                             subject_type="user",
                             subject_id=test_user_id,
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                             is_admin=False,
                             expires_at=None,
                             inherit_permissions=True,
@@ -452,7 +452,7 @@ def test_oauth_callback_race_condition():
                         # Store plaintext API key in users table
                         if user_model:
                             user_model.api_key = raw_key
-                            user_model.tenant_id = tenant_id
+                            user_model.zone_id = zone_id
 
                         session.commit()
                         api_key = raw_key
@@ -502,7 +502,7 @@ def test_oauth_callback_race_condition():
 
             # Assert user has an API key
             assert user.api_key is not None, "User should have an API key"
-            assert user.tenant_id is not None, "User should have a tenant_id"
+            assert user.zone_id is not None, "User should have a zone_id"
             assert user.api_key == api_keys_created[0], (
                 "User's API key should match the created key"
             )
@@ -574,7 +574,7 @@ def test_oauth_callback_race_condition_postgres():
         """Simulate the API key creation logic from OAuth callback."""
         try:
             # This simulates the exact double-check logic from auth_routes.py
-            tenant_id = test_email
+            zone_id = test_email
 
             # Create API key with race condition protection
             with SessionLocal() as session:
@@ -591,7 +591,7 @@ def test_oauth_callback_race_condition_postgres():
                         name="Personal API Key",
                         subject_type="user",
                         subject_id=test_user_id,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         is_admin=False,
                         expires_at=None,
                         inherit_permissions=True,
@@ -600,7 +600,7 @@ def test_oauth_callback_race_condition_postgres():
                     # Store plaintext API key in users table
                     if user_model:
                         user_model.api_key = raw_key
-                        user_model.tenant_id = tenant_id
+                        user_model.zone_id = zone_id
 
                     session.commit()
                     api_key = raw_key
@@ -650,7 +650,7 @@ def test_oauth_callback_race_condition_postgres():
 
         # Assert user has an API key
         assert user.api_key is not None, "User should have an API key"
-        assert user.tenant_id is not None, "User should have a tenant_id"
+        assert user.zone_id is not None, "User should have a zone_id"
         assert user.api_key == api_keys_created[0], "User's API key should match the created key"
 
         print("✅ PostgreSQL race condition test passed!")

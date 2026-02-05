@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.pyd
 .Python
 build/
 develop-eggs/
@@ -196,3 +197,8 @@ docs/plans/
 
 # Cargo local config (Windows MSVC linker path is dev-machine specific)
 .cargo/
+NUL
+NUL
+
+# Build tools (binary)
+tools/

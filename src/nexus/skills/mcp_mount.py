@@ -78,10 +78,10 @@ class MCPMountManager:
     """
 
     # Tier priority for MCP mounts (higher = checked first, wins on name conflict)
-    # MCP mounts have 3 levels: user > tenant > system (no agent level)
+    # MCP mounts have 3 levels: user > zone > system (no agent level)
     TIER_PRIORITY = {
         "user": 3,
-        "tenant": 2,
+        "zone": 2,
         "system": 1,
     }
 
@@ -91,11 +91,11 @@ class MCPMountManager:
 
         Structure:
             /skills/system/mcp-tools/               - System-wide MCP tools (priority 1)
-            /skills/tenants/{tenant_id}/mcp-tools/  - Tenant shared MCP tools (priority 2)
+            /skills/tenants/{zone_id}/mcp-tools/  - Zone shared MCP tools (priority 2)
             /skills/users/{user_id}/mcp-tools/      - User personal MCP tools (priority 3)
 
         Args:
-            context: Operation context with user_id, tenant_id
+            context: Operation context with user_id, zone_id
 
         Returns:
             Dict mapping tier name to mcp-tools path (only tiers available for this context)
@@ -103,8 +103,8 @@ class MCPMountManager:
         paths = {"system": "/skills/system/mcp-tools/"}
 
         if context:
-            if context.tenant_id:
-                paths["tenant"] = f"/skills/tenants/{context.tenant_id}/mcp-tools/"
+            if context.zone_id:
+                paths["zone"] = f"/skills/tenants/{context.zone_id}/mcp-tools/"
 
             if context.user_id:
                 paths["user"] = f"/skills/users/{context.user_id}/mcp-tools/"
@@ -1020,7 +1020,7 @@ class MCPMountManager:
         When same mount name exists at multiple tiers, higher priority wins.
 
         Args:
-            context: Operation context with user_id, tenant_id
+            context: Operation context with user_id, zone_id
 
         Returns:
             Number of mounts discovered

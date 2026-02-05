@@ -221,10 +221,10 @@ async def test_create_skill_different_tiers() -> None:
     fs = MockFilesystem()
     manager = SkillManager(filesystem=fs)
 
-    tiers = ["user", "tenant", "system"]
+    tiers = ["user", "zone", "system"]
     expected_paths = [
         "/skills/user/skill-user/SKILL.md",
-        "/skills/tenant/skill-tenant/SKILL.md",
+        "/skills/zone/skill-zone/SKILL.md",
         "/skill/skill-system/SKILL.md",
     ]
 
@@ -352,7 +352,7 @@ async def test_fork_skill_invalid_target_name() -> None:
 
 @pytest.mark.asyncio
 async def test_publish_skill() -> None:
-    """Test publishing a skill from user to tenant tier."""
+    """Test publishing a skill from user to zone tier."""
     fs = MockFilesystem()
     fs.write("/skills/user/my-skill/SKILL.md", EXISTING_SKILL)
 
@@ -361,10 +361,10 @@ async def test_publish_skill() -> None:
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    # Publish to tenant tier
-    path = await manager.publish_skill("existing-skill", source_tier="user", target_tier="tenant")
+    # Publish to zone tier
+    path = await manager.publish_skill("existing-skill", source_tier="user", target_tier="zone")
 
-    assert path == "/skills/tenant/existing-skill/SKILL.md"
+    assert path == "/skills/zone/existing-skill/SKILL.md"
     assert fs.exists(path)
 
     # Parse published skill
@@ -393,9 +393,9 @@ async def test_publish_skill_preserves_content() -> None:
 
     manager = SkillManager(filesystem=fs, registry=registry)
 
-    await manager.publish_skill("existing-skill", source_tier="user", target_tier="tenant")
+    await manager.publish_skill("existing-skill", source_tier="user", target_tier="zone")
 
-    content = fs.read("/skills/tenant/existing-skill/SKILL.md").decode("utf-8")
+    content = fs.read("/skills/zone/existing-skill/SKILL.md").decode("utf-8")
     assert "This is the content of the existing skill" in content
 
 
@@ -407,7 +407,7 @@ async def test_publish_skill_not_found() -> None:
     manager = SkillManager(filesystem=fs, registry=registry)
 
     with pytest.raises(SkillManagerError, match="not found"):
-        await manager.publish_skill("nonexistent", source_tier="user", target_tier="tenant")
+        await manager.publish_skill("nonexistent", source_tier="user", target_tier="zone")
 
 
 @pytest.mark.asyncio
@@ -417,7 +417,7 @@ async def test_publish_skill_invalid_source_tier() -> None:
     manager = SkillManager(filesystem=fs)
 
     with pytest.raises(SkillManagerError, match="Invalid source tier"):
-        await manager.publish_skill("skill", source_tier="invalid", target_tier="tenant")
+        await manager.publish_skill("skill", source_tier="invalid", target_tier="zone")
 
 
 @pytest.mark.asyncio
@@ -606,15 +606,15 @@ description: Agent skill for testing
 ---
 Content
 """
-    tenant_skill = b"""---
-name: tenant-skill
-description: Tenant skill for testing
+    zone_skill = b"""---
+name: zone-skill
+description: Zone skill for testing
 ---
 Content
 """
 
     fs.write("/skills/user/agent-skill/SKILL.md", agent_skill)
-    fs.write("/skills/tenant/tenant-skill/SKILL.md", tenant_skill)
+    fs.write("/skills/zone/zone-skill/SKILL.md", zone_skill)
 
     registry = SkillRegistry(filesystem=fs)
     await registry.discover()

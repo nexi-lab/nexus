@@ -66,7 +66,7 @@ class ReBACTuple:
 class Entity:
     entity_type: str  # "agent", "user", "group", "file", "memory"
     entity_id: str    # Unique identifier
-    tenant_id: str | None  # Multi-tenant isolation
+    zone_id: str | None  # Multi-zone isolation
 ```
 
 ---
@@ -399,7 +399,7 @@ tuple_id = manager.rebac_write(
     subject=("agent", "alice"),
     relation="direct_owner",
     object=("file", "/workspace/data.txt"),
-    tenant_id="acme",
+    zone_id="acme",
     expires_at=None,  # Optional expiration
     conditions=None   # Optional JSON conditions
 )
@@ -426,7 +426,7 @@ can_write = manager.rebac_check(
     subject=("agent", "alice"),
     permission="write",
     object=("file", "/workspace/data.txt"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 # Returns: True or False
 ```
@@ -451,7 +451,7 @@ nexus rebac expand read file /workspace/data.txt
 subjects = manager.rebac_expand(
     permission="read",
     object=("file", "/workspace/data.txt"),
-    tenant_id="acme"
+    zone_id="acme"
 )
 # Returns: [("agent", "alice"), ("agent", "bob"), ("group", "eng-team")]
 ```
@@ -515,7 +515,7 @@ manager = ReBACManager(
 
 **Cache Entry:**
 ```
-Key: (tenant_id, subject_type, subject_id, permission, object_type, object_id)
+Key: (zone_id, subject_type, subject_id, permission, object_type, object_id)
 Value: (result: bool, expires_at: datetime)
 ```
 
@@ -552,10 +552,10 @@ nexus rebac create agent alice direct_owner file /data.txt --tenant-id techcorp
 ```python
 # REJECTED: Cross-tenant relationships are not allowed
 manager.rebac_write(
-    subject=("agent", "alice", tenant_id="acme"),
+    subject=("agent", "alice", zone_id="acme"),
     relation="member-of",
-    object=("group", "eng", tenant_id="techcorp"),  # Different tenant!
-    tenant_id="acme"
+    object=("group", "eng", zone_id="techcorp"),  # Different tenant!
+    zone_id="acme"
 )
 # Raises: ValueError("Cross-tenant relationships not allowed")
 ```

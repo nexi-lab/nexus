@@ -112,29 +112,35 @@ class TestWorkspaceRegistry:
     """Test WorkspaceRegistry functionality."""
 
     @pytest.fixture
-    def mock_metadata(self) -> MagicMock:
-        """Create mock metadata store."""
-        mock = MagicMock()
+    def mock_session_factory(self) -> MagicMock:
+        """Create mock session factory to avoid real DB initialization."""
         mock_session = MagicMock()
         mock_session.query.return_value.all.return_value = []
         mock_session.__enter__ = lambda self: mock_session
         mock_session.__exit__ = lambda self, *args: None
-        mock.SessionLocal.return_value = mock_session
-        return mock
+        factory = MagicMock(return_value=mock_session)
+        return factory
 
     @pytest.fixture
-    def registry(self, mock_metadata: MagicMock) -> WorkspaceRegistry:
+    def mock_metadata(self) -> MagicMock:
+        """Create mock metadata store."""
+        return MagicMock()
+
+    @pytest.fixture
+    def registry(
+        self, mock_metadata: MagicMock, mock_session_factory: MagicMock
+    ) -> WorkspaceRegistry:
         """Create registry instance with mocked metadata."""
         with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
-            reg = WorkspaceRegistry(mock_metadata)
+            reg = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             reg._workspaces = {}
             reg._memories = {}
             return reg
 
-    def test_init(self, mock_metadata: MagicMock) -> None:
+    def test_init(self, mock_metadata: MagicMock, mock_session_factory: MagicMock) -> None:
         """Test registry initialization."""
         with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
-            registry = WorkspaceRegistry(mock_metadata)
+            registry = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             assert registry.metadata == mock_metadata
             assert registry.rebac_manager is None
 

@@ -136,7 +136,7 @@ async def get_trajectory_manager(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 
@@ -179,7 +179,7 @@ async def get_playbook_manager(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 
@@ -210,7 +210,7 @@ async def get_reflector(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 
@@ -221,7 +221,7 @@ async def get_reflector(
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
 
@@ -250,7 +250,7 @@ async def get_curator(
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 
@@ -286,7 +286,7 @@ async def get_consolidation_engine(
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
 
@@ -317,11 +317,11 @@ async def get_hierarchy_manager(
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
     return HierarchicalMemoryManager(
         consolidation_engine=consolidation_engine,
         session=session,
-        tenant_id=context.zone_id or "default",
+        zone_id=context.zone_id or "default",
     )

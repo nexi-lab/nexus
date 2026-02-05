@@ -11,9 +11,9 @@ bundle format, enabling:
 Example usage:
 
     # Export zone data
-    from nexus.portability import TenantExportOptions, ExportManifest
+    from nexus.portability import ZoneExportOptions, ExportManifest
 
-    options = TenantExportOptions(
+    options = ZoneExportOptions(
         output_path="/backup/zone.nexus",
         include_content=True,
         include_permissions=True,
@@ -21,9 +21,9 @@ Example usage:
     # Export service creates the bundle
 
     # Import zone data
-    from nexus.portability import TenantImportOptions, ImportResult
+    from nexus.portability import ZoneImportOptions, ImportResult
 
-    options = TenantImportOptions(
+    options = ZoneImportOptions(
         bundle_path="/backup/zone.nexus",
         target_zone_id="new-zone",
         conflict_mode=ConflictMode.SKIP,
@@ -41,11 +41,11 @@ from nexus.portability.bundle import (
     validate_bundle,
 )
 from nexus.portability.export_service import (
-    TenantExportService,
+    ZoneExportService,
     export_zone_bundle,
 )
 from nexus.portability.import_service import (
-    TenantImportService,
+    ZoneImportService,
     import_zone_bundle,
 )
 from nexus.portability.models import (
@@ -66,8 +66,8 @@ from nexus.portability.models import (
     ImportError,
     ImportResult,
     PermissionRecord,
-    TenantExportOptions,
-    TenantImportOptions,
+    ZoneExportOptions,
+    ZoneImportOptions,
 )
 
 __all__ = [
@@ -87,19 +87,19 @@ __all__ = [
     "FileChecksum",
     "BundleChecksums",
     # Export models
-    "TenantExportOptions",
+    "ZoneExportOptions",
     "ExportManifest",
     # Import models
-    "TenantImportOptions",
+    "ZoneImportOptions",
     "ImportResult",
     "ImportError",
     # Record models (JSONL)
     "FileRecord",
     "PermissionRecord",
     # Services
-    "TenantExportService",
+    "ZoneExportService",
     "export_zone_bundle",
-    "TenantImportService",
+    "ZoneImportService",
     "import_zone_bundle",
     # Bundle utilities
     "BundleReader",

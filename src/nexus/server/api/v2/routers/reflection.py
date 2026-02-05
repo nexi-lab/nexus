@@ -64,7 +64,7 @@ def _get_reflector(auth_result: dict[str, Any]) -> Any:
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 
@@ -75,7 +75,7 @@ def _get_reflector(auth_result: dict[str, Any]) -> Any:
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
 
@@ -95,7 +95,7 @@ def _get_curator(auth_result: dict[str, Any]) -> Any:
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 

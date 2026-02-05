@@ -278,7 +278,7 @@ class BundleChecksums:
 
 
 @dataclass
-class TenantExportOptions:
+class ZoneExportOptions:
     """Options for zone data export to .nexus bundle.
 
     Attributes:
@@ -358,7 +358,7 @@ class TenantExportOptions:
 
 
 @dataclass
-class TenantImportOptions:
+class ZoneImportOptions:
     """Options for importing zone data from .nexus bundle.
 
     Attributes:

@@ -18,11 +18,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Skip proto compilation if proto files don't exist yet (Issue #1159)
         if !std::path::Path::new(&core_proto).exists() {
-            println!("cargo:warning=Proto files not found at {}, skipping gRPC codegen. See Issue #1159.", proto_root);
-            // Create empty stub files so include!() macros in transport/mod.rs don't fail
+            println!(
+                "cargo:warning=Proto files not found at {proto_root}, \
+                 skipping gRPC codegen. See Issue #1159."
+            );
+            // Create empty stub files so include!() in transport/mod.rs won't fail
             let out_dir = std::env::var("OUT_DIR")?;
-            std::fs::write(format!("{}/nexus.core.rs", out_dir), "// Proto stub - proto files not yet committed (Issue #1159)\n")?;
-            std::fs::write(format!("{}/nexus.raft.rs", out_dir), "// Proto stub - proto files not yet committed (Issue #1159)\n")?;
+            let stub = "// Proto stub (Issue #1159)\n";
+            std::fs::write(format!("{out_dir}/nexus.core.rs"), stub)?;
+            std::fs::write(format!("{out_dir}/nexus.raft.rs"), stub)?;
             // Do NOT set has_protos cfg - transport client/server won't compile
             return Ok(());
         }

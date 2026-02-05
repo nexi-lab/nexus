@@ -463,9 +463,10 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         loop = asyncio.get_event_loop()
         embedding = await loop.run_in_executor(None, lambda: self._model.embed(text))
 
-        # Handle numpy arrays
+        # Handle numpy arrays - convert to list[float]
         if hasattr(embedding, "tolist"):
-            return embedding.tolist()  # type: ignore[no-any-return]
+            result: list[float] = embedding.tolist()
+            return result
         return list(embedding)
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:

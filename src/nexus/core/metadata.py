@@ -128,7 +128,7 @@ class FileMetadata:
         Returns:
             Full FileMetadata object
         """
-        return compact.to_file_metadata()
+        return compact.to_file_metadata()  # type: ignore[no-any-return]
 
 
 class MetadataStore(ABC):

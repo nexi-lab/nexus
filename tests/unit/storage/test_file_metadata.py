@@ -2,6 +2,9 @@
 
 Tests the RaftMetadataStore's ability to store and retrieve custom
 key-value metadata on files.
+
+Requires: Built Rust extensions and generated protobuf files.
+Skip these tests in environments without full build (e.g., lint-only CI).
 """
 
 import shutil
@@ -10,6 +13,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+
+# Skip entire module if required build artifacts aren't available
+pytest.importorskip("nexus.core._metadata_generated", reason="Requires built Rust extensions")
+pytest.importorskip("nexus.core.metadata_pb2", reason="Requires generated protobuf files")
 
 from nexus.core.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore

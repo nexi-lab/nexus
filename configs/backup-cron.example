@@ -1,0 +1,18 @@
+# Nexus Backup Cron Configuration
+# Copy to /etc/cron.d/nexus-backup or add to crontab
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+NEXUS_DIR=/opt/nexus
+
+# Daily PostgreSQL backup at 2:00 AM
+0 2 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --pg-only >> /var/log/nexus/backup.log 2>&1
+
+# Weekly full backup (Sunday at 3:00 AM)
+0 3 * * 0 root cd $NEXUS_DIR && ./scripts/backup.sh >> /var/log/nexus/backup.log 2>&1
+
+# Daily cleanup at 5:00 AM
+0 5 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --cleanup >> /var/log/nexus/backup.log 2>&1
+
+# Upload to GCS at 4:00 AM (requires NEXUS_GCS_BACKUP_BUCKET)
+# 0 4 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --gcs >> /var/log/nexus/backup.log 2>&1

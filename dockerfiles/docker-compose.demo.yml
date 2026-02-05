@@ -40,8 +40,11 @@ services:
     volumes:
       # PostgreSQL 18 default PGDATA: /var/lib/postgresql/data
       - postgres-data:/var/lib/postgresql/data
+      # WAL archive for point-in-time recovery (Issue #998)
+      - postgres-wal-archive:/var/lib/postgresql/wal_archive
       # NOTE: this compose file lives in dockerfiles/, so use ../ for repo-root paths.
       - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
+      - ../postgres-init/02-wal-archiving.sql:/docker-entrypoint-initdb.d/02-wal-archiving.sql:ro
     # PostgreSQL 18 optimizations:
     # - io_method=worker: Async I/O for 2-3x I/O performance
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
@@ -62,6 +65,9 @@ services:
       -c enable_self_join_elimination=on
       -c enable_distinct_reordering=on
       -c wal_compression=lz4
+      -c archive_mode=on
+      -c archive_command='test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'
+      -c archive_timeout=300
       -c maintenance_work_mem=2GB
       -c max_parallel_maintenance_workers=7
       -c shared_buffers=1GB
@@ -520,6 +526,8 @@ volumes:
   zoekt-index:
     driver: local
   postgres-data:
+    driver: local
+  postgres-wal-archive:
     driver: local
   dragonfly-data:
     driver: local

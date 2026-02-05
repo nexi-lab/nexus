@@ -3822,9 +3822,7 @@ class UsageEvent(Base):
 
     def get_metadata(self) -> dict[str, Any]:
         """Parse metadata JSON."""
-        result: dict[str, Any] = (
-            json.loads(self.metadata_json) if self.metadata_json else {}
-        )
+        result: dict[str, Any] = json.loads(self.metadata_json) if self.metadata_json else {}
         return result
 
     def set_metadata(self, data: dict[str, Any]) -> None:

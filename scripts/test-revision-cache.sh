@@ -128,7 +128,7 @@ print(f"  Using database: {db_url.split('@')[1] if '@' in db_url else db_url}")
 print("\nTest 1: Cache key uses revision bucket format")
 cache = ReBACPermissionCache(revision_quantization_window=10)
 cache.set_revision_fetcher(lambda t: 25)
-key = cache._make_key("agent", "alice", "read", "file", "/doc", "tenant1")
+key = cache._make_key("agent", "alice", "read", "file", "/doc", "zone1")
 all_passed &= test("Key ends with :r2 (25//10=2)", key.endswith(":r2"))
 
 # ─── Test 2: PostgreSQL revision tracking ───
@@ -136,31 +136,31 @@ print("\nTest 2: PostgreSQL revision increment")
 engine = create_engine(db_url)
 Base.metadata.create_all(engine)
 
-# Use unique tenant to avoid conflicts
-test_tenant = f"test_revision_{uuid.uuid4().hex[:8]}"
+# Use unique zone to avoid conflicts
+test_zone = f"test_revision_{uuid.uuid4().hex[:8]}"
 
 manager = ReBACManager(engine, l1_cache_revision_window=5)
 
-initial_rev = manager._get_tenant_revision(test_tenant)
-all_passed &= test(f"Initial revision for new tenant is 0", initial_rev == 0)
+initial_rev = manager._get_zone_revision(test_zone)
+all_passed &= test(f"Initial revision for new zone is 0", initial_rev == 0)
 
 # Write a permission
 manager.rebac_write(
     subject=("agent", "test_user"),
     relation="member-of",
     object=("group", "test-group"),
-    tenant_id=test_tenant,
+    zone_id=test_zone,
 )
 
-new_rev = manager._get_tenant_revision(test_tenant)
+new_rev = manager._get_zone_revision(test_zone)
 all_passed &= test(f"Revision incremented to {new_rev}", new_rev == 1)
 
 # ─── Test 3: Verify revision persisted in PostgreSQL ───
 print("\nTest 3: Revision persisted in PostgreSQL")
 with engine.connect() as conn:
     result = conn.execute(
-        text("SELECT current_version FROM rebac_version_sequences WHERE tenant_id = :tenant"),
-        {"tenant": test_tenant}
+        text("SELECT current_version FROM rebac_version_sequences WHERE zone_id = :zone"),
+        {"zone": test_zone}
     )
     row = result.fetchone()
     db_rev = row[0] if row else -1
@@ -173,7 +173,7 @@ result = manager.rebac_check(
     subject=("agent", "test_user"),
     permission="member-of",
     object=("group", "test-group"),
-    tenant_id=test_tenant,
+    zone_id=test_zone,
 )
 all_passed &= test("Permission check returns True", result is True)
 
@@ -183,17 +183,17 @@ result2 = manager.rebac_check(
     subject=("agent", "test_user"),
     permission="member-of",
     object=("group", "test-group"),
-    tenant_id=test_tenant,
+    zone_id=test_zone,
 )
 stats_after = manager._l1_cache.get_stats()
 all_passed &= test("Second check hits cache", stats_after["hits"] > stats_before["hits"])
 
 # ─── Test 5: Time-based stability (the original bug) ───
 print("\nTest 5: Time-based stability (original bug check)")
-key1 = manager._l1_cache._make_key("agent", "test", "read", "file", "/doc", test_tenant)
+key1 = manager._l1_cache._make_key("agent", "test", "read", "file", "/doc", test_zone)
 time.sleep(0.5)
 manager._l1_cache._revision_cache.clear()  # Force re-fetch
-key2 = manager._l1_cache._make_key("agent", "test", "read", "file", "/doc", test_tenant)
+key2 = manager._l1_cache._make_key("agent", "test", "read", "file", "/doc", test_zone)
 all_passed &= test("Cache key stable over time", key1 == key2)
 
 # ─── Test 6: Cache hit rate ───
@@ -205,7 +205,7 @@ for _ in range(20):
         subject=("agent", "test_user"),
         permission="member-of",
         object=("group", "test-group"),
-        tenant_id=test_tenant,
+        zone_id=test_zone,
     )
 
 stats = manager._l1_cache.get_stats()
@@ -215,10 +215,10 @@ all_passed &= test(f"Hit rate > 90% (got {hit_rate:.1f}%)", hit_rate > 90)
 # ─── Cleanup ───
 print("\nCleaning up test data...")
 with engine.connect() as conn:
-    conn.execute(text("DELETE FROM rebac_tuples WHERE tenant_id = :tenant"), {"tenant": test_tenant})
-    conn.execute(text("DELETE FROM rebac_version_sequences WHERE tenant_id = :tenant"), {"tenant": test_tenant})
+    conn.execute(text("DELETE FROM rebac_tuples WHERE zone_id = :zone"), {"zone": test_zone})
+    conn.execute(text("DELETE FROM rebac_version_sequences WHERE zone_id = :zone"), {"zone": test_zone})
     conn.commit()
-print("  Cleaned up test tenant data")
+print("  Cleaned up test zone data")
 
 manager.close()
 engine.dispose()

@@ -438,7 +438,7 @@ nexus mkdir /workspace 2>/dev/null && echo "✓ Created /workspace" || echo "✓
 # Only grant ownership if we just created the admin user (credentials were cleaned)
 if [ "$CLEAN_CREDENTIALS" == "1" ]; then
     # Grant admin user full ownership
-    nexus rebac create user $ADMIN_USER direct_owner file /workspace --tenant-id default >/dev/null 2>&1
+    nexus rebac create user $ADMIN_USER direct_owner file /workspace --zone-id default >/dev/null 2>&1
     echo "✓ Granted '$ADMIN_USER' ownership of /workspace"
 else
     echo "✓ Workspace permissions preserved (existing user permissions maintained)"

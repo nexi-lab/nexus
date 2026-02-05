@@ -83,7 +83,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         db_path=db_path,
         auto_parse=False,
         enforce_permissions=True,
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Check Tiger Cache is enabled
@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         groups=[],
         is_admin=True,
         is_system=False,
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Grant admin ownership of root
@@ -111,7 +111,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         subject=("user", "admin"),
         relation="direct_owner",
         object=("file", "/"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         context=admin_ctx,
     )
 
@@ -125,14 +125,14 @@ with tempfile.TemporaryDirectory() as tmpdir:
         subject=("user", "alice"),
         relation="direct_viewer",
         object=("file", "/doc1.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         context=admin_ctx,
     )
     nx.rebac_create(
         subject=("user", "alice"),
         relation="direct_viewer",
         object=("file", "/doc2.txt"),
-        tenant_id="test_tenant",
+        zone_id="test_zone",
         context=admin_ctx,
     )
     all_passed &= test("Created files and granted permissions", True)
@@ -140,7 +140,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # Check Tiger Cache is empty for alice initially
     print("\nTest 2: Verify Tiger Cache starts empty for alice...")
     accessible_before = tiger_cache.get_accessible_resources(
-        "user", "alice", "read", "file", "test_tenant"
+        "user", "alice", "read", "file", "test_zone"
     )
     all_passed &= test(f"Tiger Cache initially empty for alice (has {len(accessible_before)} resources)", len(accessible_before) == 0)
 
@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         groups=[],
         is_admin=False,
         is_system=False,
-        tenant_id="test_tenant",
+        zone_id="test_zone",
     )
 
     # Use rebac_check_bulk to trigger the write-through path
@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
         (("user", "alice"), "read", ("file", "/doc3.txt")),  # Should be denied
     ]
 
-    results = nx._rebac_manager.rebac_check_bulk(checks, tenant_id="test_tenant")
+    results = nx._rebac_manager.rebac_check_bulk(checks, zone_id="test_zone")
 
     # Verify permission check results
     doc1_allowed = results.get((("user", "alice"), "read", ("file", "/doc1.txt")), False)
@@ -175,7 +175,7 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # Check Tiger Cache was populated (WRITE-THROUGH!)
     print("\nTest 4: Verify Tiger Cache populated via write-through...")
     accessible_after = tiger_cache.get_accessible_resources(
-        "user", "alice", "read", "file", "test_tenant"
+        "user", "alice", "read", "file", "test_zone"
     )
 
     all_passed &= test(
@@ -184,9 +184,9 @@ with tempfile.TemporaryDirectory() as tmpdir:
     )
 
     # Verify the specific resources are in Tiger Cache
-    doc1_int_id = resource_map.get_or_create_int_id("file", "/doc1.txt", "test_tenant")
-    doc2_int_id = resource_map.get_or_create_int_id("file", "/doc2.txt", "test_tenant")
-    doc3_int_id = resource_map.get_or_create_int_id("file", "/doc3.txt", "test_tenant")
+    doc1_int_id = resource_map.get_or_create_int_id("file", "/doc1.txt", "test_zone")
+    doc2_int_id = resource_map.get_or_create_int_id("file", "/doc2.txt", "test_zone")
+    doc3_int_id = resource_map.get_or_create_int_id("file", "/doc3.txt", "test_zone")
 
     all_passed &= test(f"doc1 (int_id={doc1_int_id}) in Tiger Cache", doc1_int_id in accessible_after)
     all_passed &= test(f"doc2 (int_id={doc2_int_id}) in Tiger Cache", doc2_int_id in accessible_after)
@@ -195,12 +195,12 @@ with tempfile.TemporaryDirectory() as tmpdir:
     # Test that subsequent checks hit Tiger Cache
     print("\nTest 5: Verify subsequent checks use Tiger Cache...")
     result_from_tiger = tiger_cache.check_access(
-        "user", "alice", "read", "file", "/doc1.txt", "test_tenant"
+        "user", "alice", "read", "file", "/doc1.txt", "test_zone"
     )
     all_passed &= test(f"Tiger Cache check_access returns True", result_from_tiger is True)
 
     result_from_tiger_denied = tiger_cache.check_access(
-        "user", "alice", "read", "file", "/doc3.txt", "test_tenant"
+        "user", "alice", "read", "file", "/doc3.txt", "test_zone"
     )
     all_passed &= test(f"Tiger Cache check_access returns False for doc3", result_from_tiger_denied is False)
 

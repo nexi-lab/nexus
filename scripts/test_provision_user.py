@@ -47,20 +47,20 @@ def test_provision_user() -> bool:
     test_user_id = f"testuser_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
     test_email = f"{test_user_id}@example.com"
     test_display_name = "Test User"
-    test_tenant_id = test_user_id  # Extracted from email
+    test_zone_id = test_user_id  # Extracted from email
 
     print("2. Test User Details:")
     print(f"   - User ID: {test_user_id}")
     print(f"   - Email: {test_email}")
     print(f"   - Display Name: {test_display_name}")
-    print(f"   - Tenant ID: {test_tenant_id}")
+    print(f"   - Zone ID: {test_zone_id}")
     print()
 
     # Create admin context
     admin_context = OperationContext(
         user="system",
         groups=[],
-        tenant_id=test_tenant_id,
+        zone_id=test_zone_id,
         is_admin=True,
     )
 
@@ -71,7 +71,7 @@ def test_provision_user() -> bool:
             user_id=test_user_id,
             email=test_email,
             display_name=test_display_name,
-            tenant_id=test_tenant_id,
+            zone_id=test_zone_id,
             create_api_key=True,
             create_agents=True,
             import_skills=True,
@@ -79,7 +79,7 @@ def test_provision_user() -> bool:
         )
         print("   ✓ Provisioning successful!")
         print(f"   - User ID: {result1['user_id']}")
-        print(f"   - Tenant ID: {result1['tenant_id']}")
+        print(f"   - Zone ID: {result1['zone_id']}")
         print(
             f"   - API Key: {result1['api_key'][:20]}..."
             if result1.get("api_key")
@@ -112,7 +112,7 @@ def test_provision_user() -> bool:
             user_id=test_user_id,
             email=test_email,
             display_name=test_display_name,
-            tenant_id=test_tenant_id,
+            zone_id=test_zone_id,
             create_api_key=True,
             create_agents=True,
             import_skills=True,
@@ -120,7 +120,7 @@ def test_provision_user() -> bool:
         )
         print("   ✓ Idempotency test successful!")
         print(f"   - Same User ID: {result1['user_id'] == result2['user_id']}")
-        print(f"   - Same Tenant ID: {result1['tenant_id'] == result2['tenant_id']}")
+        print(f"   - Same Zone ID: {result1['zone_id'] == result2['zone_id']}")
         print(f"   - Same Workspace: {result1['workspace_path'] == result2['workspace_path']}")
         print()
     except Exception as e:
@@ -143,12 +143,12 @@ def test_provision_user() -> bool:
 
     # Check user directories exist
     user_dirs = [
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/workspace",
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/memory",
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/skill",
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/agent",
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/connector",
-        f"/tenant:{test_tenant_id}/user:{test_user_id}/resource",
+        f"/zone/{test_zone_id}/user:{test_user_id}/workspace",
+        f"/zone/{test_zone_id}/user:{test_user_id}/memory",
+        f"/zone/{test_zone_id}/user:{test_user_id}/skill",
+        f"/zone/{test_zone_id}/user:{test_user_id}/agent",
+        f"/zone/{test_zone_id}/user:{test_user_id}/connector",
+        f"/zone/{test_zone_id}/user:{test_user_id}/resource",
     ]
 
     for dir_path in user_dirs:
@@ -164,18 +164,18 @@ def test_provision_user() -> bool:
     # Test 4: Verify database records
     print("6. Verifying database records...")
     try:
-        from nexus.storage.models import TenantModel, UserModel
+        from nexus.storage.models import UserModel, ZoneModel
 
         session = nx.metadata.SessionLocal()
         try:
-            # Check tenant
-            tenant = session.query(TenantModel).filter_by(tenant_id=test_tenant_id).first()
-            if tenant:
-                print(f"   - Tenant exists: {tenant.tenant_id} ✓")
-                print(f"     Name: {tenant.name}")
-                print(f"     Active: {tenant.is_active}")
+            # Check zone
+            zone = session.query(ZoneModel).filter_by(zone_id=test_zone_id).first()
+            if zone:
+                print(f"   - Zone exists: {zone.zone_id} ✓")
+                print(f"     Name: {zone.name}")
+                print(f"     Active: {zone.is_active}")
             else:
-                print("   - Tenant not found ✗")
+                print("   - Zone not found ✗")
 
             # Check user
             user = session.query(UserModel).filter_by(user_id=test_user_id).first()
@@ -183,7 +183,7 @@ def test_provision_user() -> bool:
                 print(f"   - User exists: {user.user_id} ✓")
                 print(f"     Email: {user.email}")
                 print(f"     Display Name: {user.display_name}")
-                print(f"     Tenant ID: {user.tenant_id}")
+                print(f"     Zone ID: {user.zone_id}")
                 print(f"     Active: {user.is_active}")
             else:
                 print("   - User not found ✗")
@@ -200,12 +200,12 @@ def test_provision_user() -> bool:
     print("7. Verifying entity registry...")
     try:
         if nx._entity_registry:
-            # Check tenant
-            tenant_entity = nx._entity_registry.get_entity("tenant", test_tenant_id)
-            if tenant_entity:
-                print(f"   - Tenant in registry: {tenant_entity.entity_id} ✓")
+            # Check zone
+            zone_entity = nx._entity_registry.get_entity("zone", test_zone_id)
+            if zone_entity:
+                print(f"   - Zone in registry: {zone_entity.entity_id} ✓")
             else:
-                print("   - Tenant not in registry ✗")
+                print("   - Zone not in registry ✗")
 
             # Check user
             user_entity = nx._entity_registry.get_entity("user", test_user_id)

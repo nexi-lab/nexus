@@ -1,9 +1,9 @@
 """
-Provision Nexus server with resources following multi-tenant namespace convention.
+Provision Nexus server with resources following multi-zone namespace convention.
 
 Usage:
-    python scripts/provision_namespace.py --tenant default --user alice
-    python scripts/provision_namespace.py --user alice  # Uses 'default' tenant
+    python scripts/provision_namespace.py --zone default --user alice
+    python scripts/provision_namespace.py --user alice  # Uses 'default' zone
 """
 
 import argparse
@@ -60,14 +60,14 @@ def system_path(resource_type: str, resource_id: str) -> str:
     return f"/{resource_type}/{resource_id}"
 
 
-def tenant_path(tenant_id: str, resource_type: str, resource_id: str) -> str:
-    """Generate tenant-wide path."""
-    return f"/tenant:{tenant_id}/{resource_type}/{resource_id}"
+def zone_path(zone_id: str, resource_type: str, resource_id: str) -> str:
+    """Generate zone-wide path."""
+    return f"/zone/{zone_id}/{resource_type}/{resource_id}"
 
 
-def user_path(tenant_id: str, user_id: str, resource_type: str, resource_id: str) -> str:
+def user_path(zone_id: str, user_id: str, resource_type: str, resource_id: str) -> str:
     """Generate user-owned path."""
-    return f"/tenant:{tenant_id}/user:{user_id}/{resource_type}/{resource_id}"
+    return f"/zone/{zone_id}/user:{user_id}/{resource_type}/{resource_id}"
 
 
 def provision_system_resources(nx: Any) -> None:
@@ -77,7 +77,7 @@ def provision_system_resources(nx: Any) -> None:
     context = OperationContext(
         user="system",
         groups=[],
-        tenant_id="default",
+        zone_id="default",
         is_admin=True,
         is_system=False,  # Set to False as is_system may not be fully supported
     )
@@ -95,7 +95,7 @@ def provision_system_resources(nx: Any) -> None:
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", template_path),
-            tenant_id="default",
+            zone_id="default",
             context=context,
         )
         print(f"  ✓ Created {template_path} with ownership")
@@ -113,7 +113,7 @@ def provision_system_resources(nx: Any) -> None:
             subject=("system", "admin"),
             relation="owner-of",
             object=("file", skill_path),
-            tenant_id="default",
+            zone_id="default",
             context=context,
         )
         print(f"  ✓ Created {skill_path} with ownership")
@@ -121,56 +121,56 @@ def provision_system_resources(nx: Any) -> None:
         print(f"  ✗ Failed to create system skill: {e}")
 
 
-def provision_tenant_resources(nx: Any, tenant_id: str) -> None:
-    """Create tenant-wide resources."""
+def provision_zone_resources(nx: Any, zone_id: str) -> None:
+    """Create zone-wide resources."""
     # Create admin context for provisioning
     context = OperationContext(
         user="system",
         groups=[],
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=True,
         is_system=False,
     )
 
-    print(f"Creating tenant resources for {tenant_id}...")
+    print(f"Creating zone resources for {zone_id}...")
 
     try:
-        # Tenant logo
+        # Zone logo
         logo_id = generate_resource_id("resource", "company_logo")
-        logo_path = tenant_path(tenant_id, "resource", logo_id)
+        logo_path = zone_path(zone_id, "resource", logo_id)
         nx.write(logo_path, b"# Company logo placeholder", context=context)
 
-        # Grant tenant ownership
+        # Grant zone ownership
         nx.rebac_create(
-            subject=("tenant", tenant_id),
+            subject=("zone", zone_id),
             relation="owner-of",
             object=("file", logo_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
         print(f"  ✓ Created {logo_path} with ownership")
     except Exception as e:
-        print(f"  ✗ Failed to create tenant logo: {e}")
+        print(f"  ✗ Failed to create zone logo: {e}")
 
     try:
-        # Tenant connector (e.g., Slack)
+        # Zone connector (e.g., Slack)
         connector_id = generate_resource_id("connector", "slack")
-        connector_path = tenant_path(tenant_id, "connector", connector_id)
+        connector_path = zone_path(zone_id, "connector", connector_id)
         # Note: Actual connector setup would use add_mount()
         print(f"  ✓ Would create connector at {connector_path}")
     except Exception as e:
-        print(f"  ✗ Failed to create tenant connector: {e}")
+        print(f"  ✗ Failed to create zone connector: {e}")
 
 
-def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
+def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     """Create folder structure for admin user with proper permissions."""
-    print(f"Creating admin user folders for {tenant_id}/admin...")
+    print(f"Creating admin user folders for {zone_id}/admin...")
 
     # Create admin context for provisioning
     context = OperationContext(
         user="system",
         groups=[],
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=True,
         is_system=False,
     )
@@ -179,7 +179,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
 
     # First, create and grant permissions on the parent user directory
     try:
-        user_dir_path = f"/tenant:{tenant_id}/user:{admin_user_id}"
+        user_dir_path = f"/zone/{zone_id}/user:{admin_user_id}"
         nx.mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
 
         # Create placeholder file to make directory discoverable
@@ -191,7 +191,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
             subject=("user", admin_user_id),
             relation="owner-of",
             object=("file", user_dir_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
         print(f"  ✓ Created user directory {user_dir_path} with ownership")
@@ -201,8 +201,8 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
     # Create all 6 folders: workspace, memory, skill, agent, connector, resource
     for resource_type in ALL_RESOURCE_TYPES:
         try:
-            # Create the folder path: /tenant:<tid>/user:admin/<resource_type>
-            folder_path = f"/tenant:{tenant_id}/user:{admin_user_id}/{resource_type}"
+            # Create the folder path: /zone/<zid>/user:admin/<resource_type>
+            folder_path = f"/zone/{zone_id}/user:{admin_user_id}/{resource_type}"
 
             # Create the directory
             nx.mkdir(folder_path, parents=True, exist_ok=True, context=context)
@@ -216,7 +216,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
                 subject=("user", admin_user_id),
                 relation="owner-of",
                 object=("file", folder_path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 context=context,
             )
             print(f"  ✓ Created folder {folder_path} with admin user ownership")
@@ -227,7 +227,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
     admin_context = OperationContext(
         user=admin_user_id,  # Set user to admin, not system
         groups=[],
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=True,
         is_system=False,
     )
@@ -235,7 +235,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
     # Create default workspace "my workspace" for admin user
     try:
         workspace_id = generate_resource_id("workspace", "my_workspace")
-        workspace_path = user_path(tenant_id, admin_user_id, "workspace", workspace_id)
+        workspace_path = user_path(zone_id, admin_user_id, "workspace", workspace_id)
 
         # Create the workspace directory first
         nx.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
@@ -254,7 +254,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
                 subject=("user", admin_user_id),
                 relation="owner-of",
                 object=("file", workspace_path),
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 context=admin_context,
             )
             print("  ✓ Granted ownership to admin user")
@@ -298,7 +298,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
 
     # Import default skills from pre-zipped .skill files (before creating agents)
     # Returns a dict mapping skill names to their paths
-    skill_paths_map = provision_default_skills(nx, tenant_id, admin_user_id, admin_context)
+    skill_paths_map = provision_default_skills(nx, zone_id, admin_user_id, admin_context)
     print(f"\n[DEBUG] Imported skills map: {skill_paths_map}")
 
     # Create standard agents (ImpersonatedUser and UntrustedAgent)
@@ -316,7 +316,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
     # Note: 'skill' is excluded from AGENT_RESOURCE_GRANTS by default
     if agent_results["untrusted"]:
         grant_agent_resource_access(
-            nx, admin_user_id, tenant_id, AGENT_RESOURCE_GRANTS, agent_name="UntrustedAgent"
+            nx, admin_user_id, zone_id, AGENT_RESOURCE_GRANTS, agent_name="UntrustedAgent"
         )
 
         # Then, grant access to skill-creator skill (using actual path from import)
@@ -355,7 +355,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
                     subject=("agent", agent_id),
                     relation="direct_viewer",  # Read-only access
                     object=("file", skill_creator_path_normalized),
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     context=admin_context,
                 )
                 print(
@@ -376,7 +376,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
                         subject=("agent", agent_id),
                         permission="read",
                         object=("file", skill_creator_path),
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         context=admin_context,
                     )
                     print(f"    [DEBUG] Direct permission check (read): {check_result}")
@@ -393,7 +393,7 @@ def provision_admin_user_folders(nx: Any, tenant_id: str) -> None:
 
 
 def provision_default_skills(
-    nx: Any, tenant_id: str, user_id: str, context: OperationContext
+    nx: Any, zone_id: str, user_id: str, context: OperationContext
 ) -> dict[str, str]:
     """Import default skills from pre-zipped .skill files in data/skills/.
 
@@ -406,9 +406,9 @@ def provision_default_skills(
     - nexus/data/skills/internal-comms.skill
 
     Returns:
-        Dictionary mapping skill names to their paths (e.g., {"skill-creator": "/tenant:.../skill/skill-creator/"})
+        Dictionary mapping skill names to their paths (e.g., {"skill-creator": "/zone/.../skill/skill-creator/"})
     """
-    print(f"\nImporting default skills for {tenant_id}/{user_id}...")
+    print(f"\nImporting default skills for {zone_id}/{user_id}...")
 
     # Get the nexus directory (parent of scripts/)
     nexus_dir = Path(__file__).parent.parent
@@ -508,7 +508,7 @@ def load_env_file(env_file: str = ".env") -> dict:
     return env_vars
 
 
-def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> str | None:
+def ensure_admin_api_key(zone_id: str = "default", env_file: str = ".env") -> str | None:
     """Ensure admin API key exists, loading from .env or creating if needed.
 
     Returns:
@@ -597,8 +597,8 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
             entity_registry.register_entity(
                 entity_type="user",
                 entity_id="admin",
-                parent_type="tenant",
-                parent_id=tenant_id,
+                parent_type="zone",
+                parent_id=zone_id,
             )
 
             # Create API key
@@ -606,7 +606,7 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
                 session,
                 user_id="admin",
                 name="Admin key (provisioning)",
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 is_admin=True,
                 expires_at=None,
             )
@@ -622,15 +622,15 @@ def ensure_admin_api_key(tenant_id: str = "default", env_file: str = ".env") -> 
             return None
 
 
-def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
+def provision_user_resources(nx: Any, zone_id: str, user_id: str) -> None:
     """Create user-owned resources."""
-    print(f"Creating user resources for {tenant_id}/{user_id}...")
+    print(f"Creating user resources for {zone_id}/{user_id}...")
 
     # Create admin context for provisioning
     context = OperationContext(
         user="system",
         groups=[],
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=True,
         is_system=False,
     )
@@ -638,7 +638,7 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
     try:
         # User workspace (personal)
         workspace_id = generate_resource_id("workspace", "personal")
-        workspace_path = user_path(tenant_id, user_id, "workspace", workspace_id)
+        workspace_path = user_path(zone_id, user_id, "workspace", workspace_id)
         nx.register_workspace(workspace_path, name="Personal Workspace", context=context)
 
         # CRITICAL: Grant ownership via ReBAC
@@ -646,7 +646,7 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
             subject=("user", user_id),
             relation="owner-of",
             object=("file", workspace_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
         print(f"  ✓ Created {workspace_path} with ownership")
@@ -656,7 +656,7 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
     try:
         # Default workspace
         default_workspace_id = generate_resource_id("workspace", "default_workspace")
-        default_workspace_path = user_path(tenant_id, user_id, "workspace", default_workspace_id)
+        default_workspace_path = user_path(zone_id, user_id, "workspace", default_workspace_id)
         nx.register_workspace(default_workspace_path, name="Default Workspace", context=context)
 
         # CRITICAL: Grant ownership via ReBAC
@@ -664,7 +664,7 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
             subject=("user", user_id),
             relation="owner-of",
             object=("file", default_workspace_path),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             context=context,
         )
         print(f"  ✓ Created {default_workspace_path} with ownership")
@@ -675,7 +675,7 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
     user_context = OperationContext(
         user=user_id,  # Set user to the actual user_id, not system
         groups=[],
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         is_admin=True,
         is_system=False,
     )
@@ -692,13 +692,13 @@ def provision_user_resources(nx: Any, tenant_id: str, user_id: str) -> None:
     # Note: 'skill' is excluded from AGENT_RESOURCE_GRANTS by default
     if agent_results["untrusted"]:
         grant_agent_resource_access(
-            nx, user_id, tenant_id, AGENT_RESOURCE_GRANTS, agent_name="UntrustedAgent"
+            nx, user_id, zone_id, AGENT_RESOURCE_GRANTS, agent_name="UntrustedAgent"
         )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Provision Nexus with namespace convention")
-    parser.add_argument("--tenant", default="default", help="Tenant ID (default: default)")
+    parser.add_argument("--zone", default="default", help="Zone ID (default: default)")
     parser.add_argument("--user", help="User ID (optional, for user resources)")
     parser.add_argument("--config", help="Nexus config file path")
     parser.add_argument(
@@ -711,7 +711,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("API Key Setup")
     print("=" * 60)
-    api_key = ensure_admin_api_key(args.tenant, args.env_file)
+    api_key = ensure_admin_api_key(args.zone, args.env_file)
     if api_key:
         # Set it in environment for this process
         os.environ["NEXUS_API_KEY"] = api_key
@@ -724,13 +724,13 @@ def main() -> None:
     try:
         # Provision resources
         provision_system_resources(nx)
-        provision_tenant_resources(nx, args.tenant)
+        provision_zone_resources(nx, args.zone)
 
         # Always provision admin user folders
-        provision_admin_user_folders(nx, args.tenant)
+        provision_admin_user_folders(nx, args.zone)
 
         if args.user:
-            provision_user_resources(nx, args.tenant, args.user)
+            provision_user_resources(nx, args.zone, args.user)
 
         print("\n✓ Provisioning complete!")
     except Exception as e:

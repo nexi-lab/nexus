@@ -58,9 +58,9 @@ logger = logging.getLogger(__name__)
 class MemoryGraphPipelineE2ETest:
     """End-to-end test for memory -> graph pipeline."""
 
-    def __init__(self, database_url: str, tenant_id: str = "e2e-test"):
+    def __init__(self, database_url: str, zone_id: str = "e2e-test"):
         self.database_url = database_url
-        self.tenant_id = tenant_id
+        self.zone_id = zone_id
         self.sync_engine = None
         self.async_engine = None
         self.sync_session = None
@@ -89,21 +89,21 @@ class MemoryGraphPipelineE2ETest:
                 # Delete in correct order (respecting foreign keys)
                 self.sync_session.execute(
                     text(
-                        "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE tenant_id = :tenant)"
+                        "DELETE FROM entity_mentions WHERE entity_id IN (SELECT entity_id FROM entities WHERE zone_id = :zone)"
                     ),
-                    {"tenant": self.tenant_id},
+                    {"zone": self.zone_id},
                 )
                 self.sync_session.execute(
-                    text("DELETE FROM relationships WHERE tenant_id = :tenant"),
-                    {"tenant": self.tenant_id},
+                    text("DELETE FROM relationships WHERE zone_id = :zone"),
+                    {"zone": self.zone_id},
                 )
                 self.sync_session.execute(
-                    text("DELETE FROM entities WHERE tenant_id = :tenant"),
-                    {"tenant": self.tenant_id},
+                    text("DELETE FROM entities WHERE zone_id = :zone"),
+                    {"zone": self.zone_id},
                 )
                 self.sync_session.execute(
-                    text("DELETE FROM memories WHERE tenant_id = :tenant"),
-                    {"tenant": self.tenant_id},
+                    text("DELETE FROM memories WHERE zone_id = :zone"),
+                    {"zone": self.zone_id},
                 )
                 self.sync_session.commit()
                 logger.info("Test data cleaned up")
@@ -150,7 +150,7 @@ class MemoryGraphPipelineE2ETest:
             memory_api = Memory(
                 session=self.sync_session,
                 backend=backend,
-                tenant_id=self.tenant_id,
+                zone_id=self.zone_id,
                 user_id="test-user",
                 agent_id="test-agent",
             )
@@ -184,8 +184,8 @@ class MemoryGraphPipelineE2ETest:
 
             # Verify entities were stored in graph tables
             result = self.sync_session.execute(
-                text("SELECT COUNT(*) FROM entities WHERE tenant_id = :tenant"),
-                {"tenant": self.tenant_id},
+                text("SELECT COUNT(*) FROM entities WHERE zone_id = :zone"),
+                {"zone": self.zone_id},
             )
             entity_count = result.scalar()
             logger.info(f"  Entities in graph: {entity_count}")
@@ -234,7 +234,7 @@ class MemoryGraphPipelineE2ETest:
             from nexus.search.graph_store import GraphStore
 
             async with async_session_factory() as session:
-                graph_store = GraphStore(session, tenant_id=self.tenant_id)
+                graph_store = GraphStore(session, zone_id=self.zone_id)
 
                 # Simulate what memory ingestion would do
                 logger.info("Creating entities from 'extracted' data...")
@@ -345,7 +345,7 @@ class MemoryGraphPipelineE2ETest:
         logger.info("  Memory -> Graph Pipeline E2E Test")
         logger.info("=" * 60)
         logger.info(f"Database: {self.database_url[:50]}...")
-        logger.info(f"Tenant ID: {self.tenant_id}")
+        logger.info(f"Zone ID: {self.zone_id}")
         logger.info(f"Timestamp: {datetime.now(UTC).isoformat()}")
 
         # Run tests

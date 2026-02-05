@@ -6,20 +6,20 @@ This script tests four scenarios:
 Test 1: Agent without API key
 1. Registering an agent with no API key and no permission inheritance
 2. Verifying that no API key was created for the agent
-3. Verifying tenant_id is "default"
+3. Verifying zone_id is "default"
 4. Cleaning up by deleting the agent
 
 Test 2: Agent with API key (zero permissions)
 1. Registering an agent with API key but no permission inheritance
 2. Verifying that an API key was created
-3. Verifying tenant_id is "default"
+3. Verifying zone_id is "default"
 4. Testing that the agent API key has limited access (only agent config directory)
 5. Cleaning up by deleting the agent
 
 Test 3: Agent with API key (full permissions)
 1. Registering an agent with API key and permission inheritance
 2. Verifying that an API key was created
-3. Verifying tenant_id is "default"
+3. Verifying zone_id is "default"
 4. Testing that the agent API key has full access (inherits owner's permissions)
 5. Cleaning up by deleting the agent
 
@@ -143,7 +143,7 @@ def test_agent_no_api_key(base_url: str, api_key: str) -> None:
     print(f"   Agent ID: {register_result['result']['agent_id']}")
     print(f"   User ID: {register_result['result']['user_id']}")
     print(f"   Has API Key: {register_result['result']['has_api_key']}")
-    print(f"   Tenant ID: {register_result['result'].get('tenant_id', 'N/A')}")
+    print(f"   Zone ID: {register_result['result'].get('zone_id', 'N/A')}")
     print(f"   Config Path: {register_result['result'].get('config_path', 'N/A')}")
     print()
 
@@ -152,14 +152,14 @@ def test_agent_no_api_key(base_url: str, api_key: str) -> None:
         print("❌ ERROR: Agent should not have an API key, but has_api_key is True")
         sys.exit(1)
 
-    # Verify tenant_id is "default" (inherited from admin API key)
-    tenant_id = register_result["result"].get("tenant_id")
-    if tenant_id != "default":
+    # Verify zone_id is "default" (inherited from admin API key)
+    zone_id = register_result["result"].get("zone_id")
+    if zone_id != "default":
         print(
-            f"❌ ERROR: Agent tenant_id should be 'default' (from admin API key), but got: {tenant_id}"
+            f"❌ ERROR: Agent zone_id should be 'default' (from admin API key), but got: {zone_id}"
         )
         sys.exit(1)
-    print("✅ Tenant ID is correct (default)")
+    print("✅ Zone ID is correct (default)")
     print()
 
     # Step 2: Verify no API key was created
@@ -319,7 +319,7 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     print(f"   Agent ID: {register_result['result']['agent_id']}")
     print(f"   User ID: {register_result['result']['user_id']}")
     print(f"   Has API Key: {register_result['result']['has_api_key']}")
-    print(f"   Tenant ID: {register_result['result'].get('tenant_id', 'N/A')}")
+    print(f"   Zone ID: {register_result['result'].get('zone_id', 'N/A')}")
     print(f"   Config Path: {register_result['result'].get('config_path', 'N/A')}")
     print()
 
@@ -328,14 +328,14 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
         print("❌ ERROR: Agent should have an API key, but has_api_key is False")
         sys.exit(1)
 
-    # Verify tenant_id is "default"
-    tenant_id = register_result["result"].get("tenant_id")
-    if tenant_id != "default":
+    # Verify zone_id is "default"
+    zone_id = register_result["result"].get("zone_id")
+    if zone_id != "default":
         print(
-            f"❌ ERROR: Agent tenant_id should be 'default' (from admin API key), but got: {tenant_id}"
+            f"❌ ERROR: Agent zone_id should be 'default' (from admin API key), but got: {zone_id}"
         )
         sys.exit(1)
-    print("✅ Tenant ID is correct (default)")
+    print("✅ Zone ID is correct (default)")
     print()
 
     # Get the agent API key
@@ -390,8 +390,8 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
 
     # Step 3: Test agent API key access - should only see agent config directory
     print("Step 3: Testing agent API key access (should only see agent config directory)...")
-    # Agent directory uses the new namespace: /tenant:{tenant_id}/user:{user_id}/agent/{agent_name}
-    agent_dir = f"/tenant:default/user:admin/agent/{agent_name}"
+    # Agent directory uses the namespace: /zone/{zone_id}/user:{user_id}/agent/{agent_name}
+    agent_dir = f"/zone/default/user:admin/agent/{agent_name}"
 
     # First, check if agent can see its own directory
     list_agent_dir_params = {
@@ -435,19 +435,19 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     print(f"   Agent can see {len(files)} item(s) at root:")
     print(f"   Visible paths: {visible_paths}")
 
-    # Agent should be able to see /tenant:default (its tenant)
+    # Agent should be able to see /zone/default (its zone)
     # and should be able to access its own agent directory
-    has_tenant_access = "/tenant:default" in visible_paths
+    has_zone_access = "/zone/default" in visible_paths
     has_agent_dir_access = len(agent_dir_files) > 0
 
-    if not has_tenant_access and not has_agent_dir_access:
-        print("❌ ERROR: Agent cannot see its tenant or access its own directory")
+    if not has_zone_access and not has_agent_dir_access:
+        print("❌ ERROR: Agent cannot see its zone or access its own directory")
         print(f"   Visible paths at root: {visible_paths}")
         print(f"   Agent directory: {agent_dir}")
         sys.exit(1)
 
-    if has_tenant_access:
-        print("   ✅ Agent can see tenant: /tenant:default")
+    if has_zone_access:
+        print("   ✅ Agent can see zone: /zone/default")
     if has_agent_dir_access:
         print(f"   ✅ Agent can access its own directory: {agent_dir}")
 
@@ -575,7 +575,7 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
     print(f"   Agent ID: {register_result['result']['agent_id']}")
     print(f"   User ID: {register_result['result']['user_id']}")
     print(f"   Has API Key: {register_result['result']['has_api_key']}")
-    print(f"   Tenant ID: {register_result['result'].get('tenant_id', 'N/A')}")
+    print(f"   Zone ID: {register_result['result'].get('zone_id', 'N/A')}")
     print(f"   Config Path: {register_result['result'].get('config_path', 'N/A')}")
     print()
 
@@ -584,14 +584,14 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
         print("❌ ERROR: Agent should have an API key, but has_api_key is False")
         sys.exit(1)
 
-    # Verify tenant_id is "default"
-    tenant_id = register_result["result"].get("tenant_id")
-    if tenant_id != "default":
+    # Verify zone_id is "default"
+    zone_id = register_result["result"].get("zone_id")
+    if zone_id != "default":
         print(
-            f"❌ ERROR: Agent tenant_id should be 'default' (from admin API key), but got: {tenant_id}"
+            f"❌ ERROR: Agent zone_id should be 'default' (from admin API key), but got: {zone_id}"
         )
         sys.exit(1)
-    print("✅ Tenant ID is correct (default)")
+    print("✅ Zone ID is correct (default)")
     print()
 
     # Get the agent API key
@@ -669,15 +669,15 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
         print("❌ ERROR: Agent cannot see any files")
         sys.exit(1)
 
-    # Verify agent can see tenant (full permissions should allow access)
-    has_tenant_access = any(
-        f.get("path") == "/tenant:default" or f.get("path").startswith("/tenant:default/")
+    # Verify agent can see zone (full permissions should allow access)
+    has_zone_access = any(
+        f.get("path") == "/zone/default" or f.get("path").startswith("/zone/default/")
         for f in files
     )
-    if not has_tenant_access:
-        print("❌ ERROR: Agent cannot see /tenant:default (should have full access)")
+    if not has_zone_access:
+        print("❌ ERROR: Agent cannot see /zone/default (should have full access)")
         sys.exit(1)
-    print("   ✅ Agent can access: /tenant:default")
+    print("   ✅ Agent can access: /zone/default")
 
     # Verify agent can see workspace (full permissions)
     has_workspace_access = any(
@@ -823,7 +823,7 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     print(f"   Agent ID: {register_result['result']['agent_id']}")
     print(f"   User ID: {register_result['result']['user_id']}")
     print(f"   Has API Key: {register_result['result']['has_api_key']}")
-    print(f"   Tenant ID: {register_result['result'].get('tenant_id', 'N/A')}")
+    print(f"   Zone ID: {register_result['result'].get('zone_id', 'N/A')}")
     print()
 
     # Verify has_api_key is True
@@ -831,12 +831,12 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
         print("❌ ERROR: Agent should have an API key, but has_api_key is False")
         sys.exit(1)
 
-    # Verify tenant_id is "default"
-    tenant_id = register_result["result"].get("tenant_id")
-    if tenant_id != "default":
-        print(f"❌ ERROR: Agent tenant_id should be 'default', but got: {tenant_id}")
+    # Verify zone_id is "default"
+    zone_id = register_result["result"].get("zone_id")
+    if zone_id != "default":
+        print(f"❌ ERROR: Agent zone_id should be 'default', but got: {zone_id}")
         sys.exit(1)
-    print("✅ Tenant ID is correct (default)")
+    print("✅ Zone ID is correct (default)")
     print()
 
     # Get the agent API key
@@ -945,9 +945,9 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     root_paths = [f.get("path") for f in root_files]
     print(f"   Agent can see {len(root_files)} item(s) at root: {root_paths}")
 
-    # Should see /tenant:default (agent's tenant) or its own agent directory
-    agent_dir = f"/tenant:default/user:admin/agent/{agent_name}"
-    has_tenant_access = "/tenant:default" in root_paths
+    # Should see /zone/default (agent's zone) or its own agent directory
+    agent_dir = f"/zone/default/user:admin/agent/{agent_name}"
+    has_zone_access = "/zone/default" in root_paths
 
     # Also check if agent can access its own directory
     list_agent_dir_result = make_rpc_call(
@@ -960,13 +960,13 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     agent_dir_files = list_agent_dir_result.get("result", {}).get("files", [])
     has_agent_dir_access = len(agent_dir_files) > 0
 
-    if not has_tenant_access and not has_agent_dir_access:
+    if not has_zone_access and not has_agent_dir_access:
         print(
-            f"   ❌ ERROR: Agent cannot see /tenant:default or access its own directory {agent_dir}"
+            f"   ❌ ERROR: Agent cannot see /zone/default or access its own directory {agent_dir}"
         )
         sys.exit(1)
-    if has_tenant_access:
-        print("   ✅ Agent can access: /tenant:default")
+    if has_zone_access:
+        print("   ✅ Agent can access: /zone/default")
     if has_agent_dir_access:
         print(f"   ✅ Agent can access its own directory: {agent_dir}")
 

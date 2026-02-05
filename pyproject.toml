@@ -309,6 +309,9 @@ exclude_lines = [
 [tool.mypy]
 # Type checking configuration - Phase 3 will enable full strict mode
 python_version = "3.11"
+exclude = [
+    "nexus/raft/",  # Generated gRPC/protobuf code (Issue #1159)
+]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -512,6 +515,40 @@ disable_error_code = ["no-any-return", "misc"]
 module = "nexus.storage.metadata_store"
 # alembic dynamic imports
 disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.raft",
+    "nexus.raft.*",
+]
+# Generated gRPC/protobuf and Raft infrastructure - not yet typed (Issue #1159)
+# skip = treat as unresolvable, same as before raft files were committed
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "nexus.storage.raft_metadata_store"
+# PyO3 FFI wrapper - Rust methods not visible to mypy, complex Optional handling
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.cli.commands.work",
+    "nexus.cli.commands.search",
+    "nexus.core.nexus_fs",
+    "nexus.core.nexus_fs_core",
+    "nexus.core.nexus_fs_versions",
+    "nexus.core.nexus_fs_share_links",
+    "nexus.core.nexus_fs_search",
+    "nexus.services.version_service",
+    "nexus.services.search_service",
+    "nexus.services.gateway",
+    "nexus.server.fastapi_server",
+    "nexus.search.semantic",
+    "nexus.storage.database",
+]
+# RaftMetadataStore (PyO3) - Rust methods not visible to mypy (Issue #1159)
+disable_error_code = ["attr-defined", "union-attr", "no-any-return"]
+warn_unused_ignores = false
 
 [tool.ruff]
 target-version = "py311"

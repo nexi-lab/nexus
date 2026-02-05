@@ -84,10 +84,6 @@
 
 pub mod storage;
 
-/// Raft consensus module for STRONG_HA zones.
-///
-/// This module provides distributed consensus using tikv/raft-rs for
-/// linearizable operations on metadata and locks.
 // Raft consensus module - requires source files from the raft/ directory
 // Uncomment when raft/ module source files are committed (Issue #1159)
 // pub mod raft;

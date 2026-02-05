@@ -3952,7 +3952,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     )
                     ct_value_params.extend(cross_zone_relations)
                     ct_value_params.append(now_iso)
-                    cross_zone_params = ct_value_params
+                    cross_zone_params = ct_value_params  # type: ignore[assignment]
 
                 cursor.execute(cross_zone_query, cross_zone_params)
                 cross_zone_count = 0

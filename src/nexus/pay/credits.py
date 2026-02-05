@@ -278,9 +278,7 @@ class CreditsService:
             return Decimal("0"), Decimal("0")
 
         account = accounts[0]
-        available = Decimal(
-            str(micro_to_credits(account.credits_posted - account.debits_posted))
-        )
+        available = Decimal(str(micro_to_credits(account.credits_posted - account.debits_posted)))
         reserved = Decimal(str(micro_to_credits(account.debits_pending)))
         return available, reserved
 
@@ -451,9 +449,7 @@ class CreditsService:
             error = errors[0]
             # TigerBeetle CreateTransferResult.EXCEEDS_CREDITS = 54
             if error.result == 54:
-                raise InsufficientCreditsError(
-                    f"Insufficient balance to reserve {amount} credits"
-                )
+                raise InsufficientCreditsError(f"Insufficient balance to reserve {amount} credits")
             raise ReservationError(f"Reservation failed: {error.result}")
 
         return str(reservation_id)

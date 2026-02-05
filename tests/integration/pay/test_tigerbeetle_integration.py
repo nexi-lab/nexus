@@ -40,7 +40,10 @@ def _is_tigerbeetle_available() -> tuple[bool, str]:
         result = sock.connect_ex((host, int(port)))
         sock.close()
         if result != 0:
-            return False, f"TigerBeetle server not available at {address}. Run: docker compose --profile pay up -d tigerbeetle"
+            return (
+                False,
+                f"TigerBeetle server not available at {address}. Run: docker compose --profile pay up -d tigerbeetle",
+            )
     except Exception as e:
         return False, f"TigerBeetle connection error: {e}"
 

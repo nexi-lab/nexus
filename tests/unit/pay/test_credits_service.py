@@ -572,9 +572,7 @@ class TestWalletProvisioning:
     @pytest.mark.asyncio
     async def test_provision_wallet_idempotent(self, mock_tb_client, mock_tb_module):
         """Provisioning existing wallet should not raise error."""
-        mock_tb_client.create_accounts.return_value = [
-            MockCreateAccountError(0, TB_ACCOUNT_EXISTS)
-        ]
+        mock_tb_client.create_accounts.return_value = [MockCreateAccountError(0, TB_ACCOUNT_EXISTS)]
 
         with patch.dict("sys.modules", {"tigerbeetle": mock_tb_module}):
             from nexus.pay.credits import CreditsService
@@ -828,12 +826,10 @@ class TestEdgeCases:
 
             # Get IDs from multiple calls
             id1 = await service.transfer(
-                from_id="a", to_id="b", amount=Decimal("1"),
-                idempotency_key="test-key-123"
+                from_id="a", to_id="b", amount=Decimal("1"), idempotency_key="test-key-123"
             )
             id2 = await service.transfer(
-                from_id="a", to_id="b", amount=Decimal("1"),
-                idempotency_key="test-key-123"
+                from_id="a", to_id="b", amount=Decimal("1"), idempotency_key="test-key-123"
             )
 
             assert id1 == id2
@@ -851,20 +847,16 @@ class TestEdgeCases:
             service = CreditsService(client=mock_tb_client)
 
             id1 = await service.transfer(
-                from_id="a", to_id="b", amount=Decimal("1"),
-                idempotency_key="key-1"
+                from_id="a", to_id="b", amount=Decimal("1"), idempotency_key="key-1"
             )
             id2 = await service.transfer(
-                from_id="a", to_id="b", amount=Decimal("1"),
-                idempotency_key="key-2"
+                from_id="a", to_id="b", amount=Decimal("1"), idempotency_key="key-2"
             )
 
             assert id1 != id2
 
     @pytest.mark.asyncio
-    async def test_reservation_timeout_passed_to_tigerbeetle(
-        self, mock_tb_client, mock_tb_module
-    ):
+    async def test_reservation_timeout_passed_to_tigerbeetle(self, mock_tb_client, mock_tb_module):
         """Timeout should be passed to TigerBeetle transfer."""
         mock_tb_client.create_transfers.return_value = []
 
@@ -899,9 +891,7 @@ class TestMultiTenancy:
     """Test multi-tenant operations."""
 
     @pytest.mark.asyncio
-    async def test_different_tenants_have_different_accounts(
-        self, mock_tb_client, mock_tb_module
-    ):
+    async def test_different_tenants_have_different_accounts(self, mock_tb_client, mock_tb_module):
         """Same agent_id in different tenants should map to different TB accounts."""
         with patch.dict("sys.modules", {"tigerbeetle": mock_tb_module}):
             from nexus.pay.credits import CreditsService

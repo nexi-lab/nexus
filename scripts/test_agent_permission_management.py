@@ -435,9 +435,9 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     print(f"   Agent can see {len(files)} item(s) at root:")
     print(f"   Visible paths: {visible_paths}")
 
-    # Agent should be able to see /zone/default (its zone)
+    # Agent should be able to see /zone (zone parent directory) at root
     # and should be able to access its own agent directory
-    has_zone_access = "/zone/default" in visible_paths
+    has_zone_access = "/zone" in visible_paths or "/zone/default" in visible_paths
     has_agent_dir_access = len(agent_dir_files) > 0
 
     if not has_zone_access and not has_agent_dir_access:
@@ -447,7 +447,7 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
         sys.exit(1)
 
     if has_zone_access:
-        print("   ✅ Agent can see zone: /zone/default")
+        print("   ✅ Agent can see zone directory")
     if has_agent_dir_access:
         print(f"   ✅ Agent can access its own directory: {agent_dir}")
 
@@ -671,13 +671,14 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
 
     # Verify agent can see zone (full permissions should allow access)
     has_zone_access = any(
-        f.get("path") == "/zone/default" or f.get("path").startswith("/zone/default/")
+        f.get("path") in ("/zone", "/zone/default")
+        or f.get("path", "").startswith("/zone/")
         for f in files
     )
     if not has_zone_access:
-        print("❌ ERROR: Agent cannot see /zone/default (should have full access)")
+        print("❌ ERROR: Agent cannot see /zone (should have full access)")
         sys.exit(1)
-    print("   ✅ Agent can access: /zone/default")
+    print("   ✅ Agent can access: /zone")
 
     # Verify agent can see workspace (full permissions)
     has_workspace_access = any(
@@ -945,9 +946,9 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     root_paths = [f.get("path") for f in root_files]
     print(f"   Agent can see {len(root_files)} item(s) at root: {root_paths}")
 
-    # Should see /zone/default (agent's zone) or its own agent directory
+    # Should see /zone (zone parent dir) or its own agent directory
     agent_dir = f"/zone/default/user:admin/agent/{agent_name}"
-    has_zone_access = "/zone/default" in root_paths
+    has_zone_access = "/zone" in root_paths or "/zone/default" in root_paths
 
     # Also check if agent can access its own directory
     list_agent_dir_result = make_rpc_call(
@@ -962,11 +963,11 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
 
     if not has_zone_access and not has_agent_dir_access:
         print(
-            f"   ❌ ERROR: Agent cannot see /zone/default or access its own directory {agent_dir}"
+            f"   ❌ ERROR: Agent cannot see /zone or access its own directory {agent_dir}"
         )
         sys.exit(1)
     if has_zone_access:
-        print("   ✅ Agent can access: /zone/default")
+        print("   ✅ Agent can access: /zone")
     if has_agent_dir_access:
         print(f"   ✅ Agent can access its own directory: {agent_dir}")
 

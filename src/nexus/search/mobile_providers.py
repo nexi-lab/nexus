@@ -1,21 +1,35 @@
-"""Mobile/Edge Search Providers (Issue #1213).
+"""Mobile/Edge Search Providers (Issue #1213, #1214).
 
 This module provides embedding and reranker providers optimized for
 mobile/edge deployment, connecting MobileSearchConfig to actual model inference.
 
-Supported Providers:
+Supported Embedding Providers:
+- GGUF: Quantized models via llama-cpp-python (Issue #1214)
+  - Cross-platform: iOS, Android, desktop
+  - Quantization: Q4, Q8 for small file sizes (15-150MB)
+  - No API latency or costs, fully offline
 - FastEmbed: ONNX-optimized models (bge-small, etc.)
 - Model2Vec: Ultra-fast static embeddings (500x faster)
 - SentenceTransformers: Full HuggingFace models
-- GGUF: Quantized models via llama-cpp-python (future)
+
+Supported Reranker Providers:
+- CrossEncoder: sentence-transformers cross-encoder models
 
 Usage:
     from nexus.search.mobile_config import auto_detect_config
-    from nexus.search.mobile_providers import create_provider_from_config
+    from nexus.search.mobile_providers import create_mobile_embedding_provider
 
     config = auto_detect_config()
-    provider = await create_provider_from_config(config)
+    provider = await create_mobile_embedding_provider(config.embedding)
     embedding = await provider.embed_text("hello world")
+
+GGUF Model Download:
+    from nexus.search.mobile_providers import download_gguf_model
+
+    path = await download_gguf_model(
+        repo_id="ChristianAzinn/snowflake-arctic-embed-xs-gguf",
+        filename="snowflake-arctic-embed-xs-Q8_0.gguf",
+    )
 """
 
 from __future__ import annotations
@@ -326,6 +340,212 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
 
 
 # =============================================================================
+# GGUF Provider (llama.cpp)
+# =============================================================================
+
+
+class GGUFEmbeddingProvider(MobileEmbeddingProvider):
+    """GGUF embedding provider via llama-cpp-python.
+
+    Runs quantized GGUF models locally using llama.cpp, enabling
+    on-device semantic search without API calls.
+
+    Features:
+    - Cross-platform support (iOS, Android, desktop)
+    - Quantization (Q4, Q8) for small file sizes
+    - No API latency or costs
+    - Offline capability
+    - Battery-efficient thread management
+
+    Supports models like:
+    - Snowflake/snowflake-arctic-embed-xs (Q8_0, ~15MB, 384d)
+    - nomic-ai/nomic-embed-text-v1.5 (Q4_K_M, ~50MB, 768d)
+    - google/embeddinggemma-300m (Q4_K_M, ~150MB, 768d)
+
+    Example:
+        >>> from nexus.search.mobile_config import EMBEDDING_MODELS
+        >>> config = EMBEDDING_MODELS["arctic-xs"]
+        >>> provider = GGUFEmbeddingProvider(config)
+        >>> await provider.load()
+        >>> embedding = await provider.embed_text("hello world")
+    """
+
+    def __init__(self, config: EmbeddingModelConfig):
+        """Initialize GGUF provider.
+
+        Args:
+            config: Embedding model configuration (must have provider=GGUF)
+
+        Raises:
+            ValueError: If config.provider is not GGUF
+        """
+        from nexus.search.mobile_config import ModelProvider
+
+        if config.provider != ModelProvider.GGUF:
+            raise ValueError(f"GGUFEmbeddingProvider requires provider=GGUF, got {config.provider}")
+
+        super().__init__(config)
+        self._n_threads = config.metadata.get("n_threads") or self._detect_threads()
+        self._n_ctx = config.metadata.get("n_ctx", 512)
+
+    @staticmethod
+    def _detect_threads() -> int:
+        """Detect optimal thread count for device.
+
+        Caps at 4 threads for mobile battery efficiency.
+
+        Returns:
+            Optimal thread count (1-4)
+        """
+        import os
+
+        cpus = os.cpu_count() or 4
+        return min(cpus, 4)  # Cap at 4 for mobile battery
+
+    async def load(self) -> None:
+        """Load the GGUF model into memory.
+
+        Uses lazy loading - model is loaded on first call.
+        Subsequent calls are no-ops.
+
+        Raises:
+            ImportError: If llama-cpp-python is not installed
+        """
+        if self._loaded:
+            return
+
+        try:
+            from llama_cpp import Llama
+        except ImportError as e:
+            raise ImportError(
+                "llama-cpp-python not installed. Install with: pip install llama-cpp-python"
+            ) from e
+
+        logger.info(f"Loading GGUF model: {self.config.name}")
+
+        # Get model path from metadata or use name as path
+        model_path = self.config.metadata.get("model_path", self.config.name)
+
+        loop = asyncio.get_event_loop()
+        self._model = await loop.run_in_executor(
+            None,
+            lambda: Llama(
+                model_path=model_path,
+                embedding=True,
+                n_ctx=self._n_ctx,
+                n_threads=self._n_threads,
+                verbose=False,
+            ),
+        )
+        self._loaded = True
+        logger.info(f"GGUF model loaded: {self.config.name} (threads={self._n_threads})")
+
+    async def unload(self) -> None:
+        """Unload the model from memory."""
+        if self._model is not None:
+            del self._model
+            self._model = None
+            self._loaded = False
+            logger.info("GGUF model unloaded")
+
+    async def embed_text(self, text: str) -> list[float]:
+        """Embed a single text.
+
+        Args:
+            text: Text to embed
+
+        Returns:
+            Embedding vector as list of floats
+        """
+        if not self._loaded:
+            await self.load()
+
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(None, lambda: self._model.embed(text))
+
+        # Handle numpy arrays
+        if hasattr(embedding, "tolist"):
+            return embedding.tolist()  # type: ignore[no-any-return]
+        return list(embedding)
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            List of embedding vectors
+        """
+        if not texts:
+            return []
+
+        if not self._loaded:
+            await self.load()
+
+        loop = asyncio.get_event_loop()
+
+        def _embed_batch() -> list[list[float]]:
+            results = []
+            for text in texts:
+                embedding = self._model.embed(text)
+                if hasattr(embedding, "tolist"):
+                    results.append(embedding.tolist())
+                else:
+                    results.append(list(embedding))
+            return results
+
+        return await loop.run_in_executor(None, _embed_batch)
+
+
+# =============================================================================
+# GGUF Model Download Helper
+# =============================================================================
+
+
+async def download_gguf_model(
+    repo_id: str,
+    filename: str,
+    cache_dir: str | None = None,
+) -> str:
+    """Download a GGUF model from HuggingFace Hub.
+
+    Args:
+        repo_id: HuggingFace repository ID (e.g., "ChristianAzinn/snowflake-arctic-embed-xs-gguf")
+        filename: Model filename (e.g., "snowflake-arctic-embed-xs-Q8_0.gguf")
+        cache_dir: Optional custom cache directory
+
+    Returns:
+        Local path to the downloaded model file
+
+    Example:
+        >>> path = await download_gguf_model(
+        ...     repo_id="ChristianAzinn/snowflake-arctic-embed-xs-gguf",
+        ...     filename="snowflake-arctic-embed-xs-Q8_0.gguf",
+        ... )
+        >>> print(path)
+        /home/user/.cache/huggingface/hub/models--ChristianAzinn--snowflake-arctic-embed-xs-gguf/...
+    """
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as e:
+        raise ImportError(
+            "huggingface_hub not installed. Install with: pip install huggingface_hub"
+        ) from e
+
+    loop = asyncio.get_event_loop()
+
+    def _download() -> str:
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            cache_dir=cache_dir,
+        )
+
+    return await loop.run_in_executor(None, _download)
+
+
+# =============================================================================
 # Cross-Encoder Reranker Provider
 # =============================================================================
 
@@ -417,7 +637,7 @@ def _get_embedding_provider_class(
         ModelProvider.FASTEMBED: FastEmbedMobileProvider,
         ModelProvider.MODEL2VEC: Model2VecProvider,
         ModelProvider.SENTENCE_TRANSFORMERS: SentenceTransformersProvider,
-        ModelProvider.GGUF: SentenceTransformersProvider,  # Fallback for now
+        ModelProvider.GGUF: GGUFEmbeddingProvider,
         ModelProvider.ONNX: FastEmbedMobileProvider,  # FastEmbed uses ONNX
     }
 

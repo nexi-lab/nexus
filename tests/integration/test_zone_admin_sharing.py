@@ -70,7 +70,7 @@ class TestZoneAdminSharing:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory (using Windows-compatible path)
-        zone_path = f"/zone:{zone_id}"
+        zone_path = f"/zone/{zone_id}"
         nx.mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file owned by a regular user (bob)
@@ -120,7 +120,7 @@ class TestZoneAdminSharing:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory
-        zone_path = f"/zone:{zone_id}"
+        zone_path = f"/zone/{zone_id}"
         nx.mkdir(zone_path, context=OperationContext(**admin_context))
 
         # Create a file
@@ -162,7 +162,7 @@ class TestZoneAdminSharing:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone1
-        zone1_path = "/zone:acme"
+        zone1_path = "/zone/acme"
         nx.mkdir(zone1_path, context=OperationContext(**admin_context))
         file1_path = f"{zone1_path}/doc.txt"
         nx.write(file1_path, b"test", context=OperationContext(**admin_context))
@@ -174,7 +174,7 @@ class TestZoneAdminSharing:
         )
 
         # Create zone2
-        zone2_path = "/zone:techcorp"
+        zone2_path = "/zone/techcorp"
         nx.mkdir(zone2_path, context=OperationContext(**admin_context))
         file2_path = f"{zone2_path}/doc.txt"
         nx.write(file2_path, b"test", context=OperationContext(**admin_context))
@@ -212,7 +212,7 @@ class TestZoneAdminSharing:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
-        zone_path = f"/zone:{zone_id}"
+        zone_path = f"/zone/{zone_id}"
         nx.mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
         nx.write(file_path, b"test content", context=OperationContext(**admin_context))
@@ -253,7 +253,7 @@ class TestZoneAdminSharing:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
-        zone_path = f"/zone:{zone_id}"
+        zone_path = f"/zone/{zone_id}"
         nx.mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
         nx.write(file_path, b"test content", context=OperationContext(**admin_context))
@@ -324,7 +324,7 @@ class TestBackwardCompatibility:
         admin_context = {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
 
         # Create zone directory and file
-        zone_path = f"/zone:{zone_id}"
+        zone_path = f"/zone/{zone_id}"
         nx.mkdir(zone_path, context=OperationContext(**admin_context))
         file_path = f"{zone_path}/doc.txt"
         nx.write(file_path, b"test content", context=OperationContext(**admin_context))

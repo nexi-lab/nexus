@@ -567,10 +567,10 @@ class PermissionEnforcer:
             from nexus.core.permissions_enhanced import AdminCapability
 
             # P0-4: Zone boundary check (security fix for issue #819)
-            # Extract zone from path (format: /zone:{zone_id}/...)
+            # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None
-            if path.startswith("/zone:"):
-                parts = path[6:].split("/", 1)  # Remove "/zone:" prefix
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)  # Remove "/zone/" prefix
                 if parts:
                     path_zone_id = parts[0]
 

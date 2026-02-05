@@ -69,7 +69,7 @@ class NexusFSSkillsMixin:
         """Grant read permission on a skill.
 
         Args:
-            skill_path: Path to the skill (e.g., /zone:acme/user:alice/skill/code-review/)
+            skill_path: Path to the skill (e.g., /zone/acme/user:alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make skill visible to everyone
                 - "zone" - Share with all users in current zone
@@ -274,7 +274,7 @@ class NexusFSSkillsMixin:
             if context is None:
                 raise ValidationError("context is required")
             # Search for skill by name in user's skills
-            user_skill_dir = f"/zone:{context.zone_id}/user:{context.user_id}/skill/"
+            user_skill_dir = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
             skill_path = f"{user_skill_dir}{skill_name}/"
             # Also check if it exists in subscribed skills
             if not service._gw.exists(skill_path, context=context):
@@ -436,7 +436,7 @@ class NexusFSSkillsMixin:
             # Always import to user's skill directory
             if context is None:
                 raise ValidationError("context is required")
-            base_path = f"/zone:{context.zone_id}/user:{context.user_id}/skill/"
+            base_path = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
 
             # Detect ZIP structure: flat (SKILL.md at root) or nested (skill-name/SKILL.md)
             file_list = zf.namelist()

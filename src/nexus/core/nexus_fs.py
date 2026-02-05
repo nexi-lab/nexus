@@ -1265,10 +1265,10 @@ class NexusFS(  # type: ignore[misc]
         if ctx.is_admin and self._permission_enforcer:
             from nexus.core.permissions_enhanced import AdminCapability
 
-            # Extract zone from path (format: /zone:{zone_id}/...)
+            # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None
-            if path.startswith("/zone:"):
-                parts = path[6:].split("/", 1)  # Remove "/zone:" prefix
+            if path.startswith("/zone/"):
+                parts = path[6:].split("/", 1)  # Remove "/zone/" prefix
                 if parts:
                     path_zone_id = parts[0]
 
@@ -3540,7 +3540,7 @@ class NexusFS(  # type: ignore[misc]
             if user_id and zone_id:
                 # Filter workspaces that belong to the current user
                 # Workspace paths follow pattern: /zone/{zone_id}/user:{user_id}/workspace/...
-                user_prefix = f"/zone:{zone_id}/user:{user_id}/workspace/"
+                user_prefix = f"/zone/{zone_id}/user:{user_id}/workspace/"
                 configs = [c for c in configs if c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
@@ -3933,7 +3933,7 @@ class NexusFS(  # type: ignore[misc]
         # Check if agent config already exists BEFORE modifying entity registry
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone:{zone_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         try:
@@ -4083,7 +4083,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone:{zone_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         # Check if agent config exists
@@ -4233,7 +4233,7 @@ class NexusFS(  # type: ignore[misc]
                     if "," in e.entity_id:
                         user_id, agent_name = e.entity_id.split(",", 1)
                         # Try to read from config.yaml (use default zone for now)
-                        config_path = f"/zone:default/user:{user_id}/agent/{agent_name}/config.yaml"
+                        config_path = f"/zone/default/user:{user_id}/agent/{agent_name}/config.yaml"
                         try:
                             config_content = self.read(
                                 config_path, context=self._parse_context(_context)
@@ -4333,7 +4333,7 @@ class NexusFS(  # type: ignore[misc]
                         ctx = self._parse_context(_context)
                         zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/zone:{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4394,7 +4394,7 @@ class NexusFS(  # type: ignore[misc]
                         ctx = self._parse_context(_context)
                         zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/zone:{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4480,7 +4480,7 @@ class NexusFS(  # type: ignore[misc]
                 # Get zone_id from context or use default
                 zone_id = self._extract_zone_id(_context) or "default"
                 # Use new namespace convention: /zone/{zone_id}/user:{user_id}/agent/{agent_id}
-                agent_dir = f"/zone:{zone_id}/user:{user_id}/agent/{agent_name_part}"
+                agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
 
                 # Delete agent directory and config
                 try:
@@ -4631,7 +4631,7 @@ class NexusFS(  # type: ignore[misc]
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /zone:alice/user:alice/workspace/ws_personal_abc123
+            /zone/alice/user:alice/workspace/ws_personal_abc123
         """
         import logging
         from datetime import UTC, datetime
@@ -4811,7 +4811,7 @@ class NexusFS(  # type: ignore[misc]
             # Generate workspace ID: ws_personal_{12-char-uuid}
             uuid_suffix = str(uuid.uuid4()).replace("-", "")[:12]
             workspace_id = f"ws_personal_{uuid_suffix}"
-            workspace_path = f"/zone:{zone_id}/user:{user_id}/workspace/{workspace_id}"
+            workspace_path = f"/zone/{zone_id}/user:{user_id}/workspace/{workspace_id}"
 
             if not self.exists(workspace_path, context=admin_context):
                 self.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
@@ -4968,7 +4968,7 @@ class NexusFS(  # type: ignore[misc]
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/zone:example/user:alice/workspace', ...]
+            ['/zone/example/user:alice/workspace', ...]
         """
         import logging
         from datetime import UTC, datetime
@@ -5041,7 +5041,7 @@ class NexusFS(  # type: ignore[misc]
 
             # 1. Delete user directories
             if zone_id:
-                user_base_path = f"/zone:{zone_id}/user:{user_id}"
+                user_base_path = f"/zone/{zone_id}/user:{user_id}"
                 logger.info(f"Deleting user directories under {user_base_path}")
 
                 ALL_RESOURCE_TYPES = [
@@ -5421,7 +5421,7 @@ class NexusFS(  # type: ignore[misc]
         created_paths = []
 
         for resource_type in ALL_RESOURCE_TYPES:
-            folder_path = f"/zone:{zone_id}/user:{user_id}/{resource_type}"
+            folder_path = f"/zone/{zone_id}/user:{user_id}/{resource_type}"
 
             try:
                 # Create directory (idempotent)

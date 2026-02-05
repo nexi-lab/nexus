@@ -167,7 +167,7 @@ def grant_agent_resource_access(
         Granted 2 permissions
     """
     agent_id = f"{user_id},{agent_name}"
-    user_base_path = f"/zone:{zone_id}/user:{user_id}"
+    user_base_path = f"/zone/{zone_id}/user:{user_id}"
     granted_count = 0
 
     for resource_type in resource_types:

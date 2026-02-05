@@ -209,7 +209,7 @@ class TestGGUFEmbeddingProvider:
             # Fallback to 4
             assert threads == 4
 
-    def test_import_error_without_llama_cpp(self, arctic_xs_config):
+    async def test_import_error_without_llama_cpp(self, arctic_xs_config):
         """Test clear error when llama-cpp-python not installed."""
         # Remove llama_cpp from modules if present
         with patch.dict(sys.modules, {"llama_cpp": None}):
@@ -225,9 +225,7 @@ class TestGGUFEmbeddingProvider:
             provider = GGUFEmbeddingProvider(arctic_xs_config)
 
             with pytest.raises(ImportError, match="llama-cpp-python"):
-                import asyncio
-
-                asyncio.get_event_loop().run_until_complete(provider.load())
+                await provider.load()
 
 
 class TestGGUFProviderFactory:

@@ -35,17 +35,35 @@ from typing import TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 # gRPC client for remote Raft access (used by RemoteNexusFS)
-from nexus.raft.client import (
-    LockInfo as RemoteLockInfo,  # Renamed to avoid conflict with PyO3 LockInfo
-)
-from nexus.raft.client import (
-    LockResult,
-    RaftClient,
-    RaftClientConfig,
-    RaftClientPool,
-    RaftError,
-    RaftNotLeaderError,
-)
+# Requires generated protobuf code (metadata_pb2, transport_pb2, etc.)
+try:
+    from nexus.raft.client import (
+        LockInfo as RemoteLockInfo,  # Renamed to avoid conflict with PyO3 LockInfo
+    )
+    from nexus.raft.client import (
+        LockResult,
+        RaftClient,
+        RaftClientConfig,
+        RaftClientPool,
+        RaftError,
+        RaftNotLeaderError,
+    )
+
+    _HAS_GRPC_CLIENT = True
+except ImportError:
+    # Generated protobuf code not available (CI, pure-Python installs)
+    _HAS_GRPC_CLIENT = False
+    RemoteLockInfo = None  # type: ignore[assignment,misc]
+    LockResult = None  # type: ignore[assignment,misc]
+    RaftClient = None  # type: ignore[assignment,misc]
+    RaftClientConfig = None  # type: ignore[assignment,misc]
+    RaftClientPool = None  # type: ignore[assignment,misc]
+    RaftError = None  # type: ignore[assignment,misc]
+    RaftNotLeaderError = None  # type: ignore[assignment,misc]
+    logger.debug(
+        "RaftClient not available (protobuf code not generated). "
+        "This is expected in CI/testing environments."
+    )
 
 # PyO3 FFI for local Raft nodes (built by maturin)
 # Import from nexus._nexus_raft (consistent with nexus._nexus_fast)

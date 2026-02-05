@@ -58,7 +58,8 @@ class TestZoneBoundarySecurity:
             },
         )
 
-        # Create zone directory first
+        # Create zone directories
+        nx.mkdir("/zone", context=system_admin)
         nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
@@ -97,7 +98,8 @@ class TestZoneBoundarySecurity:
             },
         )
 
-        # Create zone directory first
+        # Create zone directories
+        nx.mkdir("/zone", context=system_admin_setup)
         nx.mkdir("/zone/acme", context=system_admin_setup)
 
         test_file = "/zone/acme/doc.txt"
@@ -136,7 +138,8 @@ class TestZoneBoundarySecurity:
             },
         )
 
-        # Create zone directory first
+        # Create zone directories
+        nx.mkdir("/zone", context=system_admin)
         nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
@@ -178,7 +181,8 @@ class TestZoneBoundarySecurity:
             },
         )
 
-        # Create zone directory first
+        # Create zone directories
+        nx.mkdir("/zone", context=system_admin)
         nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
@@ -216,7 +220,8 @@ class TestZoneBoundarySecurity:
             },
         )
 
-        # Create zone directory first
+        # Create zone directories
+        nx.mkdir("/zone", context=system_admin)
         nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"

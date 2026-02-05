@@ -59,9 +59,9 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directory first
-        nx.mkdir("/zone:acme", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/zone:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret acme data", context=system_admin)
 
         # Zone admin from zone2 (techcorp) tries to access zone1 (acme) file
@@ -98,9 +98,9 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directory first
-        nx.mkdir("/zone:acme", context=system_admin_setup)
+        nx.mkdir("/zone/acme", context=system_admin_setup)
 
-        test_file = "/zone:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret acme data", context=system_admin_setup)
 
         # System admin from zone2 should be able to access zone1 file
@@ -137,9 +137,9 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directory first
-        nx.mkdir("/zone:acme", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/zone:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"acme data", context=system_admin)
 
         # Add alice as zone admin for acme
@@ -179,9 +179,9 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directory first
-        nx.mkdir("/zone:acme", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/zone:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"original", context=system_admin)
 
         # Zone admin from zone2 tries to write to zone1 file
@@ -217,9 +217,9 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directory first
-        nx.mkdir("/zone:acme", context=system_admin)
+        nx.mkdir("/zone/acme", context=system_admin)
 
-        test_file = "/zone:acme/doc.txt"
+        test_file = "/zone/acme/doc.txt"
         nx.write(test_file, b"secret", context=system_admin)
 
         # Admin without MANAGE_ZONES tries to access different zone

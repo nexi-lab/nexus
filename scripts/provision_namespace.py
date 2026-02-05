@@ -62,12 +62,12 @@ def system_path(resource_type: str, resource_id: str) -> str:
 
 def zone_path(zone_id: str, resource_type: str, resource_id: str) -> str:
     """Generate zone-wide path."""
-    return f"/zone:{zone_id}/{resource_type}/{resource_id}"
+    return f"/zone/{zone_id}/{resource_type}/{resource_id}"
 
 
 def user_path(zone_id: str, user_id: str, resource_type: str, resource_id: str) -> str:
     """Generate user-owned path."""
-    return f"/zone:{zone_id}/user:{user_id}/{resource_type}/{resource_id}"
+    return f"/zone/{zone_id}/user:{user_id}/{resource_type}/{resource_id}"
 
 
 def provision_system_resources(nx: Any) -> None:
@@ -179,7 +179,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
 
     # First, create and grant permissions on the parent user directory
     try:
-        user_dir_path = f"/zone:{zone_id}/user:{admin_user_id}"
+        user_dir_path = f"/zone/{zone_id}/user:{admin_user_id}"
         nx.mkdir(user_dir_path, parents=True, exist_ok=True, context=context)
 
         # Create placeholder file to make directory discoverable
@@ -202,7 +202,7 @@ def provision_admin_user_folders(nx: Any, zone_id: str) -> None:
     for resource_type in ALL_RESOURCE_TYPES:
         try:
             # Create the folder path: /zone/<zid>/user:admin/<resource_type>
-            folder_path = f"/zone:{zone_id}/user:{admin_user_id}/{resource_type}"
+            folder_path = f"/zone/{zone_id}/user:{admin_user_id}/{resource_type}"
 
             # Create the directory
             nx.mkdir(folder_path, parents=True, exist_ok=True, context=context)

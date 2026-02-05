@@ -134,7 +134,7 @@ def main() -> None:
 
         # Step 3: Verify user resources
         print("Step 3: Verifying user resources...")
-        user_base = f"/zone:{test_zone_id}/user:{test_user_id}"
+        user_base = f"/zone/{test_zone_id}/user:{test_user_id}"
         resource_types = ["workspace", "memory", "skill", "agent", "connector", "resource"]
 
         existing_resources = []

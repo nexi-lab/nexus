@@ -679,7 +679,7 @@ class SyncService:
         # Extract zone_id early (needed for delta sync and metadata creation)
         zone_id = get_zone_id(ctx.context) if ctx.context else None
         if not zone_id and ctx.mount_point:
-            match = re.match(r"^/zone:([^/]+)/", ctx.mount_point)
+            match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
             if match:
                 zone_id = match.group(1)
 

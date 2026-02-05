@@ -160,7 +160,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
 
     # Use add_mount API which properly grants permissions
     mount_point = nx.add_mount(
-        mount_point="/zone:test/old/mount",
+        mount_point="/zone/test/old/mount",
         backend_type="local",
         backend_config={"data_dir": str(mount_dir)},
         priority=0,
@@ -172,8 +172,8 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     result = nx.sync_mount(mount_point, context=ctx)
 
     # Verify directory exists after sync
-    assert nx.metadata.exists("/zone:test/old")
-    assert nx.metadata.exists("/zone:test/old/mount")
+    assert nx.metadata.exists("/zone/test/old")
+    assert nx.metadata.exists("/zone/test/old/mount")
 
     # Sync result should be returned
     assert "files_scanned" in result

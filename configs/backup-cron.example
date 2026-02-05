@@ -1,0 +1,138 @@
+# Nexus Backup Cron Configuration
+# ================================
+# Copy this file to /etc/cron.d/nexus-backup on your server
+# Or add entries to your crontab with: crontab -e
+#
+# Before using, ensure:
+#   1. NEXUS_BACKUP_DIR is set or using default ./backups
+#   2. Scripts are executable: chmod +x scripts/backup.sh scripts/restore.sh
+#   3. GCS credentials configured (if using --gcs)
+#   4. Log directory exists: mkdir -p /var/log/nexus
+#
+# Environment variables (set in /etc/environment or cron's environment):
+#   NEXUS_BACKUP_DIR=/data/backups
+#   NEXUS_GCS_BACKUP_BUCKET=my-nexus-backups
+#   NEXUS_BACKUP_RETENTION_DAYS=30
+#   POSTGRES_CONTAINER=nexus-postgres
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Set Nexus installation directory
+NEXUS_DIR=/opt/nexus
+
+# =============================================================================
+# Backup Schedule
+# =============================================================================
+
+# Daily PostgreSQL backup at 2:00 AM
+# - Creates compressed pg_dump
+# - Stores in backups/daily/ (or weekly/monthly based on date)
+# - Runs verification after backup
+0 2 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --pg-only >> /var/log/nexus/backup.log 2>&1
+
+# Weekly full backup (Sunday at 3:00 AM)
+# - Full PostgreSQL dump
+# - Full CAS tarball
+# - WAL archive sync
+0 3 * * 0 root cd $NEXUS_DIR && ./scripts/backup.sh >> /var/log/nexus/backup.log 2>&1
+
+# Daily CAS incremental backup at 3:30 AM
+# - Only CAS storage (content blobs)
+# - Useful if CAS changes frequently
+30 3 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --cas-only >> /var/log/nexus/backup.log 2>&1
+
+# =============================================================================
+# Cloud Upload Schedule
+# =============================================================================
+
+# Upload to GCS at 4:00 AM (after local backup completes)
+# Requires: NEXUS_GCS_BACKUP_BUCKET environment variable
+0 4 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --gcs >> /var/log/nexus/backup.log 2>&1
+
+# =============================================================================
+# Maintenance Schedule
+# =============================================================================
+
+# Daily cleanup of old backups at 5:00 AM
+# - Removes daily backups older than NEXUS_BACKUP_RETENTION_DAYS
+# - Keeps weekly/monthly based on retention settings
+0 5 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --cleanup >> /var/log/nexus/backup.log 2>&1
+
+# Weekly backup verification (Saturday at 4:00 AM)
+# - Verifies checksum integrity
+# - Lists backup contents
+0 4 * * 6 root cd $NEXUS_DIR && ./scripts/backup.sh --verify >> /var/log/nexus/backup.log 2>&1
+
+# Monthly test restore (1st of month at 5:00 AM)
+# - Restores to temporary database
+# - Validates data integrity
+# - Cleans up test database
+0 5 1 * * root cd $NEXUS_DIR && ./scripts/restore.sh --test backups/daily/nexus-pg-latest.sql.gz >> /var/log/nexus/backup.log 2>&1
+
+# =============================================================================
+# Log Rotation
+# =============================================================================
+
+# Rotate backup logs weekly (keep 4 weeks)
+# Add to /etc/logrotate.d/nexus-backup:
+#
+# /var/log/nexus/backup.log {
+#     weekly
+#     rotate 4
+#     compress
+#     delaycompress
+#     missingok
+#     notifempty
+#     create 640 root root
+# }
+
+# =============================================================================
+# Alternative: systemd Timers
+# =============================================================================
+#
+# For systemd-based systems, you can use timers instead of cron.
+# Create /etc/systemd/system/nexus-backup.service:
+#
+# [Unit]
+# Description=Nexus Backup
+# After=network.target docker.service
+#
+# [Service]
+# Type=oneshot
+# ExecStart=/opt/nexus/scripts/backup.sh
+# WorkingDirectory=/opt/nexus
+# StandardOutput=journal
+# StandardError=journal
+#
+# Create /etc/systemd/system/nexus-backup.timer:
+#
+# [Unit]
+# Description=Daily Nexus Backup
+#
+# [Timer]
+# OnCalendar=*-*-* 02:00:00
+# Persistent=true
+#
+# [Install]
+# WantedBy=timers.target
+#
+# Enable with:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable nexus-backup.timer
+#   sudo systemctl start nexus-backup.timer
+#   systemctl list-timers | grep nexus
+
+# =============================================================================
+# Monitoring Integration
+# =============================================================================
+#
+# To monitor backup success, add a heartbeat after successful backup:
+#
+# # Healthcheck ping after successful backup
+# 0 2 * * * root cd $NEXUS_DIR && ./scripts/backup.sh --pg-only && curl -fsS --retry 3 https://hc-ping.com/your-uuid-here >> /var/log/nexus/backup.log 2>&1
+#
+# Or use a monitoring script:
+#
+# # Check if backup ran successfully in last 25 hours
+# 0 6 * * * root find $NEXUS_BACKUP_DIR/daily -name "nexus-pg-*.sql.gz" -mmin -1500 | grep -q . || echo "ALERT: No recent backup found" | mail -s "Nexus Backup Alert" admin@example.com

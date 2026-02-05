@@ -169,7 +169,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-    from nexus.storage import RaftMetadataStore
+    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSSearchMixin:
@@ -181,7 +181,7 @@ class NexusFSSearchMixin:
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        metadata: RaftMetadataStore
+        metadata: SQLAlchemyMetadataStore
         router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext

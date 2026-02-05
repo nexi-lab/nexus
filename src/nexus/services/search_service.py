@@ -67,7 +67,7 @@ if TYPE_CHECKING:
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-    from nexus.storage import RaftMetadataStore
+    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class SearchService:
@@ -114,7 +114,7 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: RaftMetadataStore,
+        metadata_store: SQLAlchemyMetadataStore,
         permission_enforcer: PermissionEnforcer | None = None,
         router: MountRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,

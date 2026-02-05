@@ -23,7 +23,7 @@ from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext, Permission
-    from nexus.storage import RaftMetadataStore
+    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSShareLinksMixin:
@@ -37,7 +37,7 @@ class NexusFSShareLinksMixin:
 
     # Type hints for attributes provided by NexusFS parent class
     if TYPE_CHECKING:
-        metadata: RaftMetadataStore
+        metadata: SQLAlchemyMetadataStore
         _enforce_permissions: bool
 
         def _validate_path(self, path: str) -> str: ...

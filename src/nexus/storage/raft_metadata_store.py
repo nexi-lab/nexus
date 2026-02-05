@@ -553,6 +553,58 @@ class RaftMetadataStore(MetadataStore):
         """
         return {path: self.get_file_metadata(path, key) for path in paths}
 
+    def delete_file_metadata(self, path: str, key: str) -> bool:
+        """Delete a metadata key from a file.
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to delete
+
+        Returns:
+            True if the key was deleted, False if it didn't exist
+        """
+        if self._is_local:
+            meta_key = f"meta:{path}:{key}"
+            # Check if the key exists first
+            data = self._local.get_metadata(meta_key)
+            if data is None:
+                return False
+            self._local.delete_metadata(meta_key)
+            return True
+        else:
+            raise NotImplementedError(
+                "Remote mode requires async. Use delete_file_metadata_async() instead."
+            )
+
+    def get_all_file_metadata(self, path: str) -> dict[str, Any]:
+        """Get all metadata key-value pairs for a file.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Dictionary mapping key to value for all metadata on the file
+        """
+        if self._is_local:
+            # List all entries with prefix "meta:{path}:"
+            prefix = f"meta:{path}:"
+            entries = self._local.list_metadata(prefix)
+            result: dict[str, Any] = {}
+            for entry_key, data in entries:
+                # Extract the key from "meta:{path}:{key}"
+                if entry_key.startswith(prefix):
+                    key = entry_key[len(prefix) :]
+                    if data is not None:
+                        # Handle both bytes and list of ints (from PyO3)
+                        if isinstance(data, list):
+                            data = bytes(data)
+                        result[key] = json.loads(data.decode("utf-8"))
+            return result
+        else:
+            raise NotImplementedError(
+                "Remote mode requires async. Use get_all_file_metadata_async() instead."
+            )
+
     def get_searchable_text(self, path: str) -> str | None:
         """Get cached searchable text for a file.
 

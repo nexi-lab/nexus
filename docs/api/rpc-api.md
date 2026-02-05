@@ -609,6 +609,167 @@ Get file metadata without content.
 
 ---
 
+## Custom File Metadata
+
+These methods allow storing and retrieving arbitrary key-value metadata on files.
+
+### set_file_metadata
+
+Set a custom metadata key-value pair for a file.
+
+**Endpoint**: `POST /api/nfs/set_file_metadata`
+
+**Parameters:**
+- `path` (string, required): File path
+- `key` (string, required): Metadata key (max 255 characters)
+- `value` (any, required): Metadata value (JSON-serializable)
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "set_file_metadata",
+  "params": {
+    "path": "/documents/report.pdf",
+    "key": "author",
+    "value": "Alice"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "path": "/documents/report.pdf",
+    "key": "author",
+    "success": true
+  }
+}
+```
+
+---
+
+### get_file_metadata
+
+Get a custom metadata value for a file.
+
+**Endpoint**: `POST /api/nfs/get_file_metadata`
+
+**Parameters:**
+- `path` (string, required): File path
+- `key` (string, required): Metadata key to retrieve
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "get_file_metadata",
+  "params": {
+    "path": "/documents/report.pdf",
+    "key": "author"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "path": "/documents/report.pdf",
+    "key": "author",
+    "value": "Alice"
+  }
+}
+```
+
+**Note:** Returns `null` as value if key doesn't exist.
+
+---
+
+### delete_file_metadata
+
+Delete a custom metadata key from a file.
+
+**Endpoint**: `POST /api/nfs/delete_file_metadata`
+
+**Parameters:**
+- `path` (string, required): File path
+- `key` (string, required): Metadata key to delete
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "delete_file_metadata",
+  "params": {
+    "path": "/documents/report.pdf",
+    "key": "author"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "path": "/documents/report.pdf",
+    "key": "author",
+    "deleted": true
+  }
+}
+```
+
+---
+
+### list_file_metadata
+
+List all custom metadata key-value pairs for a file.
+
+**Endpoint**: `POST /api/nfs/list_file_metadata`
+
+**Parameters:**
+- `path` (string, required): File path
+
+**Example Request:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "list_file_metadata",
+  "params": {
+    "path": "/documents/report.pdf"
+  }
+}
+```
+
+**Example Response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "path": "/documents/report.pdf",
+    "metadata": {
+      "author": "Alice",
+      "tags": ["important", "reviewed"],
+      "version": 2
+    }
+  }
+}
+```
+
+---
+
 ## Directory Operations
 
 ### mkdir
@@ -3860,6 +4021,10 @@ Test if an OAuth credential is valid and can be refreshed.
 | `rename` | File Operations | Rename/move file |
 | `exists` | File Operations | Check file exists |
 | `get_metadata` | File Operations | Get file metadata |
+| `set_file_metadata` | Custom Metadata | Set custom key-value metadata |
+| `get_file_metadata` | Custom Metadata | Get custom metadata value |
+| `delete_file_metadata` | Custom Metadata | Delete custom metadata key |
+| `list_file_metadata` | Custom Metadata | List all custom metadata |
 | `mkdir` | Directory Operations | Create directory |
 | `rmdir` | Directory Operations | Remove directory |
 | `list` | Directory Operations | List directory |
@@ -3939,7 +4104,7 @@ Test if an OAuth credential is valid and can be refreshed.
 | `namespace_delete` | Namespace | Delete namespace |
 | `get_available_namespaces` | Namespace | Get available namespaces |
 
-**Total: 83 RPC Methods** (7 Memory State Management methods added in #368)
+**Total: 87 RPC Methods** (4 Custom File Metadata methods added)
 
 ---
 

@@ -26,7 +26,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -1231,6 +1231,116 @@ class AsyncRemoteNexusFS:
         """
         result = await self._call_rpc("get_metadata", {"path": path})
         return result.get("metadata")  # type: ignore[no-any-return]
+
+    # ============================================================
+    # Custom File Metadata (Key-Value) - Async
+    # ============================================================
+
+    async def set_file_metadata(
+        self,
+        path: str,
+        key: str,
+        value: Any,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Set a custom metadata key-value pair for a file (async).
+
+        This method allows storing arbitrary key-value metadata on files.
+        The value can be any JSON-serializable type (string, number, bool,
+        list, dict, or None).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key (max 255 characters)
+            value: Metadata value (will be JSON-serialized)
+            context: Unused in remote client
+
+        Returns:
+            Dict with path, key, and success status
+
+        Examples:
+            >>> await nx.set_file_metadata("/docs/report.pdf", "author", "Alice")
+            {'path': '/docs/report.pdf', 'key': 'author', 'success': True}
+        """
+        result = await self._call_rpc(
+            "set_file_metadata", {"path": path, "key": key, "value": value}
+        )
+        return cast(dict[str, Any], result)
+
+    async def get_file_metadata(
+        self,
+        path: str,
+        key: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> Any:
+        """Get a custom metadata value for a file (async).
+
+        This method retrieves a specific metadata key-value pair from a file.
+        Returns None if the key doesn't exist.
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to retrieve
+            context: Unused in remote client
+
+        Returns:
+            The metadata value, or None if key doesn't exist
+
+        Examples:
+            >>> await nx.get_file_metadata("/docs/report.pdf", "author")
+            'Alice'
+        """
+        result = await self._call_rpc("get_file_metadata", {"path": path, "key": key})
+        return cast(dict[str, Any], result).get("value")
+
+    async def delete_file_metadata(
+        self,
+        path: str,
+        key: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> bool:
+        """Delete a custom metadata key from a file (async).
+
+        This method removes a specific metadata key-value pair from a file.
+        If the key doesn't exist, this is a no-op (returns True).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to delete
+            context: Unused in remote client
+
+        Returns:
+            True if the operation succeeded
+
+        Examples:
+            >>> await nx.delete_file_metadata("/docs/report.pdf", "author")
+            True
+        """
+        result = await self._call_rpc("delete_file_metadata", {"path": path, "key": key})
+        return bool(cast(dict[str, Any], result).get("deleted", False))
+
+    async def list_file_metadata(
+        self,
+        path: str,
+        context: Any = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """List all custom metadata key-value pairs for a file (async).
+
+        This method retrieves all metadata associated with a file.
+
+        Args:
+            path: Virtual file path
+            context: Unused in remote client
+
+        Returns:
+            Dict of key -> value for all metadata on the file
+
+        Examples:
+            >>> await nx.list_file_metadata("/docs/report.pdf")
+            {'author': 'Alice', 'tags': ['important']}
+        """
+        result = await self._call_rpc("list_file_metadata", {"path": path})
+        return cast(dict[str, Any], cast(dict[str, Any], result).get("metadata", {}))
 
     # ============================================================
     # Version Tracking Operations (Async)

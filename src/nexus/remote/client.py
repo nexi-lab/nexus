@@ -2019,6 +2019,96 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return result.get("metadata")  # type: ignore[no-any-return]
 
     # ============================================================
+    # Custom File Metadata (Key-Value)
+    # ============================================================
+
+    def set_file_metadata(self, path: str, key: str, value: Any) -> dict[str, Any]:
+        """Set a custom metadata key-value pair for a file.
+
+        This method allows storing arbitrary key-value metadata on files.
+        The value can be any JSON-serializable type (string, number, bool,
+        list, dict, or None).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key (max 255 characters)
+            value: Metadata value (will be JSON-serialized)
+
+        Returns:
+            Dict with path, key, and success status
+
+        Examples:
+            >>> nx.set_file_metadata("/docs/report.pdf", "author", "Alice")
+            {'path': '/docs/report.pdf', 'key': 'author', 'success': True}
+
+            >>> nx.set_file_metadata("/data/config.json", "tags", ["important", "v2"])
+            {'path': '/data/config.json', 'key': 'tags', 'success': True}
+        """
+        result = self._call_rpc("set_file_metadata", {"path": path, "key": key, "value": value})
+        return cast(dict[str, Any], result)
+
+    def get_file_metadata(self, path: str, key: str) -> Any:
+        """Get a custom metadata value for a file.
+
+        This method retrieves a specific metadata key-value pair from a file.
+        Returns None if the key doesn't exist.
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to retrieve
+
+        Returns:
+            The metadata value, or None if key doesn't exist
+
+        Examples:
+            >>> nx.get_file_metadata("/docs/report.pdf", "author")
+            'Alice'
+
+            >>> nx.get_file_metadata("/docs/report.pdf", "nonexistent")
+            None
+        """
+        result = self._call_rpc("get_file_metadata", {"path": path, "key": key})
+        return cast(dict[str, Any], result).get("value")
+
+    def delete_file_metadata(self, path: str, key: str) -> bool:
+        """Delete a custom metadata key from a file.
+
+        This method removes a specific metadata key-value pair from a file.
+        If the key doesn't exist, this is a no-op (returns True).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to delete
+
+        Returns:
+            True if the operation succeeded
+
+        Examples:
+            >>> nx.delete_file_metadata("/docs/report.pdf", "author")
+            True
+        """
+        result = self._call_rpc("delete_file_metadata", {"path": path, "key": key})
+        return bool(cast(dict[str, Any], result).get("deleted", False))
+
+    def list_file_metadata(self, path: str) -> dict[str, Any]:
+        """List all custom metadata key-value pairs for a file.
+
+        This method retrieves all metadata associated with a file.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Dict of key -> value for all metadata on the file
+
+        Examples:
+            >>> nx.list_file_metadata("/docs/report.pdf")
+            {'author': 'Alice', 'tags': ['important']}
+        """
+        result = self._call_rpc("list_file_metadata", {"path": path})
+        return cast(dict[str, Any], cast(dict[str, Any], result).get("metadata", {}))
+
+    # ============================================================
     # Version Tracking Operations
     # ============================================================
 

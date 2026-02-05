@@ -2355,6 +2355,154 @@ class NexusFS(  # type: ignore[misc]
         # Return the etag (content_hash) from metadata
         return file_meta.etag
 
+    @rpc_expose(description="Set custom metadata key-value for a file")
+    def set_file_metadata(
+        self,
+        path: str,
+        key: str,
+        value: Any,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Set a custom metadata key-value pair for a file.
+
+        This method allows storing arbitrary key-value metadata on files.
+        The value can be any JSON-serializable type (string, number, bool,
+        list, dict, or None).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key (max 255 characters)
+            value: Metadata value (will be JSON-serialized)
+            context: Operation context with user, permissions, tenant info
+
+        Returns:
+            Dict with path, key, and success status
+
+        Raises:
+            FileNotFoundError: If the file doesn't exist
+            ValidationError: If key is empty or too long
+
+        Examples:
+            >>> fs.set_file_metadata("/docs/report.pdf", "author", "Alice")
+            {'path': '/docs/report.pdf', 'key': 'author', 'success': True}
+
+            >>> fs.set_file_metadata("/data/config.json", "tags", ["important", "v2"])
+            {'path': '/data/config.json', 'key': 'tags', 'success': True}
+        """
+        _ = context  # Reserved for future permission checks
+        normalized = self._validate_path(path, allow_root=False)
+
+        # Validate key
+        if not key:
+            from nexus.core.exceptions import ValidationError
+
+            raise ValidationError("metadata key is required")
+        if len(key) > 255:
+            from nexus.core.exceptions import ValidationError
+
+            raise ValidationError(f"metadata key must be 255 characters or less, got {len(key)}")
+
+        # Set the metadata
+        self.metadata.set_file_metadata(normalized, key, value)
+
+        return {"path": normalized, "key": key, "success": True}
+
+    @rpc_expose(description="Get custom metadata value for a file")
+    def get_file_metadata(
+        self,
+        path: str,
+        key: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get a custom metadata value for a file.
+
+        This method retrieves a specific metadata key-value pair from a file.
+        Returns None as the value if the key doesn't exist.
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to retrieve
+            context: Operation context with user, permissions, tenant info
+
+        Returns:
+            Dict with path, key, and value (None if key doesn't exist)
+
+        Examples:
+            >>> fs.get_file_metadata("/docs/report.pdf", "author")
+            {'path': '/docs/report.pdf', 'key': 'author', 'value': 'Alice'}
+
+            >>> fs.get_file_metadata("/docs/report.pdf", "nonexistent")
+            {'path': '/docs/report.pdf', 'key': 'nonexistent', 'value': None}
+        """
+        _ = context  # Reserved for future permission checks
+        normalized = self._validate_path(path, allow_root=False)
+
+        # Get the metadata value
+        value = self.metadata.get_file_metadata(normalized, key)
+
+        return {"path": normalized, "key": key, "value": value}
+
+    @rpc_expose(description="Delete custom metadata key from a file")
+    def delete_file_metadata(
+        self,
+        path: str,
+        key: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a custom metadata key from a file.
+
+        This method removes a specific metadata key-value pair from a file.
+        If the key doesn't exist, this is a no-op (returns success).
+
+        Args:
+            path: Virtual file path
+            key: Metadata key to delete
+            context: Operation context with user, permissions, tenant info
+
+        Returns:
+            Dict with path, key, and deleted status
+
+        Examples:
+            >>> fs.delete_file_metadata("/docs/report.pdf", "author")
+            {'path': '/docs/report.pdf', 'key': 'author', 'deleted': True}
+        """
+        _ = context  # Reserved for future permission checks
+        normalized = self._validate_path(path, allow_root=False)
+
+        # Delete the metadata (set to None removes it)
+        self.metadata.delete_file_metadata(normalized, key)
+
+        return {"path": normalized, "key": key, "deleted": True}
+
+    @rpc_expose(description="List all custom metadata keys for a file")
+    def list_file_metadata(
+        self,
+        path: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List all custom metadata key-value pairs for a file.
+
+        This method retrieves all metadata associated with a file.
+
+        Args:
+            path: Virtual file path
+            context: Operation context with user, permissions, tenant info
+
+        Returns:
+            Dict with path and metadata (dict of key-value pairs)
+
+        Examples:
+            >>> fs.list_file_metadata("/docs/report.pdf")
+            {'path': '/docs/report.pdf', 'metadata': {'author': 'Alice', 'tags': ['important']}}
+        """
+        _ = context  # Reserved for future permission checks
+        normalized = self._validate_path(path, allow_root=False)
+
+        # Get all metadata for the file
+        metadata = self.metadata.get_all_file_metadata(normalized)
+
+        return {"path": normalized, "metadata": metadata}
+
     def _get_backend_directory_entries(
         self, path: str, context: OperationContext | None = None
     ) -> set[str]:

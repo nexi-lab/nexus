@@ -24,8 +24,7 @@ COPY nexus-langgraph/agents ./agents
 COPY nexus-langgraph/shared ./shared
 
 # Install dependencies (nexus-fs-python from PyPI, not local build)
-# Pin langgraph-api to avoid 0.7.21 import error (thread_ttl issue)
-RUN uv pip install --system . "langgraph-api>=0.7.15,<0.7.21"
+RUN uv pip install --system .
 
 # ============================================
 # Production image

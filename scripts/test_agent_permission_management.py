@@ -671,8 +671,7 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
 
     # Verify agent can see zone (full permissions should allow access)
     has_zone_access = any(
-        f.get("path") in ("/zone", "/zone/default")
-        or f.get("path", "").startswith("/zone/")
+        f.get("path") in ("/zone", "/zone/default") or f.get("path", "").startswith("/zone/")
         for f in files
     )
     if not has_zone_access:
@@ -962,9 +961,7 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     has_agent_dir_access = len(agent_dir_files) > 0
 
     if not has_zone_access and not has_agent_dir_access:
-        print(
-            f"   ❌ ERROR: Agent cannot see /zone or access its own directory {agent_dir}"
-        )
+        print(f"   ❌ ERROR: Agent cannot see /zone or access its own directory {agent_dir}")
         sys.exit(1)
     if has_zone_access:
         print("   ✅ Agent can access: /zone")

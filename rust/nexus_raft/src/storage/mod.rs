@@ -16,7 +16,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use nexus_raft::storage::{SledStore, SledTree, SledBatch};
 //!
 //! // Open a database

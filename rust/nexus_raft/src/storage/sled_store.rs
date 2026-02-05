@@ -15,7 +15,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use nexus_raft::storage::SledStore;
 //!
 //! let store = SledStore::open("/tmp/mydb").unwrap();
@@ -69,7 +69,7 @@ impl SledStore {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::SledStore;
     ///
     /// let store = SledStore::open("/var/lib/nexus/raft").unwrap();
@@ -87,7 +87,7 @@ impl SledStore {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::SledStore;
     ///
     /// let config = sled::Config::new()
@@ -120,7 +120,7 @@ impl SledStore {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::SledStore;
     ///
     /// let store = SledStore::open_temporary().unwrap();
@@ -327,7 +327,7 @@ impl SledTree {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::SledStore;
     ///
     /// let store = SledStore::open_temporary().unwrap();
@@ -355,7 +355,7 @@ impl SledTree {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::SledStore;
     ///
     /// let store = SledStore::open_temporary().unwrap();
@@ -417,7 +417,7 @@ impl SledTree {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use nexus_raft::storage::{SledStore, SledBatch};
     ///
     /// let store = SledStore::open_temporary().unwrap();

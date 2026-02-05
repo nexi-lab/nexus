@@ -4,16 +4,18 @@ Resolves virtual paths to canonical memory IDs regardless of path order.
 Enables multiple virtual path views for the same memory.
 
 Includes temporal query operators (Issue #1023) for time-based filtering.
+Includes version tracking (#1184) for memory audit trails.
 """
 
-from datetime import datetime
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from nexus.core.entity_registry import EntityRegistry
-from nexus.storage.models import MemoryModel
+from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 
 class MemoryViewRouter:
@@ -275,6 +277,50 @@ class MemoryViewRouter:
 
         return list(self.session.execute(stmt).scalars().all())
 
+    def _create_version_entry(
+        self,
+        memory_id: str,
+        content_hash: str,
+        size_bytes: int,
+        version_number: int,
+        source_type: str = "original",
+        parent_version_id: str | None = None,
+        change_reason: str | None = None,
+        created_by: str | None = None,
+    ) -> VersionHistoryModel:
+        """Create a version history entry for a memory.
+
+        Args:
+            memory_id: The memory ID (resource_id).
+            content_hash: SHA-256 hash of the content.
+            size_bytes: Size of the content in bytes.
+            version_number: Version number for this entry.
+            source_type: How version was created ('original', 'update', 'consolidated', 'rollback').
+            parent_version_id: ID of the previous version (for lineage tracking).
+            change_reason: Description of why version was created.
+            created_by: User or agent ID who created this version.
+
+        Returns:
+            The created VersionHistoryModel.
+        """
+        version_entry = VersionHistoryModel(
+            version_id=str(uuid.uuid4()),
+            resource_type="memory",
+            resource_id=memory_id,
+            version_number=version_number,
+            content_hash=content_hash,
+            size_bytes=size_bytes,
+            mime_type="application/json",  # Memory content is typically JSON
+            parent_version_id=parent_version_id,
+            source_type=source_type,
+            change_reason=change_reason,
+            created_by=created_by,
+            created_at=datetime.now(UTC),
+        )
+        version_entry.validate()
+        self.session.add(version_entry)
+        return version_entry
+
     def create_memory(
         self,
         content_hash: str,
@@ -300,6 +346,9 @@ class MemoryViewRouter:
         relationships_json: str | None = None,  # #1038: Relationship extraction JSON
         relationship_count: int | None = None,  # #1038: Count of relationships
         valid_at: Any = None,  # #1183: When fact became valid in real world
+        size_bytes: int = 0,  # #1184: Content size for version tracking
+        created_by: str | None = None,  # #1184: Who created this version
+        change_reason: str | None = None,  # #1184: Why this version was created
     ) -> MemoryModel:
         """Create a new memory (or update if path_key exists).
 
@@ -347,6 +396,15 @@ class MemoryViewRouter:
             existing_memory = self.session.execute(stmt).scalar_one_or_none()
 
         if existing_memory:
+            # #1184: Get current version entry for lineage tracking
+            prev_version_stmt = select(VersionHistoryModel).where(
+                VersionHistoryModel.resource_type == "memory",
+                VersionHistoryModel.resource_id == existing_memory.memory_id,
+                VersionHistoryModel.version_number == existing_memory.current_version,
+            )
+            prev_version_entry = self.session.execute(prev_version_stmt).scalar_one_or_none()
+            prev_version_id = prev_version_entry.version_id if prev_version_entry else None
+
             # Update existing memory
             existing_memory.content_hash = content_hash
             existing_memory.scope = scope
@@ -390,8 +448,30 @@ class MemoryViewRouter:
             if valid_at is not None:
                 existing_memory.valid_at = valid_at
 
+            # #1184: Atomically increment version at database level
+            self.session.execute(
+                update(MemoryModel)
+                .where(MemoryModel.memory_id == existing_memory.memory_id)
+                .values(current_version=MemoryModel.current_version + 1)
+            )
+            self.session.refresh(existing_memory)
+
             existing_memory.validate()
             self.session.commit()
+
+            # #1184: Create version history entry for the update
+            self._create_version_entry(
+                memory_id=existing_memory.memory_id,
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                version_number=existing_memory.current_version,
+                source_type="update",
+                parent_version_id=prev_version_id,
+                change_reason=change_reason or "Memory updated",
+                created_by=created_by or user_id or agent_id,
+            )
+            self.session.commit()
+
             return existing_memory
         else:
             # Create new memory
@@ -425,6 +505,19 @@ class MemoryViewRouter:
             memory.validate()
 
             self.session.add(memory)
+            self.session.commit()
+
+            # #1184: Create version 1 history entry
+            self._create_version_entry(
+                memory_id=memory.memory_id,
+                content_hash=content_hash,
+                size_bytes=size_bytes,
+                version_number=1,
+                source_type="original",
+                parent_version_id=None,
+                change_reason=change_reason or "Memory created",
+                created_by=created_by or user_id or agent_id,
+            )
             self.session.commit()
 
             # Create ReBAC tuple for memory owner (v0.6.0 pure ReBAC)

@@ -435,6 +435,8 @@ class Memory:
             relationships_json=relationships_json_str,  # #1038: Store relationships
             relationship_count=relationship_count_val,  # #1038: Store relationship count
             valid_at=valid_at_dt,  # #1183: When fact became valid
+            size_bytes=len(content_bytes),  # #1184: Content size for versioning
+            created_by=user_id or agent_id,  # #1184: Who created this version
         )
 
         # #1039: Store extracted entities and relationships to graph tables
@@ -2837,3 +2839,329 @@ class Memory:
         return asyncio.run(
             self.index_memories_async(embedding_provider, batch_size, memory_type, scope)
         )
+
+    # ========== Version Tracking Methods (#1184) ==========
+
+    def list_versions(self, memory_id: str) -> builtins.list[dict[str, Any]]:
+        """List all versions of a memory.
+
+        Returns version history with metadata for each version, ordered by
+        version number (newest first).
+
+        Args:
+            memory_id: The memory ID to get versions for.
+
+        Returns:
+            List of version info dicts with keys:
+            - version: Version number
+            - content_hash: SHA-256 hash for CAS retrieval
+            - size: Content size in bytes
+            - created_at: Timestamp when version was created
+            - created_by: User/agent who created it
+            - source_type: How version was created ('original', 'update', 'rollback')
+            - change_reason: Why this version was created
+            - parent_version_id: ID of the previous version
+
+        Example:
+            >>> versions = memory.list_versions("mem_123")
+            >>> for v in versions:
+            ...     print(f"v{v['version']}: {v['size']} bytes")
+        """
+        from sqlalchemy import select
+
+        from nexus.storage.models import VersionHistoryModel
+
+        # Query all versions for this memory
+        stmt = (
+            select(VersionHistoryModel)
+            .where(
+                VersionHistoryModel.resource_type == "memory",
+                VersionHistoryModel.resource_id == memory_id,
+            )
+            .order_by(VersionHistoryModel.version_number.desc())
+        )
+
+        versions = []
+        for v in self.session.scalars(stmt):
+            versions.append(
+                {
+                    "version": v.version_number,
+                    "content_hash": v.content_hash,
+                    "size": v.size_bytes,
+                    "mime_type": v.mime_type,
+                    "created_at": v.created_at.isoformat() if v.created_at else None,
+                    "created_by": v.created_by,
+                    "change_reason": v.change_reason,
+                    "source_type": v.source_type,
+                    "parent_version_id": v.parent_version_id,
+                }
+            )
+
+        return versions
+
+    def get_version(
+        self,
+        memory_id: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
+        """Retrieve a specific version of a memory.
+
+        Fetches the content and metadata for a specific historical version
+        of a memory using CAS storage.
+
+        Args:
+            memory_id: The memory ID.
+            version: Version number to retrieve (1-indexed).
+            context: Optional operation context for permission checks.
+
+        Returns:
+            Memory dictionary with content at specified version, or None
+            if memory or version not found.
+
+        Example:
+            >>> # Get version 1 of a memory
+            >>> v1 = memory.get_version("mem_123", version=1)
+            >>> print(v1['content'])
+        """
+        from sqlalchemy import select
+
+        from nexus.storage.models import VersionHistoryModel
+
+        # Check if memory exists and we have permission
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return None
+
+        check_context = context or self.context
+        if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
+            return None
+
+        # Get the specific version entry
+        stmt = select(VersionHistoryModel).where(
+            VersionHistoryModel.resource_type == "memory",
+            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.version_number == version,
+        )
+        version_entry = self.session.scalar(stmt)
+
+        if not version_entry:
+            return None
+
+        # Read content from CAS using version's content_hash
+        content = None
+        try:
+            content_bytes = self.backend.read_content(
+                version_entry.content_hash, context=self.context
+            ).unwrap()
+            try:
+                content = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                content = content_bytes.hex()
+        except Exception:
+            content = f"<content not available: {version_entry.content_hash}>"
+
+        return {
+            "memory_id": memory_id,
+            "version": version_entry.version_number,
+            "content": content,
+            "content_hash": version_entry.content_hash,
+            "size": version_entry.size_bytes,
+            "mime_type": version_entry.mime_type,
+            "created_at": version_entry.created_at.isoformat()
+            if version_entry.created_at
+            else None,
+            "created_by": version_entry.created_by,
+            "source_type": version_entry.source_type,
+            "change_reason": version_entry.change_reason,
+        }
+
+    def rollback(
+        self,
+        memory_id: str,
+        version: int,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Rollback a memory to a previous version.
+
+        Restores the memory content to a specific historical version.
+        Creates a new version entry with source_type='rollback' to maintain
+        audit trail.
+
+        Args:
+            memory_id: The memory ID to rollback.
+            version: Version number to rollback to.
+            context: Optional operation context for permission checks.
+
+        Raises:
+            ValueError: If memory or version not found, or no permission.
+
+        Example:
+            >>> # Rollback to version 1
+            >>> memory.rollback("mem_123", version=1)
+        """
+        from sqlalchemy import select, update
+
+        from nexus.storage.models import MemoryModel, VersionHistoryModel
+
+        # Check if memory exists and we have write permission
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            raise ValueError(f"Memory not found: {memory_id}")
+
+        check_context = context or self.context
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, check_context):
+            raise ValueError(f"No permission to rollback memory: {memory_id}")
+
+        # Get the target version entry
+        target_stmt = select(VersionHistoryModel).where(
+            VersionHistoryModel.resource_type == "memory",
+            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.version_number == version,
+        )
+        target_version = self.session.scalar(target_stmt)
+
+        if not target_version:
+            raise ValueError(f"Version {version} not found for memory {memory_id}")
+
+        # Get current version entry for lineage
+        current_stmt = select(VersionHistoryModel).where(
+            VersionHistoryModel.resource_type == "memory",
+            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.version_number == memory.current_version,
+        )
+        current_version_entry = self.session.scalar(current_stmt)
+        parent_version_id = current_version_entry.version_id if current_version_entry else None
+
+        # Update memory to target version's content
+        memory.content_hash = target_version.content_hash
+        memory.updated_at = datetime.now(UTC)
+
+        # Atomically increment version at database level
+        self.session.execute(
+            update(MemoryModel)
+            .where(MemoryModel.memory_id == memory_id)
+            .values(current_version=MemoryModel.current_version + 1)
+        )
+        self.session.refresh(memory)
+
+        # Create version history entry for the rollback
+        self.memory_router._create_version_entry(
+            memory_id=memory_id,
+            content_hash=target_version.content_hash,
+            size_bytes=target_version.size_bytes,
+            version_number=memory.current_version,
+            source_type="rollback",
+            parent_version_id=parent_version_id,
+            change_reason=f"Rollback to version {version}",
+            created_by=check_context.user if check_context else None,
+        )
+
+        self.session.commit()
+
+    def diff_versions(
+        self,
+        memory_id: str,
+        v1: int,
+        v2: int,
+        mode: Literal["metadata", "content"] = "metadata",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | str:
+        """Compare two versions of a memory.
+
+        Args:
+            memory_id: The memory ID.
+            v1: First version number.
+            v2: Second version number.
+            mode: Diff mode - "metadata" returns size/hash comparison,
+                  "content" returns unified diff format.
+            context: Optional operation context for permission checks.
+
+        Returns:
+            For mode="metadata": Dict with version comparison info.
+            For mode="content": String in unified diff format.
+
+        Raises:
+            ValueError: If memory or versions not found, or no permission.
+
+        Example:
+            >>> # Compare metadata between versions
+            >>> diff = memory.diff_versions("mem_123", v1=1, v2=2)
+            >>> print(f"Content changed: {diff['content_changed']}")
+
+            >>> # Get content diff
+            >>> diff_text = memory.diff_versions("mem_123", v1=1, v2=2, mode="content")
+            >>> print(diff_text)
+        """
+        import difflib
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import VersionHistoryModel
+
+        # Check if memory exists and we have permission
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            raise ValueError(f"Memory not found: {memory_id}")
+
+        check_context = context or self.context
+        if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
+            raise ValueError(f"No permission to diff memory: {memory_id}")
+
+        # Get both versions
+        stmt = select(VersionHistoryModel).where(
+            VersionHistoryModel.resource_type == "memory",
+            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.version_number.in_([v1, v2]),
+        )
+
+        versions_dict = {v.version_number: v for v in self.session.scalars(stmt)}
+
+        if v1 not in versions_dict:
+            raise ValueError(f"Version {v1} not found for memory {memory_id}")
+        if v2 not in versions_dict:
+            raise ValueError(f"Version {v2} not found for memory {memory_id}")
+
+        version1 = versions_dict[v1]
+        version2 = versions_dict[v2]
+
+        if mode == "metadata":
+            return {
+                "memory_id": memory_id,
+                "v1": v1,
+                "v2": v2,
+                "content_hash_v1": version1.content_hash,
+                "content_hash_v2": version2.content_hash,
+                "content_changed": version1.content_hash != version2.content_hash,
+                "size_v1": version1.size_bytes,
+                "size_v2": version2.size_bytes,
+                "size_delta": version2.size_bytes - version1.size_bytes,
+                "created_at_v1": version1.created_at.isoformat() if version1.created_at else None,
+                "created_at_v2": version2.created_at.isoformat() if version2.created_at else None,
+            }
+        else:
+            # Content diff mode - read both versions and compute unified diff
+            try:
+                content1_bytes = self.backend.read_content(
+                    version1.content_hash, context=self.context
+                ).unwrap()
+                content1 = content1_bytes.decode("utf-8")
+            except Exception:
+                content1 = f"<content not available: {version1.content_hash}>"
+
+            try:
+                content2_bytes = self.backend.read_content(
+                    version2.content_hash, context=self.context
+                ).unwrap()
+                content2 = content2_bytes.decode("utf-8")
+            except Exception:
+                content2 = f"<content not available: {version2.content_hash}>"
+
+            # Generate unified diff
+            diff_lines = difflib.unified_diff(
+                content1.splitlines(keepends=True),
+                content2.splitlines(keepends=True),
+                fromfile=f"version {v1}",
+                tofile=f"version {v2}",
+            )
+            return "".join(diff_lines)

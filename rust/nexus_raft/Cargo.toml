@@ -5,6 +5,10 @@ edition = "2021"
 description = "Raft consensus and embedded storage for Nexus"
 authors = ["Nexus Team"]
 
+# Allow build.rs to set has_protos cfg (set when proto files exist for gRPC codegen)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(has_protos)"] }
+
 [lib]
 # Python module name: nexus._nexus_raft (consistent with _nexus_fast)
 name = "_nexus_raft"

@@ -1322,10 +1322,10 @@ class ReBACService:
 
             # If user is not owner, check if they are zone admin
             if not has_permission:
-                # Extract zone from resource path (format: /zone/{zone_id}/...)
+                # Extract zone from resource path (format: /zone:{zone_id}/...)
                 zone_id = None
-                if resource_path.startswith("/zone/"):
-                    parts = resource_path[6:].split("/", 1)  # Remove "/zone/" prefix
+                if resource_path.startswith("/zone:"):
+                    parts = resource_path[6:].split("/", 1)  # Remove "/zone:" prefix
                     if parts:
                         zone_id = parts[0]
 

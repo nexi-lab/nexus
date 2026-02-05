@@ -55,9 +55,8 @@ from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.version_service import VersionService
-from nexus.storage import RaftMetadataStore
+from nexus.storage import SQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
-from nexus.storage.database import get_engine, get_session_factory
 
 
 class NexusFS(  # type: ignore[misc]
@@ -209,21 +208,24 @@ class NexusFS(  # type: ignore[misc]
         # When False: Write operations succeed but log at CRITICAL level
         self._audit_strict_mode = audit_strict_mode
 
-        # Initialize metadata store (using Raft-based sled store)
+        # Initialize metadata store (using SQLAlchemy-based store)
         if db_path is None:
             # Default to current directory
-            db_path = Path("./nexus-data")
-        metadata_path = Path(db_path) / "metadata"
-        self.metadata = RaftMetadataStore.local(str(metadata_path))
+            db_path = Path("./nexus-metadata.db")
+        self.metadata = SQLAlchemyMetadataStore(
+            db_path=db_path,
+            enable_cache=enable_metadata_cache,
+            cache_path_size=cache_path_size,
+            cache_list_size=cache_list_size,
+            cache_kv_size=cache_kv_size,
+            cache_exists_size=cache_exists_size,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
 
-        # Initialize SQLAlchemy database for other models (users, permissions, etc.)
-        # File metadata uses sled (RaftMetadataStore), SQLAlchemy is for relational data
-        sql_db_path = Path(db_path) / "nexus.db"
-        self._sql_engine = get_engine(db_path=sql_db_path)
-        self._db_session_factory = get_session_factory(db_path=sql_db_path)
-
-        # Compatibility: expose SessionLocal for code that expects it on self.metadata
-        # TODO: Migrate all callers to use self._db_session_factory directly
+        # SQLAlchemy engine and session factory from the metadata store
+        # Used by ReBAC, AuditStore, MountManager, etc.
+        self._sql_engine = self.metadata.engine
+        self._db_session_factory = self.metadata.SessionLocal
         self.SessionLocal = self._db_session_factory
 
         # Initialize path router with default namespaces
@@ -298,7 +300,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
         self._rebac_manager = EnhancedReBACManager(
-            engine=self._sql_engine,  # SQLAlchemy engine for ReBAC (file metadata uses RaftMetadataStore)
+            engine=self._sql_engine,  # SQLAlchemy engine for ReBAC
             cache_ttl_seconds=cache_ttl_seconds or 300,
             max_depth=10,
             enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone scoping (configurable)
@@ -482,7 +484,7 @@ class NexusFS(  # type: ignore[misc]
                         set_distributed_lock_manager,
                     )
 
-                    # Locks use Raft consensus via RaftMetadataStore (no Redis needed)
+                    # Locks use Raft consensus via metadata store (no Redis needed)
                     self._lock_manager = RaftLockManager(self.metadata)
                     set_distributed_lock_manager(self._lock_manager)
                     logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
@@ -2531,7 +2533,7 @@ class NexusFS(  # type: ignore[misc]
                 # Try to get custom metadata for this file (if any)
                 # Note: This is optional - files may not have custom metadata
                 try:
-                    if isinstance(self.metadata, RaftMetadataStore):
+                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
                         # Get all custom metadata keys for this path
                         # We need to query the database directly for all keys
                         with self.SessionLocal() as session:

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
-    from nexus.storage import RaftMetadataStore
+    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class VersionService:
@@ -87,7 +87,7 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: RaftMetadataStore,
+        metadata_store: SQLAlchemyMetadataStore,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,

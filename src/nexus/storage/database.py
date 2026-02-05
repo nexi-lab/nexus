@@ -2,7 +2,7 @@
 
 This module provides the SQLAlchemy database connection used by various Nexus
 components (auth, permissions, version history, etc.). File metadata uses
-RaftMetadataStore (sled) instead.
+SQLAlchemyMetadataStore instead.
 
 Usage:
     from nexus.storage.database import get_session, get_engine

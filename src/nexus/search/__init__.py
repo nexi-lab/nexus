@@ -113,6 +113,7 @@ from nexus.search.mobile_config import (
 from nexus.search.mobile_providers import (
     CrossEncoderRerankerProvider,
     FastEmbedMobileProvider,
+    GGUFEmbeddingProvider,
     MobileEmbeddingProvider,
     MobileRerankerProvider,
     MobileSearchService,
@@ -123,6 +124,7 @@ from nexus.search.mobile_providers import (
     create_mobile_embedding_provider,
     create_reranker_provider,
     create_service_from_config,
+    download_gguf_model,
     download_model,
     download_models_for_tier,
 )
@@ -272,6 +274,7 @@ __all__ = [
     "FastEmbedMobileProvider",
     "Model2VecProvider",
     "SentenceTransformersProvider",
+    "GGUFEmbeddingProvider",
     "CrossEncoderRerankerProvider",
     "MobileSearchService",
     "create_mobile_embedding_provider",
@@ -281,4 +284,6 @@ __all__ = [
     "check_model_available",
     "download_model",
     "download_models_for_tier",
+    # GGUF Model Download Helper (Issue #1214)
+    "download_gguf_model",
 ]

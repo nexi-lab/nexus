@@ -128,6 +128,12 @@ performance = [
     "fastembed>=0.4.0",
 ]
 
+mobile = [
+    # GGUF model support via llama.cpp (Issue #1214)
+    # For local embedding inference on mobile/edge devices
+    "llama-cpp-python>=0.2.0",
+]
+
 dev = [
     # Testing
     "pytest>=9.0.2",

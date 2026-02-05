@@ -196,6 +196,13 @@ class NexusFSSearchMixin:
             self, path: str, permission: Permission, context: OperationContext
         ) -> bool: ...
         def _get_backend_directory_entries(self, path: str) -> set[str]: ...
+        def _record_read_if_tracking(
+            self,
+            context: OperationContext | None,
+            resource_type: str,
+            resource_id: str,
+            access_type: str = "content",
+        ) -> None: ...
         def _get_routing_params(
             self, context: OperationContext | None
         ) -> tuple[str | None, str | None, bool]: ...
@@ -1210,6 +1217,10 @@ class NexusFSSearchMixin:
             logger.info(
                 f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
             )
+
+            # Issue #1166: Record directory list for dependency tracking
+            self._record_read_if_tracking(context, "directory", path, "list")
+
             return all_results
         else:
             # Return paths only (filter out directory metadata markers)
@@ -1223,6 +1234,10 @@ class NexusFSSearchMixin:
             logger.info(
                 f"[LIST-TIMING] TOTAL: {(_time.time() - _list_start) * 1000:.1f}ms for path={path}"
             )
+
+            # Issue #1166: Record directory list for dependency tracking
+            self._record_read_if_tracking(context, "directory", path, "list")
+
             return all_paths
 
     def _list_paginated(

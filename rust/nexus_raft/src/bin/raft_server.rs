@@ -58,8 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data_path.display()
     );
 
-    // Import and start the server
-    #[cfg(feature = "grpc")]
+    // Import and start the server (requires grpc feature AND proto files)
+    #[cfg(all(feature = "grpc", has_protos))]
     {
         use _nexus_raft::transport::{RaftServer, ServerConfig};
 
@@ -89,9 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Raft server stopped");
     }
 
-    #[cfg(not(feature = "grpc"))]
+    #[cfg(not(all(feature = "grpc", has_protos)))]
     {
-        eprintln!("Error: This binary requires the 'grpc' feature.");
+        eprintln!("Error: This binary requires the 'grpc' feature and proto files.");
         eprintln!("Build with: cargo build --features grpc --bin nexus-raft-server");
         std::process::exit(1);
     }

@@ -58,23 +58,23 @@
 //! nexus_raft = { version = "0.1", features = ["grpc"] }
 //! ```
 
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", has_protos))]
 mod client;
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", has_protos))]
 mod server;
 
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
     AppendEntriesResponseLocal, ClientConfig, LogEntry, RaftClient, RaftClientPool,
     VoteResponseLocal,
 };
-#[cfg(feature = "grpc")]
+#[cfg(all(feature = "grpc", has_protos))]
 pub use server::{
     RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState,
 };
 
-// Re-export generated types when grpc feature is enabled
-#[cfg(feature = "grpc")]
+// Re-export generated types when grpc feature is enabled and protos were compiled
+#[cfg(all(feature = "grpc", has_protos))]
 pub mod proto {
     //! Generated protobuf types and gRPC services.
     //!

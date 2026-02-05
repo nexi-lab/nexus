@@ -1,6 +1,6 @@
 """Zone import service for restoring from .nexus bundles.
 
-This module provides the TenantImportService class for importing zone data
+This module provides the ZoneImportService class for importing zone data
 from portable .nexus bundles including:
 - File metadata (JSONL streaming)
 - Content blobs (CAS structure)
@@ -25,7 +25,7 @@ from nexus.portability.models import (
     ContentMode,
     FileRecord,
     ImportResult,
-    TenantImportOptions,
+    ZoneImportOptions,
 )
 
 if TYPE_CHECKING:
@@ -54,14 +54,14 @@ def _create_import_context() -> OperationContext:
 ProgressCallback = Callable[[int, int, str], None]
 
 
-class TenantImportService:
+class ZoneImportService:
     """Service for importing zone data from .nexus bundles.
 
     Example usage:
-        from nexus.portability import TenantImportService, TenantImportOptions
+        from nexus.portability import ZoneImportService, ZoneImportOptions
 
-        service = TenantImportService(nexus_fs)
-        options = TenantImportOptions(
+        service = ZoneImportService(nexus_fs)
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/zone.nexus"),
             target_zone_id="new-zone",
             conflict_mode=ConflictMode.SKIP,
@@ -83,7 +83,7 @@ class TenantImportService:
 
     def import_zone(
         self,
-        options: TenantImportOptions,
+        options: ZoneImportOptions,
         progress_callback: ProgressCallback | None = None,
     ) -> ImportResult:
         """Import zone data from .nexus bundle.
@@ -175,7 +175,7 @@ class TenantImportService:
     def _import_files(
         self,
         reader: BundleReader,
-        options: TenantImportOptions,
+        options: ZoneImportOptions,
         result: ImportResult,
         manifest_file_count: int,
         progress_callback: ProgressCallback | None,
@@ -229,7 +229,7 @@ class TenantImportService:
         self,
         reader: BundleReader,
         record: FileRecord,
-        options: TenantImportOptions,
+        options: ZoneImportOptions,
         result: ImportResult,
         content_hashes_imported: set[str],
     ) -> None:
@@ -368,7 +368,7 @@ class TenantImportService:
         self,
         path: str,
         record: FileRecord,
-        options: TenantImportOptions,
+        options: ZoneImportOptions,
         result: ImportResult,
         is_update: bool,
     ) -> None:
@@ -442,7 +442,7 @@ class TenantImportService:
     def _import_permissions(
         self,
         reader: BundleReader,
-        options: TenantImportOptions,
+        options: ZoneImportOptions,
         result: ImportResult,
         progress_callback: ProgressCallback | None,
     ) -> None:
@@ -528,7 +528,7 @@ def import_zone_bundle(
     Returns:
         ImportResult with import statistics
     """
-    options = TenantImportOptions(
+    options = ZoneImportOptions(
         bundle_path=bundle_path,
         target_zone_id=target_zone_id,
         conflict_mode=conflict_mode,
@@ -538,5 +538,5 @@ def import_zone_bundle(
         path_prefix_remap=path_prefix_remap or {},
     )
 
-    service = TenantImportService(nexus_fs)
+    service = ZoneImportService(nexus_fs)
     return service.import_zone(options, progress_callback)

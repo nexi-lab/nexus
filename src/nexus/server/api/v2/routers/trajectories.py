@@ -62,7 +62,7 @@ def _get_trajectory_manager(auth_result: dict[str, Any]) -> Any:
         backend=backend,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
         context=context,
     )
 

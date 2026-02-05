@@ -65,7 +65,7 @@ def _get_consolidation_engine(auth_result: dict[str, Any]) -> Any:
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
 
@@ -87,13 +87,13 @@ def _get_hierarchy_manager(auth_result: dict[str, Any]) -> Any:
         llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
-        tenant_id=context.zone_id,
+        zone_id=context.zone_id,
     )
 
     return HierarchicalMemoryManager(
         consolidation_engine=consolidation_engine,
         session=session,
-        tenant_id=context.zone_id or "default",
+        zone_id=context.zone_id or "default",
     )
 
 

@@ -1631,7 +1631,7 @@ def _register_routes(app: FastAPI) -> None:
 
     # Zone management routes
     try:
-        from nexus.server.auth.tenant_routes import router as zone_router
+        from nexus.server.auth.zone_routes import router as zone_router
 
         app.include_router(zone_router)
         logger.info("Zone management routes registered")

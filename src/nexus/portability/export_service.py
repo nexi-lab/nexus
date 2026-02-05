@@ -1,6 +1,6 @@
 """Zone export service for creating .nexus bundles.
 
-This module provides the TenantExportService class for exporting zone data
+This module provides the ZoneExportService class for exporting zone data
 to portable .nexus bundles including:
 - File metadata (JSONL streaming)
 - Content blobs (CAS structure)
@@ -28,7 +28,7 @@ from nexus.portability.models import (
     BundleChecksums,
     ExportManifest,
     FileRecord,
-    TenantExportOptions,
+    ZoneExportOptions,
 )
 
 if TYPE_CHECKING:
@@ -42,14 +42,14 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, int], None]
 
 
-class TenantExportService:
+class ZoneExportService:
     """Service for exporting zone data to .nexus bundles.
 
     Example usage:
-        from nexus.portability import TenantExportService, TenantExportOptions
+        from nexus.portability import ZoneExportService, ZoneExportOptions
 
-        service = TenantExportService(nexus_fs)
-        options = TenantExportOptions(
+        service = ZoneExportService(nexus_fs)
+        options = ZoneExportOptions(
             output_path=Path("/backup/zone.nexus"),
             include_content=True,
             include_permissions=True,
@@ -74,7 +74,7 @@ class TenantExportService:
     def export_zone(
         self,
         zone_id: str,
-        options: TenantExportOptions,
+        options: ZoneExportOptions,
         progress_callback: ProgressCallback | None = None,
     ) -> ExportManifest:
         """Export zone data to .nexus bundle.
@@ -192,7 +192,7 @@ class TenantExportService:
         self,
         zone_id: str,
         output_path: Path,
-        options: TenantExportOptions,
+        options: ZoneExportOptions,
         content_hashes: set[str],
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[int, int]:
@@ -420,7 +420,7 @@ def export_zone_bundle(
     Returns:
         ExportManifest with export statistics
     """
-    options = TenantExportOptions(
+    options = ZoneExportOptions(
         output_path=output_path,
         include_content=include_content,
         include_permissions=include_permissions,
@@ -429,5 +429,5 @@ def export_zone_bundle(
         compression_level=compression_level,
     )
 
-    service = TenantExportService(nexus_fs)
+    service = ZoneExportService(nexus_fs)
     return service.export_zone(zone_id, options, progress_callback)

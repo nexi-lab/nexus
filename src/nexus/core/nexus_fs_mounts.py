@@ -405,6 +405,7 @@ class NexusFSMountsMixin:
         generate_embeddings: bool = False,
         context: OperationContext | None = None,
         progress_callback: ProgressCallback | None = None,
+        full_sync: bool = False,  # Issue #1127: Force full scan, bypassing delta checks
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s).
 
@@ -419,6 +420,7 @@ class NexusFSMountsMixin:
             generate_embeddings: Generate embeddings
             context: Operation context
             progress_callback: Progress callback function
+            full_sync: Force full scan, bypassing delta checks (Issue #1127)
 
         Returns:
             Dictionary with sync statistics
@@ -436,6 +438,7 @@ class NexusFSMountsMixin:
             generate_embeddings=generate_embeddings,
             context=context,
             progress_callback=progress_callback,
+            full_sync=full_sync,
         )
 
         result = self._sync_service.sync_mount(ctx)

@@ -843,11 +843,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             blob_path = self._get_blob_path(backend_path)
             blob = self.bucket.blob(blob_path)
 
-            # Check existence and load metadata
-            if not blob.exists():
-                return HandlerResponse.not_found(path, backend_name=self.name)
-
-            blob.reload()  # Fetch latest metadata
+            # Fetch metadata in a single API call (reload handles NotFound)
+            blob.reload()  # Raises NotFound if blob doesn't exist
 
             # Extract metadata
             size = blob.size or 0

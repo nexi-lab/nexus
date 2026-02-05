@@ -22,7 +22,7 @@ echo "This should cause the segfault..."
 echo ""
 
 # Make API call that triggers skills registry
-# This will scan /zone/default/user:admin/skill/ and read many SKILL.md files
+# This will scan /zone:default/user:admin/skill/ and read many SKILL.md files
 curl -v -X POST http://localhost:2026/api/nfs/list \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $ADMIN_KEY" \

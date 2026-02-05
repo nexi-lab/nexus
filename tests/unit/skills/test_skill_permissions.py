@@ -89,13 +89,13 @@ class TestSkillsShare:
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_share("/zone/acme/user:alice/skill/test/", "public", context=None)
+            nx.skills_share("/zone:acme/user:alice/skill/test/", "public", context=None)
 
     def test_skills_share_public(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill publicly."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
 
         result = nx.skills_share(skill_path, "public", context=context)
 
@@ -113,7 +113,7 @@ class TestSkillsShare:
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with a group."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
 
         result = nx.skills_share(skill_path, "group:engineering", context=context)
 
@@ -128,7 +128,7 @@ class TestSkillsShare:
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with a specific user."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
 
         result = nx.skills_share(skill_path, "user:bob", context=context)
 
@@ -140,7 +140,7 @@ class TestSkillsShare:
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with zone."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
 
         result = nx.skills_share(skill_path, "zone", context=context)
 
@@ -152,7 +152,7 @@ class TestSkillsShare:
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with an agent."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
 
         result = nx.skills_share(skill_path, "agent:agent-123", context=context)
 
@@ -193,7 +193,7 @@ class TestSkillsUnshare:
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test unsharing a skill."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone:acme/user:alice/skill/test/"
         # NexusFS.rebac_list_tuples does direct SQL, so we patch the method on the instance
         with patch.object(nx, "rebac_list_tuples", return_value=[{"tuple_id": "tuple-123"}]):
             result = nx.skills_unshare(skill_path, "public", context=context)
@@ -234,7 +234,7 @@ class TestSkillsDiscover:
     def test_skills_discover_with_skills(self, nx: NexusFS, context: OperationContext) -> None:
         """Test discover returns skills with permissions."""
         # Create skill using NexusFS
-        skill_path = "/zone/acme/user:alice/skill/test-skill/SKILL.md"
+        skill_path = "/zone:acme/user:alice/skill/test-skill/SKILL.md"
         nx.write(
             skill_path,
             b"---\nname: Test Skill\ndescription: A test\nauthor: alice\n---\nContent",
@@ -252,7 +252,7 @@ class TestSkillsDiscover:
     ) -> None:
         """Test discover filters by subscribed status."""
         # Create skill using NexusFS
-        skill_path = "/zone/acme/user:alice/skill/subscribed-skill/"
+        skill_path = "/zone:acme/user:alice/skill/subscribed-skill/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: Subscribed\n---\nContent",
@@ -281,7 +281,7 @@ class TestSkillsSubscribe:
 
     def test_skills_subscribe_success(self, nx: NexusFS, context: OperationContext) -> None:
         """Test subscribing to a skill."""
-        skill_path = "/zone/acme/user:bob/skill/shared/"
+        skill_path = "/zone:acme/user:bob/skill/shared/"
 
         result = nx.skills_subscribe(skill_path, context=context)
 
@@ -371,7 +371,7 @@ class TestSkillsGetPromptContext:
     ) -> None:
         """Test prompt context with subscriptions."""
         # Create skill using NexusFS
-        skill_path = "/zone/acme/user:alice/skill/test-skill/"
+        skill_path = "/zone:acme/user:alice/skill/test-skill/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: Test Skill\ndescription: A test\nauthor: alice\n---\nContent",
@@ -393,7 +393,7 @@ class TestSkillsGetPromptContext:
         """Test prompt context respects max_skills limit."""
         # Create multiple skills using NexusFS
         for i in range(5):
-            skill_path = f"/zone/acme/user:alice/skill/skill-{i}/"
+            skill_path = f"/zone:acme/user:alice/skill/skill-{i}/"
             nx.write(
                 f"{skill_path}SKILL.md",
                 f"---\nname: Skill {i}\n---\nContent".encode(),
@@ -419,7 +419,7 @@ class TestSkillsLoad:
     def test_skills_load_success(self, nx: NexusFS, context: OperationContext) -> None:
         """Test loading a skill."""
         # Create skill using NexusFS
-        skill_path = "/zone/acme/user:alice/skill/test-skill/"
+        skill_path = "/zone:acme/user:alice/skill/test-skill/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: Test Skill\ndescription: A test\nauthor: alice\nversion: 2.0.0\n---\n# Test Skill\n\nInstructions here.",
@@ -448,7 +448,7 @@ class TestSkillsLoad:
     def test_skills_load_without_frontmatter(self, nx: NexusFS, context: OperationContext) -> None:
         """Test loading a skill without YAML frontmatter."""
         # Create skill without frontmatter using NexusFS
-        skill_path = "/zone/acme/user:alice/skill/simple/"
+        skill_path = "/zone:acme/user:alice/skill/simple/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"# Simple Skill\n\nJust content.",

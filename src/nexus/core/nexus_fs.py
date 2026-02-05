@@ -4631,7 +4631,7 @@ class NexusFS(  # type: ignore[misc]
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /zone/alice/user:alice/workspace/ws_personal_abc123
+            /zone:alice/user:alice/workspace/ws_personal_abc123
         """
         import logging
         from datetime import UTC, datetime
@@ -4968,7 +4968,7 @@ class NexusFS(  # type: ignore[misc]
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/zone/example/user:alice/workspace', ...]
+            ['/zone:example/user:alice/workspace', ...]
         """
         import logging
         from datetime import UTC, datetime

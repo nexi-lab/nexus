@@ -169,7 +169,7 @@ class Memory:
 
         Args:
             content: Memory content (text, bytes, or structured dict).
-            scope: Memory scope ('agent', 'user', 'tenant', 'global').
+            scope: Memory scope ('agent', 'user', 'zone', 'global').
             memory_type: Type of memory ('fact', 'preference', 'experience'). Optional if using namespace structure.
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
@@ -505,7 +505,7 @@ class Memory:
         else:
             async_url = sync_url
 
-        # Use default tenant if not provided
+        # Use default zone if not provided
         effective_zone_id = zone_id or "default"
 
         async def _do_store() -> None:
@@ -604,7 +604,7 @@ class Memory:
         Args:
             user_id: Filter by user ID (defaults to current user).
             agent_id: Filter by agent ID.
-            zone_id: Filter by zone ID (defaults to current tenant).
+            zone_id: Filter by zone ID (defaults to current zone).
             scope: Filter by scope.
             memory_type: Filter by memory type.
             state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
@@ -865,7 +865,7 @@ class Memory:
             if memory_type:
                 stmt = stmt.where(MemoryModel.memory_type == memory_type)
 
-            # Filter by tenant/user/agent
+            # Filter by zone/user/agent
             if self.zone_id:
                 stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
             if self.user_id:
@@ -2751,7 +2751,7 @@ class Memory:
         if scope:
             stmt = stmt.where(MemoryModel.scope == scope)
 
-        # Filter by tenant/user/agent
+        # Filter by zone/user/agent
         if self.zone_id:
             stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
         if self.user_id:

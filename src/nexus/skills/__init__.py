@@ -3,7 +3,7 @@
 The Skills System provides:
 - SKILL.md parser with YAML frontmatter support
 - Skill registry with progressive disclosure and lazy loading
-- Three-tier hierarchy (agent > tenant > system)
+- Three-tier hierarchy (agent > zone > system)
 - Dependency resolution with DAG and cycle detection
 - Vendor-neutral skill export to .zip packages
 - Skill lifecycle management (create, fork, publish)
@@ -40,7 +40,7 @@ Example:
     >>> # Fork existing skill
     >>> await manager.fork_skill("analyze-code", "my-analyzer")
     >>>
-    >>> # Publish to tenant library
+    >>> # Publish to zone library
     >>> await manager.publish_skill("my-skill")
     >>>
     >>> # Export skill

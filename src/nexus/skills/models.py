@@ -48,7 +48,7 @@ class SkillMetadata:
 
     # Internal fields
     file_path: str | None = None  # Path to SKILL.md file
-    tier: str | None = None  # agent, tenant, or system
+    tier: str | None = None  # agent, zone, or system
 
     def validate(self) -> None:
         """Validate skill metadata.

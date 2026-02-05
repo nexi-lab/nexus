@@ -153,7 +153,7 @@ class WorkspaceManager:
         if not has_permission:
             logger.warning(
                 f"WorkspaceManager: Permission denied for {subject_desc}, "
-                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, tenant={check_zone_id}"
+                f"permission={permission} (mapped to {file_permission}), workspace={workspace_path}, zone={check_zone_id}"
             )
             raise NexusPermissionError(
                 f"Permission denied: {permission} on workspace {workspace_path}"

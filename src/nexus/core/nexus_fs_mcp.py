@@ -93,7 +93,7 @@ class NexusFSMCPMixin:
         """List MCP server mounts.
 
         Args:
-            tier: Filter by tier (user/tenant/system)
+            tier: Filter by tier (user/zone/system)
             include_unmounted: Include unmounted configurations (default: True)
             _context: Operation context
 
@@ -222,7 +222,7 @@ class NexusFSMCPMixin:
             env: Environment variables
             headers: HTTP headers (for sse transport)
             description: Mount description
-            tier: Target tier (user/tenant/system, default: system)
+            tier: Target tier (user/zone/system, default: system)
             _context: Operation context
 
         Returns:

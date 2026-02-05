@@ -139,7 +139,7 @@ class NexusFilesystem(Protocol):
         Raises:
             InvalidPathError: If any path is invalid
             BackendError: If write operation fails
-            AccessDeniedError: If access is denied (tenant isolation or read-only namespace)
+            AccessDeniedError: If access is denied (zone isolation or read-only namespace)
             PermissionError: If any path is read-only or user doesn't have write permission
 
         Examples:
@@ -382,7 +382,7 @@ class NexusFilesystem(Protocol):
         Get list of available namespace directories.
 
         Returns the built-in namespaces that should appear at root level.
-        Filters based on tenant and admin context.
+        Filters based on zone and admin context.
 
         Returns:
             List of namespace names (e.g., ['workspace', 'shared', 'external'])

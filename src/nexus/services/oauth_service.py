@@ -449,7 +449,7 @@ class OAuthService:
             current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
         is_admin = context and getattr(context, "is_admin", False)
 
-        # List credentials for tenant (and optionally user)
+        # List credentials for zone (and optionally user)
         credentials = await token_manager.list_credentials(
             zone_id=zone_id, user_id=current_user_id if not is_admin else None
         )
@@ -474,7 +474,7 @@ class OAuthService:
 
         logger.info(
             f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"tenant={zone_id}, provider={provider}"
+            f"zone={zone_id}, provider={provider}"
         )
         return result
 

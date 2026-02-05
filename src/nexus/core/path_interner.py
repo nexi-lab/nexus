@@ -1,6 +1,6 @@
 """Path interning for memory-efficient path storage (Issue #912).
 
-Many file paths share common prefixes (e.g., `/tenant1/user1/projects/...`).
+Many file paths share common prefixes (e.g., `/zone1/user1/projects/...`).
 Storing full paths wastes memory. This module provides:
 
 1. PathInterner: Simple string interning for O(1) equality and reduced allocations
@@ -414,7 +414,7 @@ class CompactFileMetadata:
         created_at_ts: Creation timestamp as Unix epoch (float)
         modified_at_ts: Modification timestamp as Unix epoch (float)
         version: File version number
-        zone_id: Tenant identifier (could be interned in future)
+        zone_id: Zone identifier (could be interned in future)
         created_by: Creator identifier
         is_directory: Whether this represents a directory
     """

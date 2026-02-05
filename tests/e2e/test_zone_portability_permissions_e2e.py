@@ -1,4 +1,4 @@
-"""End-to-end tests for tenant portability with permissions enabled.
+"""End-to-end tests for zone portability with permissions enabled.
 
 Tests the export/import workflow with enforce_permissions=True to ensure
 the portability module works correctly with the permission system.
@@ -16,10 +16,10 @@ from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.portability import (
     ConflictMode,
-    TenantImportOptions,
-    TenantImportService,
-    export_tenant_bundle,
-    import_tenant_bundle,
+    ZoneImportOptions,
+    ZoneImportService,
+    export_zone_bundle,
+    import_zone_bundle,
 )
 
 
@@ -77,9 +77,9 @@ def exported_bundle_with_permissions(source_nexus_fs_with_permissions, temp_dir)
     """Create an exported bundle from permission-enabled source."""
     output_path = temp_dir / "export_perms.nexus"
 
-    export_tenant_bundle(
+    export_zone_bundle(
         nexus_fs=source_nexus_fs_with_permissions,
-        tenant_id="source-tenant",
+        zone_id="source-zone",
         output_path=output_path,
         include_content=True,
         include_permissions=True,
@@ -97,9 +97,9 @@ class TestExportWithPermissions:
         """Test that export works with permissions enabled."""
         output_path = temp_dir / "perms_export.nexus"
 
-        manifest = export_tenant_bundle(
+        manifest = export_zone_bundle(
             nexus_fs=source_nexus_fs_with_permissions,
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             output_path=output_path,
             include_content=True,
             include_permissions=True,
@@ -116,9 +116,9 @@ class TestExportWithPermissions:
         """Test path filtering works with permissions enabled."""
         output_path = temp_dir / "filtered_perms.nexus"
 
-        manifest = export_tenant_bundle(
+        manifest = export_zone_bundle(
             nexus_fs=source_nexus_fs_with_permissions,
-            tenant_id="test-tenant",
+            zone_id="test-zone",
             output_path=output_path,
             path_prefix="/workspace",
         )
@@ -134,7 +134,7 @@ class TestImportWithPermissions:
         self, exported_bundle_with_permissions, target_nexus_fs_with_permissions
     ):
         """Test that import works with permissions enabled on target."""
-        result = import_tenant_bundle(
+        result = import_zone_bundle(
             nexus_fs=target_nexus_fs_with_permissions,
             bundle_path=exported_bundle_with_permissions,
         )
@@ -166,13 +166,13 @@ class TestImportWithPermissions:
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle_with_permissions,
             conflict_mode=ConflictMode.SKIP,
         )
 
-        service = TenantImportService(target_nexus_fs_with_permissions)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs_with_permissions)
+        result = service.import_zone(options)
 
         assert result.success is True
         assert result.files_skipped == 1
@@ -195,13 +195,13 @@ class TestImportWithPermissions:
             "/workspace/readme.md", b"Existing content", context=admin_context
         )
 
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle_with_permissions,
             conflict_mode=ConflictMode.OVERWRITE,
         )
 
-        service = TenantImportService(target_nexus_fs_with_permissions)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs_with_permissions)
+        result = service.import_zone(options)
 
         assert result.success is True
         assert result.files_updated == 1
@@ -225,15 +225,15 @@ class TestRoundTripWithPermissions:
         admin_context = OperationContext(user="admin", groups=[], is_admin=True)
 
         # Export from source
-        export_manifest = export_tenant_bundle(
+        export_manifest = export_zone_bundle(
             nexus_fs=source_nexus_fs_with_permissions,
-            tenant_id="source",
+            zone_id="source",
             output_path=bundle_path,
             include_content=True,
         )
 
         # Import to target
-        import_result = import_tenant_bundle(
+        import_result = import_zone_bundle(
             nexus_fs=target_nexus_fs_with_permissions,
             bundle_path=bundle_path,
         )

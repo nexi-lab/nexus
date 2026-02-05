@@ -39,7 +39,7 @@ class MicrosoftOAuthProvider(OAuthProvider):
     - Token: https://login.microsoftonline.com/{azure_tenant}/oauth2/v2.0/token
     - Token info: https://graph.microsoft.com/v1.0/me
 
-    Note: Microsoft uses Azure tenant-specific endpoints. Use "common" for multi-zone apps.
+    Note: Microsoft uses Azure zone-specific endpoints. Use "common" for multi-zone apps.
     """
 
     def __init__(

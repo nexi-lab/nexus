@@ -8,7 +8,7 @@ The authentication system supports:
 - **Username/Password authentication** (database-backed with bcrypt)
 - **Google OAuth authentication** (user login)
 - **User profile management**
-- **Multi-tenant support** (via ReBAC groups)
+- **Multi-zone support** (via ReBAC groups)
 
 ## Quick Start
 
@@ -383,10 +383,10 @@ curl -X GET http://localhost:2026/auth/oauth/google/authorize
 - **Expiry**: Configurable (default: 1 hour)
 - **Secret**: Must be set via environment variable in production
 
-### Multi-Tenant Isolation
-- **Tenant membership**: Managed via ReBAC groups
-- **No primary_tenant_id**: All relationships via ReBAC
-- **Group pattern**: `group:tenant-{tenant_id}`
+### Multi-Zone Isolation
+- **Zone membership**: Managed via ReBAC groups
+- **No primary_zone_id**: All relationships via ReBAC
+- **Group pattern**: `group:zone-{zone_id}`
 
 ## TODO: Future Enhancements
 

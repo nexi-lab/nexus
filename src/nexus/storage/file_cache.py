@@ -16,13 +16,13 @@ Usage:
     file_cache = FileContentCache("/app/data")
 
     # Write content
-    file_cache.write("tenant1", "/mnt/gcs/file.txt", b"content")
+    file_cache.write("zone1", "/mnt/gcs/file.txt", b"content")
 
     # Read content
-    content = file_cache.read("tenant1", "/mnt/gcs/file.txt")
+    content = file_cache.read("zone1", "/mnt/gcs/file.txt")
 
     # Delete content
-    file_cache.delete("tenant1", "/mnt/gcs/file.txt")
+    file_cache.delete("zone1", "/mnt/gcs/file.txt")
 """
 
 from __future__ import annotations
@@ -118,12 +118,12 @@ class FileContentCache:
 
         keys: list[str] = []
         try:
-            for tenant_dir in self.cache_dir.iterdir():
-                if not tenant_dir.is_dir():
+            for zone_dir in self.cache_dir.iterdir():
+                if not zone_dir.is_dir():
                     continue
-                zone_id = tenant_dir.name
-                # Scan all .bin files in tenant directory
-                for cache_file in tenant_dir.rglob("*.bin"):
+                zone_id = zone_dir.name
+                # Scan all .bin files in zone directory
+                for cache_file in zone_dir.rglob("*.bin"):
                     # Extract hash from filename (remove .bin extension)
                     file_hash = cache_file.stem
                     # We store keys as "zone_id:hash" since we can't recover original path
@@ -172,7 +172,7 @@ class FileContentCache:
     def _get_cache_path(self, zone_id: str, virtual_path: str) -> Path:
         """Get the file path for cached content.
 
-        Uses hash-based sharding: {tenant}/{hash[:2]}/{hash[2:4]}/{hash}.bin
+        Uses hash-based sharding: {zone}/{hash[:2]}/{hash[2:4]}/{hash}.bin
         This prevents too many files in a single directory (max 256 per level).
         """
         path_hash = self._path_hash(virtual_path)
@@ -450,8 +450,8 @@ class FileContentCache:
 
         return deleted
 
-    def delete_tenant(self, zone_id: str) -> int:
-        """Delete all cached content for a tenant.
+    def delete_zone(self, zone_id: str) -> int:
+        """Delete all cached content for a zone.
 
         Args:
             zone_id: Zone ID
@@ -459,17 +459,17 @@ class FileContentCache:
         Returns:
             Number of files deleted
         """
-        tenant_dir = self.cache_dir / zone_id
-        if not tenant_dir.exists():
+        zone_dir = self.cache_dir / zone_id
+        if not zone_dir.exists():
             return 0
 
-        count = sum(1 for _ in tenant_dir.rglob("*") if _.is_file())
+        count = sum(1 for _ in zone_dir.rglob("*") if _.is_file())
 
         try:
-            shutil.rmtree(tenant_dir)
-            logger.info(f"Deleted {count} cached files for tenant {zone_id}")
+            shutil.rmtree(zone_dir)
+            logger.info(f"Deleted {count} cached files for zone {zone_id}")
         except Exception as e:
-            logger.error(f"Failed to delete tenant cache {tenant_dir}: {e}")
+            logger.error(f"Failed to delete zone cache {zone_dir}: {e}")
             return 0
 
         return count
@@ -478,35 +478,35 @@ class FileContentCache:
         """Get cache statistics.
 
         Returns:
-            Dict with cache stats (file count, total size, by tenant)
+            Dict with cache stats (file count, total size, by zone)
         """
         stats: dict[str, Any] = {
             "total_files": 0,
             "total_size_bytes": 0,
-            "tenants": {},
+            "zones": {},
         }
 
         if not self.cache_dir.exists():
             return stats
 
-        for tenant_dir in self.cache_dir.iterdir():
-            if not tenant_dir.is_dir():
+        for zone_dir in self.cache_dir.iterdir():
+            if not zone_dir.is_dir():
                 continue
 
-            zone_id = tenant_dir.name
-            tenant_files = 0
-            tenant_size = 0
+            zone_id = zone_dir.name
+            zone_files = 0
+            zone_size = 0
 
-            for cache_file in tenant_dir.rglob("*.bin"):
-                tenant_files += 1
-                tenant_size += cache_file.stat().st_size
+            for cache_file in zone_dir.rglob("*.bin"):
+                zone_files += 1
+                zone_size += cache_file.stat().st_size
 
-            stats["tenants"][zone_id] = {
-                "files": tenant_files,
-                "size_bytes": tenant_size,
+            stats["zones"][zone_id] = {
+                "files": zone_files,
+                "size_bytes": zone_size,
             }
-            stats["total_files"] += tenant_files
-            stats["total_size_bytes"] += tenant_size
+            stats["total_files"] += zone_files
+            stats["total_size_bytes"] += zone_size
 
         return stats
 

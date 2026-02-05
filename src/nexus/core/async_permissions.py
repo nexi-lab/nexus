@@ -94,7 +94,7 @@ class AsyncPermissionEnforcer:
 
         logger.debug(
             f"[ASYNC-PERM] Checking: subject={subject}, permission={permission_name}, "
-            f"object=({object_type}, {path}), tenant={zone_id}"
+            f"object=({object_type}, {path}), zone={zone_id}"
         )
 
         start_time = time.perf_counter()

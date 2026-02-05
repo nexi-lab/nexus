@@ -1,6 +1,6 @@
-"""Tenant import service for restoring from .nexus bundles.
+"""Zone import service for restoring from .nexus bundles.
 
-This module provides the TenantImportService class for importing tenant data
+This module provides the TenantImportService class for importing zone data
 from portable .nexus bundles including:
 - File metadata (JSONL streaming)
 - Content blobs (CAS structure)
@@ -8,7 +8,7 @@ from portable .nexus bundles including:
 
 References:
 - Issue #1162: Define .nexus bundle format
-- Epic #1161: Tenant Data Portability
+- Epic #1161: Zone Data Portability
 """
 
 from __future__ import annotations
@@ -55,18 +55,18 @@ ProgressCallback = Callable[[int, int, str], None]
 
 
 class TenantImportService:
-    """Service for importing tenant data from .nexus bundles.
+    """Service for importing zone data from .nexus bundles.
 
     Example usage:
         from nexus.portability import TenantImportService, TenantImportOptions
 
         service = TenantImportService(nexus_fs)
         options = TenantImportOptions(
-            bundle_path=Path("/backup/tenant.nexus"),
-            target_tenant_id="new-tenant",
+            bundle_path=Path("/backup/zone.nexus"),
+            target_zone_id="new-zone",
             conflict_mode=ConflictMode.SKIP,
         )
-        result = service.import_tenant(options)
+        result = service.import_zone(options)
         print(f"Imported {result.files_created} files")
     """
 
@@ -81,12 +81,12 @@ class TenantImportService:
         """
         self.nexus_fs = nexus_fs
 
-    def import_tenant(
+    def import_zone(
         self,
         options: TenantImportOptions,
         progress_callback: ProgressCallback | None = None,
     ) -> ImportResult:
-        """Import tenant data from .nexus bundle.
+        """Import zone data from .nexus bundle.
 
         Reads a tar.gz bundle and imports:
         - File metadata from metadata/files.jsonl
@@ -129,11 +129,11 @@ class TenantImportService:
 
                 manifest = reader.get_manifest()
 
-                # Check tenant remapping
-                if options.target_tenant_id:
-                    result.tenant_remapped = True
+                # Check zone remapping
+                if options.target_zone_id:
+                    result.zone_remapped = True
                     logger.info(
-                        f"Remapping tenant: {manifest.source_tenant_id} -> {options.target_tenant_id}"
+                        f"Remapping zone: {manifest.source_zone_id} -> {options.target_zone_id}"
                     )
 
                 # Phase 1: Import file metadata and content
@@ -248,8 +248,8 @@ class TenantImportService:
         if remapped_path != original_path:
             result.paths_remapped += 1
 
-        # Determine target tenant (used for logging/tracking)
-        _ = options.target_tenant_id or record.tenant_id
+        # Determine target zone (used for logging/tracking)
+        _ = options.target_zone_id or record.zone_id
 
         # Check if file already exists
         existing = self.nexus_fs.metadata.get(remapped_path)
@@ -501,10 +501,10 @@ class TenantImportService:
             progress_callback(idx, idx, "permissions")
 
 
-def import_tenant_bundle(
+def import_zone_bundle(
     nexus_fs: NexusFS,
     bundle_path: Path,
-    target_tenant_id: str | None = None,
+    target_zone_id: str | None = None,
     conflict_mode: ConflictMode = ConflictMode.SKIP,
     preserve_timestamps: bool = True,
     dry_run: bool = False,
@@ -512,12 +512,12 @@ def import_tenant_bundle(
     path_prefix_remap: dict[str, str] | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> ImportResult:
-    """Convenience function to import a tenant from a .nexus bundle.
+    """Convenience function to import a zone from a .nexus bundle.
 
     Args:
         nexus_fs: NexusFS instance
         bundle_path: Path to .nexus bundle
-        target_tenant_id: Remap to different tenant (None = preserve original)
+        target_zone_id: Remap to different zone (None = preserve original)
         conflict_mode: How to handle existing files
         preserve_timestamps: Keep original timestamps
         dry_run: Preview changes without applying
@@ -530,7 +530,7 @@ def import_tenant_bundle(
     """
     options = TenantImportOptions(
         bundle_path=bundle_path,
-        target_tenant_id=target_tenant_id,
+        target_zone_id=target_zone_id,
         conflict_mode=conflict_mode,
         preserve_timestamps=preserve_timestamps,
         dry_run=dry_run,
@@ -539,4 +539,4 @@ def import_tenant_bundle(
     )
 
     service = TenantImportService(nexus_fs)
-    return service.import_tenant(options, progress_callback)
+    return service.import_zone(options, progress_callback)

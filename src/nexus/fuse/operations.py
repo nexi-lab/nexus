@@ -1437,10 +1437,10 @@ class NexusFUSEOperations(Operations):
             # Get zone_id for multi-zone isolation
             zone_id = self._get_zone_id()
 
-            # Check L2 disk cache (tenant-isolated)
+            # Check L2 disk cache (zone-isolated)
             content = self._local_disk_cache.get(content_hash, zone_id=zone_id)
             if content is not None:
-                logger.debug(f"[FUSE-L2] HIT: {path} (tenant={zone_id})")
+                logger.debug(f"[FUSE-L2] HIT: {path} (zone={zone_id})")
             return content
         except Exception as e:
             logger.debug(f"[FUSE-L2] Error reading {path}: {e}")
@@ -1474,7 +1474,7 @@ class NexusFUSEOperations(Operations):
             self._local_disk_cache.put(
                 content_hash, content, zone_id=zone_id, store_blocks=store_blocks
             )
-            logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, tenant={zone_id})")
+            logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, zone={zone_id})")
         except Exception as e:
             logger.debug(f"[FUSE-L2] Error caching {path}: {e}")
 

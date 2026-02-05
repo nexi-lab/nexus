@@ -140,7 +140,7 @@ class PermissionCacheProtocol(Protocol):
         """Clear all cached permissions.
 
         Args:
-            zone_id: If provided, only clear entries for this tenant.
+            zone_id: If provided, only clear entries for this zone.
                        If None, clear all entries.
 
         Returns:
@@ -174,7 +174,7 @@ class TigerCacheProtocol(Protocol):
 
     Example:
         # Check if user can access resource using bitmap
-        bitmap_data = await cache.get_bitmap("user", "alice", "read", "file", "tenant1")
+        bitmap_data = await cache.get_bitmap("user", "alice", "read", "file", "zone1")
         if bitmap_data:
             bitmap = RoaringBitmap.deserialize(bitmap_data[0])
             can_access = resource_int_id in bitmap
@@ -244,7 +244,7 @@ class TigerCacheProtocol(Protocol):
             subject_id: Filter by subject ID
             permission: Filter by permission
             resource_type: Filter by resource type
-            zone_id: Filter by tenant
+            zone_id: Filter by zone
 
         Returns:
             Number of entries invalidated
@@ -319,7 +319,7 @@ class ResourceMapCacheProtocol(Protocol):
 
     async def set_int_ids_bulk(
         self,
-        mappings: dict[tuple[str, str, str], int],  # (type, id, tenant) -> int_id
+        mappings: dict[tuple[str, str, str], int],  # (type, id, zone) -> int_id
     ) -> None:
         """Bulk store integer IDs for multiple resources.
 

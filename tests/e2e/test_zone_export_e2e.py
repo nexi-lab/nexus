@@ -1,4 +1,4 @@
-"""End-to-end tests for tenant export functionality.
+"""End-to-end tests for zone export functionality.
 
 Tests the complete export workflow including:
 - Creating test files
@@ -19,9 +19,9 @@ from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.portability import (
     BundleReader,
-    TenantExportOptions,
-    TenantExportService,
-    export_tenant_bundle,
+    ZoneExportOptions,
+    ZoneExportService,
+    export_zone_bundle,
     inspect_bundle,
     validate_bundle,
 )
@@ -57,21 +57,21 @@ def nexus_fs(temp_dir):
     fs.close()
 
 
-class TestTenantExportService:
-    """Tests for TenantExportService."""
+class TestZoneExportService:
+    """Tests for ZoneExportService."""
 
     def test_export_creates_bundle(self, nexus_fs, temp_dir):
         """Test that export creates a valid .nexus bundle."""
         output_path = temp_dir / "export.nexus"
 
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=output_path,
             include_content=True,
             include_permissions=True,
         )
 
-        service = TenantExportService(nexus_fs)
-        manifest = service.export_tenant("default", options)
+        service = ZoneExportService(nexus_fs)
+        manifest = service.export_zone("default", options)
 
         # Verify bundle was created
         assert output_path.exists()
@@ -81,20 +81,20 @@ class TestTenantExportService:
         assert manifest.file_count == 4
         assert manifest.total_size_bytes > 0
         assert manifest.content_blob_count > 0
-        assert manifest.source_tenant_id == "default"
+        assert manifest.source_zone_id == "default"
 
     def test_export_with_path_prefix_filter(self, nexus_fs, temp_dir):
         """Test export with path prefix filtering."""
         output_path = temp_dir / "workspace_only.nexus"
 
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=output_path,
             include_content=True,
             path_prefix="/workspace",
         )
 
-        service = TenantExportService(nexus_fs)
-        manifest = service.export_tenant("default", options)
+        service = ZoneExportService(nexus_fs)
+        manifest = service.export_zone("default", options)
 
         # Should only export workspace files (3 files)
         assert manifest.file_count == 3
@@ -104,14 +104,14 @@ class TestTenantExportService:
         """Test metadata-only export (no content blobs)."""
         output_path = temp_dir / "metadata_only.nexus"
 
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=output_path,
             include_content=False,
             include_permissions=False,
         )
 
-        service = TenantExportService(nexus_fs)
-        manifest = service.export_tenant("default", options)
+        service = ZoneExportService(nexus_fs)
+        manifest = service.export_zone("default", options)
 
         # Verify no content was exported
         assert manifest.file_count == 4
@@ -130,9 +130,9 @@ class TestBundleReader:
         output_path = temp_dir / "test.nexus"
 
         # Create bundle
-        manifest = export_tenant_bundle(
+        manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
@@ -142,15 +142,15 @@ class TestBundleReader:
 
             assert read_manifest.bundle_id == manifest.bundle_id
             assert read_manifest.file_count == manifest.file_count
-            assert read_manifest.source_tenant_id == "default"
+            assert read_manifest.source_zone_id == "default"
 
     def test_iter_file_records(self, nexus_fs, temp_dir):
         """Test iterating over file records."""
         output_path = temp_dir / "test.nexus"
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
@@ -168,9 +168,9 @@ class TestBundleReader:
         """Test reading content blobs from bundle."""
         output_path = temp_dir / "test.nexus"
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
@@ -188,9 +188,9 @@ class TestBundleReader:
         """Test listing bundle contents."""
         output_path = temp_dir / "test.nexus"
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
@@ -208,9 +208,9 @@ class TestValidateBundle:
         """Test validation of valid bundle."""
         output_path = temp_dir / "valid.nexus"
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
@@ -249,31 +249,31 @@ class TestInspectBundle:
         """Test bundle inspection returns correct info."""
         output_path = temp_dir / "test.nexus"
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
         )
 
         info = inspect_bundle(output_path)
 
         assert info["file_count"] == 4
-        assert info["source_tenant_id"] == "default"
+        assert info["source_zone_id"] == "default"
         assert info["include_content"] is True
         assert "bundle_id" in info
         assert "export_timestamp" in info
 
 
 class TestExportConvenienceFunction:
-    """Tests for export_tenant_bundle convenience function."""
+    """Tests for export_zone_bundle convenience function."""
 
-    def test_export_tenant_bundle(self, nexus_fs, temp_dir):
+    def test_export_zone_bundle(self, nexus_fs, temp_dir):
         """Test convenience function creates valid bundle."""
         output_path = temp_dir / "convenience.nexus"
 
-        manifest = export_tenant_bundle(
+        manifest = export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
             include_content=True,
             include_permissions=True,
@@ -292,9 +292,9 @@ class TestExportConvenienceFunction:
         def on_progress(current: int, total: int) -> None:
             progress_calls.append((current, total))
 
-        export_tenant_bundle(
+        export_zone_bundle(
             nexus_fs=nexus_fs,
-            tenant_id="default",
+            zone_id="default",
             output_path=output_path,
             progress_callback=on_progress,
         )

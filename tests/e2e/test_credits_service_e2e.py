@@ -125,10 +125,10 @@ class TestCreditsServiceE2E:
         service = CreditsService(enabled=False)
 
         # Should not raise on first call
-        await service.provision_wallet("new-agent", "tenant-1")
+        await service.provision_wallet("new-agent", "zone-1")
 
         # Should not raise on second call (idempotent)
-        await service.provision_wallet("new-agent", "tenant-1")
+        await service.provision_wallet("new-agent", "zone-1")
 
     @pytest.mark.asyncio
     async def test_budget_check(self):
@@ -242,7 +242,7 @@ class TestModuleExports:
             credits_to_micro,
             make_tb_account_id,
             micro_to_credits,
-            tenant_to_tb_prefix,
+            zone_to_tb_prefix,
         )
 
         # Test conversions
@@ -254,9 +254,9 @@ class TestModuleExports:
         assert isinstance(tb_id, int)
         assert tb_id > 0
 
-        prefix = tenant_to_tb_prefix("test-tenant")
+        prefix = zone_to_tb_prefix("test-zone")
         assert isinstance(prefix, int)
 
-        full_id = make_tb_account_id("test-tenant", "test-agent")
+        full_id = make_tb_account_id("test-zone", "test-agent")
         assert isinstance(full_id, int)
         assert full_id > 0

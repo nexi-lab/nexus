@@ -299,8 +299,8 @@ class SkillExporter:
 
                 # Calculate relative path from skill directory using Path objects
                 # This ensures proper path handling across platforms
-                # e.g., /tenant:default/user:admin/skill/my-skill/scripts/helper.py
-                # skill_dir_path: /tenant:default/user:admin/skill/my-skill
+                # e.g., /zone:default/user:admin/skill/my-skill/scripts/helper.py
+                # skill_dir_path: /zone:default/user:admin/skill/my-skill
                 # becomes: scripts/helper.py
                 try:
                     # Normalize file path (remove trailing slash if present)
@@ -515,7 +515,7 @@ class SkillExporter:
 
         Args:
             zip_path: Path to .zip file or file-like object
-            tier: Tier to import skills to (agent, tenant, system)
+            tier: Tier to import skills to (agent, zone, system)
             output_dir: Optional output directory (defaults to tier path)
 
         Returns:

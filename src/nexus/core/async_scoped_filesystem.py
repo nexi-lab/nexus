@@ -5,11 +5,11 @@ to a user's root directory, enabling multi-zone isolation without
 modifying existing code that uses hardcoded global paths.
 
 Example:
-    # For user at /tenants/aquarius_team_12/users/user_12/
-    scoped_fs = AsyncScopedFilesystem(async_nx, root="/tenants/aquarius_team_12/users/user_12")
+    # For user at /zones/aquarius_team_12/users/user_12/
+    scoped_fs = AsyncScopedFilesystem(async_nx, root="/zones/aquarius_team_12/users/user_12")
 
     # SkillRegistry sees "/workspace/.nexus/skills/"
-    # But actually reads from "/tenants/aquarius_team_12/users/user_12/workspace/.nexus/skills/"
+    # But actually reads from "/zones/aquarius_team_12/users/user_12/workspace/.nexus/skills/"
     files = await scoped_fs.list("/workspace/.nexus/skills/")
 """
 
@@ -28,7 +28,7 @@ class AsyncScopedFilesystem:
 
     This enables multi-zone isolation by transparently rebasing paths.
     Code using hardcoded paths like "/workspace/.nexus/skills/" will
-    actually access "/tenants/team_X/users/user_Y/workspace/.nexus/skills/".
+    actually access "/zones/team_X/users/user_Y/workspace/.nexus/skills/".
 
     The wrapper delegates all operations to the underlying async filesystem
     after path translation.
@@ -43,7 +43,7 @@ class AsyncScopedFilesystem:
 
         Args:
             fs: The underlying async filesystem to wrap
-            root: Root path prefix (e.g., "/tenants/team_12/users/user_1")
+            root: Root path prefix (e.g., "/zones/team_12/users/user_1")
                   All paths will be rebased relative to this root.
         """
         self._fs = fs
@@ -67,7 +67,7 @@ class AsyncScopedFilesystem:
             path: Virtual path (e.g., "/workspace/file.txt")
 
         Returns:
-            Scoped path (e.g., "/tenants/team_12/users/user_1/workspace/file.txt")
+            Scoped path (e.g., "/zones/team_12/users/user_1/workspace/file.txt")
         """
         if not path.startswith("/"):
             path = "/" + path
@@ -83,7 +83,7 @@ class AsyncScopedFilesystem:
         """Remove the root prefix from a path.
 
         Args:
-            path: Scoped path (e.g., "/tenants/team_12/users/user_1/workspace/file.txt")
+            path: Scoped path (e.g., "/zones/team_12/users/user_1/workspace/file.txt")
 
         Returns:
             Virtual path (e.g., "/workspace/file.txt")

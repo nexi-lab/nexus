@@ -749,7 +749,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             self._negative_bloom = None
 
     def _negative_cache_key(self, path: str) -> str:
-        """Generate cache key with tenant isolation."""
+        """Generate cache key with zone isolation."""
         return f"{self._zone_id or 'default'}:{path}"
 
     def _negative_cache_check(self, path: str) -> bool:
@@ -837,7 +837,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                         self.agent_id = None
                     logger.info(
                         f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(tenant: {self.zone_id})"
+                        f"(zone: {self.zone_id})"
                     )
                 else:
                     logger.debug("Not authenticated (anonymous access)")
@@ -1990,7 +1990,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Get list of available namespace directories.
 
         Returns the built-in namespaces that should appear at root level.
-        Filters based on tenant and admin context on the server side.
+        Filters based on zone and admin context on the server side.
 
         Returns:
             List of namespace names (e.g., ["workspace", "shared", "external"])
@@ -3208,7 +3208,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         return result  # type: ignore[no-any-return]
 
     # ============================================================
-    # Cross-Tenant Sharing
+    # Cross-Zone Sharing
     # ============================================================
 
     def share_with_user(
@@ -3220,35 +3220,35 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         user_zone_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> str:
-        """Share a resource with a specific user (same or different tenant).
+        """Share a resource with a specific user (same or different zone).
 
-        This enables cross-tenant sharing - users from different organizations
+        This enables cross-zone sharing - users from different organizations
         can be granted access to specific resources.
 
         Args:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             user_id: User to share with (e.g., "bob@partner-company.com")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            zone_id: Resource owner's zone ID (defaults to current tenant)
-            user_zone_id: Recipient user's zone ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current zone)
+            user_zone_id: Recipient user's zone ID (for cross-zone shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
             Share ID (tuple_id) that can be used to revoke the share
 
         Examples:
-            >>> # Share with same-tenant user
+            >>> # Share with same-zone user
             >>> share_id = nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="alice@mycompany.com",
             ...     relation="editor"
             ... )
 
-            >>> # Share with cross-tenant user
+            >>> # Share with cross-zone user
             >>> share_id = nx.share_with_user(
             ...     resource=("file", "/project/doc.txt"),
             ...     user_id="bob@partner.com",
-            ...     user_zone_id="partner-tenant",
+            ...     user_zone_id="partner-zone",
             ...     relation="viewer"
             ... )
         """
@@ -3279,33 +3279,33 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Uses userset-as-subject pattern: ("group", group_id, "member")
         All members of the group will have the specified permission level.
 
-        This enables cross-tenant sharing - groups from different organizations
+        This enables cross-zone sharing - groups from different organizations
         can be granted access to specific resources.
 
         Args:
             resource: Resource to share (e.g., ("file", "/path/to/doc.txt"))
             group_id: Group to share with (e.g., "developers")
             relation: Permission level - "viewer" (read) or "editor" (read/write)
-            zone_id: Resource owner's zone ID (defaults to current tenant)
-            group_zone_id: Group's zone ID (for cross-tenant shares)
+            zone_id: Resource owner's zone ID (defaults to current zone)
+            group_zone_id: Group's zone ID (for cross-zone shares)
             expires_at: Optional expiration datetime for the share
 
         Returns:
             Share ID (tuple_id) that can be used to revoke the share
 
         Examples:
-            >>> # Share with same-tenant group
+            >>> # Share with same-zone group
             >>> share_id = nx.share_with_group(
             ...     resource=("file", "/project/doc.txt"),
             ...     group_id="developers",
             ...     relation="editor"
             ... )
 
-            >>> # Share with cross-tenant group
+            >>> # Share with cross-zone group
             >>> share_id = nx.share_with_group(
             ...     resource=("file", "/project/doc.txt"),
             ...     group_id="partner-team",
-            ...     group_zone_id="partner-tenant",
+            ...     group_zone_id="partner-zone",
             ...     relation="viewer"
             ... )
         """
@@ -3369,11 +3369,11 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         limit: int = 100,
         offset: int = 0,
     ) -> builtins.list[dict[str, Any]]:
-        """List shares created by the current tenant (resources shared with others).
+        """List shares created by the current zone (resources shared with others).
 
         Args:
             resource: Filter by specific resource (optional)
-            zone_id: Zone ID to list shares for (defaults to current tenant)
+            zone_id: Zone ID to list shares for (defaults to current zone)
             limit: Maximum number of results
             offset: Number of results to skip
 
@@ -3404,7 +3404,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
     ) -> builtins.list[dict[str, Any]]:
         """List shares received by a user (resources shared with me).
 
-        This includes cross-tenant shares from other organizations.
+        This includes cross-zone shares from other organizations.
 
         Args:
             user_id: User ID to list incoming shares for
@@ -4388,7 +4388,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
         - API key (if create_api_key=True)
-        - ReBAC permissions (user as tenant owner)
+        - ReBAC permissions (user as zone owner)
         - Entity registry entries
 
         Args:
@@ -4421,7 +4421,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /tenant:alice/user:alice/workspace/ws_personal_abc123
+            /zone:alice/user:alice/workspace/ws_personal_abc123
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -4491,7 +4491,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/tenant:example/user:alice/workspace', ...]
+            ['/zone:example/user:alice/workspace', ...]
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -4745,7 +4745,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Args:
             name: Playbook name
             description: Optional description
-            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            scope: Scope level ('agent', 'user', 'zone', 'global')
             context: Operation context
 
         Returns:
@@ -5270,7 +5270,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             file_data: Base64 encoded file data (for remote calls)
             name: Skill name (auto-generated if not provided)
             description: Skill description
-            tier: Target tier (agent, tenant, system)
+            tier: Target tier (agent, zone, system)
             use_ai: Enable AI enhancement
             use_ocr: Enable OCR for scanned PDFs
             extract_tables: Extract tables from documents
@@ -5457,7 +5457,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             zip_data: Base64-encoded ZIP file data
-            tier: Target tier ('user', 'agent', 'tenant', 'system')
+            tier: Target tier ('user', 'agent', 'zone', 'system')
             allow_overwrite: Allow overwriting existing skills
             _context: Operation context (optional)
 
@@ -5958,7 +5958,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """List MCP server mounts.
 
         Args:
-            tier: Filter by tier (user/tenant/system)
+            tier: Filter by tier (user/zone/system)
             include_unmounted: Include unmounted configurations (default: True)
 
         Returns:
@@ -6025,7 +6025,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             env: Environment variables
             headers: HTTP headers (for sse transport)
             description: Mount description
-            tier: Target tier (user/tenant/system, default: system)
+            tier: Target tier (user/zone/system, default: system)
 
         Returns:
             Dict with mount info:
@@ -6112,7 +6112,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         Args:
             prefix: Path prefix to backfill (default: "/" for all)
-            zone_id: Optional tenant filter
+            zone_id: Optional zone filter
 
         Returns:
             Dict with 'created' count of new index entries

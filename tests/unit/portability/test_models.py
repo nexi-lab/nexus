@@ -2,8 +2,8 @@
 
 Tests cover:
 - ExportManifest serialization/deserialization
-- TenantExportOptions validation
-- TenantImportOptions remapping logic
+- ZoneExportOptions validation
+- ZoneImportOptions remapping logic
 - ImportResult tracking
 - FileRecord and PermissionRecord JSONL handling
 - BundleChecksums integrity verification
@@ -30,8 +30,8 @@ from nexus.portability import (
     FileRecord,
     ImportResult,
     PermissionRecord,
-    TenantExportOptions,
-    TenantImportOptions,
+    ZoneExportOptions,
+    ZoneImportOptions,
 )
 
 # =============================================================================
@@ -232,16 +232,16 @@ class TestBundleChecksums:
 
 
 # =============================================================================
-# TenantExportOptions Tests
+# ZoneExportOptions Tests
 # =============================================================================
 
 
-class TestTenantExportOptions:
-    """Tests for TenantExportOptions dataclass."""
+class TestZoneExportOptions:
+    """Tests for ZoneExportOptions dataclass."""
 
     def test_default_values(self):
         """Test default option values."""
-        options = TenantExportOptions(output_path=Path("/backup/export.nexus"))
+        options = ZoneExportOptions(output_path=Path("/backup/export.nexus"))
 
         assert options.include_content is True
         assert options.include_permissions is True
@@ -254,19 +254,19 @@ class TestTenantExportOptions:
 
     def test_string_path_converted(self):
         """Test that string paths are converted to Path objects."""
-        options = TenantExportOptions(output_path="/backup/export.nexus")  # type: ignore
+        options = ZoneExportOptions(output_path="/backup/export.nexus")  # type: ignore
         assert isinstance(options.output_path, Path)
 
     def test_invalid_compression_level(self):
         """Test validation of compression level."""
         with pytest.raises(ValueError, match="compression_level must be 1-9"):
-            TenantExportOptions(
+            ZoneExportOptions(
                 output_path=Path("/backup/export.nexus"),
                 compression_level=10,
             )
 
         with pytest.raises(ValueError, match="compression_level must be 1-9"):
-            TenantExportOptions(
+            ZoneExportOptions(
                 output_path=Path("/backup/export.nexus"),
                 compression_level=0,
             )
@@ -274,7 +274,7 @@ class TestTenantExportOptions:
     def test_invalid_concurrent_reads(self):
         """Test validation of max_concurrent_reads."""
         with pytest.raises(ValueError, match="max_concurrent_reads must be >= 1"):
-            TenantExportOptions(
+            ZoneExportOptions(
                 output_path=Path("/backup/export.nexus"),
                 max_concurrent_reads=0,
             )
@@ -282,14 +282,14 @@ class TestTenantExportOptions:
     def test_api_keys_require_encryption_key(self):
         """Test that API key export requires encryption key."""
         with pytest.raises(ValueError, match="encryption_key required"):
-            TenantExportOptions(
+            ZoneExportOptions(
                 output_path=Path("/backup/export.nexus"),
                 include_api_keys=True,
                 encryption_key=None,
             )
 
         # Should work with encryption key
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=Path("/backup/export.nexus"),
             include_api_keys=True,
             encryption_key=b"secret-key-123456",
@@ -298,7 +298,7 @@ class TestTenantExportOptions:
 
     def test_to_dict_excludes_encryption_key(self):
         """Test that to_dict excludes sensitive encryption_key."""
-        options = TenantExportOptions(
+        options = ZoneExportOptions(
             output_path=Path("/backup/export.nexus"),
             include_api_keys=True,
             encryption_key=b"secret",
@@ -311,18 +311,18 @@ class TestTenantExportOptions:
 
 
 # =============================================================================
-# TenantImportOptions Tests
+# ZoneImportOptions Tests
 # =============================================================================
 
 
-class TestTenantImportOptions:
-    """Tests for TenantImportOptions dataclass."""
+class TestZoneImportOptions:
+    """Tests for ZoneImportOptions dataclass."""
 
     def test_default_values(self):
         """Test default option values."""
-        options = TenantImportOptions(bundle_path=Path("/backup/import.nexus"))
+        options = ZoneImportOptions(bundle_path=Path("/backup/import.nexus"))
 
-        assert options.target_tenant_id is None
+        assert options.target_zone_id is None
         assert options.conflict_mode == ConflictMode.SKIP
         assert options.preserve_timestamps is True
         assert options.preserve_ids is False
@@ -333,7 +333,7 @@ class TestTenantImportOptions:
 
     def test_string_conflict_mode_converted(self):
         """Test that string conflict mode is converted to enum."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/import.nexus"),
             conflict_mode="overwrite",  # type: ignore
         )
@@ -341,7 +341,7 @@ class TestTenantImportOptions:
 
     def test_string_content_mode_converted(self):
         """Test that string content mode is converted to enum."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/import.nexus"),
             content_mode="reference",  # type: ignore
         )
@@ -350,7 +350,7 @@ class TestTenantImportOptions:
     def test_api_keys_require_decryption_key(self):
         """Test that API key import requires decryption key."""
         with pytest.raises(ValueError, match="decryption_key required"):
-            TenantImportOptions(
+            ZoneImportOptions(
                 bundle_path=Path("/backup/import.nexus"),
                 import_api_keys=True,
                 decryption_key=None,
@@ -358,7 +358,7 @@ class TestTenantImportOptions:
 
     def test_remap_path(self):
         """Test path prefix remapping."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/import.nexus"),
             path_prefix_remap={
                 "/companyA/": "/companyB/",
@@ -372,7 +372,7 @@ class TestTenantImportOptions:
 
     def test_remap_user(self):
         """Test user ID remapping."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/import.nexus"),
             user_id_remap={
                 "old-user-1": "new-user-1",
@@ -386,7 +386,7 @@ class TestTenantImportOptions:
 
     def test_to_dict_excludes_decryption_key(self):
         """Test that to_dict excludes sensitive decryption_key."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=Path("/backup/import.nexus"),
             import_api_keys=True,
             decryption_key=b"secret",
@@ -422,7 +422,7 @@ class TestExportManifest:
         manifest = ExportManifest(
             nexus_version="0.8.0",
             source_instance="https://nexus.company.com",
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             file_count=100,
             total_size_bytes=1024000,
             content_blob_count=50,
@@ -436,7 +436,7 @@ class TestExportManifest:
         assert result["format_version"] == BUNDLE_FORMAT_VERSION
         assert result["nexus_version"] == "0.8.0"
         assert result["source_instance"] == "https://nexus.company.com"
-        assert result["source_tenant_id"] == "tenant-123"
+        assert result["source_zone_id"] == "zone-123"
 
         # Check statistics
         assert result["statistics"]["file_count"] == 100
@@ -453,7 +453,7 @@ class TestExportManifest:
         original = ExportManifest(
             nexus_version="0.8.0",
             source_instance="https://nexus.company.com",
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             file_count=100,
             total_size_bytes=1024000,
             include_content=True,
@@ -468,7 +468,7 @@ class TestExportManifest:
         assert restored.format_version == original.format_version
         assert restored.nexus_version == original.nexus_version
         assert restored.source_instance == original.source_instance
-        assert restored.source_tenant_id == original.source_tenant_id
+        assert restored.source_zone_id == original.source_zone_id
         assert restored.file_count == original.file_count
         assert restored.total_size_bytes == original.total_size_bytes
         assert restored.include_content == original.include_content
@@ -480,13 +480,13 @@ class TestExportManifest:
         """Test from_dict handles minimal data gracefully."""
         data = {
             "format_version": "1.0.0",
-            "source_tenant_id": "tenant-123",
+            "source_zone_id": "zone-123",
         }
 
         manifest = ExportManifest.from_dict(data)
 
         assert manifest.format_version == "1.0.0"
-        assert manifest.source_tenant_id == "tenant-123"
+        assert manifest.source_zone_id == "zone-123"
         assert manifest.file_count == 0  # Default
         assert manifest.include_content is True  # Default
 
@@ -494,7 +494,7 @@ class TestExportManifest:
         """Test validation of valid manifest."""
         manifest = ExportManifest(
             nexus_version="0.8.0",
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             file_count=10,
         )
 
@@ -506,7 +506,7 @@ class TestExportManifest:
         """Test validation catches missing required fields."""
         manifest = ExportManifest(
             format_version="",
-            source_tenant_id="",
+            source_zone_id="",
             bundle_id="",
         )
 
@@ -514,12 +514,12 @@ class TestExportManifest:
 
         assert "format_version is required" in errors
         assert "bundle_id is required" in errors
-        assert "source_tenant_id is required" in errors
+        assert "source_zone_id is required" in errors
 
     def test_validate_negative_counts(self):
         """Test validation catches negative counts."""
         manifest = ExportManifest(
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             file_count=-1,
             total_size_bytes=-100,
         )
@@ -532,7 +532,7 @@ class TestExportManifest:
     def test_encryption_fields(self):
         """Test encryption metadata in manifest."""
         manifest = ExportManifest(
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             encryption_method="age-v1",
             encrypted_dek="base64-encoded-key",
         )
@@ -559,7 +559,7 @@ class TestExportManifest:
         manifest = ExportManifest(
             nexus_version="0.8.0",
             source_instance="https://nexus.company.com",
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
             file_count=100,
             total_size_bytes=1024000,
             content_blob_count=50,
@@ -577,7 +577,7 @@ class TestExportManifest:
         manifest = ExportManifest(
             format_version="",  # Invalid empty string
             bundle_id="",  # Invalid empty string
-            source_tenant_id="tenant-123",
+            source_zone_id="zone-123",
         )
 
         errors = manifest.validate_against_schema()
@@ -676,7 +676,7 @@ class TestImportResult:
             files_updated=5,
             permissions_imported=20,
             content_blobs_imported=15,
-            tenant_remapped=True,
+            zone_remapped=True,
             paths_remapped=8,
             started_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC),
             completed_at=datetime(2025, 1, 1, 12, 1, 0, tzinfo=UTC),
@@ -690,7 +690,7 @@ class TestImportResult:
         assert data["files"]["total_processed"] == 15
         assert data["permissions"]["imported"] == 20
         assert data["content"]["blobs_imported"] == 15
-        assert data["remapping"]["tenant_remapped"] is True
+        assert data["remapping"]["zone_remapped"] is True
         assert data["remapping"]["paths_remapped"] == 8
         assert data["timing"]["duration_seconds"] == 60.0
         assert data["success"] is True
@@ -726,7 +726,7 @@ class TestFileRecord:
         """Test creating a file record."""
         record = FileRecord(
             path_id="uuid-123",
-            tenant_id="tenant-abc",
+            zone_id="zone-abc",
             virtual_path="/docs/readme.md",
             backend_id="local-1",
             physical_path="/data/abc123",
@@ -743,7 +743,7 @@ class TestFileRecord:
         """Test JSONL serialization roundtrip."""
         original = FileRecord(
             path_id="uuid-123",
-            tenant_id="tenant-abc",
+            zone_id="zone-abc",
             virtual_path="/docs/readme.md",
             backend_id="local-1",
             physical_path="/data/abc123",
@@ -760,7 +760,7 @@ class TestFileRecord:
         restored = FileRecord.from_jsonl(jsonl_line)
 
         assert restored.path_id == original.path_id
-        assert restored.tenant_id == original.tenant_id
+        assert restored.zone_id == original.zone_id
         assert restored.virtual_path == original.virtual_path
         assert restored.backend_id == original.backend_id
         assert restored.physical_path == original.physical_path
@@ -774,7 +774,7 @@ class TestFileRecord:
         """Test that JSONL output is a single line."""
         record = FileRecord(
             path_id="uuid-123",
-            tenant_id="tenant-abc",
+            zone_id="zone-abc",
             virtual_path="/docs/readme.md",
             backend_id="local-1",
             physical_path="/data/abc123",
@@ -891,7 +891,7 @@ class TestSchemaConstants:
         required_properties = [
             "format_version",
             "bundle_id",
-            "source_tenant_id",
+            "source_zone_id",
             "export_timestamp",
             "statistics",
             "options",

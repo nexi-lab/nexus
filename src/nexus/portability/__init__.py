@@ -1,38 +1,38 @@
-"""Tenant Data Portability module for .nexus bundle export/import.
+"""Zone Data Portability module for .nexus bundle export/import.
 
-This module provides complete tenant data portability through the .nexus
+This module provides complete zone data portability through the .nexus
 bundle format, enabling:
 
-- Export tenant data (files, metadata, permissions, embeddings) as portable bundle
-- Import bundles into another Nexus instance with tenant ID remapping
-- Cross-tenant migration (Company A → Company B)
+- Export zone data (files, metadata, permissions, embeddings) as portable bundle
+- Import bundles into another Nexus instance with zone ID remapping
+- Cross-zone migration (Company A → Company B)
 - GDPR Article 20 compliance (Right to Data Portability)
 
 Example usage:
 
-    # Export tenant data
+    # Export zone data
     from nexus.portability import TenantExportOptions, ExportManifest
 
     options = TenantExportOptions(
-        output_path="/backup/tenant.nexus",
+        output_path="/backup/zone.nexus",
         include_content=True,
         include_permissions=True,
     )
     # Export service creates the bundle
 
-    # Import tenant data
+    # Import zone data
     from nexus.portability import TenantImportOptions, ImportResult
 
     options = TenantImportOptions(
-        bundle_path="/backup/tenant.nexus",
-        target_tenant_id="new-tenant",
+        bundle_path="/backup/zone.nexus",
+        target_zone_id="new-zone",
         conflict_mode=ConflictMode.SKIP,
     )
     # Import service processes the bundle
 
 References:
 - Issue #1162: Define .nexus bundle format
-- Epic #1161: Tenant Data Portability
+- Epic #1161: Zone Data Portability
 """
 
 from nexus.portability.bundle import (
@@ -42,11 +42,11 @@ from nexus.portability.bundle import (
 )
 from nexus.portability.export_service import (
     TenantExportService,
-    export_tenant_bundle,
+    export_zone_bundle,
 )
 from nexus.portability.import_service import (
     TenantImportService,
-    import_tenant_bundle,
+    import_zone_bundle,
 )
 from nexus.portability.models import (
     BUNDLE_EXTENSION,
@@ -98,9 +98,9 @@ __all__ = [
     "PermissionRecord",
     # Services
     "TenantExportService",
-    "export_tenant_bundle",
+    "export_zone_bundle",
     "TenantImportService",
-    "import_tenant_bundle",
+    "import_zone_bundle",
     # Bundle utilities
     "BundleReader",
     "validate_bundle",

@@ -186,14 +186,14 @@ class LocalDiskCache:
             self._bloom = None
 
     def _make_cache_key(self, content_hash: str, zone_id: str | None = None) -> str:
-        """Create tenant-isolated cache key.
+        """Create zone-isolated cache key.
 
         For multi-zone security, cache entries are isolated by zone_id.
-        This prevents content leakage across tenant boundaries.
+        This prevents content leakage across zone boundaries.
 
         Args:
             content_hash: SHA-256 hash of content
-            zone_id: Zone ID for isolation (None = default tenant)
+            zone_id: Zone ID for isolation (None = default zone)
 
         Returns:
             Cache key in format "{zone_id}:{content_hash}" or just "{content_hash}"

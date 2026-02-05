@@ -58,7 +58,7 @@ class SkillParser:
 
         Args:
             file_path: Path to the SKILL.md file
-            tier: Optional tier (agent, tenant, system) for this skill
+            tier: Optional tier (agent, zone, system) for this skill
 
         Returns:
             Parsed Skill object
@@ -91,7 +91,7 @@ class SkillParser:
         Args:
             content: Raw SKILL.md content
             file_path: Optional file path (for error messages)
-            tier: Optional tier (agent, tenant, system) for this skill
+            tier: Optional tier (agent, zone, system) for this skill
 
         Returns:
             Parsed Skill object
@@ -144,7 +144,7 @@ class SkillParser:
         Args:
             content: Raw SKILL.md content
             file_path: Optional file path (for metadata)
-            tier: Optional tier (agent, tenant, system) for this skill
+            tier: Optional tier (agent, zone, system) for this skill
 
         Returns:
             SkillMetadata object (without full content)
@@ -182,7 +182,7 @@ class SkillParser:
 
         Args:
             file_path: Path to the SKILL.md file
-            tier: Optional tier (agent, tenant, system) for this skill
+            tier: Optional tier (agent, zone, system) for this skill
 
         Returns:
             SkillMetadata object (without full content)
@@ -235,7 +235,7 @@ class SkillParser:
         Args:
             frontmatter: Parsed YAML frontmatter
             file_path: Optional file path (for metadata)
-            tier: Optional tier (agent, tenant, system)
+            tier: Optional tier (agent, zone, system)
 
         Returns:
             SkillMetadata object

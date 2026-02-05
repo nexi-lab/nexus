@@ -17,7 +17,7 @@ class ExportFilter:
     """Filter options for metadata export.
 
     Attributes:
-        zone_id: Filter by zone ID (None = all tenants)
+        zone_id: Filter by zone ID (None = all zones)
         path_prefix: Only export paths starting with this prefix (default: "")
         after_time: Only export files modified after this time (None = all)
         include_deleted: Include soft-deleted files in export (default: False)

@@ -249,8 +249,8 @@ class MountManager:
             >>> # List mounts for specific user
             >>> user_mounts = manager.list_mounts(owner_user_id="alice")
             >>>
-            >>> # List mounts for specific tenant
-            >>> tenant_mounts = manager.list_mounts(zone_id="acme")
+            >>> # List mounts for specific zone
+            >>> zone_mounts = manager.list_mounts(zone_id="acme")
         """
         with self.SessionLocal() as session:
             stmt = select(MountConfigModel)

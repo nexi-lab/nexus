@@ -53,7 +53,7 @@ class MemoryViewRouter:
             return True
 
         # Pattern 2: /memory/by-{type}/{id}/...
-        # Only match memory API paths (by-user, by-agent, by-tenant), not registered memory directories
+        # Only match memory API paths (by-user, by-agent, by-zone), not registered memory directories
         if len(parts) >= 2 and parts[0] == "memory" and parts[1].startswith("by-"):
             return True
 
@@ -65,7 +65,7 @@ class MemoryViewRouter:
         """Resolve virtual path to canonical memory.
 
         Supports multiple path formats:
-        - /workspace/{tenant}/{user}/{agent}/memory/{filename}
+        - /workspace/{zone}/{user}/{agent}/memory/{filename}
         - /workspace/{user}/{agent}/memory/{filename}
         - /workspace/{agent}/{user}/memory/{filename}
         - /memory/by-user/{user}/{filename}
@@ -182,10 +182,10 @@ class MemoryViewRouter:
         """Query memories by relationships and metadata.
 
         Args:
-            zone_id: Filter by tenant.
+            zone_id: Filter by zone.
             user_id: Filter by user.
             agent_id: Filter by agent.
-            scope: Filter by scope ('agent', 'user', 'tenant', 'global').
+            scope: Filter by scope ('agent', 'user', 'zone', 'global').
             memory_type: Filter by memory type.
             namespace: Filter by exact namespace match. v0.8.0
             namespace_prefix: Filter by namespace prefix (hierarchical). v0.8.0
@@ -357,7 +357,7 @@ class MemoryViewRouter:
             zone_id: Zone ID.
             user_id: User ID (owner). If not provided, defaults to agent_id for backward compatibility.
             agent_id: Agent ID (creator).
-            scope: Scope ('agent', 'user', 'tenant', 'global').
+            scope: Scope ('agent', 'user', 'zone', 'global').
             visibility: Visibility ('private', 'shared', 'public').
             memory_type: Type of memory ('fact', 'preference', 'experience').
             importance: Importance score (0.0-1.0).
@@ -390,7 +390,7 @@ class MemoryViewRouter:
                 MemoryModel.path_key == path_key,
                 MemoryModel.user_id == user_id,  # Scope to same user
             )
-            # Filter by tenant if provided
+            # Filter by zone if provided
             if zone_id:
                 stmt = stmt.where(MemoryModel.zone_id == zone_id)
             existing_memory = self.session.execute(stmt).scalar_one_or_none()
@@ -703,8 +703,8 @@ class MemoryViewRouter:
         if memory.agent_id:
             paths.append(f"/memory/by-agent/{memory.agent_id}/")
 
-        # By-tenant path
+        # By-zone path
         if memory.zone_id:
-            paths.append(f"/memory/by-tenant/{memory.zone_id}/")
+            paths.append(f"/memory/by-zone/{memory.zone_id}/")
 
         return paths

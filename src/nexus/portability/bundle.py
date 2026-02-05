@@ -7,7 +7,7 @@ This module provides utilities for working with .nexus bundle files:
 
 References:
 - Issue #1162: Define .nexus bundle format
-- Epic #1161: Tenant Data Portability
+- Epic #1161: Zone Data Portability
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class BundleReader:
     extracting the entire archive to disk.
 
     Example usage:
-        with BundleReader("/backup/tenant.nexus") as reader:
+        with BundleReader("/backup/zone.nexus") as reader:
             manifest = reader.get_manifest()
             print(f"Bundle contains {manifest.file_count} files")
 
@@ -288,7 +288,7 @@ def inspect_bundle(bundle_path: Path | str) -> dict:
             "bundle_id": manifest.bundle_id,
             "format_version": manifest.format_version,
             "nexus_version": manifest.nexus_version,
-            "source_tenant_id": manifest.source_tenant_id,
+            "source_zone_id": manifest.source_zone_id,
             "source_instance": manifest.source_instance,
             "export_timestamp": manifest.export_timestamp.isoformat(),
             "file_count": manifest.file_count,

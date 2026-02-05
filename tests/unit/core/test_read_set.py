@@ -81,15 +81,15 @@ class TestReadSet:
 
     def test_create_empty_read_set(self):
         """Test creating an empty read set."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         assert rs.query_id == "q1"
-        assert rs.tenant_id == "t1"
+        assert rs.zone_id == "t1"
         assert len(rs) == 0
         assert len(rs.entries) == 0
 
     def test_record_read(self):
         """Test recording a read operation."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         entry = rs.record_read("file", "/test.txt", 10)
 
         assert len(rs) == 1
@@ -99,7 +99,7 @@ class TestReadSet:
 
     def test_record_multiple_reads(self):
         """Test recording multiple read operations."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/a.txt", 10)
         rs.record_read("file", "/b.txt", 15)
         rs.record_read("directory", "/inbox/", 5)
@@ -108,7 +108,7 @@ class TestReadSet:
 
     def test_overlaps_with_write_direct_match(self):
         """Test overlap detection for direct path match."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/inbox/a.txt", 10)
 
         # Write to the same file with newer revision
@@ -122,7 +122,7 @@ class TestReadSet:
 
     def test_overlaps_with_write_directory_containment(self):
         """Test overlap detection for directory containment."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
 
         # Write to file inside the directory
@@ -134,7 +134,7 @@ class TestReadSet:
 
     def test_overlaps_with_write_no_overlap(self):
         """Test overlap detection when there's no overlap."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/inbox/a.txt", 10)
         rs.record_read("file", "/inbox/b.txt", 15)
 
@@ -143,7 +143,7 @@ class TestReadSet:
 
     def test_get_affected_entries(self):
         """Test getting affected entries by a write."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/inbox/a.txt", 10)
         rs.record_read("file", "/inbox/b.txt", 15)
         rs.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
@@ -159,27 +159,27 @@ class TestReadSet:
 
     def test_factory_create(self):
         """Test factory method for creating read sets."""
-        rs = ReadSet.create(tenant_id="org_acme")
-        assert rs.tenant_id == "org_acme"
+        rs = ReadSet.create(zone_id="org_acme")
+        assert rs.zone_id == "org_acme"
         assert len(rs.query_id) > 0  # UUID generated
         assert rs.expires_at is None
 
     def test_factory_create_with_ttl(self):
         """Test factory method with TTL."""
-        rs = ReadSet.create(tenant_id="t1", ttl_seconds=60.0)
+        rs = ReadSet.create(zone_id="t1", ttl_seconds=60.0)
         assert rs.expires_at is not None
         assert rs.expires_at > rs.created_at
 
     def test_is_expired(self):
         """Test expiration checking."""
         # Non-expiring read set
-        rs1 = ReadSet.create(tenant_id="t1")
+        rs1 = ReadSet.create(zone_id="t1")
         assert rs1.is_expired() is False
 
         # Expired read set (TTL in the past)
         rs2 = ReadSet(
             query_id="q2",
-            tenant_id="t1",
+            zone_id="t1",
             created_at=time.time() - 120,
             expires_at=time.time() - 60,
         )
@@ -187,7 +187,7 @@ class TestReadSet:
 
     def test_to_dict_and_from_dict(self):
         """Test serialization roundtrip."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/a.txt", 10)
         rs.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
 
@@ -195,12 +195,12 @@ class TestReadSet:
         restored = ReadSet.from_dict(data)
 
         assert restored.query_id == rs.query_id
-        assert restored.tenant_id == rs.tenant_id
+        assert restored.zone_id == rs.zone_id
         assert len(restored) == len(rs)
 
     def test_iteration(self):
         """Test iterating over entries."""
-        rs = ReadSet(query_id="q1", tenant_id="t1")
+        rs = ReadSet(query_id="q1", zone_id="t1")
         rs.record_read("file", "/a.txt", 10)
         rs.record_read("file", "/b.txt", 15)
 
@@ -218,7 +218,7 @@ class TestReadSetRegistry:
 
     def test_register_and_get_read_set(self):
         """Test registering and retrieving a read set."""
-        rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs = ReadSet(query_id="sub_1", zone_id="t1")
         rs.record_read("file", "/inbox/a.txt", 10)
 
         self.registry.register(rs)
@@ -230,11 +230,11 @@ class TestReadSetRegistry:
 
     def test_register_updates_existing(self):
         """Test that registering with same ID updates existing entry."""
-        rs1 = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs1 = ReadSet(query_id="sub_1", zone_id="t1")
         rs1.record_read("file", "/a.txt", 10)
         self.registry.register(rs1)
 
-        rs2 = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs2 = ReadSet(query_id="sub_1", zone_id="t1")
         rs2.record_read("file", "/b.txt", 20)
         self.registry.register(rs2)
 
@@ -244,7 +244,7 @@ class TestReadSetRegistry:
 
     def test_unregister(self):
         """Test unregistering a read set."""
-        rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs = ReadSet(query_id="sub_1", zone_id="t1")
         rs.record_read("file", "/a.txt", 10)
         self.registry.register(rs)
 
@@ -254,7 +254,7 @@ class TestReadSetRegistry:
 
     def test_get_affected_queries_direct_match(self):
         """Test finding affected queries with direct path match."""
-        rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs = ReadSet(query_id="sub_1", zone_id="t1")
         rs.record_read("file", "/inbox/a.txt", 10)
         self.registry.register(rs)
 
@@ -266,7 +266,7 @@ class TestReadSetRegistry:
 
     def test_get_affected_queries_directory_containment(self):
         """Test finding affected queries with directory containment."""
-        rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs = ReadSet(query_id="sub_1", zone_id="t1")
         rs.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
         self.registry.register(rs)
 
@@ -280,15 +280,15 @@ class TestReadSetRegistry:
 
     def test_get_affected_queries_multiple_subscriptions(self):
         """Test finding affected queries with multiple subscriptions."""
-        rs1 = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs1 = ReadSet(query_id="sub_1", zone_id="t1")
         rs1.record_read("file", "/inbox/a.txt", 10)
         self.registry.register(rs1)
 
-        rs2 = ReadSet(query_id="sub_2", tenant_id="t1")
+        rs2 = ReadSet(query_id="sub_2", zone_id="t1")
         rs2.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
         self.registry.register(rs2)
 
-        rs3 = ReadSet(query_id="sub_3", tenant_id="t1")
+        rs3 = ReadSet(query_id="sub_3", zone_id="t1")
         rs3.record_read("file", "/docs/readme.md", 20)
         self.registry.register(rs3)
 
@@ -298,41 +298,41 @@ class TestReadSetRegistry:
         assert "sub_2" in affected
         assert "sub_3" not in affected
 
-    def test_get_affected_queries_with_tenant_filter(self):
-        """Test finding affected queries with tenant filter."""
-        rs1 = ReadSet(query_id="sub_1", tenant_id="tenant_a")
+    def test_get_affected_queries_with_zone_filter(self):
+        """Test finding affected queries with zone filter."""
+        rs1 = ReadSet(query_id="sub_1", zone_id="zone_a")
         rs1.record_read("file", "/shared/data.txt", 10)
         self.registry.register(rs1)
 
-        rs2 = ReadSet(query_id="sub_2", tenant_id="tenant_b")
+        rs2 = ReadSet(query_id="sub_2", zone_id="zone_b")
         rs2.record_read("file", "/shared/data.txt", 10)
         self.registry.register(rs2)
 
-        # Without tenant filter, both affected
+        # Without zone filter, both affected
         affected = self.registry.get_affected_queries("/shared/data.txt", 15)
         assert "sub_1" in affected
         assert "sub_2" in affected
 
-        # With tenant filter, only matching tenant
-        affected = self.registry.get_affected_queries("/shared/data.txt", 15, tenant_id="tenant_a")
+        # With zone filter, only matching zone
+        affected = self.registry.get_affected_queries("/shared/data.txt", 15, zone_id="zone_a")
         assert "sub_1" in affected
         assert "sub_2" not in affected
 
-    def test_get_queries_for_tenant(self):
-        """Test getting all queries for a tenant."""
-        rs1 = ReadSet(query_id="sub_1", tenant_id="t1")
+    def test_get_queries_for_zone(self):
+        """Test getting all queries for a zone."""
+        rs1 = ReadSet(query_id="sub_1", zone_id="t1")
         rs1.record_read("file", "/a.txt", 10)
         self.registry.register(rs1)
 
-        rs2 = ReadSet(query_id="sub_2", tenant_id="t1")
+        rs2 = ReadSet(query_id="sub_2", zone_id="t1")
         rs2.record_read("file", "/b.txt", 10)
         self.registry.register(rs2)
 
-        rs3 = ReadSet(query_id="sub_3", tenant_id="t2")
+        rs3 = ReadSet(query_id="sub_3", zone_id="t2")
         rs3.record_read("file", "/c.txt", 10)
         self.registry.register(rs3)
 
-        queries = self.registry.get_queries_for_tenant("t1")
+        queries = self.registry.get_queries_for_zone("t1")
         assert "sub_1" in queries
         assert "sub_2" in queries
         assert "sub_3" not in queries
@@ -340,17 +340,17 @@ class TestReadSetRegistry:
     def test_cleanup_expired(self):
         """Test cleaning up expired read sets."""
         # Non-expiring read set
-        rs1 = ReadSet.create(tenant_id="t1")
+        rs1 = ReadSet.create(zone_id="t1")
         rs1.record_read("file", "/a.txt", 10)
         # Manually set query_id for test
-        rs1 = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs1 = ReadSet(query_id="sub_1", zone_id="t1")
         rs1.record_read("file", "/a.txt", 10)
         self.registry.register(rs1)
 
         # Expired read set
         rs2 = ReadSet(
             query_id="sub_2",
-            tenant_id="t1",
+            zone_id="t1",
             created_at=time.time() - 120,
             expires_at=time.time() - 60,
         )
@@ -367,11 +367,11 @@ class TestReadSetRegistry:
 
     def test_clear(self):
         """Test clearing all read sets."""
-        rs1 = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs1 = ReadSet(query_id="sub_1", zone_id="t1")
         rs1.record_read("file", "/a.txt", 10)
         self.registry.register(rs1)
 
-        rs2 = ReadSet(query_id="sub_2", tenant_id="t1")
+        rs2 = ReadSet(query_id="sub_2", zone_id="t1")
         rs2.record_read("file", "/b.txt", 10)
         self.registry.register(rs2)
 
@@ -382,7 +382,7 @@ class TestReadSetRegistry:
 
     def test_get_stats(self):
         """Test getting registry statistics."""
-        rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        rs = ReadSet(query_id="sub_1", zone_id="t1")
         rs.record_read("file", "/a.txt", 10)
         rs.record_read("directory", "/inbox/", 5, access_type=AccessType.LIST)
         self.registry.register(rs)

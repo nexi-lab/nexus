@@ -83,14 +83,14 @@ def agent_id_to_tb_id(agent_id: str) -> int:
     return int.from_bytes(hash_bytes[:8], byteorder="big") % (2**63)
 
 
-def tenant_to_tb_prefix(tenant_id: str) -> int:
-    """Convert tenant_id to upper 64-bit prefix for TigerBeetle ID."""
-    hash_bytes = hashlib.md5(tenant_id.encode()).digest()
+def zone_to_tb_prefix(zone_id: str) -> int:
+    """Convert zone_id to upper 64-bit prefix for TigerBeetle ID."""
+    hash_bytes = hashlib.md5(zone_id.encode()).digest()
     return int.from_bytes(hash_bytes[8:16], byteorder="big") % (2**63)
 
 
-def make_tb_account_id(tenant_id: str, agent_id: str) -> int:
+def make_tb_account_id(zone_id: str, agent_id: str) -> int:
     """Create full 128-bit TigerBeetle account ID."""
-    upper = tenant_to_tb_prefix(tenant_id)
+    upper = zone_to_tb_prefix(zone_id)
     lower = agent_id_to_tb_id(agent_id)
     return (upper << 64) | lower

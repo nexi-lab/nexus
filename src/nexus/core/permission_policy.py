@@ -13,8 +13,8 @@ Policy Structure:
 Policy Matching:
     - Policies are matched by namespace pattern
     - Most specific pattern wins (by priority)
-    - System-wide policies apply to all tenants
-    - Tenant-specific policies override system-wide
+    - System-wide policies apply to all zones
+    - Zone-specific policies override system-wide
 
 Variable Substitution:
     - ${agent_id}: Replaced with agent ID from context
@@ -137,7 +137,7 @@ class PolicyMatcher:
 
     This class handles policy selection based on:
     - Path pattern matching
-    - Tenant scoping
+    - Zone scoping
     - Priority ordering
     """
 
@@ -163,7 +163,7 @@ class PolicyMatcher:
         """Find the best matching policy for a path.
 
         Policy selection logic:
-        1. Filter policies by tenant (tenant-specific + system-wide)
+        1. Filter policies by zone (zone-specific + system-wide)
         2. Filter policies that match the path pattern
         3. Sort by priority (higher first)
         4. Return highest priority policy
@@ -179,14 +179,14 @@ class PolicyMatcher:
         applicable = [
             p
             for p in self.policies
-            if (p.zone_id == zone_id or p.zone_id is None)  # Tenant or system-wide
+            if (p.zone_id == zone_id or p.zone_id is None)  # Zone or system-wide
             and p.matches(path)  # Matches pattern
         ]
 
         if not applicable:
             return None
 
-        # Sort by priority (higher first), then prefer tenant-specific
+        # Sort by priority (higher first), then prefer zone-specific
         applicable.sort(key=lambda p: (p.priority, p.zone_id is not None), reverse=True)
 
         return applicable[0]
@@ -241,7 +241,7 @@ def create_default_policies() -> list[PermissionPolicy]:
             default_mode=0o644,  # rw-r--r--
             priority=10,
         ),
-        # Shared: Tenant-shared files, read-write for group
+        # Shared: Zone-shared files, read-write for group
         PermissionPolicy(
             policy_id=str(uuid.uuid4()),
             namespace_pattern="/shared/*",

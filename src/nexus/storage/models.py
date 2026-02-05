@@ -1133,6 +1133,11 @@ class MemoryModel(Base):
         Integer, nullable=False, default=0
     )  # Consolidation tracking
 
+    # Version tracking (#1184 - Memory versioning)
+    current_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1
+    )  # Current version number, incremented on each update
+
     # Semantic search support (#406)
     embedding_model: Mapped[str | None] = mapped_column(
         String(100), nullable=True
@@ -1225,6 +1230,7 @@ class MemoryModel(Base):
         Index("idx_memory_last_accessed", "last_accessed_at"),  # #1030 - decay calculation
         Index("idx_memory_valid_at", "valid_at"),  # #1183 - bi-temporal validity start
         Index("idx_memory_invalid_at", "invalid_at"),  # #1183 - bi-temporal validity end
+        Index("idx_memory_current_version", "current_version"),  # #1184 - version tracking
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(

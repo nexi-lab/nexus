@@ -3,7 +3,7 @@
 Create an API key for a test agent.
 
 Usage:
-    python create_test_agent_key.py <database_url> <api_key> <agent_id> <user_id> <tenant_id> <agent_name>
+    python create_test_agent_key.py <database_url> <api_key> <agent_id> <user_id> <zone_id> <agent_name>
 """
 
 import sys
@@ -21,7 +21,7 @@ def create_test_agent_key(
     api_key: str,
     agent_id: str,
     user_id: str,
-    tenant_id: str,
+    zone_id: str,
     agent_name: str,
 ) -> bool:
     """Create or update an API key for a test agent.
@@ -31,7 +31,7 @@ def create_test_agent_key(
         api_key: The API key string to hash and store
         agent_id: Full agent ID (e.g., "admin,TestAgent")
         user_id: User ID (e.g., "admin")
-        tenant_id: Tenant ID (e.g., "default")
+        zone_id: Zone ID (e.g., "default")
         agent_name: Human-readable agent name
 
     Returns:
@@ -50,7 +50,7 @@ def create_test_agent_key(
                 select(APIKeyModel).where(
                     APIKeyModel.subject_type == "agent",
                     APIKeyModel.subject_id == agent_id,
-                    APIKeyModel.tenant_id == tenant_id,
+                    APIKeyModel.zone_id == zone_id,
                 )
             ).scalar_one_or_none()
 
@@ -64,7 +64,7 @@ def create_test_agent_key(
                     user_id=user_id,
                     subject_type="agent",
                     subject_id=agent_id,
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     is_admin=0,
                     name=f"{agent_name} Test Key",
                     created_at=datetime.now(UTC),
@@ -89,7 +89,7 @@ def main() -> int:
     """Main entry point."""
     if len(sys.argv) != 7:
         print(
-            "Usage: create_test_agent_key.py <database_url> <api_key> <agent_id> <user_id> <tenant_id> <agent_name>"
+            "Usage: create_test_agent_key.py <database_url> <api_key> <agent_id> <user_id> <zone_id> <agent_name>"
         )
         return 1
 
@@ -97,7 +97,7 @@ def main() -> int:
     api_key = sys.argv[2]
     agent_id = sys.argv[3]
     user_id = sys.argv[4]
-    tenant_id = sys.argv[5]
+    zone_id = sys.argv[5]
     agent_name = sys.argv[6]
 
     success = create_test_agent_key(
@@ -105,7 +105,7 @@ def main() -> int:
         api_key=api_key,
         agent_id=agent_id,
         user_id=user_id,
-        tenant_id=tenant_id,
+        zone_id=zone_id,
         agent_name=agent_name,
     )
 

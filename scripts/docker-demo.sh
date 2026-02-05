@@ -316,7 +316,7 @@ run_provisioning() {
         return
     fi
 
-    # Provision admin user for default tenant using API
+    # Provision admin user for default zone using API
     echo "  Calling provision_user API for admin@default..."
     local RESPONSE
     # Try API call first (requires valid API key); include headers so we can grep for HTTP/1.1 200 OK
@@ -332,7 +332,7 @@ run_provisioning() {
                 "user_id": "admin",
                 "email": "",
                 "display_name": "Admin User",
-                "tenant_id": "default",
+                "zone_id": "default",
                 "create_api_key": false,
                 "create_agents": true,
                 "import_skills": true

@@ -83,10 +83,10 @@ def repair_directory(nx: Any, path: str, dry_run: bool = False) -> bool:
             logger.info(f"[DRY RUN] Would create parent tuple for: {path}")
             return True
 
-        # Get tenant_id from default context
-        tenant_id = nx._default_context.tenant_id if hasattr(nx, "_default_context") else None
+        # Get zone_id from default context
+        zone_id = nx._default_context.zone_id if hasattr(nx, "_default_context") else None
 
-        created_count = nx._hierarchy_manager.ensure_parent_tuples(path, tenant_id=tenant_id)
+        created_count = nx._hierarchy_manager.ensure_parent_tuples(path, zone_id=zone_id)
 
         if created_count > 0:
             logger.info(f"✓ Created {created_count} parent tuple(s) for: {path}")

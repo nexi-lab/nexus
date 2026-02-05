@@ -23,9 +23,9 @@ ALL_RESOURCE_TYPES = ["workspace", "memory", "skill", "agent", "connector", "res
 # Skills must be explicitly granted if needed for security
 AGENT_RESOURCE_GRANTS = ["resource"]
 
-# Default admin user and tenant IDs
+# Default admin user and zone IDs
 DEFAULT_ADMIN_USER = "admin"
-DEFAULT_TENANT_ID = "default"
+DEFAULT_ZONE_ID = "default"
 
 # Default API key (for development only - should be in environment in production)
 DEFAULT_ADMIN_API_KEY = "sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"

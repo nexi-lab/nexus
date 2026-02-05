@@ -280,7 +280,10 @@ class ReadSet:
                 continue
 
             # Directory containment
-            if entry.resource_type == ResourceType.DIRECTORY or entry.access_type == AccessType.LIST:
+            if (
+                entry.resource_type == ResourceType.DIRECTORY
+                or entry.access_type == AccessType.LIST
+            ):
                 dir_path = entry.resource_id.rstrip("/") + "/"
                 if normalized_write.startswith(dir_path):
                     affected.append(entry)
@@ -424,7 +427,10 @@ class ReadSetRegistry:
                 self._reverse_index[path].add(query_id)
 
                 # Directory index
-                if entry.resource_type == ResourceType.DIRECTORY or entry.access_type == AccessType.LIST:
+                if (
+                    entry.resource_type == ResourceType.DIRECTORY
+                    or entry.access_type == AccessType.LIST
+                ):
                     dir_path = path.rstrip("/") + "/"
                     if dir_path not in self._directory_index:
                         self._directory_index[dir_path] = set()
@@ -470,7 +476,10 @@ class ReadSetRegistry:
                 if not self._reverse_index[path]:
                     del self._reverse_index[path]
 
-            if entry.resource_type == ResourceType.DIRECTORY or entry.access_type == AccessType.LIST:
+            if (
+                entry.resource_type == ResourceType.DIRECTORY
+                or entry.access_type == AccessType.LIST
+            ):
                 dir_path = path.rstrip("/") + "/"
                 if dir_path in self._directory_index:
                     self._directory_index[dir_path].discard(query_id)
@@ -579,9 +588,7 @@ class ReadSetRegistry:
         """
         with self._lock:
             expired = [
-                query_id
-                for query_id, read_set in self._read_sets.items()
-                if read_set.is_expired()
+                query_id for query_id, read_set in self._read_sets.items() if read_set.is_expired()
             ]
 
             for query_id in expired:

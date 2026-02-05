@@ -78,7 +78,7 @@ class ChangeLogStore:
         return None
 
     def get_change_log(
-        self, path: str, backend_name: str, tenant_id: str = "default"
+        self, path: str, backend_name: str, zone_id: str = "default"
     ) -> ChangeLogEntry | None:
         """Get change log entry for a path.
 
@@ -218,7 +218,7 @@ class ChangeLogStore:
         finally:
             session.close()
 
-    def get_last_sync_time(self, backend_name: str, tenant_id: str = "default") -> datetime | None:
+    def get_last_sync_time(self, backend_name: str, zone_id: str = "default") -> datetime | None:
         """Get the most recent sync time for a backend.
 
         Args:
@@ -762,7 +762,7 @@ class SyncService:
                     self._change_log.upsert_change_log(
                         path=virtual_path,
                         backend_name=backend.name,
-                        tenant_id=zone_id or "default",
+                        zone_id=zone_id or "default",
                         size_bytes=file_info.size,
                         mtime=file_info.mtime,
                         backend_version=file_info.backend_version,
@@ -778,7 +778,7 @@ class SyncService:
                 self._change_log.upsert_change_log(
                     path=virtual_path,
                     backend_name=backend.name,
-                    tenant_id=zone_id or "default",
+                    zone_id=zone_id or "default",
                     size_bytes=file_info.size,
                     mtime=file_info.mtime,
                     backend_version=file_info.backend_version,

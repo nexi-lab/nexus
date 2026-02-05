@@ -276,8 +276,8 @@ impl SledTree {
     }
 
     /// Check if the tree is empty.
-    pub fn is_empty(&self) -> Result<bool> {
-        Ok(self.tree.is_empty())
+    pub fn is_empty(&self) -> bool {
+        self.tree.is_empty()
     }
 
     /// Get the first key-value pair.
@@ -695,6 +695,6 @@ mod tests {
 
         tree.clear().unwrap();
         assert_eq!(tree.len(), 0);
-        assert!(tree.is_empty().unwrap());
+        assert!(tree.is_empty());
     }
 }

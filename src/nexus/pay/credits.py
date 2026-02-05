@@ -210,9 +210,9 @@ class CreditsService:
                 # Log but don't fail - system might still work
                 pass
 
-    def _to_tb_id(self, agent_id: str, tenant_id: str = "default") -> int:
+    def _to_tb_id(self, agent_id: str, zone_id: str = "default") -> int:
         """Convert agent_id to TigerBeetle account ID."""
-        return make_tb_account_id(tenant_id, agent_id)
+        return make_tb_account_id(zone_id, agent_id)
 
     def _generate_transfer_id(self, idempotency_key: str | None = None) -> int:
         """Generate transfer ID, using idempotency key if provided.
@@ -231,12 +231,12 @@ class CreditsService:
     # Balance Operations
     # =========================================================================
 
-    async def get_balance(self, agent_id: str, tenant_id: str = "default") -> Decimal:
+    async def get_balance(self, agent_id: str, zone_id: str = "default") -> Decimal:
         """Get available balance (credits_posted - debits_posted).
 
         Args:
             agent_id: Agent identifier.
-            tenant_id: Tenant identifier for multi-tenancy.
+            zone_id: Zone identifier for multi-tenancy.
 
         Returns:
             Available balance in credits.
@@ -245,7 +245,7 @@ class CreditsService:
             return self.DISABLED_UNLIMITED_BALANCE
 
         client = await self._get_client()
-        tb_id = self._to_tb_id(agent_id, tenant_id)
+        tb_id = self._to_tb_id(agent_id, zone_id)
 
         accounts = await client.lookup_accounts([tb_id])
         if not accounts:
@@ -256,13 +256,13 @@ class CreditsService:
         return Decimal(str(micro_to_credits(micro_balance)))
 
     async def get_balance_with_reserved(
-        self, agent_id: str, tenant_id: str = "default"
+        self, agent_id: str, zone_id: str = "default"
     ) -> tuple[Decimal, Decimal]:
         """Get available balance and reserved (pending) amount.
 
         Args:
             agent_id: Agent identifier.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             Tuple of (available_balance, reserved_amount).
@@ -271,7 +271,7 @@ class CreditsService:
             return self.DISABLED_UNLIMITED_BALANCE, Decimal("0")
 
         client = await self._get_client()
-        tb_id = self._to_tb_id(agent_id, tenant_id)
+        tb_id = self._to_tb_id(agent_id, zone_id)
 
         accounts = await client.lookup_accounts([tb_id])
         if not accounts:
@@ -294,7 +294,7 @@ class CreditsService:
         *,
         memo: str = "",  # noqa: ARG002 - stored in PostgreSQL, not TigerBeetle
         idempotency_key: str | None = None,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> str:
         """Execute atomic credit transfer between agents.
 
@@ -306,7 +306,7 @@ class CreditsService:
             amount: Amount in credits.
             memo: Optional description (stored in PostgreSQL, not TigerBeetle).
             idempotency_key: Optional key for deduplication.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             Transfer ID as string.
@@ -325,8 +325,8 @@ class CreditsService:
 
         transfer = tb.Transfer(
             id=transfer_id,
-            debit_account_id=self._to_tb_id(from_id, tenant_id),
-            credit_account_id=self._to_tb_id(to_id, tenant_id),
+            debit_account_id=self._to_tb_id(from_id, zone_id),
+            credit_account_id=self._to_tb_id(to_id, zone_id),
             amount=micro_amount,
             ledger=LEDGER_CREDITS,
             code=TRANSFER_CODE_PAYMENT,
@@ -355,7 +355,7 @@ class CreditsService:
         source: str,  # noqa: ARG002 - stored in PostgreSQL metadata
         *,
         external_tx_id: str | None = None,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> str:
         """Add credits from external source (treasury -> agent).
 
@@ -364,7 +364,7 @@ class CreditsService:
             amount: Amount in credits.
             source: Source identifier ("admin", "stripe", "x402").
             external_tx_id: External transaction reference.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             Transfer ID as string.
@@ -381,7 +381,7 @@ class CreditsService:
         transfer = tb.Transfer(
             id=transfer_id,
             debit_account_id=SYSTEM_TREASURY_TB_ID,
-            credit_account_id=self._to_tb_id(agent_id, tenant_id),
+            credit_account_id=self._to_tb_id(agent_id, zone_id),
             amount=micro_amount,
             ledger=LEDGER_CREDITS,
             code=TRANSFER_CODE_TOPUP,
@@ -403,7 +403,7 @@ class CreditsService:
         amount: Decimal,
         timeout_seconds: int = 300,
         *,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> str:
         """Reserve credits for a pending operation.
 
@@ -416,7 +416,7 @@ class CreditsService:
             agent_id: Agent whose credits to reserve.
             amount: Amount in credits to reserve.
             timeout_seconds: Auto-release timeout (default 5 minutes).
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             Reservation ID as string.
@@ -435,7 +435,7 @@ class CreditsService:
 
         transfer = tb.Transfer(
             id=reservation_id,
-            debit_account_id=self._to_tb_id(agent_id, tenant_id),
+            debit_account_id=self._to_tb_id(agent_id, zone_id),
             credit_account_id=ESCROW_ACCOUNT_TB_ID,
             amount=micro_amount,
             ledger=LEDGER_CREDITS,
@@ -533,7 +533,7 @@ class CreditsService:
         amount: Decimal,
         *,
         code: int = TRANSFER_CODE_API_USAGE,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> bool:
         """Fast credit deduction for API metering / rate limiting.
 
@@ -544,7 +544,7 @@ class CreditsService:
             agent_id: Agent to deduct from.
             amount: Amount in credits.
             code: Transfer code for categorization.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             True if successful, False if insufficient balance.
@@ -560,7 +560,7 @@ class CreditsService:
 
         transfer = tb.Transfer(
             id=transfer_id,
-            debit_account_id=self._to_tb_id(agent_id, tenant_id),
+            debit_account_id=self._to_tb_id(agent_id, zone_id),
             credit_account_id=SYSTEM_TREASURY_TB_ID,
             amount=micro_amount,
             ledger=LEDGER_CREDITS,
@@ -578,7 +578,7 @@ class CreditsService:
         self,
         transfers: list[TransferRequest],
         *,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> list[str]:
         """Execute atomic batch transfer - all succeed or all fail.
 
@@ -587,7 +587,7 @@ class CreditsService:
 
         Args:
             transfers: List of transfer requests.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             List of transfer IDs.
@@ -612,8 +612,8 @@ class CreditsService:
             tb_transfers.append(
                 tb.Transfer(
                     id=self._generate_transfer_id(),
-                    debit_account_id=self._to_tb_id(t.from_id, tenant_id),
-                    credit_account_id=self._to_tb_id(t.to_id, tenant_id),
+                    debit_account_id=self._to_tb_id(t.from_id, zone_id),
+                    credit_account_id=self._to_tb_id(t.to_id, zone_id),
                     amount=credits_to_micro(float(t.amount)),
                     ledger=LEDGER_CREDITS,
                     code=TRANSFER_CODE_PAYMENT,
@@ -634,7 +634,7 @@ class CreditsService:
     async def provision_wallet(
         self,
         agent_id: str,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> None:
         """Create TigerBeetle account for a new agent.
 
@@ -642,7 +642,7 @@ class CreditsService:
 
         Args:
             agent_id: Agent identifier.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
         """
         if not self._enabled:
             return
@@ -650,7 +650,7 @@ class CreditsService:
         tb = self._get_tb_module()
         client = await self._get_client()
 
-        tb_id = self._to_tb_id(agent_id, tenant_id)
+        tb_id = self._to_tb_id(agent_id, zone_id)
 
         account = tb.Account(
             id=tb_id,
@@ -674,7 +674,7 @@ class CreditsService:
         agent_id: str,
         amount: Decimal,
         *,
-        tenant_id: str = "default",
+        zone_id: str = "default",
     ) -> bool:
         """Check if agent has sufficient balance for an amount.
 
@@ -684,7 +684,7 @@ class CreditsService:
         Args:
             agent_id: Agent identifier.
             amount: Amount to check against.
-            tenant_id: Tenant identifier.
+            zone_id: Zone identifier.
 
         Returns:
             True if sufficient balance, False otherwise.
@@ -692,7 +692,7 @@ class CreditsService:
         if not self._enabled:
             return True
 
-        available, reserved = await self.get_balance_with_reserved(agent_id, tenant_id)
+        available, reserved = await self.get_balance_with_reserved(agent_id, zone_id)
         effective_balance = available - reserved
         return effective_balance >= amount
 

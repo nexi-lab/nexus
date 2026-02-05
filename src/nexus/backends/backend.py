@@ -266,7 +266,7 @@ class Backend(ABC):
 
         Args:
             content: File content as bytes
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with content hash (SHA-256 as hex string) in data field
@@ -286,7 +286,7 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with file content as bytes in data field
@@ -309,7 +309,7 @@ class Backend(ABC):
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             Dictionary mapping content_hash -> content bytes
@@ -340,7 +340,7 @@ class Backend(ABC):
         Args:
             content_hash: SHA-256 hash as hex string
             chunk_size: Size of each chunk in bytes (default: 8KB)
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Yields:
             bytes: Chunks of file content
@@ -375,7 +375,7 @@ class Backend(ABC):
 
         Args:
             chunks: Iterator yielding byte chunks
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with content hash (SHA-256 as hex string) in data field
@@ -410,7 +410,7 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse indicating success or failure
@@ -430,7 +430,7 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with True if content exists, False otherwise in data field
@@ -450,7 +450,7 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with content size in bytes in data field
@@ -470,7 +470,7 @@ class Backend(ABC):
 
         Args:
             content_hash: SHA-256 hash as hex string
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse with number of references in data field
@@ -501,7 +501,7 @@ class Backend(ABC):
             path: Directory path (relative to backend root)
             parents: Create parent directories if needed (like mkdir -p)
             exist_ok: Don't raise error if directory exists
-            context: Operation context with user/tenant info (optional, for user-scoped backends)
+            context: Operation context with user/zone info (optional, for user-scoped backends)
 
         Returns:
             HandlerResponse indicating success or failure

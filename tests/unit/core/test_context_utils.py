@@ -298,7 +298,7 @@ class TestResolveSkillBasePath:
         context.zone_id = "acme"
 
         result = resolve_skill_base_path(context)
-        assert result == "/skills/tenants/acme/"
+        assert result == "/skills/zones/acme/"
 
     def test_resolve_skill_base_path_defaults_to_system(self):
         """Test that system path is returned when no user_id or zone_id."""
@@ -324,7 +324,7 @@ class TestResolveSkillBasePath:
 
         context = SimpleContext()
         result = resolve_skill_base_path(context)
-        assert result == "/skills/tenants/acme/"
+        assert result == "/skills/zones/acme/"
 
     def test_resolve_skill_base_path_user_id_overrides_zone_id(self):
         """Test that user_id takes priority even when zone_id is present."""
@@ -334,4 +334,4 @@ class TestResolveSkillBasePath:
 
         result = resolve_skill_base_path(context)
         assert result == "/skills/users/bob/"
-        assert result != "/skills/tenants/acme/"
+        assert result != "/skills/zones/acme/"

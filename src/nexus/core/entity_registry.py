@@ -102,7 +102,7 @@ class EntityRegistry:
         """Register an entity in the registry.
 
         Args:
-            entity_type: Type of entity ('tenant', 'user', 'agent').
+            entity_type: Type of entity ('zone', 'user', 'agent').
             entity_id: Unique identifier for the entity.
             parent_type: Type of parent entity (optional).
             parent_id: ID of parent entity (optional).
@@ -291,7 +291,7 @@ class EntityRegistry:
             entity_id: Unique identifier.
             cascade: If True, recursively delete child entities (default: True).
                      When deleting a user, all their owned agents are also deleted.
-                     When deleting a tenant, all users and agents are also deleted.
+                     When deleting a zone, all users and agents are also deleted.
 
         Returns:
             True if deleted, False if not found.
@@ -393,7 +393,7 @@ class EntityRegistry:
                 "objs",
                 "by-user",
                 "by-agent",
-                "by-tenant",
+                "by-zone",
             ]:
                 continue
 

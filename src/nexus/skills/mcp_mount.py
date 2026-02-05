@@ -91,7 +91,7 @@ class MCPMountManager:
 
         Structure:
             /skills/system/mcp-tools/               - System-wide MCP tools (priority 1)
-            /skills/tenants/{zone_id}/mcp-tools/  - Zone shared MCP tools (priority 2)
+            /skills/zones/{zone_id}/mcp-tools/  - Zone shared MCP tools (priority 2)
             /skills/users/{user_id}/mcp-tools/      - User personal MCP tools (priority 3)
 
         Args:
@@ -104,7 +104,7 @@ class MCPMountManager:
 
         if context:
             if context.zone_id:
-                paths["zone"] = f"/skills/tenants/{context.zone_id}/mcp-tools/"
+                paths["zone"] = f"/skills/zones/{context.zone_id}/mcp-tools/"
 
             if context.user_id:
                 paths["user"] = f"/skills/users/{context.user_id}/mcp-tools/"
@@ -1016,7 +1016,7 @@ class MCPMountManager:
         """Discover mounts from context-aware tier paths.
 
         Scans all available tiers for the given context and loads mount configurations.
-        Uses tier priority: user (3) > tenant (2) > system (1).
+        Uses tier priority: user (3) > zone (2) > system (1).
         When same mount name exists at multiple tiers, higher priority wins.
 
         Args:
@@ -1051,7 +1051,7 @@ class MCPMountManager:
         """Discover mounts from a single tier path.
 
         Args:
-            tier: Tier name (user, tenant, system)
+            tier: Tier name (user, zone, system)
             tier_path: Path to mcp-tools directory for this tier
             seen_names: Dict of mount names already seen with their priorities
 
@@ -1168,7 +1168,7 @@ class MCPMountManager:
 
         Args:
             include_unmounted: Include unmounted configurations
-            tier: Optional tier filter (user, tenant, system)
+            tier: Optional tier filter (user, zone, system)
             context: Optional operation context for discovery
 
         Returns:

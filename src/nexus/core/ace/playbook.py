@@ -59,7 +59,7 @@ class PlaybookManager:
         1. Admin/system bypass
         2. Direct creator (agent matches)
         3. User ownership (same user_id)
-        4. Tenant-scoped sharing (same zone_id and scope='tenant')
+        4. Zone-scoped sharing (same zone_id and scope='zone')
         5. Public visibility for read operations
 
         Args:
@@ -108,7 +108,7 @@ class PlaybookManager:
         Args:
             name: Playbook name
             description: Optional description
-            scope: Scope level ('agent', 'user', 'tenant', 'global')
+            scope: Scope level ('agent', 'user', 'zone', 'global')
             visibility: Visibility level ('private', 'shared', 'public')
             initial_strategies: Optional initial strategies
 

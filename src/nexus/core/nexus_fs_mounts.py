@@ -629,7 +629,7 @@ class NexusFSMountsMixin:
 
         Args:
             owner_user_id: Filter by owner
-            zone_id: Filter by tenant
+            zone_id: Filter by zone
             context: Operation context
 
         Returns:

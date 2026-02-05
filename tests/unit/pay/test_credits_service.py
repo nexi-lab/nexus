@@ -218,16 +218,16 @@ class TestConstants:
         id_2 = agent_id_to_tb_id("agent-2")
         assert id_1 != id_2
 
-    def test_make_tb_account_id_combines_tenant_and_agent(self):
-        """Full TB ID should combine tenant and agent hashes."""
-        full_id = make_tb_account_id("tenant-1", "agent-1")
+    def test_make_tb_account_id_combines_zone_and_agent(self):
+        """Full TB ID should combine zone and agent hashes."""
+        full_id = make_tb_account_id("zone-1", "agent-1")
         assert isinstance(full_id, int)
         assert full_id > 0
 
     def test_make_tb_account_id_deterministic(self):
         """Full TB ID generation should be deterministic."""
-        id_1 = make_tb_account_id("tenant-1", "agent-1")
-        id_2 = make_tb_account_id("tenant-1", "agent-1")
+        id_1 = make_tb_account_id("zone-1", "agent-1")
+        id_2 = make_tb_account_id("zone-1", "agent-1")
         assert id_1 == id_2
 
 
@@ -564,7 +564,7 @@ class TestWalletProvisioning:
             service = CreditsService(client=mock_tb_client)
             await service.provision_wallet(
                 agent_id="new-agent",
-                tenant_id="tenant-1",
+                zone_id="zone-1",
             )
 
             mock_tb_client.create_accounts.assert_called_once()
@@ -581,7 +581,7 @@ class TestWalletProvisioning:
             # Should not raise
             await service.provision_wallet(
                 agent_id="existing-agent",
-                tenant_id="tenant-1",
+                zone_id="zone-1",
             )
 
 
@@ -888,28 +888,28 @@ class TestEdgeCases:
 
 
 class TestMultiTenancy:
-    """Test multi-tenant operations."""
+    """Test multi-zone operations."""
 
     @pytest.mark.asyncio
-    async def test_different_tenants_have_different_accounts(self, mock_tb_client, mock_tb_module):
-        """Same agent_id in different tenants should map to different TB accounts."""
+    async def test_different_zones_have_different_accounts(self, mock_tb_client, mock_tb_module):
+        """Same agent_id in different zones should map to different TB accounts."""
         with patch.dict("sys.modules", {"tigerbeetle": mock_tb_module}):
             from nexus.pay.credits import CreditsService
 
             service = CreditsService(client=mock_tb_client)
 
-            # Create wallets for same agent in different tenants
+            # Create wallets for same agent in different zones
             mock_tb_client.create_accounts.return_value = []
 
-            await service.provision_wallet("agent-1", tenant_id="tenant-a")
-            await service.provision_wallet("agent-1", tenant_id="tenant-b")
+            await service.provision_wallet("agent-1", zone_id="zone-a")
+            await service.provision_wallet("agent-1", zone_id="zone-b")
 
             # Should have been called twice with different IDs
             assert mock_tb_client.create_accounts.call_count == 2
 
-    def test_tenant_id_changes_tb_account_id(self):
-        """Same agent_id with different tenant_id should produce different TB IDs."""
-        id_tenant_a = make_tb_account_id("tenant-a", "agent-1")
-        id_tenant_b = make_tb_account_id("tenant-b", "agent-1")
+    def test_zone_id_changes_tb_account_id(self):
+        """Same agent_id with different zone_id should produce different TB IDs."""
+        id_zone_a = make_tb_account_id("zone-a", "agent-1")
+        id_zone_b = make_tb_account_id("zone-b", "agent-1")
 
-        assert id_tenant_a != id_tenant_b
+        assert id_zone_a != id_zone_b

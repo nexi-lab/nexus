@@ -457,16 +457,16 @@ class CacheConnectorMixin:
         file_cache = get_file_cache()
         disk_contents: dict[str, bytes] = {}
         if original:
-            # Group paths by tenant for bulk read
-            tenant_paths: dict[str, list[str]] = {}
+            # Group paths by zone for bulk read
+            zone_paths: dict[str, list[str]] = {}
             for path_id, cache_model in cache_models.items():
                 vpath = path_id_to_path.get(path_id)
                 if vpath:
-                    cache_tenant = cache_model.zone_id or "default"
-                    tenant_paths.setdefault(cache_tenant, []).append(vpath)
+                    cache_zone = cache_model.zone_id or "default"
+                    zone_paths.setdefault(cache_zone, []).append(vpath)
 
-            # Bulk read from disk for each tenant
-            for zone_id, vpaths in tenant_paths.items():
+            # Bulk read from disk for each zone
+            for zone_id, vpaths in zone_paths.items():
                 disk_contents.update(file_cache.read_bulk(zone_id, vpaths))
 
         l2_hits = 0
@@ -515,8 +515,8 @@ class CacheConnectorMixin:
             if l1_cache is not None:
                 with contextlib.suppress(Exception):
                     file_cache = get_file_cache()
-                    cache_tenant = cache_model.zone_id or "default"
-                    disk_path = str(file_cache._get_cache_path(cache_tenant, vpath))
+                    cache_zone = cache_model.zone_id or "default"
+                    disk_path = str(file_cache._get_cache_path(cache_zone, vpath))
                     is_text = cache_model.content_type in ("full", "parsed", "summary")
                     l1_cache.put(
                         key=vpath,
@@ -526,7 +526,7 @@ class CacheConnectorMixin:
                         original_size=cache_model.original_size_bytes,
                         ttl_seconds=0,  # Use default TTL
                         is_text=is_text,
-                        zone_id=cache_tenant,
+                        zone_id=cache_zone,
                     )
 
         logger.info(
@@ -692,8 +692,8 @@ class CacheConnectorMixin:
         if original:
             # Try disk cache first (new storage)
             file_cache = get_file_cache()
-            cache_tenant = cache_model.zone_id or "default"
-            content_binary_raw = file_cache.read(cache_tenant, path)
+            cache_zone = cache_model.zone_id or "default"
+            content_binary_raw = file_cache.read(cache_zone, path)
             if content_binary_raw:
                 logger.debug(f"[CACHE] L2 content from DISK: {path}")
             elif cache_model.content_binary:
@@ -732,8 +732,8 @@ class CacheConnectorMixin:
         if l1_cache is not None:
             with contextlib.suppress(Exception):
                 file_cache = get_file_cache()
-                cache_tenant = cache_model.zone_id or "default"
-                disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                cache_zone = cache_model.zone_id or "default"
+                disk_path = str(file_cache._get_cache_path(cache_zone, path))
                 is_text = cache_model.content_type in ("full", "parsed", "summary")
                 # Use connector-specific TTL if defined
                 ttl = getattr(self, "cache_ttl", 0) or 0
@@ -745,7 +745,7 @@ class CacheConnectorMixin:
                     original_size=cache_model.original_size_bytes,
                     ttl_seconds=ttl,
                     is_text=is_text,
-                    zone_id=cache_tenant,
+                    zone_id=cache_zone,
                 )
                 logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
 
@@ -785,7 +785,7 @@ class CacheConnectorMixin:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_tenant = zone_id or "default"
+        cache_zone = zone_id or "default"
 
         # Determine text content
         if content_text is None:
@@ -816,7 +816,7 @@ class CacheConnectorMixin:
             file_cache = get_file_cache()
             if original_size <= self.MAX_CACHE_FILE_SIZE:
                 try:
-                    file_cache.write(cache_tenant, path, content, text_content=content_text)
+                    file_cache.write(cache_zone, path, content, text_content=content_text)
                     logger.debug(f"[CACHE] Wrote {original_size} bytes to disk: {path}")
                 except Exception as e:
                     logger.warning(f"[CACHE] Failed to write to disk cache: {e}")
@@ -897,7 +897,7 @@ class CacheConnectorMixin:
             session.commit()
 
             # disk_path for L1 points to FileContentCache
-            disk_path = str(get_file_cache()._get_cache_path(cache_tenant, path))
+            disk_path = str(get_file_cache()._get_cache_path(cache_zone, path))
         else:
             # L1-only mode: no PostgreSQL, disk_path points to original file
             path_id = path  # Use path as path_id in L1-only mode
@@ -925,7 +925,7 @@ class CacheConnectorMixin:
                     original_size=original_size,
                     ttl_seconds=ttl,
                     is_text=is_text,
-                    zone_id=cache_tenant,
+                    zone_id=cache_zone,
                 )
                 mode = "L1+L2" if has_l2 else "L1 (l1_only)"
                 logger.info(f"[CACHE] WRITE to {mode}: {path} (size={original_size})")
@@ -1184,10 +1184,10 @@ class CacheConnectorMixin:
                 cached_size = len(content_text) if content_text else 0
 
                 # Write binary content to disk via FileContentCache
-                cache_tenant = zone_id or "default"
+                cache_zone = zone_id or "default"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
                     try:
-                        file_cache.write(cache_tenant, path, content, text_content=content_text)
+                        file_cache.write(cache_zone, path, content, text_content=content_text)
                     except Exception as e:
                         logger.warning(f"[CACHE] Failed to write to disk cache: {path}: {e}")
 
@@ -1261,7 +1261,7 @@ class CacheConnectorMixin:
                 # Update L1 Rust metadata cache (stores only metadata, not content)
                 if l1_cache is not None:
                     with contextlib.suppress(Exception):
-                        disk_path = str(file_cache._get_cache_path(cache_tenant, path))
+                        disk_path = str(file_cache._get_cache_path(cache_zone, path))
                         is_text = content_type in ("full", "parsed", "summary")
                         # Use connector-specific TTL if defined
                         ttl = getattr(self, "cache_ttl", 0) or 0
@@ -1273,7 +1273,7 @@ class CacheConnectorMixin:
                             original_size=original_size,
                             ttl_seconds=ttl,
                             is_text=is_text,
-                            zone_id=cache_tenant,
+                            zone_id=cache_zone,
                         )
 
             except Exception as e:
@@ -1369,8 +1369,8 @@ class CacheConnectorMixin:
 
             if delete:
                 # Delete from disk cache
-                cache_tenant = entry.zone_id or "default"
-                file_cache.delete(cache_tenant, path)
+                cache_zone = entry.zone_id or "default"
+                file_cache.delete(cache_zone, path)
                 session.delete(entry)
             else:
                 entry.stale = True
@@ -1393,8 +1393,8 @@ class CacheConnectorMixin:
             for cache_entry, vpath in rows:
                 if delete:
                     # Delete from disk cache
-                    cache_tenant = cache_entry.zone_id or "default"
-                    file_cache.delete(cache_tenant, vpath)
+                    cache_zone = cache_entry.zone_id or "default"
+                    file_cache.delete(cache_zone, vpath)
                     session.delete(cache_entry)
                 else:
                     cache_entry.stale = True

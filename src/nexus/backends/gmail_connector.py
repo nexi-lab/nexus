@@ -325,7 +325,7 @@ class GmailConnectorBackend(
         import asyncio
 
         try:
-            # Default to 'default' tenant if not specified to match mount configurations
+            # Default to 'default' zone if not specified to match mount configurations
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id

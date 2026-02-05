@@ -405,7 +405,7 @@ class SandboxManager:
 
         Args:
             user_id: Filter by user (optional)
-            zone_id: Filter by tenant (optional)
+            zone_id: Filter by zone (optional)
             agent_id: Filter by agent (optional)
             status: Filter by status (e.g., 'active', 'stopped', 'paused') (optional)
             verify_status: If True, verify status with provider (slower but accurate)

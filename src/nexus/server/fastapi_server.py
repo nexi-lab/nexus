@@ -2962,14 +2962,14 @@ def _register_routes(app: FastAPI) -> None:
         - Exponential backoff with jitter to prevent thundering herd
         """
         lock_manager = _get_lock_manager()
-        tenant_id = auth_result.get("tenant_id") or "default"
+        zone_id = auth_result.get("zone_id") or "default"
 
         # Non-blocking mode: use timeout=0
         timeout = request.timeout if request.blocking else 0.0
 
         try:
             lock_id = await lock_manager.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=request.path,
                 timeout=timeout,
                 ttl=request.ttl,

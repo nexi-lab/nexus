@@ -525,10 +525,10 @@ class NexusFSOAuthMixin:
 
         Note:
             Only returns credentials for the current user (from context).
-            Admins can see all credentials in their tenant.
+            Admins can see all credentials in their zone.
         """
         token_manager = self._get_token_manager()
-        # Default to 'default' tenant if not specified to match mount configurations
+        # Default to 'default' zone if not specified to match mount configurations
         zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
@@ -538,7 +538,7 @@ class NexusFSOAuthMixin:
             current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
         is_admin = context and getattr(context, "is_admin", False)
 
-        # List credentials for tenant (and optionally user)
+        # List credentials for zone (and optionally user)
         # Filter by user_id if available (more reliable than email matching)
         credentials = await token_manager.list_credentials(
             zone_id=zone_id, user_id=current_user_id if not is_admin else None
@@ -565,7 +565,7 @@ class NexusFSOAuthMixin:
 
         logger.info(
             f"Listed {len(result)} OAuth credentials for user_id={current_user_id}, "
-            f"tenant={zone_id}, provider={provider}"
+            f"zone={zone_id}, provider={provider}"
         )
         return result
 
@@ -595,7 +595,7 @@ class NexusFSOAuthMixin:
             Users can only revoke their own credentials unless they are admin.
         """
         token_manager = self._get_token_manager()
-        # Default to 'default' tenant if not specified to match mount configurations
+        # Default to 'default' zone if not specified to match mount configurations
         zone_id = get_zone_id(context)
 
         # Extract current user's identity from context
@@ -676,7 +676,7 @@ class NexusFSOAuthMixin:
             Users can only test their own credentials unless they are admin.
         """
         token_manager = self._get_token_manager()
-        # Default to 'default' tenant if not specified to match mount configurations
+        # Default to 'default' zone if not specified to match mount configurations
         zone_id = get_zone_id(context)
 
         # Extract current user's identity from context

@@ -1,10 +1,10 @@
-"""Data models for .nexus bundle format and tenant portability.
+"""Data models for .nexus bundle format and zone portability.
 
 This module defines the data structures for exporting and importing
-tenant data as portable .nexus bundles. The bundle format supports:
+zone data as portable .nexus bundles. The bundle format supports:
 
-- Complete tenant data portability (files, metadata, permissions, embeddings)
-- Cross-tenant migration with ID remapping
+- Complete zone data portability (files, metadata, permissions, embeddings)
+- Cross-zone migration with ID remapping
 - GDPR Article 20 compliance (right to data portability)
 - Incremental and filtered exports
 
@@ -30,7 +30,7 @@ company-a-export-2025-01-31.nexus
 
 References:
 - Issue #1162: Define .nexus bundle format
-- Epic #1161: Tenant Data Portability
+- Epic #1161: Zone Data Portability
 """
 
 from __future__ import annotations
@@ -279,7 +279,7 @@ class BundleChecksums:
 
 @dataclass
 class TenantExportOptions:
-    """Options for tenant data export to .nexus bundle.
+    """Options for zone data export to .nexus bundle.
 
     Attributes:
         output_path: Path where the .nexus bundle will be written
@@ -359,11 +359,11 @@ class TenantExportOptions:
 
 @dataclass
 class TenantImportOptions:
-    """Options for importing tenant data from .nexus bundle.
+    """Options for importing zone data from .nexus bundle.
 
     Attributes:
         bundle_path: Path to the .nexus bundle file
-        target_tenant_id: Remap to different tenant (None = preserve original)
+        target_zone_id: Remap to different zone (None = preserve original)
         path_prefix_remap: Path prefix remapping (e.g., {"/old/": "/new/"})
         user_id_remap: User ID remapping (e.g., {"old-user": "new-user"})
         conflict_mode: How to handle path collisions
@@ -381,7 +381,7 @@ class TenantImportOptions:
     bundle_path: Path
 
     # Remapping
-    target_tenant_id: str | None = None
+    target_zone_id: str | None = None
     path_prefix_remap: dict[str, str] = field(default_factory=dict)
     user_id_remap: dict[str, str] = field(default_factory=dict)
 
@@ -460,7 +460,7 @@ class TenantImportOptions:
         """Convert to dictionary for JSON serialization (excludes sensitive data)."""
         return {
             "bundle_path": str(self.bundle_path),
-            "target_tenant_id": self.target_tenant_id,
+            "target_zone_id": self.target_zone_id,
             "path_prefix_remap": self.path_prefix_remap,
             "user_id_remap": self.user_id_remap,
             "conflict_mode": self.conflict_mode.value,
@@ -493,7 +493,7 @@ class ExportManifest:
         nexus_version: Version of Nexus that created this bundle
         bundle_id: Unique identifier for this bundle (UUIDv4)
         source_instance: URL or identifier of source Nexus instance
-        source_tenant_id: Original tenant ID
+        source_zone_id: Original zone ID
         export_timestamp: When the export was created
         file_count: Number of file records in metadata
         total_size_bytes: Total size of all content
@@ -519,7 +519,7 @@ class ExportManifest:
     # Bundle identification
     bundle_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     source_instance: str = ""
-    source_tenant_id: str = ""
+    source_zone_id: str = ""
     export_timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     # Content statistics
@@ -563,7 +563,7 @@ class ExportManifest:
             # Bundle identification
             "bundle_id": self.bundle_id,
             "source_instance": self.source_instance,
-            "source_tenant_id": self.source_tenant_id,
+            "source_zone_id": self.source_zone_id,
             "export_timestamp": self.export_timestamp.isoformat(),
             # Statistics
             "statistics": {
@@ -651,7 +651,7 @@ class ExportManifest:
             nexus_version=data.get("nexus_version", ""),
             bundle_id=data.get("bundle_id", str(uuid.uuid4())),
             source_instance=data.get("source_instance", ""),
-            source_tenant_id=data.get("source_tenant_id", ""),
+            source_zone_id=data.get("source_zone_id", ""),
             export_timestamp=export_ts,
             file_count=stats.get("file_count", 0),
             total_size_bytes=stats.get("total_size_bytes", 0),
@@ -697,8 +697,8 @@ class ExportManifest:
         if not self.bundle_id:
             errors.append("bundle_id is required")
 
-        if not self.source_tenant_id:
-            errors.append("source_tenant_id is required")
+        if not self.source_zone_id:
+            errors.append("source_zone_id is required")
 
         if self.file_count < 0:
             errors.append("file_count cannot be negative")
@@ -797,7 +797,7 @@ class ImportError:
 
 @dataclass
 class ImportResult:
-    """Result of tenant import operation.
+    """Result of zone import operation.
 
     Tracks all operations performed during import and provides
     summary statistics.
@@ -812,7 +812,7 @@ class ImportResult:
         content_blobs_imported: Number of content blobs imported
         content_blobs_skipped: Number of content blobs already existing
         embeddings_imported: Number of embeddings imported
-        tenant_remapped: Whether tenant ID was remapped
+        zone_remapped: Whether zone ID was remapped
         paths_remapped: Number of paths remapped
         users_remapped: Number of user IDs remapped
         errors: List of errors encountered
@@ -839,7 +839,7 @@ class ImportResult:
     embeddings_imported: int = 0
 
     # Remapping statistics
-    tenant_remapped: bool = False
+    zone_remapped: bool = False
     paths_remapped: int = 0
     users_remapped: int = 0
 
@@ -922,7 +922,7 @@ class ImportResult:
                 "imported": self.embeddings_imported,
             },
             "remapping": {
-                "tenant_remapped": self.tenant_remapped,
+                "zone_remapped": self.zone_remapped,
                 "paths_remapped": self.paths_remapped,
                 "users_remapped": self.users_remapped,
             },
@@ -960,7 +960,7 @@ class FileRecord:
 
     Attributes:
         path_id: Unique identifier (UUID)
-        tenant_id: Tenant ID
+        zone_id: Zone ID
         virtual_path: Virtual file path
         backend_id: Backend storage identifier
         physical_path: Physical storage path
@@ -976,7 +976,7 @@ class FileRecord:
     """
 
     path_id: str
-    tenant_id: str
+    zone_id: str
     virtual_path: str
     backend_id: str
     physical_path: str
@@ -994,7 +994,7 @@ class FileRecord:
         """Convert to dictionary for JSONL serialization."""
         return {
             "path_id": self.path_id,
-            "tenant_id": self.tenant_id,
+            "zone_id": self.zone_id,
             "virtual_path": self.virtual_path,
             "backend_id": self.backend_id,
             "physical_path": self.physical_path,
@@ -1024,7 +1024,7 @@ class FileRecord:
 
         return cls(
             path_id=data["path_id"],
-            tenant_id=data["tenant_id"],
+            zone_id=data["zone_id"],
             virtual_path=data["virtual_path"],
             backend_id=data["backend_id"],
             physical_path=data["physical_path"],

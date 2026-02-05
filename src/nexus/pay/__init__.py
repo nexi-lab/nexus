@@ -12,7 +12,7 @@ Key Features:
     - Two-phase transfers (reserve/commit) with auto-timeout
     - Fast API metering / rate limiting
     - Batch transfers with atomic guarantees
-    - Multi-tenant support
+    - Multi-zone support
 
 Example:
     >>> from nexus.pay import CreditsService
@@ -41,7 +41,7 @@ from nexus.pay.constants import (
     credits_to_micro,
     make_tb_account_id,
     micro_to_credits,
-    tenant_to_tb_prefix,
+    zone_to_tb_prefix,
 )
 from nexus.pay.credits import (
     CreditsError,
@@ -77,7 +77,7 @@ __all__ = [
     "MICRO_UNIT_SCALE",
     # Utilities
     "agent_id_to_tb_id",
-    "tenant_to_tb_prefix",
+    "zone_to_tb_prefix",
     "make_tb_account_id",
     "credits_to_micro",
     "micro_to_credits",

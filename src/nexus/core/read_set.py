@@ -20,7 +20,7 @@ Example:
     >>> from nexus.core.read_set import ReadSet, ReadSetEntry
     >>>
     >>> # Create read set for a query
-    >>> read_set = ReadSet(query_id="q1", tenant_id="tenant1")
+    >>> read_set = ReadSet(query_id="q1", zone_id="zone1")
     >>> read_set.record_read("file", "/inbox/a.txt", revision=10)
     >>> read_set.record_read("file", "/inbox/b.txt", revision=15)
     >>> read_set.record_read("directory", "/inbox/", revision=5)
@@ -149,13 +149,13 @@ class ReadSet:
 
     Attributes:
         query_id: Unique identifier for this query/subscription
-        tenant_id: Tenant this read set belongs to
+        zone_id: Zone this read set belongs to
         entries: List of individual read entries
         created_at: When this read set was created (epoch seconds)
         expires_at: When this read set expires (for TTL-based cleanup)
 
     Example:
-        >>> rs = ReadSet(query_id="sub_123", tenant_id="org_acme")
+        >>> rs = ReadSet(query_id="sub_123", zone_id="org_acme")
         >>> rs.record_read("file", "/docs/readme.md", 10)
         >>> rs.record_read("directory", "/docs/", 10)
         >>>
@@ -165,7 +165,7 @@ class ReadSet:
     """
 
     query_id: str
-    tenant_id: str
+    zone_id: str
     entries: list[ReadSetEntry] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     expires_at: float | None = None  # None = no expiry
@@ -229,7 +229,7 @@ class ReadSet:
             True if any entry in this read set is affected by the write
 
         Example:
-            >>> rs = ReadSet(query_id="q1", tenant_id="t1")
+            >>> rs = ReadSet(query_id="q1", zone_id="t1")
             >>> rs.record_read("file", "/inbox/a.txt", 10)
             >>> rs.record_read("directory", "/inbox/", 5)
             >>>
@@ -312,7 +312,7 @@ class ReadSet:
         """Convert to dictionary for serialization."""
         return {
             "query_id": self.query_id,
-            "tenant_id": self.tenant_id,
+            "zone_id": self.zone_id,
             "entries": [e.to_dict() for e in self.entries],
             "created_at": self.created_at,
             "expires_at": self.expires_at,
@@ -324,18 +324,18 @@ class ReadSet:
         entries = [ReadSetEntry.from_dict(e) for e in data.get("entries", [])]
         return cls(
             query_id=data["query_id"],
-            tenant_id=data["tenant_id"],
+            zone_id=data["zone_id"],
             entries=entries,
             created_at=data.get("created_at", time.time()),
             expires_at=data.get("expires_at"),
         )
 
     @classmethod
-    def create(cls, tenant_id: str, ttl_seconds: float | None = None) -> ReadSet:
+    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> ReadSet:
         """Factory method to create a new read set with auto-generated ID.
 
         Args:
-            tenant_id: Tenant this read set belongs to
+            zone_id: Zone this read set belongs to
             ttl_seconds: Optional TTL in seconds (None = no expiry)
 
         Returns:
@@ -344,7 +344,7 @@ class ReadSet:
         now = time.time()
         return cls(
             query_id=str(uuid.uuid4()),
-            tenant_id=tenant_id,
+            zone_id=zone_id,
             created_at=now,
             expires_at=now + ttl_seconds if ttl_seconds else None,
         )
@@ -367,7 +367,7 @@ class ReadSetRegistry:
         >>> registry = ReadSetRegistry()
         >>>
         >>> # Register a subscription's read set
-        >>> rs = ReadSet(query_id="sub_1", tenant_id="t1")
+        >>> rs = ReadSet(query_id="sub_1", zone_id="t1")
         >>> rs.record_read("file", "/inbox/a.txt", 10)
         >>> rs.record_read("directory", "/inbox/", 5)
         >>> registry.register(rs)
@@ -387,7 +387,7 @@ class ReadSetRegistry:
         self._read_sets: dict[str, ReadSet] = {}
         self._reverse_index: dict[str, set[str]] = {}  # path -> query_ids
         self._directory_index: dict[str, set[str]] = {}  # dir_path -> query_ids
-        self._tenant_index: dict[str, set[str]] = {}  # tenant_id -> query_ids
+        self._zone_index: dict[str, set[str]] = {}  # zone_id -> query_ids
         self._default_ttl = default_ttl_seconds
         self._lock = threading.RLock()
 
@@ -436,15 +436,15 @@ class ReadSetRegistry:
                         self._directory_index[dir_path] = set()
                     self._directory_index[dir_path].add(query_id)
 
-            # Tenant index
-            tenant_id = read_set.tenant_id
-            if tenant_id not in self._tenant_index:
-                self._tenant_index[tenant_id] = set()
-            self._tenant_index[tenant_id].add(query_id)
+            # Zone index
+            zone_id = read_set.zone_id
+            if zone_id not in self._zone_index:
+                self._zone_index[zone_id] = set()
+            self._zone_index[zone_id].add(query_id)
 
             logger.debug(
                 f"[ReadSetRegistry] Registered {query_id} with {len(read_set)} entries "
-                f"for tenant {tenant_id}"
+                f"for zone {zone_id}"
             )
 
     def unregister(self, query_id: str) -> bool:
@@ -486,12 +486,12 @@ class ReadSetRegistry:
                     if not self._directory_index[dir_path]:
                         del self._directory_index[dir_path]
 
-        # Remove from tenant index
-        tenant_id = read_set.tenant_id
-        if tenant_id in self._tenant_index:
-            self._tenant_index[tenant_id].discard(query_id)
-            if not self._tenant_index[tenant_id]:
-                del self._tenant_index[tenant_id]
+        # Remove from zone index
+        zone_id = read_set.zone_id
+        if zone_id in self._zone_index:
+            self._zone_index[zone_id].discard(query_id)
+            if not self._zone_index[zone_id]:
+                del self._zone_index[zone_id]
 
         logger.debug(f"[ReadSetRegistry] Unregistered {query_id}")
         return True
@@ -500,7 +500,7 @@ class ReadSetRegistry:
         self,
         write_path: str,
         write_revision: int,
-        tenant_id: str | None = None,
+        zone_id: str | None = None,
     ) -> set[str]:
         """Get all query IDs affected by a write operation.
 
@@ -510,7 +510,7 @@ class ReadSetRegistry:
         Args:
             write_path: Path that was written to
             write_revision: Revision of the write operation
-            tenant_id: Optional tenant filter (only return queries for this tenant)
+            zone_id: Optional zone filter (only return queries for this zone)
 
         Returns:
             Set of query IDs whose read sets overlap with the write
@@ -526,7 +526,7 @@ class ReadSetRegistry:
                     if (
                         read_set
                         and read_set.overlaps_with_write(write_path, write_revision)
-                        and (tenant_id is None or read_set.tenant_id == tenant_id)
+                        and (zone_id is None or read_set.zone_id == zone_id)
                     ):
                         affected.add(query_id)
 
@@ -538,7 +538,7 @@ class ReadSetRegistry:
                 if dir_path in self._directory_index:
                     for query_id in self._directory_index[dir_path]:
                         read_set = self._read_sets.get(query_id)
-                        if read_set and (tenant_id is None or read_set.tenant_id == tenant_id):
+                        if read_set and (zone_id is None or read_set.zone_id == zone_id):
                             affected.add(query_id)
 
                 # Move to parent
@@ -568,17 +568,17 @@ class ReadSetRegistry:
         with self._lock:
             return self._read_sets.get(query_id)
 
-    def get_queries_for_tenant(self, tenant_id: str) -> set[str]:
-        """Get all query IDs for a tenant.
+    def get_queries_for_zone(self, zone_id: str) -> set[str]:
+        """Get all query IDs for a zone.
 
         Args:
-            tenant_id: The tenant ID
+            zone_id: The zone ID
 
         Returns:
-            Set of query IDs registered for this tenant
+            Set of query IDs registered for this zone
         """
         with self._lock:
-            return self._tenant_index.get(tenant_id, set()).copy()
+            return self._zone_index.get(zone_id, set()).copy()
 
     def cleanup_expired(self) -> int:
         """Remove expired read sets.
@@ -606,7 +606,7 @@ class ReadSetRegistry:
             self._read_sets.clear()
             self._reverse_index.clear()
             self._directory_index.clear()
-            self._tenant_index.clear()
+            self._zone_index.clear()
             logger.info("[ReadSetRegistry] Cleared all read sets")
 
     def get_stats(self) -> dict[str, Any]:
@@ -622,7 +622,7 @@ class ReadSetRegistry:
                 "read_sets_count": len(self._read_sets),
                 "paths_indexed": len(self._reverse_index),
                 "directories_indexed": len(self._directory_index),
-                "tenants_count": len(self._tenant_index),
+                "zones_count": len(self._zone_index),
                 "registers": self._stats["registers"],
                 "unregisters": self._stats["unregisters"],
                 "lookups": lookups,

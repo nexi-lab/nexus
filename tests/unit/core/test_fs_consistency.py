@@ -20,10 +20,10 @@ class TestWriteReturnsZookie:
     def test_zookie_in_write_result(self):
         """Write should return a zookie token in the result dict."""
         # Create a zookie as the write method would
-        tenant_id = "test_tenant"
+        zone_id = "test_zone"
         revision = 42
 
-        token = Zookie.encode(tenant_id, revision)
+        token = Zookie.encode(zone_id, revision)
         result = {
             "etag": "abc123",
             "version": 1,
@@ -35,14 +35,14 @@ class TestWriteReturnsZookie:
 
         # Verify zookie can be decoded
         zookie = Zookie.decode(result["zookie"])
-        assert zookie.tenant_id == tenant_id
+        assert zookie.zone_id == zone_id
         assert zookie.revision == revision
 
     def test_zookie_revision_increments(self):
         """Each write should return an incrementing revision."""
         revisions = []
         for i in range(3):
-            token = Zookie.encode("tenant", i + 1)
+            token = Zookie.encode("zone", i + 1)
             zookie = Zookie.decode(token)
             revisions.append(zookie.revision)
 
@@ -67,13 +67,13 @@ class TestZookieConsistencyModes:
 
         assert current_revision < required_revision
 
-    def test_zookie_tenant_validation(self):
-        """Zookie should validate tenant matches."""
-        zookie = Zookie.decode(Zookie.encode("tenant_a", 100))
+    def test_zookie_zone_validation(self):
+        """Zookie should validate zone matches."""
+        zookie = Zookie.decode(Zookie.encode("zone_a", 100))
 
-        # Different tenant should be noted
-        request_tenant = "tenant_b"
-        assert zookie.tenant_id != request_tenant
+        # Different zone should be noted
+        request_zone = "zone_b"
+        assert zookie.zone_id != request_zone
 
 
 class TestRevisionBlocking:
@@ -83,25 +83,25 @@ class TestRevisionBlocking:
         """_wait_for_revision should return immediately if revision is already met."""
 
         # Mock the revision check
-        def mock_get_revision(tenant_id: str) -> int:
+        def mock_get_revision(zone_id: str) -> int:
             return 100  # Already at revision 100
 
         # Check would pass immediately
         min_revision = 50
-        current = mock_get_revision("tenant")
+        current = mock_get_revision("zone")
         assert current >= min_revision
 
     def test_consistency_timeout_error_attributes(self):
         """ConsistencyTimeoutError should contain useful debugging info."""
         error = ConsistencyTimeoutError(
             message="Timeout waiting for revision",
-            tenant_id="tenant_123",
+            zone_id="zone_123",
             requested_revision=100,
             current_revision=95,
             timeout_ms=5000,
         )
 
-        assert error.tenant_id == "tenant_123"
+        assert error.zone_id == "zone_123"
         assert error.requested_revision == 100
         assert error.current_revision == 95
         assert error.timeout_ms == 5000
@@ -112,11 +112,11 @@ class TestZookieHeader:
 
     def test_valid_zookie_header_parsing(self):
         """Valid X-Nexus-Zookie header should be parsed correctly."""
-        token = Zookie.encode("tenant_123", 42)
+        token = Zookie.encode("zone_123", 42)
 
         # Simulate header parsing
         zookie = Zookie.decode(token)
-        assert zookie.tenant_id == "tenant_123"
+        assert zookie.zone_id == "zone_123"
         assert zookie.revision == 42
 
     def test_invalid_zookie_header_raises(self):
@@ -128,7 +128,7 @@ class TestZookieHeader:
 
     def test_zookie_response_header_format(self):
         """Zookie in response header should be properly formatted."""
-        token = Zookie.encode("tenant", 100)
+        token = Zookie.encode("zone", 100)
 
         # Verify it's a string suitable for HTTP header
         assert isinstance(token, str)
@@ -148,7 +148,7 @@ class TestEventWithRevision:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test.txt",
-            tenant_id="tenant",
+            zone_id="zone",
             revision=42,
         )
 
@@ -161,7 +161,7 @@ class TestEventWithRevision:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/test.txt",
-            tenant_id="tenant",
+            zone_id="zone",
             revision=42,
         )
 
@@ -176,7 +176,7 @@ class TestEventWithRevision:
         data = {
             "type": "file_write",
             "path": "/test.txt",
-            "tenant_id": "tenant",
+            "zone_id": "zone",
             "revision": 42,
         }
 
@@ -189,7 +189,7 @@ class TestZookieAgeTracking:
 
     def test_zookie_age_increases_over_time(self):
         """Zookie age should increase as time passes."""
-        token = Zookie.encode("tenant", 1)
+        token = Zookie.encode("zone", 1)
         zookie = Zookie.decode(token)
 
         age1 = zookie.age_ms()
@@ -201,7 +201,7 @@ class TestZookieAgeTracking:
     def test_zookie_created_at_is_accurate(self):
         """Zookie created_at should be close to current time."""
         before = time.time() * 1000
-        token = Zookie.encode("tenant", 1)
+        token = Zookie.encode("zone", 1)
         after = time.time() * 1000
 
         zookie = Zookie.decode(token)

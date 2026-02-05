@@ -1,4 +1,4 @@
-"""End-to-end tests for tenant import functionality.
+"""End-to-end tests for zone import functionality.
 
 Tests the complete import workflow including:
 - Importing from .nexus bundles
@@ -18,10 +18,10 @@ from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.portability import (
     ConflictMode,
-    TenantImportOptions,
-    TenantImportService,
-    export_tenant_bundle,
-    import_tenant_bundle,
+    ZoneImportOptions,
+    ZoneImportService,
+    export_zone_bundle,
+    import_zone_bundle,
 )
 
 
@@ -77,9 +77,9 @@ def exported_bundle(source_nexus_fs, temp_dir):
     """Create an exported bundle for import tests."""
     output_path = temp_dir / "export.nexus"
 
-    export_tenant_bundle(
+    export_zone_bundle(
         nexus_fs=source_nexus_fs,
-        tenant_id="source-tenant",
+        zone_id="source-zone",
         output_path=output_path,
         include_content=True,
         include_permissions=True,
@@ -88,18 +88,18 @@ def exported_bundle(source_nexus_fs, temp_dir):
     return output_path
 
 
-class TestTenantImportService:
-    """Tests for TenantImportService."""
+class TestZoneImportService:
+    """Tests for ZoneImportService."""
 
     def test_import_creates_files(self, exported_bundle, target_nexus_fs):
         """Test that import creates files from bundle."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             conflict_mode=ConflictMode.SKIP,
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         # Verify import succeeded
         assert result.success is True
@@ -115,29 +115,29 @@ class TestTenantImportService:
         content = target_nexus_fs.read("/workspace/readme.md")
         assert b"Test Project" in content
 
-    def test_import_with_target_tenant_remap(self, exported_bundle, target_nexus_fs):
-        """Test import with tenant ID remapping."""
-        options = TenantImportOptions(
+    def test_import_with_target_zone_remap(self, exported_bundle, target_nexus_fs):
+        """Test import with zone ID remapping."""
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
-            target_tenant_id="new-tenant",
+            target_zone_id="new-zone",
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is True
-        assert result.tenant_remapped is True
+        assert result.zone_remapped is True
         assert result.files_created == 4
 
     def test_import_dry_run(self, exported_bundle, target_nexus_fs):
         """Test dry run mode doesn't create files."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             dry_run=True,
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         # Dry run should report files that would be created
         assert result.files_created == 4
@@ -155,13 +155,13 @@ class TestConflictResolution:
         # Create an existing file
         target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             conflict_mode=ConflictMode.SKIP,
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is True
         assert result.files_skipped == 1
@@ -176,13 +176,13 @@ class TestConflictResolution:
         # Create an existing file
         target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             conflict_mode=ConflictMode.OVERWRITE,
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is True
         assert result.files_updated == 1
@@ -197,13 +197,13 @@ class TestConflictResolution:
         # Create an existing file
         target_nexus_fs.write("/workspace/readme.md", b"Existing content")
 
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             conflict_mode=ConflictMode.FAIL,
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         # Import should fail
         assert result.success is False
@@ -215,13 +215,13 @@ class TestPathRemapping:
 
     def test_path_remap(self, exported_bundle, target_nexus_fs):
         """Test path prefix remapping during import."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             path_prefix_remap={"/workspace/": "/projects/"},
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is True
         assert result.paths_remapped >= 3  # workspace files remapped
@@ -235,7 +235,7 @@ class TestPathRemapping:
 
     def test_multiple_path_remaps(self, exported_bundle, target_nexus_fs):
         """Test multiple path prefix remappings."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=exported_bundle,
             path_prefix_remap={
                 "/workspace/": "/projects/",
@@ -243,8 +243,8 @@ class TestPathRemapping:
             },
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is True
 
@@ -254,11 +254,11 @@ class TestPathRemapping:
 
 
 class TestImportConvenienceFunction:
-    """Tests for import_tenant_bundle convenience function."""
+    """Tests for import_zone_bundle convenience function."""
 
-    def test_import_tenant_bundle(self, exported_bundle, target_nexus_fs):
+    def test_import_zone_bundle(self, exported_bundle, target_nexus_fs):
         """Test convenience function imports bundle."""
-        result = import_tenant_bundle(
+        result = import_zone_bundle(
             nexus_fs=target_nexus_fs,
             bundle_path=exported_bundle,
         )
@@ -274,7 +274,7 @@ class TestImportConvenienceFunction:
         def on_progress(current: int, total: int, phase: str) -> None:
             progress_calls.append((current, total, phase))
 
-        result = import_tenant_bundle(
+        result = import_zone_bundle(
             nexus_fs=target_nexus_fs,
             bundle_path=exported_bundle,
             progress_callback=on_progress,
@@ -290,19 +290,19 @@ class TestImportValidation:
 
     def test_import_nonexistent_bundle(self, target_nexus_fs, temp_dir):
         """Test import fails gracefully for nonexistent bundle."""
-        options = TenantImportOptions(
+        options = ZoneImportOptions(
             bundle_path=temp_dir / "nonexistent.nexus",
         )
 
-        service = TenantImportService(target_nexus_fs)
-        result = service.import_tenant(options)
+        service = ZoneImportService(target_nexus_fs)
+        result = service.import_zone(options)
 
         assert result.success is False
         assert any(e.error_type == "file_not_found" for e in result.errors)
 
     def test_import_statistics(self, exported_bundle, target_nexus_fs):
         """Test import result statistics are accurate."""
-        result = import_tenant_bundle(
+        result = import_zone_bundle(
             nexus_fs=target_nexus_fs,
             bundle_path=exported_bundle,
         )
@@ -322,15 +322,15 @@ class TestRoundTrip:
         bundle_path = temp_dir / "roundtrip.nexus"
 
         # Export from source
-        export_manifest = export_tenant_bundle(
+        export_manifest = export_zone_bundle(
             nexus_fs=source_nexus_fs,
-            tenant_id="source",
+            zone_id="source",
             output_path=bundle_path,
             include_content=True,
         )
 
         # Import to target
-        import_result = import_tenant_bundle(
+        import_result = import_zone_bundle(
             nexus_fs=target_nexus_fs,
             bundle_path=bundle_path,
         )

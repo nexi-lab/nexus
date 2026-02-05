@@ -160,7 +160,7 @@ pub mod prelude {
     // #[cfg(feature = "consensus")]
     // pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
 
-    #[cfg(feature = "grpc")]
+    #[cfg(all(feature = "grpc", has_protos))]
     pub use crate::transport::{
         ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftServer, RaftServerState,
         ServerConfig, TransportError as GrpcError,

@@ -776,7 +776,8 @@ class NexusFSEventsMixin:
                             logger.warning(f"Startup sync failed (continuing anyway): {e}")
 
                     logger.info(f"Starting distributed cache invalidation for tenant: {zone_id}")
-                    async for event in self._event_bus.subscribe(zone_id):  # type: ignore[union-attr]
+                    assert self._event_bus is not None  # guaranteed by _has_distributed_events()
+                    async for event in self._event_bus.subscribe(zone_id):
                         self._on_distributed_event(event)
                 except asyncio.CancelledError:
                     logger.info("Distributed cache invalidation stopped")

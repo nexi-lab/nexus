@@ -23,6 +23,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 #[tokio::main]
+#[allow(unreachable_code)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -93,8 +94,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         eprintln!("Error: This binary requires the 'grpc' feature and proto files.");
         eprintln!("Build with: cargo build --features grpc --bin nexus-raft-server");
-        std::process::exit(1);
+        return Err("grpc feature or proto files not available".into());
     }
 
+    #[cfg(all(feature = "grpc", has_protos))]
     Ok(())
 }

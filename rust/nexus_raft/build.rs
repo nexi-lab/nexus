@@ -14,9 +14,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // Proto files are in project root's proto/ directory (SSOT)
         let proto_root = "../../proto";
+        let core_proto = format!("{}/nexus/core/metadata.proto", proto_root);
+
+        // Skip proto compilation if proto files don't exist yet (Issue #1159)
+        if !std::path::Path::new(&core_proto).exists() {
+            println!("cargo:warning=Proto files not found at {}, skipping gRPC codegen. See Issue #1159.", proto_root);
+            return Ok(());
+        }
 
         // First compile core/metadata.proto separately
-        let core_protos = &[format!("{}/nexus/core/metadata.proto", proto_root)];
+        let core_protos = &[core_proto];
         let includes = &[proto_root];
 
         tonic_build::configure()

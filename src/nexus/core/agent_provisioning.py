@@ -47,7 +47,7 @@ def create_impersonated_user_agent(
     Examples:
         >>> result = create_impersonated_user_agent(nx, "alice", alice_context)
         >>> print(result.get('config_path'))
-        /zone/default/user:alice/agent/ImpersonatedUser/config.yaml
+        /zone:default/user:alice/agent/ImpersonatedUser/config.yaml
     """
     agent_metadata = metadata or get_default_agent_metadata()
     agent_id = f"{user_id},ImpersonatedUser"

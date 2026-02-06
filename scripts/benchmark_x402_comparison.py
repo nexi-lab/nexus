@@ -10,14 +10,26 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from nexus.pay.x402 import (
     X402Client,
-    usdc_to_micro as usdc_to_micro_orig,
+)
+from nexus.pay.x402 import (
     micro_to_usdc as micro_to_usdc_orig,
+)
+from nexus.pay.x402 import (
+    usdc_to_micro as usdc_to_micro_orig,
+)
+from nexus.pay.x402 import (
     validate_wallet_address as validate_orig,
 )
 from nexus.pay.x402_optimized import (
     X402ClientOptimized,
-    usdc_to_micro as usdc_to_micro_opt,
+)
+from nexus.pay.x402_optimized import (
     micro_to_usdc as micro_to_usdc_opt,
+)
+from nexus.pay.x402_optimized import (
+    usdc_to_micro as usdc_to_micro_opt,
+)
+from nexus.pay.x402_optimized import (
     validate_wallet_address as validate_opt,
 )
 
@@ -106,7 +118,9 @@ def main():
 
     orig_ops, _ = benchmark(orig_repeated, 10000)
     opt_ops, _ = benchmark(opt_repeated, 10000)
-    print(f"{'usdc_to_micro (10x same)':<30} {orig_ops:>12,.0f}/s {opt_ops:>12,.0f}/s {opt_ops/orig_ops:>9.2f}x")
+    print(
+        f"{'usdc_to_micro (10x same)':<30} {orig_ops:>12,.0f}/s {opt_ops:>12,.0f}/s {opt_ops / orig_ops:>9.2f}x"
+    )
 
     print("\n" + "=" * 70)
     print("Summary: Optimized version provides ~2-10x speedup depending on operation")

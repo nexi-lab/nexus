@@ -323,7 +323,7 @@ def run_e2e_tests():
         webhook_data = webhook_r.json()
         assert webhook_data["status"] == "credited"
 
-        print(f"  ✅ PASSED - Full flow completed")
+        print("  ✅ PASSED - Full flow completed")
         print(f"     Step 1: Topup requested for {topup_data['amount']} USDC")
         print(f"     Step 2: Payment confirmed, tx_id={webhook_data['tx_id']}")
         passed += 1

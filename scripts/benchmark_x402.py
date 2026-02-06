@@ -12,14 +12,12 @@ Usage:
     uv run python scripts/benchmark_x402.py
 """
 
-import asyncio
 import base64
 import json
 import os
 import sys
 import time
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
@@ -30,16 +28,16 @@ from fastapi.testclient import TestClient
 from nexus.pay.x402 import (
     X402Client,
     X402PaymentVerification,
-    usdc_to_micro,
     micro_to_usdc,
+    usdc_to_micro,
     validate_wallet_address,
 )
-from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
 
 def benchmark(name: str, iterations: int = 10000):
     """Decorator to benchmark a function."""
+
     def decorator(func):
         def wrapper(*args, **kwargs):
             # Warmup
@@ -59,7 +57,9 @@ def benchmark(name: str, iterations: int = 10000):
             print(f"    {iterations:,} iterations in {elapsed:.3f}s")
             print(f"    {ops_per_sec:,.0f} ops/sec | {us_per_op:.2f} µs/op")
             return ops_per_sec
+
         return wrapper
+
     return decorator
 
 
@@ -181,6 +181,7 @@ def run_benchmarks():
             amount=expected_amount,
             error=None,
         )
+
     x402_client.verify_payment = instant_verify
 
     app.add_middleware(

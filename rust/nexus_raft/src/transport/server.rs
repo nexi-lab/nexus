@@ -11,7 +11,7 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, GetClusterInfoRequest, GetClusterInfoResponse,
     GetMetadataResult, InstallSnapshotResponse, ListMetadataResult, LockInfoResult, LockResult,
-    ProposeRequest, ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQuery,
+    ProposeRequest, ProposeResponse, QueryRequest, QueryResponse, RaftCommand,
     RaftQueryResponse, RaftResponse, SnapshotChunk, TransferLeaderRequest, TransferLeaderResponse,
     VoteRequest, VoteResponse,
 };
@@ -665,9 +665,10 @@ impl RaftClientService for RaftClientServiceImpl {
             },
         };
 
+        let error = query_result.error.clone();
         Ok(Response::new(QueryResponse {
             success: query_result.success,
-            error: query_result.error,
+            error,
             leader_address: None,
             result: Some(query_result),
         }))

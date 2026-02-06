@@ -138,7 +138,7 @@ pip install python-dotenv
 ### Python API
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Method 1: Use environment variable (recommended)
 # export NEXUS_DATABASE_URL="postgresql://nexus:nexus@localhost/nexus"
@@ -194,7 +194,7 @@ alembic history
 ### Auto-run Migrations (Python API)
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Auto-run migrations on startup
 store = SQLAlchemyMetadataStore(
@@ -362,7 +362,7 @@ store = SQLAlchemyMetadataStore()  # Reads from NEXUS_DATABASE_URL
 ### Check Connection Pool Status
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 store = SQLAlchemyMetadataStore()
 
@@ -503,7 +503,7 @@ docker exec -i nexus-postgres psql -U nexus nexus < nexus_backup.sql
 ### 1. Export Data from SQLite
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Connect to SQLite
 sqlite_store = SQLAlchemyMetadataStore(db_path="nexus-data/metadata.db")

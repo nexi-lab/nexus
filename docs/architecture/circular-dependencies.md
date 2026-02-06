@@ -52,7 +52,7 @@ Analyzed with: `grep -r "TYPE_CHECKING" src/nexus --include="*.py" -l`
 8. `src/nexus/core/filesystem.py`
 
 **Storage Module:**
-9. `src/nexus/storage/metadata_store.py`
+9. `src/nexus/storage/sqlalchemy_metadata_store.py`
 10. `src/nexus/storage/models.py`
 11. `src/nexus/storage/content_cache.py`
 
@@ -82,7 +82,7 @@ Analyzed with: `grep -r "TYPE_CHECKING" src/nexus --include="*.py" -l`
 ```python
 # File: nexus_fs.py
 if TYPE_CHECKING:
-    from nexus.storage.metadata_store import MetadataStore
+    from nexus.core._metadata_generated import MetadataStore
 
 class NexusFS:
     def __init__(self, metadata: 'MetadataStore'):

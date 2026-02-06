@@ -33,8 +33,8 @@ from nexus.portability.models import (
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.core._metadata_generated import MetadataStore
     from nexus.core.nexus_fs import NexusFS
-    from nexus.storage.metadata_store import MetadataStore
 
 logger = logging.getLogger(__name__)
 

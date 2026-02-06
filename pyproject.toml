@@ -517,7 +517,7 @@ module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]
 disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
-module = "nexus.storage.metadata_store"
+module = "nexus.storage.sqlalchemy_metadata_store"
 # alembic dynamic imports
 disable_error_code = ["attr-defined"]
 

@@ -20,7 +20,7 @@ Nexus uses SQLAlchemy for database operations, which provides database-agnostic 
 ### Configuration
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Default: SQLite
 store = SQLAlchemyMetadataStore("./nexus.db")
@@ -51,7 +51,7 @@ sqlalchemy.url = sqlite:///nexus.db
 ### Configuration
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # PostgreSQL
 store = SQLAlchemyMetadataStore(

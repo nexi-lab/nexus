@@ -184,7 +184,7 @@ for cid, paths in duplicates.items():
 For advanced use cases, you can access the metadata store directly:
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Open the metadata database
 store = SQLAlchemyMetadataStore("./nexus-data/metadata.db")

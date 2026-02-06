@@ -796,7 +796,7 @@ metadata_store = MetadataStore(db_url="postgresql://user:pass@host/db")
 - More flexible and standard (SQLAlchemy format)
 
 **Files Affected:**
-- [nexus/storage/metadata_store.py:80](nexus/src/nexus/storage/metadata_store.py#L80)
+- [nexus/storage/sqlalchemy_metadata_store.py:80](nexus/src/nexus/storage/sqlalchemy_metadata_store.py#L80)
 
 ---
 

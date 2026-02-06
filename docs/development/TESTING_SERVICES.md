@@ -192,7 +192,7 @@ Use `isolated_db` fixture from `tests/unit/conftest.py`:
 
 ```python
 import pytest
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 class TestServiceWithDB:
     @pytest.mark.asyncio
@@ -226,7 +226,7 @@ import pytest
 from pathlib import Path
 
 from nexus.services.service_name import ServiceName
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.cas_store import CASStore
 
 

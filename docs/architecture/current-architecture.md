@@ -138,7 +138,7 @@ Storage Layer
 ```
 
 **Files:**
-- `src/nexus/storage/metadata_store.py` (114KB, 2,800 lines) ⚠️
+- `src/nexus/storage/sqlalchemy_metadata_store.py` (114KB, 2,800 lines) ⚠️
 - `src/nexus/storage/models.py` (128KB, 3,200 lines) ⚠️
 - `src/nexus/backends/local.py`
 - `src/nexus/backends/s3.py`

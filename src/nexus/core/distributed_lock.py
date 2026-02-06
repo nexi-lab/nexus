@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 logger = logging.getLogger(__name__)
 

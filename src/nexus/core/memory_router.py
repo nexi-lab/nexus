@@ -176,7 +176,8 @@ class MemoryViewRouter:
         event_after: datetime | None = None,  # #1028: Filter by event date >= value
         event_before: datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
-        valid_at_point: datetime | None = None,  # #1183: Point-in-time query
+        valid_at_point: datetime | None = None,  # #1183: Point-in-time query (as_of_event)
+        system_at_point: datetime | None = None,  # #1185: System-time query (as_of_system)
         limit: int | None = None,
     ) -> list[MemoryModel]:
         """Query memories by relationships and metadata.
@@ -197,7 +198,8 @@ class MemoryViewRouter:
             event_after: Filter by event earliest_date >= value. #1028
             event_before: Filter by event latest_date <= value. #1028
             include_invalid: Include invalidated memories (default False). #1183
-            valid_at_point: Point-in-time query - return facts valid at this time. #1183
+            valid_at_point: Point-in-time query - return facts valid at this time (as_of_event). #1183
+            system_at_point: System-time query - return what system knew at this time (as_of_system). #1185
             limit: Maximum number of results.
 
         Returns:
@@ -249,13 +251,10 @@ class MemoryViewRouter:
         if event_before:
             stmt = stmt.where(MemoryModel.latest_date <= event_before)
 
-        # #1183: Bi-temporal filtering
-        if not include_invalid:
-            # Exclude invalidated memories (invalid_at IS NULL = still valid)
-            stmt = stmt.where(MemoryModel.invalid_at.is_(None))
-
+        # #1183/#1185: Bi-temporal filtering
         if valid_at_point is not None:
-            # Point-in-time query: valid_at <= point AND (invalid_at IS NULL OR invalid_at > point)
+            # Point-in-time query (as_of_event): valid_at <= point AND (invalid_at IS NULL OR invalid_at > point)
+            # This OVERRIDES include_invalid - we want facts valid at that specific time
             stmt = stmt.where(
                 or_(
                     MemoryModel.valid_at.is_(None),  # NULL = use created_at
@@ -268,6 +267,14 @@ class MemoryViewRouter:
                     MemoryModel.invalid_at > valid_at_point,
                 )
             )
+        elif not include_invalid:
+            # Exclude invalidated memories (invalid_at IS NULL = still valid)
+            stmt = stmt.where(MemoryModel.invalid_at.is_(None))
+
+        # #1185: System-time filtering (as_of_system)
+        if system_at_point is not None:
+            # Return only memories created before the given system time
+            stmt = stmt.where(MemoryModel.created_at <= system_at_point)
 
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())

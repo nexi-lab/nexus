@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from nexus.server.api.v2.models import (
     MemoryBatchStoreRequest,
     MemoryBatchStoreResponse,
+    MemoryQueryRequest,
     MemorySearchRequest,
     MemoryStoreRequest,
     MemoryStoreResponse,
@@ -375,6 +376,73 @@ async def search_memories(
     except Exception as e:
         logger.error(f"Memory search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory search error: {e}") from e
+
+
+@router.post("/query", response_model=dict[str, Any])
+async def query_memories(
+    request: MemoryQueryRequest,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Query memories with point-in-time temporal filters (#1185).
+
+    Supports bi-temporal queries:
+    - as_of_event: "What was TRUE at time X?" - Filters by valid_at/invalid_at
+    - as_of_system: "What did SYSTEM KNOW at time X?" - Filters by created_at,
+      returns historical content for memories updated after that time
+
+    Use cases:
+    - Compliance audits: Reconstruct system state at a specific timestamp
+    - Agent debugging: Understand what facts were available during a decision
+    - Historical queries: Answer "What did we believe at time X?"
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+
+        results = app_state.nexus_fs.memory.query(
+            scope=request.scope,
+            memory_type=request.memory_type,
+            namespace=request.namespace,
+            namespace_prefix=request.namespace_prefix,
+            state=request.state,
+            after=request.after,
+            before=request.before,
+            during=request.during,
+            entity_type=request.entity_type,
+            person=request.person,
+            event_after=request.event_after,
+            event_before=request.event_before,
+            include_invalid=request.include_invalid,
+            as_of_event=request.as_of_event,
+            as_of_system=request.as_of_system,
+            limit=request.limit,
+            context=context,
+        )
+
+        # Build response with filter metadata
+        response = {
+            "results": results,
+            "total": len(results),
+            "filters": {
+                "scope": request.scope,
+                "memory_type": request.memory_type,
+                "namespace": request.namespace,
+                "namespace_prefix": request.namespace_prefix,
+                "state": request.state,
+                "as_of_event": request.as_of_event,
+                "as_of_system": request.as_of_system,
+                "include_invalid": request.include_invalid,
+            },
+        }
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Memory query error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory query error: {e}") from e
 
 
 @router.post("/batch", response_model=MemoryBatchStoreResponse, status_code=status.HTTP_201_CREATED)

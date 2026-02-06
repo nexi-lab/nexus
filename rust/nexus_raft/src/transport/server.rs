@@ -2,6 +2,18 @@
 //!
 //! Provides a tonic-based server to handle incoming Raft messages from other nodes.
 
+// Workaround: these lints will be resolved when the transport layer is refactored.
+// #[expect] ensures Rust warns us to remove these when the lints no longer fire.
+#![expect(
+    clippy::result_large_err,
+    reason = "TransportError contains tonic types; will Box large variants in transport refactor"
+)]
+#![expect(
+    clippy::if_same_then_else,
+    reason = "vote logic uses separate branches for readability; will extract shared helper"
+)]
+#![expect(clippy::manual_ok_err, reason = "will clean up in transport refactor")]
+
 use super::proto::nexus::raft::{
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_command::Command as ProtoCommandVariant,

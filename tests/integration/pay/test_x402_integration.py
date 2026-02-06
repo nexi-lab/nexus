@@ -21,7 +21,6 @@ from nexus.pay.x402 import X402Client, X402PaymentVerification
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -157,6 +156,7 @@ class TestProtectedEndpoints:
 
     def test_premium_endpoint_with_valid_payment(self, client, x402_client):
         """Premium endpoint should work with verified payment."""
+
         # Mock the verify_payment to return valid
         async def mock_verify(payment_header, expected_amount):
             return X402PaymentVerification(
@@ -170,11 +170,13 @@ class TestProtectedEndpoints:
 
         # Create payment header
         payment = base64.b64encode(
-            json.dumps({
-                "tx_hash": "0x" + "ab" * 32,
-                "amount": "1000000",
-                "network": "eip155:8453",
-            }).encode()
+            json.dumps(
+                {
+                    "tx_hash": "0x" + "ab" * 32,
+                    "amount": "1000000",
+                    "network": "eip155:8453",
+                }
+            ).encode()
         ).decode()
 
         response = client.get(
@@ -189,6 +191,7 @@ class TestProtectedEndpoints:
 
     def test_premium_endpoint_with_invalid_payment(self, client, x402_client):
         """Premium endpoint should return 402 with invalid payment."""
+
         # Mock the verify_payment to return invalid
         async def mock_verify(payment_header, expected_amount):
             return X402PaymentVerification(
@@ -385,6 +388,7 @@ class TestErrorHandling:
 
     def test_malformed_payment_header(self, client, x402_client):
         """Malformed X-Payment header should be rejected."""
+
         async def mock_verify(payment_header, expected_amount):
             return X402PaymentVerification(
                 valid=False,

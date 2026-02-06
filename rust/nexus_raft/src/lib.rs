@@ -5,11 +5,11 @@
 //! 1. **Embedded Storage** ([`storage`]): General-purpose embedded KV database
 //!    based on sled, reusable for caching, queues, and more.
 //!
-//! 2. **Raft Consensus** (coming soon): Distributed consensus using tikv/raft-rs
+//! 2. **Raft Consensus** ([`raft`]): Distributed consensus using tikv/raft-rs
 //!    for STRONG_HA zones.
 //!
-//! 3. **Witness Node** (coming soon): Lightweight vote-only node for cost-effective
-//!    high availability.
+//! 3. **Witness Node** ([`raft::WitnessStateMachine`]): Lightweight vote-only node
+//!    for cost-effective high availability.
 //!
 //! # Architecture
 //!
@@ -27,7 +27,7 @@
 //! │  └─────────────────────────────────────────────────────────┘   │
 //! │                                                                 │
 //! │  ┌─────────────────────────────────────────────────────────┐   │
-//! │  │  raft module (coming in Commit 3)                       │   │
+//! │  │  raft module                                             │   │
 //! │  │                                                         │   │
 //! │  │  RaftNode ──────┬──► Leader Election                    │   │
 //! │  │                 ├──► Log Replication                    │   │
@@ -35,7 +35,7 @@
 //! │  └─────────────────────────────────────────────────────────┘   │
 //! │                                                                 │
 //! │  ┌─────────────────────────────────────────────────────────┐   │
-//! │  │  transport module (coming in Commit 2)                  │   │
+//! │  │  transport module                                        │   │
 //! │  │                                                         │   │
 //! │  │  gRPC (tonic) ──┬──► Raft Messages                      │   │
 //! │  │                 └──► Webhook Streaming (future)         │   │
@@ -73,6 +73,7 @@
 //! # Modules
 //!
 //! - [`storage`]: Embedded key-value storage (sled-based)
+//! - [`raft`]: Raft consensus state machine and node
 //!
 //! # Feature Flags
 //!
@@ -84,9 +85,12 @@
 
 pub mod storage;
 
-// Raft consensus module - requires source files from the raft/ directory
-// Uncomment when raft/ module source files are committed (Issue #1159)
-// pub mod raft;
+/// Raft consensus module for STRONG_HA zones.
+///
+/// Provides distributed consensus using tikv/raft-rs for linearizable
+/// metadata and lock operations. Requires `consensus` feature for
+/// full RaftNode support (leader election, log replication).
+pub mod raft;
 
 /// gRPC transport layer (requires `grpc` feature).
 ///
@@ -111,12 +115,10 @@ pub mod transport;
 /// [dependencies]
 /// nexus_raft = { version = "0.1", features = ["python"] }
 /// ```
-// PyO3 bindings - requires pyo3_bindings.rs source file
-// Uncomment when pyo3_bindings.rs is committed (Issue #1159)
-// #[cfg(feature = "python")]
-// mod pyo3_bindings;
-// #[cfg(feature = "python")]
-// pub use pyo3_bindings::*;
+#[cfg(feature = "python")]
+mod pyo3_bindings;
+#[cfg(feature = "python")]
+pub use pyo3_bindings::*;
 
 // Stub module when grpc feature is disabled
 #[cfg(not(feature = "grpc"))]
@@ -139,22 +141,17 @@ pub mod transport {
     }
 }
 
-// Future modules (placeholders for documentation)
-// pub mod raft; // Coming in Commit 3
-
 /// Re-export commonly used types for convenience.
 pub mod prelude {
     pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError, TreeBatch};
 
-    // Raft state machine types - uncomment when raft module is committed (Issue #1159)
-    // pub use crate::raft::{
-    //     Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
-    //     StateMachine, WitnessStateMachine,
-    // };
+    pub use crate::raft::{
+        Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,
+        StateMachine, WitnessStateMachine,
+    };
 
-    // Raft consensus types (requires consensus feature)
-    // #[cfg(feature = "consensus")]
-    // pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
+    #[cfg(feature = "consensus")]
+    pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
 
     #[cfg(all(feature = "grpc", has_protos))]
     pub use crate::transport::{

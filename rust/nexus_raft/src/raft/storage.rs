@@ -279,7 +279,7 @@ impl Storage for RaftStorage {
 
         if idx < first {
             // Check if it matches snapshot
-            if let Some(snap) = self.snapshot(0, 0).ok() {
+            if let Ok(snap) = self.snapshot(0, 0) {
                 if snap.get_metadata().index == idx {
                     return Ok(snap.get_metadata().term);
                 }

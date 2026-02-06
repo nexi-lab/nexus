@@ -87,9 +87,7 @@ def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
     """
     content = proto_path.read_text(encoding="utf-8")
 
-    match = re.search(
-        r"message\s+FileMetadata\s*\{(.*?)\}", content, re.DOTALL
-    )
+    match = re.search(r"message\s+FileMetadata\s*\{(.*?)\}", content, re.DOTALL)
     if not match:
         print("ERROR: Could not find 'message FileMetadata' in proto file", file=sys.stderr)
         sys.exit(1)
@@ -97,9 +95,7 @@ def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
     body = match.group(1)
     fields = []
 
-    field_re = re.compile(
-        r"^\s*(\w+)\s+(\w+)\s*=\s*(\d+)\s*;(?:\s*//\s*(.*))?$", re.MULTILINE
-    )
+    field_re = re.compile(r"^\s*(\w+)\s+(\w+)\s*=\s*(\d+)\s*;(?:\s*//\s*(.*))?$", re.MULTILINE)
 
     lines = body.split("\n")
     prev_comment = ""
@@ -113,12 +109,14 @@ def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
         if m:
             inline_comment = m.group(4) or ""
             comment = inline_comment or prev_comment
-            fields.append({
-                "type": m.group(1),
-                "name": m.group(2),
-                "number": m.group(3),
-                "comment": comment,
-            })
+            fields.append(
+                {
+                    "type": m.group(1),
+                    "name": m.group(2),
+                    "number": m.group(3),
+                    "comment": comment,
+                }
+            )
             prev_comment = ""
         elif stripped:
             prev_comment = ""
@@ -410,9 +408,7 @@ def generate_compact_py(fields: list[dict[str, str]]) -> str:
 
     # Build to_file_metadata keyword args
     # Required string fields use _resolve_required() for type safety
-    required_string_fields = {
-        n for n in COMPACT_FIELD_NAMES if n not in NULLABLE_STRING_FIELDS
-    }
+    required_string_fields = {n for n in COMPACT_FIELD_NAMES if n not in NULLABLE_STRING_FIELDS}
     fm_args = []
     for f in fields:
         name = f["name"]

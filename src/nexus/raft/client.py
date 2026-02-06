@@ -29,7 +29,7 @@ from nexus.core import metadata_pb2
 from nexus.raft import commands_pb2, transport_pb2, transport_pb2_grpc
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.core._metadata_generated import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +438,7 @@ class RaftClient:
 
     def _proto_to_file_metadata(self, proto: metadata_pb2.FileMetadata) -> FileMetadata:
         """Convert proto FileMetadata to dataclass."""
-        from nexus.core.metadata import FileMetadata as FM
+        from nexus.core._metadata_generated import FileMetadata as FM
 
         created_at = None
         modified_at = None

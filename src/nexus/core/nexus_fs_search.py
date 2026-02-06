@@ -165,7 +165,7 @@ class GlobStrategy(StrEnum):
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import PaginatedResult
+    from nexus.core._metadata_generated import PaginatedResult
     from nexus.core.permissions import OperationContext
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
@@ -685,7 +685,7 @@ class NexusFSSearchMixin:
                     )
 
                     # Use Tiger bitmap to check which directories have accessible descendants
-                    from nexus.core.metadata import FileMetadata
+                    from nexus.core._metadata_generated import FileMetadata
 
                     all_files = []
                     _perm_start = _time.time()
@@ -1267,7 +1267,7 @@ class NexusFSSearchMixin:
         Returns:
             PaginatedResult with items, next_cursor, and has_more
         """
-        from nexus.core.metadata import PaginatedResult
+        from nexus.core._metadata_generated import PaginatedResult
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context

@@ -512,7 +512,7 @@ module = "nexus.llm.message"
 disable_error_code = ["no-any-return", "misc"]
 
 [[tool.mypy.overrides]]
-module = "nexus.core.metadata"
+module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]
 # CompactFileMetadata.to_file_metadata() returns Any
 disable_error_code = ["no-any-return"]
 

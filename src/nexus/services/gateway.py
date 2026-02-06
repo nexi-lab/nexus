@@ -29,7 +29,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.core._metadata_generated import FileMetadata
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter

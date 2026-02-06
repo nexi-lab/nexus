@@ -61,7 +61,7 @@ class GlobStrategy(StrEnum):
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.metadata import PaginatedResult
+    from nexus.core._metadata_generated import PaginatedResult
     from nexus.core.mount_router import MountRouter
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager

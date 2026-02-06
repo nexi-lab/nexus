@@ -1,6 +1,6 @@
 """x402 protocol integration for Nexus Pay.
 
-This module provides the X402Client for handling x402 HTTP-native payments:
+This module provides the X402Client for handling x402 HTTP-native payments (RFC 8053):
 - Outgoing payments (pay external x402-enabled services)
 - Incoming payments (accept x402 for Nexus API endpoints)
 - Credit topups (x402 → TigerBeetle via webhooks)

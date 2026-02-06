@@ -2,7 +2,6 @@
 
 from nexus.storage import views
 from nexus.storage.file_cache import FileContentCache, get_file_cache
-from nexus.storage.metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.models import (
     ContentChunkModel,
     ExternalUserServiceModel,
@@ -12,6 +11,7 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
     ZoneModel,
 )
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 __all__ = [
     "FilePathModel",

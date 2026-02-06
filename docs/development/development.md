@@ -120,7 +120,7 @@ nexus/
 | `src/nexus/__init__.py` | Main entry point, exports `connect()` |
 | `src/nexus/core/embedded.py` | Embedded mode implementation |
 | `src/nexus/storage/models.py` | SQLAlchemy models |
-| `src/nexus/storage/metadata_store.py` | Metadata store implementation |
+| `src/nexus/storage/sqlalchemy_metadata_store.py` | Metadata store implementation |
 | `pyproject.toml` | Dependencies, build config, tool settings |
 | `alembic.ini` | Database migration settings |
 

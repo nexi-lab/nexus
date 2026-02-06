@@ -480,7 +480,7 @@ class TestVersionServiceHelpers:
 #     @pytest.fixture
 #     def metadata_store(self, isolated_db):
 #         """Create real metadata store."""
-#         from nexus.storage.metadata_store import SQLAlchemyMetadataStore
+#         from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 #
 #         store = SQLAlchemyMetadataStore(db_path=str(isolated_db))
 #         yield store

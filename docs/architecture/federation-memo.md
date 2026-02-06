@@ -257,6 +257,6 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 | Raft proto | `rust/nexus_raft/proto/raft.proto` | gRPC transport definitions |
 | Proto build | `rust/nexus_raft/build.rs` | tonic-build, expects `../../proto/` |
 | RaftMetadataStore | `src/nexus/storage/raft_metadata_store.py` | Python Raft client (local+remote) |
-| SQLAlchemyMetadataStore | `src/nexus/storage/metadata_store.py` | Current production store |
+| SQLAlchemyMetadataStore | `src/nexus/storage/sqlalchemy_metadata_store.py` | Current production store |
 | Docker Compose | `dockerfiles/docker-compose.cross-platform-test.yml` | 3-node cluster template |
 | gRPC stubs | `src/nexus/raft/*_pb2*.py` | Generated from proto (committed) |

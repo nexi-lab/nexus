@@ -9,15 +9,13 @@ These tests verify:
 
 from __future__ import annotations
 
-from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.server.api.v2.routers.x402 import router
-
 
 # =============================================================================
 # Fixtures

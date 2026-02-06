@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 from nexus.pay.x402 import X402PaymentVerification
 from nexus.server.middleware.x402 import X402PaymentMiddleware
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -262,8 +261,8 @@ class TestPaymentState:
         import base64
         import json
 
-        from starlette.routing import Route
         from starlette.applications import Starlette
+        from starlette.routing import Route
 
         mock_x402_client.verify_payment = AsyncMock(
             return_value=X402PaymentVerification(

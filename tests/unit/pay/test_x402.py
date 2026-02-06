@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from starlette.responses import Response
 
 # =============================================================================
 # Fixtures
@@ -114,7 +113,7 @@ class TestX402DataModels:
             network="eip155:8453",
             amount=Decimal("1.00"),
             currency="USDC",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
 
         assert receipt.tx_hash.startswith("0x")
@@ -500,13 +499,15 @@ class TestOutgoingPayments:
             }
         )
 
-        with patch("httpx.AsyncClient.post", return_value=mock_response):
-            with pytest.raises(X402Error, match="Insufficient"):
-                await client.pay(
-                    to_address="0x9876543210987654321098765432109876543210",
-                    amount=Decimal("1000000.00"),
-                    currency="USDC",
-                )
+        with (
+            patch("httpx.AsyncClient.post", return_value=mock_response),
+            pytest.raises(X402Error, match="Insufficient"),
+        ):
+            await client.pay(
+                to_address="0x9876543210987654321098765432109876543210",
+                amount=Decimal("1000000.00"),
+                currency="USDC",
+            )
 
 
 # =============================================================================
@@ -579,8 +580,9 @@ class TestPayForRequest:
         mock_success_response.content = b'{"data": "value"}'
         mock_success_response.headers = {}
 
-        with patch("httpx.AsyncClient.request") as mock_request, patch(
-            "httpx.AsyncClient.post", return_value=mock_payment_response
+        with (
+            patch("httpx.AsyncClient.request") as mock_request,
+            patch("httpx.AsyncClient.post", return_value=mock_payment_response),
         ):
             mock_request.side_effect = [mock_402_response, mock_success_response]
 
@@ -651,9 +653,7 @@ class TestWebhookProcessing:
             mock_credits_service.topup.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_process_topup_webhook_missing_agent_id(
-        self, x402_config, mock_credits_service
-    ):
+    async def test_process_topup_webhook_missing_agent_id(self, x402_config, mock_credits_service):
         """process_topup_webhook should reject webhook without agent_id."""
         from nexus.pay.x402 import X402Client, X402Error
 
@@ -671,12 +671,14 @@ class TestWebhookProcessing:
             "signature": "valid-signature",
         }
 
-        with patch.object(client, "_verify_webhook_signature", return_value=True):
-            with pytest.raises(X402Error, match="agent_id"):
-                await client.process_topup_webhook(
-                    webhook_payload=bad_payload,
-                    credits_service=mock_credits_service,
-                )
+        with (
+            patch.object(client, "_verify_webhook_signature", return_value=True),
+            pytest.raises(X402Error, match="agent_id"),
+        ):
+            await client.process_topup_webhook(
+                webhook_payload=bad_payload,
+                credits_service=mock_credits_service,
+            )
 
     @pytest.mark.asyncio
     async def test_process_topup_webhook_provisions_wallet_if_needed(
@@ -811,13 +813,15 @@ class TestEdgeCases:
             wallet_address=x402_config["wallet_address"],
         )
 
-        with patch("httpx.AsyncClient.post", side_effect=ConnectionError("Network error")):
-            with pytest.raises(X402Error, match="network|connection|error"):
-                await client.pay(
-                    to_address="0x9876543210987654321098765432109876543210",
-                    amount=Decimal("1.00"),
-                    currency="USDC",
-                )
+        with (
+            patch("httpx.AsyncClient.post", side_effect=ConnectionError("Network error")),
+            pytest.raises(X402Error, match="network|connection|error"),
+        ):
+            await client.pay(
+                to_address="0x9876543210987654321098765432109876543210",
+                amount=Decimal("1.00"),
+                currency="USDC",
+            )
 
     def test_payment_required_with_zero_amount(self, x402_config):
         """payment_required_response should handle zero amount."""
@@ -864,13 +868,13 @@ class TestEdgeCases:
 
         with patch.object(client, "_verify_webhook_signature", return_value=True):
             # First call
-            tx_id_1 = await client.process_topup_webhook(
+            await client.process_topup_webhook(
                 webhook_payload=sample_webhook_payload,
                 credits_service=mock_credits_service,
             )
 
             # Second call with same payload (duplicate)
-            tx_id_2 = await client.process_topup_webhook(
+            await client.process_topup_webhook(
                 webhook_payload=sample_webhook_payload,
                 credits_service=mock_credits_service,
             )

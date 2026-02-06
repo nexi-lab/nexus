@@ -71,18 +71,31 @@ repos:
       #   files: ^(pyproject\.toml|src/nexus/__init__\.py)$
 
       # Fast Rust format check (< 2s)
-      - id: rust-fmt
-        name: Rust Format Check
+      - id: rust-fmt-fast
+        name: Rust Format Check (nexus_fast)
         entry: bash -c 'cd rust/nexus_fast && cargo fmt --check'
         language: system
         pass_filenames: false
         files: ^rust/nexus_fast/.*\.rs$
 
-      # DISABLED: Rust clippy (requires compilation, slow) - runs in CI instead
-      # Uncomment to re-enable:
-      # - id: rust-clippy
-      #   name: Rust Clippy
-      #   entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
-      #   language: system
-      #   pass_filenames: false
-      #   files: ^rust/nexus_fast/.*\.rs$
+      - id: rust-fmt-raft
+        name: Rust Format Check (nexus_raft)
+        entry: bash -c 'cd rust/nexus_raft && cargo fmt --check'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_raft/.*\.rs$
+
+      # Rust clippy (requires compilation, ~10-30s per crate)
+      - id: rust-clippy-fast
+        name: Rust Clippy (nexus_fast)
+        entry: bash -c 'cd rust/nexus_fast && cargo clippy -- -D warnings'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_fast/.*\.rs$
+
+      - id: rust-clippy-raft
+        name: Rust Clippy (nexus_raft)
+        entry: bash -c 'cd rust/nexus_raft && cargo clippy --all-features -- -D warnings'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_raft/.*\.rs$

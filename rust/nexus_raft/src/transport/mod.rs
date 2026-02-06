@@ -88,6 +88,10 @@ pub mod proto {
         pub mod core {
             include!(concat!(env!("OUT_DIR"), "/nexus.core.rs"));
         }
+        #[expect(
+            clippy::large_enum_variant,
+            reason = "generated proto code; will configure prost boxing when variants are stabilized"
+        )]
         pub mod raft {
             include!(concat!(env!("OUT_DIR"), "/nexus.raft.rs"));
         }
@@ -153,7 +157,10 @@ impl NodeAddress {
     }
 
     /// Parse from "id@host:port" format.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "TransportError contains tonic types; will Box in transport refactor"
+    )]
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.splitn(2, '@').collect();
         if parts.len() != 2 {

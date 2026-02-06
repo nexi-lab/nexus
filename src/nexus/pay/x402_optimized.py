@@ -399,7 +399,8 @@ class X402ClientOptimized:
 
         metadata = webhook_payload.get("metadata", {})
         agent_id = metadata.get("agent_id")
-        tenant_id = metadata.get("tenant_id", "default")
+        # Support both zone_id and tenant_id for backwards compatibility
+        zone_id = metadata.get("zone_id") or metadata.get("tenant_id", "default")
 
         if not agent_id:
             raise X402Error("Missing agent_id in webhook metadata")
@@ -407,14 +408,14 @@ class X402ClientOptimized:
         tx_hash = webhook_payload.get("tx_hash", "")
         amount = micro_to_usdc(int(webhook_payload.get("amount", 0)))
 
-        await credits_service.provision_wallet(agent_id=agent_id, tenant_id=tenant_id)
+        await credits_service.provision_wallet(agent_id=agent_id, zone_id=zone_id)
 
         return await credits_service.topup(
             agent_id=agent_id,
             amount=amount,
             source="x402",
             external_tx_id=tx_hash,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
     def _verify_webhook_signature(self, payload: dict[str, Any]) -> bool:

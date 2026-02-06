@@ -597,7 +597,8 @@ class X402Client:
         # 2. Extract payment details
         metadata = webhook_payload.get("metadata", {})
         agent_id = metadata.get("agent_id")
-        tenant_id = metadata.get("tenant_id", "default")
+        # Support both zone_id and tenant_id for backwards compatibility
+        zone_id = metadata.get("zone_id") or metadata.get("tenant_id", "default")
 
         if not agent_id:
             raise X402Error("Missing agent_id in webhook metadata")
@@ -609,7 +610,7 @@ class X402Client:
         # 3. Provision wallet if needed (idempotent)
         await credits_service.provision_wallet(
             agent_id=agent_id,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         # 4. Credit agent in TigerBeetle
@@ -619,7 +620,7 @@ class X402Client:
             amount=amount,
             source="x402",
             external_tx_id=tx_hash,
-            tenant_id=tenant_id,
+            zone_id=zone_id,
         )
 
         return tx_id

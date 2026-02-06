@@ -1455,7 +1455,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
                 # Build base conditions
                 conditions: builtins.list[Any] = [FilePathModel.deleted_at.is_(None)]
 
-                # Tenant filtering (Issue #904 PREWHERE optimization)
+                # Zone filtering (Issue #904 PREWHERE optimization)
                 # Include matching zone, 'default' zone, AND legacy NULL files
                 if zone_id is not None:
                     from sqlalchemy import or_
@@ -2874,7 +2874,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         prefix = path + "/"
 
         with self.SessionLocal() as session:
-            # Note: Path already contains zone info (e.g., /zone/multifi.ai/...)
+            # Note: Path already contains zone info (e.g., /zone:multifi.ai/...)
             # so we can match by path pattern. Also match zone_id if provided,
             # but fall back to path-only matching for entries with mismatched zone_id.
 

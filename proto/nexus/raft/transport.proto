@@ -1,0 +1,235 @@
+// Raft transport layer - gRPC services and messages.
+//
+// This proto file defines the gRPC services and messages for:
+// 1. RaftService - Internal node-to-node Raft consensus
+// 2. RaftClientService - Client-facing API for Raft operations
+// 3. EventStreamService - Streaming events (webhook pattern)
+//
+// The transport layer is general-purpose and can be reused for:
+// - Raft consensus (primary use case)
+// - Webhook streaming (Server Streaming pattern)
+// - Real-time event push
+
+syntax = "proto3";
+
+package nexus.raft;
+
+import "nexus/raft/commands.proto";
+
+// === Services ===
+
+// RaftService handles Raft consensus protocol messages.
+//
+// This service is used for communication between Raft nodes (leaders, followers, witnesses).
+service RaftService {
+  // RequestVote is called by candidates to gather votes during leader election.
+  rpc RequestVote(VoteRequest) returns (VoteResponse);
+
+  // AppendEntries is called by leaders to replicate log entries and send heartbeats.
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+  // InstallSnapshot is called by leaders to send a snapshot to lagging followers.
+  rpc InstallSnapshot(stream SnapshotChunk) returns (InstallSnapshotResponse);
+
+  // TransferLeader requests the current leader to transfer leadership.
+  rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
+}
+
+// EventStreamService provides streaming events (reusable for webhooks).
+//
+// This service demonstrates how gRPC Server Streaming can replace
+// HTTP-based webhooks for real-time event delivery.
+service EventStreamService {
+  // Subscribe to a stream of events.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+// RaftClientService provides the client-facing API for Raft operations.
+//
+// This service is used by clients (Python, CLI, etc.) to interact with the Raft cluster.
+// It differs from RaftService which is for internal node-to-node communication.
+//
+// Architecture:
+// - Propose: Write operations -> goes through Raft log -> applied to state machine
+// - Query: Read operations -> served directly from state machine (any node)
+//
+// Leader handling:
+// - Propose: If not leader, returns leader address for client to redirect
+// - Query: Can be served by any node (eventual consistency) or redirected to leader (strong consistency)
+service RaftClientService {
+  // Propose submits a command to be replicated through Raft.
+  // Only the leader can accept proposals; followers return a redirect.
+  rpc Propose(ProposeRequest) returns (ProposeResponse);
+
+  // Query reads from the local state machine without going through Raft.
+  // Can be served by any node. Use read_from_leader=true for linearizable reads.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // GetClusterInfo returns information about the Raft cluster.
+  rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse);
+}
+
+// === Client Messages ===
+
+// ProposeRequest submits a command to be replicated through Raft.
+message ProposeRequest {
+  RaftCommand command = 1;
+  string request_id = 2;
+}
+
+// ProposeResponse is the response to a Propose RPC.
+message ProposeResponse {
+  bool success = 1;
+  optional string error = 2;
+  optional string leader_address = 3;
+  optional RaftResponse result = 4;
+  uint64 applied_index = 5;
+}
+
+// QueryRequest reads from the local state machine.
+message QueryRequest {
+  RaftQuery query = 1;
+  bool read_from_leader = 2;
+}
+
+// QueryResponse is the response to a Query RPC.
+message QueryResponse {
+  bool success = 1;
+  optional string error = 2;
+  optional string leader_address = 3;
+  optional RaftQueryResponse result = 4;
+}
+
+// GetClusterInfoRequest requests cluster information.
+message GetClusterInfoRequest {}
+
+// GetClusterInfoResponse returns cluster information.
+message GetClusterInfoResponse {
+  uint64 node_id = 1;
+  uint64 leader_id = 2;
+  uint64 term = 3;
+  ClusterConfig config = 4;
+  bool is_leader = 5;
+  optional string leader_address = 6;
+}
+
+// === Raft Protocol Messages ===
+
+// VoteRequest is sent by candidates to request votes from other nodes.
+message VoteRequest {
+  uint64 term = 1;
+  uint64 candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+// VoteResponse is the response to a VoteRequest.
+message VoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+// AppendEntriesRequest is sent by leaders to replicate log entries.
+message AppendEntriesRequest {
+  uint64 term = 1;
+  uint64 leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  uint64 leader_commit = 6;
+}
+
+// AppendEntriesResponse is the response to an AppendEntriesRequest.
+message AppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+  uint64 match_index = 3;
+}
+
+// LogEntry represents a single entry in the Raft log.
+message LogEntry {
+  uint64 term = 1;
+  uint64 index = 2;
+  EntryType entry_type = 3;
+  bytes data = 4;
+}
+
+// SnapshotChunk is a chunk of snapshot data (for streaming).
+message SnapshotChunk {
+  SnapshotMetadata metadata = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+  bool done = 4;
+}
+
+// SnapshotMetadata describes a snapshot.
+message SnapshotMetadata {
+  uint64 index = 1;
+  uint64 term = 2;
+  uint64 size = 3;
+  ClusterConfig config = 4;
+}
+
+// InstallSnapshotResponse is the response to a snapshot installation.
+message InstallSnapshotResponse {
+  uint64 term = 1;
+  bool success = 2;
+}
+
+// ClusterConfig describes the cluster membership.
+message ClusterConfig {
+  repeated NodeInfo voters = 1;
+  repeated NodeInfo learners = 2;
+  repeated NodeInfo witnesses = 3;
+}
+
+// NodeInfo describes a node in the cluster.
+message NodeInfo {
+  uint64 id = 1;
+  string address = 2;
+  NodeRole role = 3;
+}
+
+// TransferLeaderRequest requests leadership transfer.
+message TransferLeaderRequest {
+  uint64 target_id = 1;
+}
+
+// TransferLeaderResponse is the response to a leadership transfer request.
+message TransferLeaderResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// === Enums ===
+
+// EntryType indicates the type of log entry.
+enum EntryType {
+  ENTRY_NORMAL = 0;
+  ENTRY_CONF_CHANGE = 1;
+}
+
+// NodeRole indicates the role of a node.
+enum NodeRole {
+  ROLE_VOTER = 0;
+  ROLE_LEARNER = 1;
+  ROLE_WITNESS = 2;
+}
+
+// === Event Streaming Messages (Webhook Pattern) ===
+
+// SubscribeRequest initiates an event stream subscription.
+message SubscribeRequest {
+  repeated string topics = 1;
+  string filter = 2;
+  uint64 from_sequence = 3;
+}
+
+// Event represents a streaming event.
+message Event {
+  uint64 sequence = 1;
+  string topic = 2;
+  string event_type = 3;
+  bytes payload = 4;
+  int64 timestamp_ms = 5;
+}

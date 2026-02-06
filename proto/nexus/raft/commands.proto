@@ -1,0 +1,156 @@
+// Raft state machine commands and queries.
+//
+// These messages define the operations that can be proposed to the Raft
+// cluster (writes) or queried from the state machine (reads).
+
+syntax = "proto3";
+
+package nexus.raft;
+
+import "nexus/core/metadata.proto";
+
+// === Write Commands (go through Raft log) ===
+
+// RaftCommand is the top-level command proposed to the Raft log.
+// Each variant represents a different state machine operation.
+message RaftCommand {
+  oneof command {
+    PutMetadata put_metadata = 1;
+    DeleteMetadata delete_metadata = 2;
+    AcquireLock acquire_lock = 3;
+    ReleaseLock release_lock = 4;
+    UpdateRouting update_routing = 5;
+    ExtendLock extend_lock = 6;
+  }
+}
+
+// PutMetadata stores or updates file metadata in the state machine.
+message PutMetadata {
+  nexus.core.FileMetadata metadata = 1;
+}
+
+// DeleteMetadata removes file metadata from the state machine.
+message DeleteMetadata {
+  string path = 1;
+  string zone_id = 2;
+}
+
+// AcquireLock attempts to acquire a distributed lock.
+message AcquireLock {
+  string lock_id = 1;
+  string holder_id = 2;
+  int64 ttl_ms = 3;
+  string zone_id = 4;
+}
+
+// ReleaseLock releases a previously acquired lock.
+message ReleaseLock {
+  string lock_id = 1;
+  string holder_id = 2;
+  string zone_id = 3;
+}
+
+// ExtendLock extends the TTL of an existing lock (heartbeat).
+message ExtendLock {
+  string lock_id = 1;
+  string holder_id = 2;
+  int64 ttl_ms = 3;
+  string zone_id = 4;
+}
+
+// UpdateRouting updates the routing table for a path prefix.
+message UpdateRouting {
+  string path_prefix = 1;
+  string zone_id = 2;
+  repeated string peer_addresses = 3;
+}
+
+// === Command Response ===
+
+// RaftResponse is returned after a command is applied to the state machine.
+message RaftResponse {
+  bool success = 1;
+  optional string error = 2;
+  oneof result {
+    LockResult lock_result = 3;
+    MetadataResult metadata_result = 4;
+  }
+}
+
+// LockResult contains the result of a lock operation.
+message LockResult {
+  bool acquired = 1;
+  optional string current_holder = 2;
+  int64 expires_at_ms = 3;
+}
+
+// MetadataResult contains the result of a metadata operation.
+message MetadataResult {
+  optional nexus.core.FileMetadata metadata = 1;
+}
+
+// === Read Queries (served from local state machine) ===
+
+// RaftQuery is the top-level query for reading from the state machine.
+message RaftQuery {
+  oneof query {
+    GetMetadata get_metadata = 1;
+    ListMetadata list_metadata = 2;
+    GetLockInfo get_lock_info = 3;
+  }
+}
+
+// GetMetadata queries metadata for a single file.
+message GetMetadata {
+  string path = 1;
+  string zone_id = 2;
+}
+
+// ListMetadata queries metadata for files matching a prefix.
+message ListMetadata {
+  string prefix = 1;
+  string zone_id = 2;
+  bool recursive = 3;
+  int32 limit = 4;
+  string cursor = 5;
+}
+
+// GetLockInfo queries the current state of a lock.
+message GetLockInfo {
+  string lock_id = 1;
+  string zone_id = 2;
+}
+
+// === Query Response ===
+
+// RaftQueryResponse is returned for read queries.
+message RaftQueryResponse {
+  bool success = 1;
+  optional string error = 2;
+  oneof result {
+    GetMetadataResult get_metadata_result = 3;
+    ListMetadataResult list_metadata_result = 4;
+    LockInfoResult lock_info_result = 5;
+  }
+}
+
+// GetMetadataResult contains the result of a GetMetadata query.
+message GetMetadataResult {
+  optional nexus.core.FileMetadata metadata = 1;
+}
+
+// ListMetadataResult contains the result of a ListMetadata query.
+message ListMetadataResult {
+  repeated nexus.core.FileMetadata items = 1;
+  optional string next_cursor = 2;
+  bool has_more = 3;
+}
+
+// LockInfoResult contains the result of a GetLockInfo query.
+message LockInfoResult {
+  bool exists = 1;
+  optional string holder_id = 2;
+  int64 expires_at_ms = 3;
+  int32 max_holders = 4;
+  int32 current_holders = 5;
+}

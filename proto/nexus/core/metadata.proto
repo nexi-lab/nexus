@@ -1,0 +1,55 @@
+// FileMetadata - shared metadata message used across Nexus.
+//
+// This is the canonical protobuf definition for file metadata,
+// used by both the Python gRPC layer and the Rust Raft state machine.
+//
+// SSOT: This file is the single source of truth for FileMetadata serialization.
+
+syntax = "proto3";
+
+package nexus.core;
+
+// FileMetadata represents the metadata for a single file or directory in Nexus.
+//
+// All string fields use empty string as the default/absent value.
+// Timestamps are stored as ISO 8601 strings for cross-language compatibility.
+message FileMetadata {
+  // Virtual path in the Nexus filesystem (e.g., "/docs/README.md").
+  string path = 1;
+
+  // Storage backend name (e.g., "local", "s3", "gcs").
+  string backend_name = 2;
+
+  // Physical path on the backend storage.
+  string physical_path = 3;
+
+  // File size in bytes.
+  int64 size = 4;
+
+  // Content hash / ETag for CAS deduplication.
+  string etag = 5;
+
+  // MIME type of the file (e.g., "text/plain").
+  string mime_type = 6;
+
+  // Creation timestamp (ISO 8601 string).
+  string created_at = 7;
+
+  // Last modification timestamp (ISO 8601 string).
+  string modified_at = 8;
+
+  // Metadata version number (starts at 1).
+  int32 version = 9;
+
+  // Zone ID for multi-zone deployments.
+  string zone_id = 10;
+
+  // User or agent ID who created/modified this version.
+  string created_by = 11;
+
+  // Whether this path represents a directory.
+  bool is_directory = 12;
+
+  // Owner ID for O(1) permission checks (posix_uid).
+  string owner_id = 13;
+}

@@ -586,6 +586,8 @@ class Memory:
         zone_id: str | None = None,
         scope: str | None = None,
         memory_type: str | None = None,
+        namespace: str | None = None,  # v0.8.0: Exact namespace match
+        namespace_prefix: str | None = None,  # v0.8.0: Prefix match for hierarchical queries
         state: str | None = "active",  # #368: Default to active memories only
         after: str | datetime | None = None,  # #1023: Temporal filter
         before: str | datetime | None = None,  # #1023: Temporal filter
@@ -595,7 +597,15 @@ class Memory:
         event_after: str | datetime | None = None,  # #1028: Filter by event date >= value
         event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
-        as_of: str | datetime | None = None,  # #1183: Point-in-time query
+        as_of: str
+        | datetime
+        | None = None,  # #1183: Point-in-time query (deprecated, use as_of_event)
+        as_of_event: str
+        | datetime
+        | None = None,  # #1185: What was TRUE at time X? (valid_at/invalid_at)
+        as_of_system: str
+        | datetime
+        | None = None,  # #1185: What did SYSTEM KNOW at time X? (created_at)
         limit: int | None = None,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -607,6 +617,8 @@ class Memory:
             zone_id: Filter by zone ID (defaults to current zone).
             scope: Filter by scope.
             memory_type: Filter by memory type.
+            namespace: Filter by exact namespace match. v0.8.0
+            namespace_prefix: Filter by namespace prefix (hierarchical). v0.8.0
             state: Filter by state ('inactive', 'active', 'all'). Defaults to 'active'. #368
             after: Return memories created after this time (ISO-8601 or datetime). #1023
             before: Return memories created before this time (ISO-8601 or datetime). #1023
@@ -616,7 +628,9 @@ class Memory:
             event_after: Filter by event earliest_date >= value (ISO-8601 or datetime). #1028
             event_before: Filter by event latest_date <= value (ISO-8601 or datetime). #1028
             include_invalid: Include invalidated memories. Default False (current facts only). #1183
-            as_of: Point-in-time query - return facts valid at this timestamp. #1183
+            as_of: Point-in-time query (deprecated, use as_of_event). #1183
+            as_of_event: What was TRUE at time X? Filters by valid_at/invalid_at. #1185
+            as_of_system: What did SYSTEM KNOW at time X? Filters by created_at, returns historical content. #1185
             limit: Maximum number of results.
             context: Optional operation context to override identity (v0.7.1+).
 
@@ -669,10 +683,21 @@ class Memory:
             else:
                 event_before_dt = event_before
 
-        # #1183: Parse as_of for point-in-time queries
+        # #1185: Parse as_of_event and as_of_system for bi-temporal queries
+        # Fall back to as_of for backward compatibility
+        effective_as_of_event = as_of_event or as_of
         valid_at_point = (
-            (parse_datetime(as_of) if isinstance(as_of, str) else as_of)
-            if as_of is not None
+            (
+                parse_datetime(effective_as_of_event)
+                if isinstance(effective_as_of_event, str)
+                else effective_as_of_event
+            )
+            if effective_as_of_event is not None
+            else None
+        )
+        system_at_point = (
+            (parse_datetime(as_of_system) if isinstance(as_of_system, str) else as_of_system)
+            if as_of_system is not None
             else None
         )
 
@@ -683,6 +708,8 @@ class Memory:
             agent_id=agent_id,
             scope=scope,
             memory_type=memory_type,
+            namespace=namespace,  # v0.8.0: Namespace filtering
+            namespace_prefix=namespace_prefix,  # v0.8.0: Namespace prefix filtering
             state=state,
             after=after_dt,
             before=before_dt,
@@ -691,7 +718,8 @@ class Memory:
             event_after=event_after_dt,  # #1028: Event date filtering
             event_before=event_before_dt,  # #1028: Event date filtering
             include_invalid=include_invalid,  # #1183: Include invalidated memories
-            valid_at_point=valid_at_point,  # #1183: Point-in-time query
+            valid_at_point=valid_at_point,  # #1185: Point-in-time query (as_of_event)
+            system_at_point=system_at_point,  # #1185: System-time query (as_of_system)
             limit=limit,
         )
 
@@ -704,15 +732,59 @@ class Memory:
             if self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
                 accessible_memories.append(memory)
 
-        # Batch read all content hashes (optimization: single operation instead of N queries)
-        content_hashes = [memory.content_hash for memory in accessible_memories]
+        # #1185: For as_of_system queries, resolve historical content hashes
+        # If a memory was updated after the system_at_point, get the version that was current at that time
+        historical_content_hashes: dict[str, str] = {}  # memory_id -> historical content_hash
+        if system_at_point is not None:
+            from sqlalchemy import select
+
+            from nexus.storage.models import VersionHistoryModel
+
+            # Normalize system_at_point for comparison (SQLite stores without timezone)
+            system_at_naive = (
+                system_at_point.replace(tzinfo=None) if system_at_point.tzinfo else system_at_point
+            )
+
+            for memory in accessible_memories:
+                # Check if memory was updated after system_at_point
+                updated_at_naive = (
+                    memory.updated_at.replace(tzinfo=None)
+                    if memory.updated_at and memory.updated_at.tzinfo
+                    else memory.updated_at
+                )
+
+                if updated_at_naive and updated_at_naive > system_at_naive:
+                    # Memory was updated after system_at_point, need to find historical version
+                    stmt = (
+                        select(VersionHistoryModel)
+                        .where(
+                            VersionHistoryModel.resource_type == "memory",
+                            VersionHistoryModel.resource_id == memory.memory_id,
+                            VersionHistoryModel.created_at <= system_at_point,
+                        )
+                        .order_by(VersionHistoryModel.version_number.desc())
+                        .limit(1)
+                    )
+                    version = self.session.execute(stmt).scalar_one_or_none()
+                    if version:
+                        historical_content_hashes[memory.memory_id] = version.content_hash
+
+        # Batch read all content hashes (including historical ones)
+        content_hashes = [
+            historical_content_hashes.get(memory.memory_id, memory.content_hash)
+            for memory in accessible_memories
+        ]
         content_map = self.backend.batch_read_content(content_hashes)
 
         # Build results with enriched content
         results = []
         for memory in accessible_memories:
+            # #1185: Get content hash (use historical version if as_of_system was specified)
+            effective_content_hash = historical_content_hashes.get(
+                memory.memory_id, memory.content_hash
+            )
             # Get content from batch read result
-            content_bytes = content_map.get(memory.content_hash)
+            content_bytes = content_map.get(effective_content_hash)
 
             if content_bytes is not None:
                 try:
@@ -734,7 +806,7 @@ class Memory:
                 {
                     "memory_id": memory.memory_id,
                     "content": content,
-                    "content_hash": memory.content_hash,
+                    "content_hash": effective_content_hash,  # #1185: Use historical hash for as_of_system
                     "zone_id": memory.zone_id,
                     "user_id": memory.user_id,
                     "agent_id": memory.agent_id,

@@ -1138,9 +1138,7 @@ class TestLockIsolation:
             a_end_index = acquired_order.index("A_end")
 
             # B should have acquired before A released
-            assert b_index < a_end_index, (
-                f"Zone B was blocked by Zone A! Order: {acquired_order}"
-            )
+            assert b_index < a_end_index, f"Zone B was blocked by Zone A! Order: {acquired_order}"
 
             nx.close()
 

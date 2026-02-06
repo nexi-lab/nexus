@@ -86,16 +86,16 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
 
-      - name: Verify Rust extensions
-        run: |
-          python -c "import nexus_fast; print('nexus_fast OK')"
-          python -c "from nexus._nexus_raft import LocalRaft; print('nexus_raft OK')"
-        if: matrix.os != 'windows-latest'
-        shell: bash
-
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev,test]"
+
+      - name: Verify Rust extensions
+        run: |
+          uv run python -c "import nexus_fast; print('nexus_fast OK')"
+          uv run python -c "from nexus._nexus_raft import LocalRaft; print('nexus_raft OK')"
+        if: matrix.os != 'windows-latest'
+        shell: bash
 
       - name: Run tests with coverage
         run: |

@@ -448,12 +448,14 @@ impl<S: StateMachine + 'static> RaftNode<S> {
 mod tests {
     use super::*;
     use crate::raft::state_machine::WitnessStateMachine;
+    use crate::storage::SledStore;
     use tempfile::TempDir;
 
     async fn create_test_node() -> (Arc<RaftNode<WitnessStateMachine>>, TempDir) {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let state_machine = WitnessStateMachine::new();
+        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
             id: 1,
@@ -478,7 +480,8 @@ mod tests {
     async fn test_witness_node() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let state_machine = WitnessStateMachine::new();
+        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig::witness(1, vec![2, 3]);
         let node = RaftNode::new(config, storage, state_machine).unwrap();

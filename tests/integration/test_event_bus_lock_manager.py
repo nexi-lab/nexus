@@ -1354,9 +1354,7 @@ class TestLockCornerCases:
         await asyncio.sleep(0.5)
 
         # Extend should fail (lock expired)
-        extended = await lock_manager.extend(
-            lock_id, "test-zone", "/extend-expired.txt", ttl=30.0
-        )
+        extended = await lock_manager.extend(lock_id, "test-zone", "/extend-expired.txt", ttl=30.0)
         assert extended is False
 
     @pytest.mark.asyncio

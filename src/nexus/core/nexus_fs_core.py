@@ -20,9 +20,9 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.core.zookie import Zookie

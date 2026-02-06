@@ -1,6 +1,6 @@
-"""Tests for CompactFileMetadata and string interning pools.
+"""Tests for CompactFileMetadata and string interning.
 
-Issue #911: Implement CompactFileMetadata with __slots__ for 3x memory reduction.
+Issue #911: Implement CompactFileMetadata with string interning for 3x memory reduction.
 """
 
 import sys
@@ -9,74 +9,71 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.core.compact_metadata import (
+from nexus.core._compact_generated import (
+    _STRING_POOL,
     CompactFileMetadata,
-    StringInternPool,
-    clear_intern_pools,
-    get_intern_pools,
-    get_pool_stats,
+    _intern,
+    _resolve,
+    clear_intern_pool,
+    get_intern_pool_stats,
 )
-from nexus.core.metadata import FileMetadata
+from nexus.core._metadata_generated import FileMetadata
 
 
 @pytest.fixture(autouse=True)
-def reset_intern_pools():
-    """Reset interning pools before each test."""
-    clear_intern_pools()
+def reset_intern_pool():
+    """Reset interning pool before each test."""
+    clear_intern_pool()
     yield
-    clear_intern_pools()
+    clear_intern_pool()
 
 
-class TestStringInternPool:
-    """Tests for StringInternPool."""
+class TestStringInterning:
+    """Tests for _intern() / _resolve() functions."""
 
     def test_intern_returns_same_id_for_same_string(self):
-        pool = StringInternPool()
-        id1 = pool.intern("hello")
-        id2 = pool.intern("hello")
+        id1 = _intern("hello")
+        id2 = _intern("hello")
         assert id1 == id2
 
     def test_intern_returns_different_ids_for_different_strings(self):
-        pool = StringInternPool()
-        id1 = pool.intern("hello")
-        id2 = pool.intern("world")
+        id1 = _intern("hello")
+        id2 = _intern("world")
         assert id1 != id2
 
-    def test_get_returns_original_string(self):
-        pool = StringInternPool()
+    def test_resolve_returns_original_string(self):
         original = "/path/to/file.txt"
-        str_id = pool.intern(original)
-        retrieved = pool.get(str_id)
+        str_id = _intern(original)
+        retrieved = _resolve(str_id)
         assert retrieved == original
 
-    def test_get_or_none_returns_none_for_negative_id(self):
-        pool = StringInternPool()
-        pool.intern("test")
-        assert pool.get_or_none(-1) is None
+    def test_resolve_returns_none_for_negative_id(self):
+        _intern("test")
+        assert _resolve(-1) is None
 
-    def test_get_or_none_returns_none_for_invalid_id(self):
-        pool = StringInternPool()
-        pool.intern("test")
-        assert pool.get_or_none(999) is None
+    def test_resolve_returns_none_for_invalid_id(self):
+        _intern("test")
+        assert _resolve(999) is None
 
-    def test_len_returns_count_of_interned_strings(self):
-        pool = StringInternPool()
-        assert len(pool) == 0
-        pool.intern("a")
-        pool.intern("b")
-        pool.intern("a")  # Duplicate
-        assert len(pool) == 2
+    def test_intern_none_returns_negative_one(self):
+        assert _intern(None) == -1
+
+    def test_pool_deduplicates_strings(self):
+        assert len(_STRING_POOL) == 0
+        _intern("a")
+        _intern("b")
+        _intern("a")  # Duplicate
+        assert len(_STRING_POOL) == 2
 
     def test_thread_safety(self):
         """Test that interning is thread-safe."""
-        pool = StringInternPool()
         results = {}
         errors = []
 
         def intern_strings(thread_id: int):
             try:
                 for i in range(100):
-                    str_id = pool.intern(f"string_{i}")
+                    str_id = _intern(f"string_{i}")
                     results[(thread_id, i)] = str_id
             except Exception as e:
                 errors.append(e)
@@ -118,7 +115,7 @@ class TestCompactFileMetadata:
 
         assert compact.size == 1024
         assert compact.version == 1
-        assert compact.path == "/test/file.txt"
+        assert _resolve(compact.path_id) == "/test/file.txt"
         assert not compact.is_directory
 
     def test_to_file_metadata_roundtrip(self):
@@ -151,9 +148,9 @@ class TestCompactFileMetadata:
         assert restored.zone_id == original.zone_id
         assert restored.created_by == original.created_by
         assert restored.is_directory == original.is_directory
-        # Timestamps are converted to/from Unix, so compare as integers
-        assert int(restored.created_at.timestamp()) == int(original.created_at.timestamp())
-        assert int(restored.modified_at.timestamp()) == int(original.modified_at.timestamp())
+        # Timestamps use ISO 8601 roundtrip, so should be exact
+        assert restored.created_at == original.created_at
+        assert restored.modified_at == original.modified_at
 
     def test_handles_none_values(self):
         """Test conversion with None optional fields."""
@@ -183,7 +180,7 @@ class TestCompactFileMetadata:
         assert restored.created_by is None
 
     def test_is_directory_flag(self):
-        """Test is_directory flag packing/unpacking."""
+        """Test is_directory flag roundtrip."""
         dir_metadata = FileMetadata(
             path="/test/dir",
             backend_name="local",
@@ -200,9 +197,7 @@ class TestCompactFileMetadata:
 
     def test_string_interning_deduplication(self):
         """Test that same strings are deduplicated across instances."""
-        pools = get_intern_pools()
-        path_pool = pools["path"]
-        initial_count = len(path_pool)
+        initial_count = len(_STRING_POOL)
 
         # Create multiple metadata objects with same path
         for i in range(100):
@@ -214,8 +209,9 @@ class TestCompactFileMetadata:
             )
             CompactFileMetadata.from_file_metadata(metadata)
 
-        # Path should only be interned once
-        assert len(path_pool) == initial_count + 2  # path + physical_path
+        # Strings should only be interned once each
+        # "local" (backend) + "/shared/path/file.txt" (path) + "/var/data/file.txt" (physical_path)
+        assert len(_STRING_POOL) == initial_count + 3
 
     def test_file_metadata_to_compact_method(self):
         """Test FileMetadata.to_compact() convenience method."""
@@ -245,13 +241,28 @@ class TestCompactFileMetadata:
         assert restored.path == metadata.path
         assert restored.size == metadata.size
 
+    def test_owner_id_roundtrip(self):
+        """Test owner_id field roundtrip."""
+        metadata = FileMetadata(
+            path="/test/file.txt",
+            backend_name="local",
+            physical_path="/var/data/file.txt",
+            size=1024,
+            owner_id="owner-abc-123",
+        )
+
+        compact = CompactFileMetadata.from_file_metadata(metadata)
+        restored = compact.to_file_metadata()
+
+        assert restored.owner_id == "owner-abc-123"
+
 
 class TestPoolStats:
     """Tests for pool statistics."""
 
-    def test_get_pool_stats(self):
+    def test_get_intern_pool_stats(self):
         """Test getting pool statistics."""
-        # Create some metadata to populate pools
+        # Create some metadata to populate the pool
         metadata = FileMetadata(
             path="/test/file.txt",
             backend_name="local",
@@ -264,21 +275,12 @@ class TestPoolStats:
         )
         CompactFileMetadata.from_file_metadata(metadata)
 
-        stats = get_pool_stats()
+        stats = get_intern_pool_stats()
 
-        assert "path" in stats
-        assert "backend" in stats
-        assert "hash" in stats
-        assert "mime" in stats
-        assert "zone" in stats
-        assert "user" in stats
-
-        # Each pool should have count and memory_estimate
-        for _name, pool_stats in stats.items():
-            assert "count" in pool_stats
-            assert "memory_estimate" in pool_stats
-            assert pool_stats["count"] >= 0
-            assert pool_stats["memory_estimate"] >= 0
+        assert "count" in stats
+        assert "memory_estimate" in stats
+        assert stats["count"] > 0
+        assert stats["memory_estimate"] > 0
 
 
 class TestMemoryEfficiency:
@@ -286,7 +288,6 @@ class TestMemoryEfficiency:
 
     def test_compact_uses_less_memory(self):
         """Test that CompactFileMetadata uses less memory than FileMetadata."""
-        # Create a FileMetadata instance
         file_metadata = FileMetadata(
             path="/test/very/long/path/to/a/file/that/has/many/segments.txt",
             backend_name="local-storage-backend",
@@ -304,13 +305,9 @@ class TestMemoryEfficiency:
 
         compact_metadata = CompactFileMetadata.from_file_metadata(file_metadata)
 
-        # Get object sizes (without counting referenced objects)
         file_metadata_size = sys.getsizeof(file_metadata)
         compact_metadata_size = sys.getsizeof(compact_metadata)
 
-        # CompactFileMetadata should be significantly smaller
-        # Note: The slots version of FileMetadata is already smaller,
-        # but CompactFileMetadata replaces strings with ints
         assert compact_metadata_size <= file_metadata_size
 
     def test_slots_on_file_metadata(self):
@@ -322,7 +319,6 @@ class TestMemoryEfficiency:
             size=1024,
         )
 
-        # Slotted classes don't have __dict__
         assert not hasattr(metadata, "__dict__")
 
     def test_frozen_compact_metadata(self):
@@ -335,6 +331,5 @@ class TestMemoryEfficiency:
         )
         compact = CompactFileMetadata.from_file_metadata(metadata)
 
-        # Frozen dataclass should raise on attribute assignment
         with pytest.raises(AttributeError):
             compact.size = 2048

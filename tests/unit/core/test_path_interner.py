@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from nexus.core.metadata import FileMetadata
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.path_interner import (
     CompactFileMetadata,
     PathInterner,

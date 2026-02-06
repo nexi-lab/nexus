@@ -28,8 +28,8 @@ try:
 except ImportError:
     psycopg2 = None
 
+from nexus.core._metadata_generated import FileMetadata, MetadataStore, PaginatedResult
 from nexus.core.exceptions import MetadataError
-from nexus.core.metadata import FileMetadata, MetadataStore, PaginatedResult
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
     Base,
@@ -1432,7 +1432,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
             CursorError: If cursor is invalid or filters changed
             MetadataError: If database query fails
         """
-        from nexus.core.metadata import PaginatedResult
+        from nexus.core._metadata_generated import PaginatedResult
         from nexus.core.pagination import CursorData, CursorError, decode_cursor, encode_cursor
 
         # Validate and cap limit

@@ -384,7 +384,7 @@ class ZoneImportService:
         try:
             # For metadata-only import, we need to create a metadata entry
             # without actual content. This is useful for catalog-style imports.
-            from nexus.core.metadata import FileMetadata
+            from nexus.core._metadata_generated import FileMetadata
 
             metadata = FileMetadata(
                 path=path,

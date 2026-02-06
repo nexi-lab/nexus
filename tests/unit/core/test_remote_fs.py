@@ -241,7 +241,7 @@ class TestWriteAndRead:
         # Create metadata entry without etag
         from datetime import UTC, datetime
 
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         meta = FileMetadata(
             path=path,

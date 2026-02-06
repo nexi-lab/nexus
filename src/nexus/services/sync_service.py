@@ -652,7 +652,7 @@ class SyncService:
             files_found: Set to track found files
             paths_needing_tuples: List to collect paths for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         # Apply pattern filtering
         if not self._matches_patterns(virtual_path, ctx):
@@ -852,7 +852,7 @@ class SyncService:
             files_found: Set to track found paths
             paths_needing_tuples: List for batch tuple creation
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         files_found.add(virtual_path)
 
@@ -1138,7 +1138,7 @@ class SyncService:
         Returns:
             Set of files found
         """
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         assert ctx.mount_point is not None
 

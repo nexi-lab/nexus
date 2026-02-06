@@ -456,7 +456,7 @@ class CompactFileMetadata:
         """
         from datetime import datetime
 
-        from nexus.core.metadata import FileMetadata
+        from nexus.core._metadata_generated import FileMetadata
 
         if interner is None:
             interner = get_path_interner()
@@ -530,4 +530,4 @@ class CompactFileMetadata:
 
 # Import FileMetadata for type checking
 if TYPE_CHECKING:
-    from nexus.core.metadata import FileMetadata
+    from nexus.core._metadata_generated import FileMetadata

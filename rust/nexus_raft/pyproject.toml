@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "nexus-raft"
+version = "0.1.0"
+description = "Raft consensus and embedded storage PyO3 bindings for Nexus"
+requires-python = ">=3.12"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+module-name = "nexus._nexus_raft"
+bindings = "pyo3"

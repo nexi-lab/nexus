@@ -51,6 +51,16 @@ from nexus.pay.credits import (
     TransferRequest,
     WalletNotFoundError,
 )
+from nexus.pay.x402 import (
+    X402Client,
+    X402Error,
+    X402PaymentVerification,
+    X402Receipt,
+    micro_to_usdc,
+    usdc_to_micro,
+    validate_network,
+    validate_wallet_address,
+)
 
 __all__ = [
     # Service
@@ -81,4 +91,13 @@ __all__ = [
     "make_tb_account_id",
     "credits_to_micro",
     "micro_to_credits",
+    # x402 Protocol
+    "X402Client",
+    "X402Error",
+    "X402Receipt",
+    "X402PaymentVerification",
+    "usdc_to_micro",
+    "micro_to_usdc",
+    "validate_wallet_address",
+    "validate_network",
 ]

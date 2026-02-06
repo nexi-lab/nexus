@@ -119,29 +119,115 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 ## 4. Zone Model
 
 - **Path format**: `/zone:{zone_id}/path/to/file`
-- **Current**: Flat structure, zones don't nest
+- **Physical**: Zones are flat and independent — each Zone is a Raft Group with its own root `/`
+- **Logical**: Hierarchical namespace is composed through **Mount Points** (see 5a)
 - **Intra-zone**: Raft consensus guarantees linearizable reads/writes
-- **Cross-zone**: Two approaches planned:
-  - **Plan A** (Issue #1181): Nexus-to-nexus mount — one zone mounts another's namespace
-  - **Plan B** (future): Spanner-like 2PC for cross-zone transactions
+- **Cross-zone reads**: Client-side VFS traversal across mount points (no cross-zone metadata sync)
+- **Cross-zone writes**: Two approaches planned:
+  - **Plan A** (Issue #1181): Nexus-to-nexus mount — client traverses zone boundaries on read
+  - **Plan B** (future): Spanner-like 2PC for cross-zone atomic transactions
 
 ---
 
 ## 5. Open Questions & Future Design Work
 
-### 5a. Zone Nesting & Overlaps
+### 5a. Inter-Zone Architecture: Mount Points & Zone Lifecycle
 
-**Status**: No design yet. Need to decide.
+**Status**: Design decided. Implementation pending (P2).
 
-**Questions**:
-- Can a zone contain sub-zones? e.g., `/zone:org/zone:team/file`
-- Can a single path belong to multiple zones?
-- If zones can nest, how does Raft consensus scope work? (One Raft group per leaf zone? Per top-level zone?)
-- What's the permission model for nested zones? (Inherit from parent? Independent?)
+**Source**: Discussion in `document-ai/notes/Nexus Federation inter-zones 架构设计重新决策 (消息131-142).md`
 
-**Current assumption**: Flat zones only. `/zone:{id}/...` where `id` is a single-level identifier.
+#### Core Principle: Flattened Storage + Hierarchical Mounts
 
-**TODO**: Design document needed before implementing any nesting.
+Zones are physically flat and isolated. The global namespace tree is an illusion
+constructed by **mount point entries** (`DT_MOUNT`) in parent zones.
+
+```
+Physical Reality (what Raft sees):         Logical View (what users see):
+
+  Zone_A (Company):  /, docs/, hr/           /company/
+  Zone_B (Eng):      /, code/, design/         ├── docs/
+  Zone_C (Wife):     /, photos/                ├── hr/
+                                               ├── engineering/  → [Zone_B]
+                                               └── ceo_wife/     → [Zone_C]
+```
+
+Zone A stores `engineering` as `DT_MOUNT → Zone_B_UUID` — it knows nothing about
+Zone B's contents. Zone A and Zone B **never sync metadata**.
+
+#### Directory Entry: DT_MOUNT
+
+A new entry type alongside `DT_DIR` and `DT_REG`:
+
+| Field | Value |
+|-------|-------|
+| `name` | `engineering` |
+| `entry_type` | `DT_MOUNT` |
+| `target_zone_id` | `Zone_B_UUID` |
+
+#### Client-Side Traversal (ls -R /company/)
+
+1. Client → Zone A: `list /` → returns `docs/, hr/, engineering(DT_MOUNT→Zone_B)`
+2. Client sees DT_MOUNT, pauses recursion
+3. Client resolves Zone_B address, connects
+4. Client → Zone B: `list /` → returns `code/, design/`
+5. Client merges Zone B results under `engineering/` name
+6. Final result presented to user as unified tree
+
+**Mixed consistency**: Zone A can be eventual, Zone B can be strong.
+Client handles the boundary transparently.
+
+#### Unified Mount Logic (DRY)
+
+Creating a child zone and manually mounting a cross-zone path are the **same operation**:
+
+```python
+# System topology (automatic):
+nexus zone create /company/engineering  →  link_zone("/company", "engineering", Zone_B_UUID)
+
+# User mount (manual):
+nexus mount /home/wife /company/ceo_wife  →  link_zone("/company", "ceo_wife", Zone_C_UUID)
+```
+
+One mechanism for all zone relationships.
+
+#### Zone Lifecycle: Hard Link Model (shared_ptr semantics)
+
+Mount points are **Hard Links** to zones with reference counting (`i_links_count`):
+
+| Action | Operation | RefCnt | Data Fate |
+|--------|-----------|--------|-----------|
+| `nexus zone create` | `new Zone()` | 0 → 1 | Created |
+| `nexus mount /a/b` | `link(Zone, "/a/b")` | 1 → 2 | Accessible |
+| `rm /a/b` | `unlink("/a/b")` | 2 → 1 | Hidden (safe) |
+| `nexus zone destroy` | `delete Zone` | 1 → 0 | Destroyed |
+
+**Safety net**: Every Zone has an implicit system-level link from its Owner.
+Even if all mount points are removed, `i_links_count ≥ 1` (the Owner reference).
+Orphaned zones appear in `/nexus/trash/` — explicit `nexus zone destroy` required
+to truly delete data.
+
+#### Permissions: Gatekeeper at the Door
+
+- **Parent zone** controls: "Can you see this mount point exists?"
+- **Target zone** controls: "Can you enter this zone?" (RBAC check at zone boundary)
+
+Example: Wife can see `ceo` directory name in `/home`, but Zone Private denies her entry.
+
+#### User-Centric Root (Chroot by Default)
+
+Each user's root is determined by their zone registry (ordered KV scan):
+- CEO's first key: `/zones/001/company/` → mounts as `/`
+- Eng's first key: `/zones/002/engineering/` → mounts as `/`
+
+Users don't see parent zones they don't have access to. No complex ACL needed to
+hide upper directories — the namespace boundary is the zone boundary.
+
+#### Edge Cases
+
+- **Orphan zones**: GC agent scans for unreferenced zones → moves to lost+found, notifies admin
+- **Cycle detection**: Check at mount time (hierarchy is shallow), or set max recursion depth
+- **Zone down**: Parent still shows mount point name, but entering returns Transport Error
 
 ### 5b. Write Performance (NexusFS.write() ~30ms/op)
 
@@ -196,18 +282,14 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 
 ### 5e. Proto-to-Python Code Generation (SSOT Pattern)
 
-**Status**: Generation script was never committed. Only .pyc of generated files exist.
+**Status**: ✅ Complete. Implemented in commit 5da0bf1c.
 
-**What existed**:
-- `make proto-gen` target generated `_metadata_generated.py` and `_compact_generated.py` from `metadata.proto`
-- Docstring: `"Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT."`
-- `_metadata_generated.py`: Clean `FileMetadata` dataclass + `PaginatedResult` + `validate()` + `to_compact()`/`from_compact()`
-- `_compact_generated.py`: `CompactFileMetadata` with simplified string interning (`_intern()`/`_resolve()` pattern, global dict)
-- Already used `zone_id` (not `tenant_id`)
-
-**What we have now**: Hand-written `metadata.py` and `compact_metadata.py` (restored from pre-deletion). These work but are not proto-driven.
-
-**TODO**: Recreate the `proto-gen` script/Makefile target that reads `metadata.proto` and generates both Python files. This ensures proto remains true SSOT for FileMetadata across Python and Rust.
+- `scripts/gen_metadata.py` reads `proto/nexus/core/metadata.proto` and generates:
+  - `src/nexus/core/_metadata_generated.py` — FileMetadata + PaginatedResult + MetadataStore ABC
+  - `src/nexus/core/_compact_generated.py` — CompactFileMetadata with dict interning
+- Old `metadata.py` and `compact_metadata.py` deleted
+- All imports updated (20+ files), idempotent generation verified
+- `_resolve_required()` for type-safe required fields (no mypy suppressions needed)
 
 ### 5f. NexusFS Raft Re-integration
 
@@ -225,7 +307,7 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 
 ### P0: Immediate (this sprint)
 1. ~~Restore accidentally deleted files~~ ✅
-2. Rebuild proto SSOT files (in progress)
+2. ~~Rebuild proto SSOT files~~ ✅ (`scripts/gen_metadata.py` + generated files)
 3. Complete global tenant→zone rename (3866 remaining occurrences)
 4. Write this memo ✅
 
@@ -241,7 +323,7 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 
 ### P3: Future
 11. Cross-zone distributed transactions (Spanner-like 2PC)
-12. Zone nesting/overlaps design
+12. ~~Zone nesting/overlaps design~~ ✅ Design decided (Section 5a: Mount Points + Hard Link lifecycle)
 13. Write performance optimization (NexusFS.write() ~30ms/op)
 
 ---

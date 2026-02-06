@@ -71,11 +71,25 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         if: matrix.os != 'windows-latest'
 
-      - name: Build Rust extension
+      - name: Build Rust extension (nexus_fast)
         run: |
           cd rust/nexus_fast
           pip install maturin
           maturin develop --release
+        if: matrix.os != 'windows-latest'
+        shell: bash
+
+      - name: Build Rust extension (nexus_raft)
+        run: |
+          cd rust/nexus_raft
+          maturin develop --release --features python
+        if: matrix.os != 'windows-latest'
+        shell: bash
+
+      - name: Verify Rust extensions
+        run: |
+          python -c "import nexus_fast; print('nexus_fast OK')"
+          python -c "from nexus._nexus_raft import LocalRaft; print('nexus_raft OK')"
         if: matrix.os != 'windows-latest'
         shell: bash
 

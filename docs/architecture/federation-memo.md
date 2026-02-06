@@ -263,6 +263,16 @@ hide upper directories — the namespace boundary is the zone boundary.
 - Leader re-election timing measurements
 - Snapshot transfer between nodes
 
+**Full Node Docker Image Goal**: Each container should be a complete Nexus node capable of acting as both a federation participant and a client-server backend:
+- NexusFS (filesystem ops, backend connectors, caching)
+- FastAPI (HTTP API)
+- RPC Server (client-facing RPC)
+- RaftNode + sled (consensus + embedded storage)
+- gRPC transport (inter-node Raft replication)
+- SQLAlchemy (users, permissions, ReBAC)
+
+This "full node" image will serve as the unit for `docker-compose.cross-platform-test.yml` (dev/test) and eventually the production `Dockerfile`. The test compose environment (`docker-compose.cross-platform-test.yml`) evolves from single-node → distributed as components land; main `Dockerfile` updated only when production-ready.
+
 **TODO**: After gRPC transport is functional, create a proper multi-node test suite.
 
 ### 5d. Cross-Zone Federation (Plan B: Spanner-like 2PC)
@@ -312,7 +322,9 @@ hide upper directories — the namespace boundary is the zone boundary.
 4. Write this memo ✅
 
 ### P1: Short-term
-5. Add maturin (PyO3) build to CI
+5. Add maturin (PyO3) build to CI — ✅ `test.yml` builds `nexus_raft` with `--features python` (#1234)
+   - Main `Dockerfile` deferred until production-ready (currently only nexus_fast)
+   - gRPC feature (`--features python,grpc`) deferred until transport is ready for true federation
 6. Re-integrate RaftMetadataStore into NexusFS (behind feature flag or config)
 7. Get gRPC transport compiling and tested (proto → tonic codegen)
 

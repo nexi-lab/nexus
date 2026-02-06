@@ -96,13 +96,13 @@ class TestCrossPlatformLocking:
         await win_client.connect()
         win_lock_mgr = RedisLockManager(win_client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/cross-platform-test-1"
 
         try:
             # Step 1: Windows acquires lock
             win_lock_id = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=resource_path,
                 timeout=5.0,
                 ttl=30.0,
@@ -126,7 +126,7 @@ async def try_acquire():
 
     # Try to acquire with short timeout (should fail)
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=2.0,  # Short timeout - should fail
         ttl=30.0,
@@ -153,7 +153,7 @@ asyncio.run(try_acquire())
             )
 
             # Step 3: Windows releases lock
-            await win_lock_mgr.release(win_lock_id, tenant_id, resource_path)
+            await win_lock_mgr.release(win_lock_id, zone_id, resource_path)
 
             # Step 4: Linux can now acquire
             linux_script_acquire = f'''
@@ -169,7 +169,7 @@ async def acquire_and_release():
     lock_mgr = RedisLockManager(client)
 
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=5.0,
         ttl=30.0,
@@ -177,7 +177,7 @@ async def acquire_and_release():
 
     if lock_id is not None:
         print("LOCK_ACQUIRED")
-        await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
     else:
         print("LOCK_FAILED")
 
@@ -216,7 +216,7 @@ asyncio.run(acquire_and_release())
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/cross-platform-test-2"
 
         # Step 1: Linux acquires lock (start in background)
@@ -234,7 +234,7 @@ async def hold_lock():
     lock_mgr = RedisLockManager(client)
 
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=5.0,
         ttl=30.0,
@@ -244,7 +244,7 @@ async def hold_lock():
         print("LINUX_ACQUIRED", flush=True)
         # Hold lock for 5 seconds
         await asyncio.sleep(5)
-        await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
         print("LINUX_RELEASED", flush=True)
     else:
         print("LINUX_FAILED", flush=True)
@@ -275,7 +275,7 @@ asyncio.run(hold_lock())
 
             try:
                 win_lock_id = await win_lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=resource_path,
                     timeout=2.0,  # Short timeout
                     ttl=30.0,
@@ -292,14 +292,14 @@ asyncio.run(hold_lock())
 
                 # Now Windows should be able to acquire
                 win_lock_id = await win_lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=resource_path,
                     timeout=5.0,
                     ttl=30.0,
                 )
                 assert win_lock_id is not None, "Windows should acquire lock after Linux release"
 
-                await win_lock_mgr.release(win_lock_id, tenant_id, resource_path)
+                await win_lock_mgr.release(win_lock_id, zone_id, resource_path)
 
             finally:
                 await win_client.disconnect()
@@ -325,7 +325,7 @@ asyncio.run(hold_lock())
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/cross-platform-test-3"
         results = {"win": None, "linux": None}
 
@@ -345,7 +345,7 @@ async def compete():
 
     start = time.time()
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=10.0,  # Longer timeout to wait for other side
         ttl=30.0,
@@ -355,7 +355,7 @@ async def compete():
     if lock_id is not None:
         print(f"LINUX_ACQUIRED_AT:{{acquire_time:.2f}}", flush=True)
         await asyncio.sleep(1)  # Hold briefly
-        await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
         print("LINUX_RELEASED", flush=True)
     else:
         print("LINUX_FAILED", flush=True)
@@ -372,7 +372,7 @@ asyncio.run(compete())
 
             start = time.time()
             lock_id = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=resource_path,
                 timeout=10.0,
                 ttl=30.0,
@@ -382,7 +382,7 @@ asyncio.run(compete())
             if lock_id is not None:
                 results["win"] = ("acquired", acquire_time)
                 await asyncio.sleep(1)  # Hold briefly
-                await lock_mgr.release(lock_id, tenant_id, resource_path)
+                await lock_mgr.release(lock_id, zone_id, resource_path)
             else:
                 results["win"] = ("failed", acquire_time)
 
@@ -447,7 +447,7 @@ asyncio.run(compete())
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/cross-platform-counter"
         num_increments = 5
 
@@ -478,7 +478,7 @@ async def increment():
 
     for i in range({num_increments}):
         lock_id = await lock_mgr.acquire(
-            tenant_id="{tenant_id}",
+            zone_id="{zone_id}",
             path="{resource_path}",
             timeout=30.0,
             ttl=30.0,
@@ -492,7 +492,7 @@ async def increment():
                 await client._client.set("{counter_key}", str(count))
                 print(f"LINUX_INCREMENT:{{i}}->{{count}}", flush=True)
             finally:
-                await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+                await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
         await asyncio.sleep(0.05)  # Small delay between increments
 
     await client.disconnect()
@@ -504,7 +504,7 @@ asyncio.run(increment())
         async def win_increment():
             for _ in range(num_increments):
                 lock_id = await win_lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=resource_path,
                     timeout=30.0,
                     ttl=30.0,
@@ -517,7 +517,7 @@ asyncio.run(increment())
                         count += 1
                         await win_client._client.set(counter_key, str(count))
                     finally:
-                        await win_lock_mgr.release(lock_id, tenant_id, resource_path)
+                        await win_lock_mgr.release(lock_id, zone_id, resource_path)
                 await asyncio.sleep(0.05)
 
         # Start Linux incrementer
@@ -577,7 +577,7 @@ asyncio.run(increment())
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/crash-recovery-test"
         SHORT_TTL = 2.0  # Short TTL for faster test
 
@@ -588,7 +588,7 @@ asyncio.run(increment())
 
         try:
             win_lock_id = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=resource_path,
                 timeout=5.0,
                 ttl=SHORT_TTL,  # Short TTL
@@ -616,7 +616,7 @@ async def acquire_after_crash():
     start = time.time()
     # Wait up to 10 seconds (TTL is {SHORT_TTL}s, so should acquire after ~{SHORT_TTL}s)
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=10.0,
         ttl=30.0,
@@ -625,7 +625,7 @@ async def acquire_after_crash():
 
     if lock_id is not None:
         print(f"LINUX_ACQUIRED_AFTER:{{acquire_time:.2f}}", flush=True)
-        await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
         print("LINUX_RELEASED", flush=True)
     else:
         print("LINUX_FAILED", flush=True)
@@ -659,7 +659,7 @@ asyncio.run(acquire_after_crash())
             try:
                 cleanup_client = DragonflyClient(url=redis_url)
                 await cleanup_client.connect()
-                lock_key = f"nexus:lock:{tenant_id}:{resource_path}"
+                lock_key = f"nexus:lock:{zone_id}:{resource_path}"
                 await cleanup_client._client.delete(lock_key)
                 await cleanup_client.disconnect()
             except Exception:
@@ -686,7 +686,7 @@ asyncio.run(acquire_after_crash())
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/heartbeat-test"
         SHORT_TTL = 2.0
         HOLD_TIME = 5.0  # Hold for 5 seconds (longer than TTL)
@@ -698,7 +698,7 @@ asyncio.run(acquire_after_crash())
         try:
             # Windows: acquire lock with short TTL
             win_lock_id = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=resource_path,
                 timeout=5.0,
                 ttl=SHORT_TTL,
@@ -712,7 +712,7 @@ asyncio.run(acquire_after_crash())
                     await asyncio.sleep(1.0)
                     extended = await win_lock_mgr.extend(
                         lock_id=win_lock_id,
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         path=resource_path,
                         ttl=SHORT_TTL,
                     )
@@ -736,7 +736,7 @@ async def try_acquire():
 
     start = time.time()
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{resource_path}",
         timeout=10.0,  # Wait up to 10s
         ttl=30.0,
@@ -745,7 +745,7 @@ async def try_acquire():
 
     if lock_id is not None:
         print(f"LINUX_ACQUIRED_AFTER:{{acquire_time:.2f}}", flush=True)
-        await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
     else:
         print("LINUX_TIMEOUT", flush=True)
 
@@ -766,7 +766,7 @@ asyncio.run(try_acquire())
             await heartbeat()
 
             # Release lock
-            await win_lock_mgr.release(win_lock_id, tenant_id, resource_path)
+            await win_lock_mgr.release(win_lock_id, zone_id, resource_path)
 
             # Wait for Linux
             linux_proc.wait(timeout=15)
@@ -811,7 +811,7 @@ class TestHighContention:
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/high-contention-test"
         counter_key = "test:high-contention-counter"
         NUM_THREADS = 5
@@ -837,7 +837,7 @@ class TestHighContention:
                 try:
                     for i in range(INCREMENTS_PER_THREAD):
                         lock_id = await lock_mgr.acquire(
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                             path=resource_path,
                             timeout=60.0,  # Long timeout for high contention
                             ttl=30.0,
@@ -850,7 +850,7 @@ class TestHighContention:
                                 await client._client.set(counter_key, str(count))
                                 successful_increments.append((thread_id, i))
                             finally:
-                                await lock_mgr.release(lock_id, tenant_id, resource_path)
+                                await lock_mgr.release(lock_id, zone_id, resource_path)
                         else:
                             errors.append(f"T{thread_id}: Lock acquisition failed at {i}")
                 finally:
@@ -901,7 +901,7 @@ class TestHighContention:
             os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6380"),
         )
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         resource_path = "/cross-platform-high-contention"
         counter_key = "test:cross-platform-contention-counter"
         WIN_THREADS = 3
@@ -926,7 +926,7 @@ class TestHighContention:
                 try:
                     for _ in range(INCREMENTS_EACH):
                         lock_id = await lock_mgr.acquire(
-                            tenant_id=tenant_id,
+                            zone_id=zone_id,
                             path=resource_path,
                             timeout=60.0,
                             ttl=30.0,
@@ -938,7 +938,7 @@ class TestHighContention:
                                 count += 1
                                 await client._client.set(counter_key, str(count))
                             finally:
-                                await lock_mgr.release(lock_id, tenant_id, resource_path)
+                                await lock_mgr.release(lock_id, zone_id, resource_path)
                 finally:
                     await client.disconnect()
 
@@ -963,7 +963,7 @@ async def work():
     try:
         for _ in range({INCREMENTS_EACH}):
             lock_id = await lock_mgr.acquire(
-                tenant_id="{tenant_id}",
+                zone_id="{zone_id}",
                 path="{resource_path}",
                 timeout=60.0,
                 ttl=30.0,
@@ -975,7 +975,7 @@ async def work():
                     count += 1
                     await client._client.set("{counter_key}", str(count))
                 finally:
-                    await lock_mgr.release(lock_id, "{tenant_id}", "{resource_path}")
+                    await lock_mgr.release(lock_id, "{zone_id}", "{resource_path}")
     finally:
         await client.disconnect()
 

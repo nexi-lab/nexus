@@ -1082,13 +1082,13 @@ class TestMultiThreadingContention:
 
 
 class TestLockIsolation:
-    """Tests for lock isolation (different paths, different tenants)."""
+    """Tests for lock isolation (different paths, different zones)."""
 
     @pytest.mark.asyncio
-    async def test_tenant_isolation(self, temp_dir, isolated_db, tmp_path):
-        """Test that different tenants have isolated locks.
+    async def test_zone_isolation(self, temp_dir, isolated_db, tmp_path):
+        """Test that different zones have isolated locks.
 
-        Tenant A's lock on /file.txt should NOT block Tenant B's lock on /file.txt.
+        Zone A's lock on /file.txt should NOT block Zone B's lock on /file.txt.
         """
         from nexus.backends.passthrough import PassthroughBackend
         from nexus.core.cache.dragonfly import DragonflyClient
@@ -1112,26 +1112,26 @@ class TestLockIsolation:
 
             nx.write("/shared.txt", b"content")
 
-            # Create contexts for different tenants
-            tenant_a_ctx = OperationContext(user="user_a", groups=[], tenant_id="tenant_a")
-            tenant_b_ctx = OperationContext(user="user_b", groups=[], tenant_id="tenant_b")
+            # Create contexts for different zones
+            zone_a_ctx = OperationContext(user="user_a", groups=[], zone_id="zone_a")
+            zone_b_ctx = OperationContext(user="user_b", groups=[], zone_id="zone_b")
 
             acquired_order = []
 
-            async def tenant_a_lock():
-                async with nx.locked("/shared.txt", timeout=5.0, _context=tenant_a_ctx):
+            async def zone_a_lock():
+                async with nx.locked("/shared.txt", timeout=5.0, _context=zone_a_ctx):
                     acquired_order.append("A_start")
                     await asyncio.sleep(0.3)
                     acquired_order.append("A_end")
 
-            async def tenant_b_lock():
+            async def zone_b_lock():
                 await asyncio.sleep(0.1)  # Start slightly later
-                async with nx.locked("/shared.txt", timeout=5.0, _context=tenant_b_ctx):
+                async with nx.locked("/shared.txt", timeout=5.0, _context=zone_b_ctx):
                     acquired_order.append("B_acquired")
 
-            await asyncio.gather(tenant_a_lock(), tenant_b_lock())
+            await asyncio.gather(zone_a_lock(), zone_b_lock())
 
-            # If tenants are isolated, B should acquire WHILE A holds the lock
+            # If zones are isolated, B should acquire WHILE A holds the lock
             # Order should be: A_start, B_acquired, A_end (B doesn't wait for A)
             assert "B_acquired" in acquired_order
             b_index = acquired_order.index("B_acquired")
@@ -1139,7 +1139,7 @@ class TestLockIsolation:
 
             # B should have acquired before A released
             assert b_index < a_end_index, (
-                f"Tenant B was blocked by Tenant A! Order: {acquired_order}"
+                f"Zone B was blocked by Zone A! Order: {acquired_order}"
             )
 
             nx.close()
@@ -1148,10 +1148,10 @@ class TestLockIsolation:
             await client.disconnect()
 
     @pytest.mark.asyncio
-    async def test_same_tenant_lock_blocks(self, nx_pair_with_lock):
-        """Test that same tenant's lock on same path blocks.
+    async def test_same_zone_lock_blocks(self, nx_pair_with_lock):
+        """Test that same zone's lock on same path blocks.
 
-        This is the normal case - same tenant, same path = mutual exclusion.
+        This is the normal case - same zone, same path = mutual exclusion.
         """
         nx1, nx2 = nx_pair_with_lock
         nx1.write("/shared.txt", b"content")
@@ -1171,7 +1171,7 @@ class TestLockIsolation:
 
         await asyncio.gather(first_lock(), second_lock())
 
-        # Same tenant = mutual exclusion
+        # Same zone = mutual exclusion
         # Order should be: first_start, first_end, second_acquired
         assert acquired_order == ["first_start", "first_end", "second_acquired"], (
             f"Lock didn't block! Order: {acquired_order}"

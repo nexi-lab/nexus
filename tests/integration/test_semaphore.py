@@ -97,7 +97,7 @@ class TestSemaphoreBasic:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-basic"
         max_holders = 5
 
@@ -106,7 +106,7 @@ class TestSemaphoreBasic:
             lock_ids = []
             for i in range(max_holders):
                 lock_id = await lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=path,
                     timeout=5.0,
                     ttl=30.0,
@@ -117,7 +117,7 @@ class TestSemaphoreBasic:
 
             # (max_holders + 1)th should timeout
             extra_lock = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=0.5,
                 ttl=30.0,
@@ -126,12 +126,12 @@ class TestSemaphoreBasic:
             assert extra_lock is None, "Should not exceed max_holders"
 
             # Release one slot
-            await lock_mgr.release(lock_ids[0], tenant_id, path)
+            await lock_mgr.release(lock_ids[0], zone_id, path)
             lock_ids.pop(0)
 
             # Now should be able to acquire
             new_lock = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -143,7 +143,7 @@ class TestSemaphoreBasic:
         finally:
             # Cleanup
             for lock_id in lock_ids:
-                await lock_mgr.release(lock_id, tenant_id, path)
+                await lock_mgr.release(lock_id, zone_id, path)
             await client.disconnect()
 
     @pytest.mark.asyncio
@@ -156,13 +156,13 @@ class TestSemaphoreBasic:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-ssot"
 
         try:
             # First acquire with max_holders=5
             lock_id = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -173,7 +173,7 @@ class TestSemaphoreBasic:
             # Try to acquire with different max_holders
             with pytest.raises(ValueError, match="max_holders mismatch"):
                 await lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=path,
                     timeout=1.0,
                     ttl=30.0,
@@ -183,7 +183,7 @@ class TestSemaphoreBasic:
         finally:
             # Cleanup
             if lock_id:
-                await lock_mgr.release(lock_id, tenant_id, path)
+                await lock_mgr.release(lock_id, zone_id, path)
             await client.disconnect()
 
     @pytest.mark.asyncio
@@ -196,13 +196,13 @@ class TestSemaphoreBasic:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-cleanup"
 
         try:
             # Acquire with max_holders=5
             lock_id = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -211,12 +211,12 @@ class TestSemaphoreBasic:
             assert lock_id is not None
 
             # Config key should exist
-            config_key = f"nexus:semaphore_config:{tenant_id}:{path}"
+            config_key = f"nexus:semaphore_config:{zone_id}:{path}"
             config_val = await client.client.get(config_key)
             assert config_val is not None, "Config should exist while holding"
 
             # Release
-            await lock_mgr.release(lock_id, tenant_id, path)
+            await lock_mgr.release(lock_id, zone_id, path)
 
             # Config should be cleaned up
             config_val = await client.client.get(config_key)
@@ -224,14 +224,14 @@ class TestSemaphoreBasic:
 
             # Now can acquire with different max_holders
             new_lock = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
                 max_holders=3,  # Different value now allowed
             )
             assert new_lock is not None, "Should allow new max_holders after cleanup"
-            await lock_mgr.release(new_lock, tenant_id, path)
+            await lock_mgr.release(new_lock, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -246,7 +246,7 @@ class TestSemaphoreBasic:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-ttl"
         max_holders = 2
         short_ttl = 1.5  # Short TTL
@@ -254,14 +254,14 @@ class TestSemaphoreBasic:
         try:
             # Acquire both slots with short TTL
             lock1 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=short_ttl,
                 max_holders=max_holders,
             )
             lock2 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=short_ttl,
@@ -271,7 +271,7 @@ class TestSemaphoreBasic:
 
             # Third should fail (slots full)
             lock3 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=0.3,
                 ttl=30.0,
@@ -284,7 +284,7 @@ class TestSemaphoreBasic:
 
             # Now should be able to acquire (expired slots cleaned)
             lock4 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -292,7 +292,7 @@ class TestSemaphoreBasic:
             )
             assert lock4 is not None, "Should acquire after TTL expiry"
 
-            await lock_mgr.release(lock4, tenant_id, path)
+            await lock_mgr.release(lock4, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -307,7 +307,7 @@ class TestSemaphoreBasic:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-extend"
         max_holders = 3
         short_ttl = 2.0
@@ -315,7 +315,7 @@ class TestSemaphoreBasic:
         try:
             # Acquire with short TTL
             lock_id = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=short_ttl,
@@ -326,7 +326,7 @@ class TestSemaphoreBasic:
             # Extend TTL
             extended = await lock_mgr.extend(
                 lock_id=lock_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 ttl=30.0,  # Much longer TTL
             )
@@ -338,13 +338,13 @@ class TestSemaphoreBasic:
             # Should still be able to extend (not expired)
             extended_again = await lock_mgr.extend(
                 lock_id=lock_id,
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 ttl=30.0,
             )
             assert extended_again is True, "Should still hold lock after original TTL"
 
-            await lock_mgr.release(lock_id, tenant_id, path)
+            await lock_mgr.release(lock_id, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -369,7 +369,7 @@ class TestSemaphoreConcurrent:
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/room-01"
         max_holders = 5
         num_participants = 10
@@ -388,7 +388,7 @@ class TestSemaphoreConcurrent:
 
                 try:
                     lock_id = await lock_mgr.acquire(
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         path=path,
                         timeout=30.0,  # Wait up to 30s
                         ttl=30.0,
@@ -400,7 +400,7 @@ class TestSemaphoreConcurrent:
 
                         await asyncio.sleep(hold_time)  # Stay in room
 
-                        await lock_mgr.release(lock_id, tenant_id, path)
+                        await lock_mgr.release(lock_id, zone_id, path)
 
                         with results_lock:
                             results["left"] += 1
@@ -442,7 +442,7 @@ class TestSemaphoreConcurrent:
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/verify-max"
         max_holders = 3
         num_participants = 15
@@ -465,7 +465,7 @@ class TestSemaphoreConcurrent:
 
                 try:
                     lock_id = await lock_mgr.acquire(
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         path=path,
                         timeout=60.0,
                         ttl=30.0,
@@ -486,7 +486,7 @@ class TestSemaphoreConcurrent:
                             # Decrement
                             await client.client.decr(counter_key)
                         finally:
-                            await lock_mgr.release(lock_id, tenant_id, path)
+                            await lock_mgr.release(lock_id, zone_id, path)
 
                 finally:
                     await client.disconnect()
@@ -531,7 +531,7 @@ class TestSemaphoreCrossPlatform:
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/cross-platform"
         max_holders = 3
 
@@ -542,14 +542,14 @@ class TestSemaphoreCrossPlatform:
 
         try:
             win_lock1 = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
                 max_holders=max_holders,
             )
             win_lock2 = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -576,7 +576,7 @@ async def try_acquire():
     # Try to acquire 2 seats
     for i in range(2):
         lock_id = await lock_mgr.acquire(
-            tenant_id="{tenant_id}",
+            zone_id="{zone_id}",
             path="{path}",
             timeout=1.0,  # Short timeout
             ttl=30.0,
@@ -590,7 +590,7 @@ async def try_acquire():
 
     # Release what we got
     for lock_id in lock_ids:
-        await lock_mgr.release(lock_id, "{tenant_id}", "{path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{path}")
 
     await client.disconnect()
 
@@ -609,8 +609,8 @@ asyncio.run(try_acquire())
             )
 
         finally:
-            await win_lock_mgr.release(win_lock1, tenant_id, path)
-            await win_lock_mgr.release(win_lock2, tenant_id, path)
+            await win_lock_mgr.release(win_lock1, zone_id, path)
+            await win_lock_mgr.release(win_lock2, zone_id, path)
             await win_client.disconnect()
 
     @pytest.mark.asyncio
@@ -623,7 +623,7 @@ asyncio.run(try_acquire())
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/ssot-cross"
 
         win_client = DragonflyClient(url=get_redis_url())
@@ -633,7 +633,7 @@ asyncio.run(try_acquire())
         try:
             # Windows: create with max_holders=5
             win_lock = await win_lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -656,7 +656,7 @@ async def try_mismatch():
 
     try:
         lock_id = await lock_mgr.acquire(
-            tenant_id="{tenant_id}",
+            zone_id="{zone_id}",
             path="{path}",
             timeout=1.0,
             ttl=30.0,
@@ -664,7 +664,7 @@ async def try_mismatch():
         )
         if lock_id:
             print("LINUX_ACQUIRED", flush=True)
-            await lock_mgr.release(lock_id, "{tenant_id}", "{path}")
+            await lock_mgr.release(lock_id, "{zone_id}", "{path}")
         else:
             print("LINUX_TIMEOUT", flush=True)
     except ValueError as e:
@@ -689,7 +689,7 @@ asyncio.run(try_mismatch())
             )
 
         finally:
-            await win_lock_mgr.release(win_lock, tenant_id, path)
+            await win_lock_mgr.release(win_lock, zone_id, path)
             await win_client.disconnect()
 
     @pytest.mark.asyncio
@@ -704,7 +704,7 @@ asyncio.run(try_mismatch())
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/relay"
         max_holders = 3
 
@@ -717,7 +717,7 @@ asyncio.run(try_mismatch())
             win_locks = []
             for _ in range(max_holders):
                 lock_id = await win_lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=path,
                     timeout=5.0,
                     ttl=30.0,
@@ -742,7 +742,7 @@ async def wait_for_slot():
 
     start = time.time()
     lock_id = await lock_mgr.acquire(
-        tenant_id="{tenant_id}",
+        zone_id="{zone_id}",
         path="{path}",
         timeout=30.0,  # Wait up to 30s
         ttl=30.0,
@@ -752,7 +752,7 @@ async def wait_for_slot():
 
     if lock_id:
         print(f"LINUX_ACQUIRED_AFTER:{{wait_time:.2f}}", flush=True)
-        await lock_mgr.release(lock_id, "{tenant_id}", "{path}")
+        await lock_mgr.release(lock_id, "{zone_id}", "{path}")
     else:
         print("LINUX_TIMEOUT", flush=True)
 
@@ -769,7 +769,7 @@ asyncio.run(wait_for_slot())
 
             # Wait a bit, then release one slot
             await asyncio.sleep(2)
-            await win_lock_mgr.release(win_locks[0], tenant_id, path)
+            await win_lock_mgr.release(win_locks[0], zone_id, path)
             win_locks.pop(0)
 
             # Wait for Linux to finish
@@ -787,7 +787,7 @@ asyncio.run(wait_for_slot())
 
         finally:
             for lock_id in win_locks:
-                await win_lock_mgr.release(lock_id, tenant_id, path)
+                await win_lock_mgr.release(lock_id, zone_id, path)
             await win_client.disconnect()
 
 
@@ -813,7 +813,7 @@ class TestSemaphoreEdgeCases:
         try:
             released = await lock_mgr.release(
                 lock_id="nonexistent-lock-id",
-                tenant_id="test-tenant",
+                zone_id="test-zone",
                 path="/nonexistent/path",
             )
             assert released is False, "Should return False for nonexistent lock"
@@ -834,7 +834,7 @@ class TestSemaphoreEdgeCases:
         try:
             extended = await lock_mgr.extend(
                 lock_id="nonexistent-lock-id",
-                tenant_id="test-tenant",
+                zone_id="test-zone",
                 path="/nonexistent/path",
                 ttl=30.0,
             )
@@ -853,13 +853,13 @@ class TestSemaphoreEdgeCases:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/semaphore-as-mutex"
 
         try:
             # Acquire with max_holders=1 (explicit)
             lock1 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -869,7 +869,7 @@ class TestSemaphoreEdgeCases:
 
             # Second should timeout (like mutex)
             lock2 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=0.5,
                 ttl=30.0,
@@ -877,7 +877,7 @@ class TestSemaphoreEdgeCases:
             )
             assert lock2 is None, "Should behave like mutex"
 
-            await lock_mgr.release(lock1, tenant_id, path)
+            await lock_mgr.release(lock1, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -892,14 +892,14 @@ class TestSemaphoreEdgeCases:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/zero-timeout"
         max_holders = 1
 
         try:
             # Acquire the only slot
             lock1 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -910,7 +910,7 @@ class TestSemaphoreEdgeCases:
             # Try with zero timeout (should fail immediately)
             start = time.time()
             lock2 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=0.0,  # Zero timeout
                 ttl=30.0,
@@ -921,7 +921,7 @@ class TestSemaphoreEdgeCases:
             assert lock2 is None
             assert elapsed < 0.5, f"Should fail quickly with zero timeout, took {elapsed}s"
 
-            await lock_mgr.release(lock1, tenant_id, path)
+            await lock_mgr.release(lock1, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -961,14 +961,14 @@ class TestNetworkPartitionRecovery:
         lock_mgr_a = RedisLockManager(client_a)
         lock_mgr_b = RedisLockManager(client_b)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/partition-release"
         max_holders = 3
 
         try:
             # Step 1: A acquires slot
             lock_a = await lock_mgr_a.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -977,12 +977,12 @@ class TestNetworkPartitionRecovery:
             assert lock_a is not None
 
             # Step 2: Simulate partition - delete A's slot from Redis
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
             await client_a.client.zrem(sem_key, lock_a)
 
             # Step 3: B acquires the slot (now available)
             lock_b = await lock_mgr_b.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -991,11 +991,11 @@ class TestNetworkPartitionRecovery:
             assert lock_b is not None
 
             # Step 4: A tries to release (after "partition recovery")
-            released = await lock_mgr_a.release(lock_a, tenant_id, path)
+            released = await lock_mgr_a.release(lock_a, zone_id, path)
             assert released is False, "A should not be able to release (slot was lost)"
 
             # B should still hold the slot
-            await lock_mgr_b.release(lock_b, tenant_id, path)
+            await lock_mgr_b.release(lock_b, zone_id, path)
 
         finally:
             await client_a.disconnect()
@@ -1014,14 +1014,14 @@ class TestNetworkPartitionRecovery:
         await client_a.connect()
         lock_mgr_a = RedisLockManager(client_a)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/partition-extend"
         max_holders = 2
 
         try:
             # A acquires slot
             lock_a = await lock_mgr_a.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1030,8 +1030,8 @@ class TestNetworkPartitionRecovery:
             assert lock_a is not None
 
             # Simulate partition + TTL expiry by deleting A's slot
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
-            config_key = f"nexus:semaphore_config:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
+            config_key = f"nexus:semaphore_config:{zone_id}:{path}"
             await client_a.client.zrem(sem_key, lock_a)
 
             # Also clean config if it's empty now
@@ -1040,7 +1040,7 @@ class TestNetworkPartitionRecovery:
                 await client_a.client.delete(config_key)
 
             # A tries to extend (should detect slot loss)
-            extended = await lock_mgr_a.extend(lock_a, tenant_id, path, ttl=30.0)
+            extended = await lock_mgr_a.extend(lock_a, zone_id, path, ttl=30.0)
             assert extended is False, "A should detect slot was lost"
 
         finally:
@@ -1063,7 +1063,7 @@ class TestNetworkPartitionRecovery:
         lock_mgr_a = RedisLockManager(client_a)
         lock_mgr_b = RedisLockManager(client_b)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/natural-ttl-expiry"
         max_holders = 1
         short_ttl = 2.0
@@ -1071,7 +1071,7 @@ class TestNetworkPartitionRecovery:
         try:
             # A acquires with short TTL and "crashes" (doesn't release or extend)
             lock_a = await lock_mgr_a.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=short_ttl,
@@ -1081,7 +1081,7 @@ class TestNetworkPartitionRecovery:
 
             # B should not be able to acquire immediately
             lock_b_fail = await lock_mgr_b.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=0.5,
                 ttl=30.0,
@@ -1094,7 +1094,7 @@ class TestNetworkPartitionRecovery:
 
             # Now B should be able to acquire
             lock_b = await lock_mgr_b.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1103,10 +1103,10 @@ class TestNetworkPartitionRecovery:
             assert lock_b is not None, "B should acquire after A's TTL expires"
 
             # A tries to extend - should fail (TTL expired)
-            extended = await lock_mgr_a.extend(lock_a, tenant_id, path, ttl=30.0)
+            extended = await lock_mgr_a.extend(lock_a, zone_id, path, ttl=30.0)
             assert extended is False, "A's extend should fail (TTL expired)"
 
-            await lock_mgr_b.release(lock_b, tenant_id, path)
+            await lock_mgr_b.release(lock_b, zone_id, path)
 
         finally:
             await client_a.disconnect()
@@ -1136,7 +1136,7 @@ class TestRedisRestart:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/redis-restart"
         max_holders = 5
 
@@ -1145,7 +1145,7 @@ class TestRedisRestart:
             lock_ids = []
             for _ in range(3):
                 lock_id = await lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=path,
                     timeout=5.0,
                     ttl=30.0,
@@ -1155,18 +1155,18 @@ class TestRedisRestart:
                 lock_ids.append(lock_id)
 
             # Simulate Redis restart by deleting keys
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
-            config_key = f"nexus:semaphore_config:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
+            config_key = f"nexus:semaphore_config:{zone_id}:{path}"
             await client.client.delete(sem_key, config_key)
 
             # All holders should fail to extend
             for lock_id in lock_ids:
-                extended = await lock_mgr.extend(lock_id, tenant_id, path, ttl=30.0)
+                extended = await lock_mgr.extend(lock_id, zone_id, path, ttl=30.0)
                 assert extended is False, "Should fail after Redis restart"
 
             # New client should be able to acquire fresh
             new_lock = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1174,7 +1174,7 @@ class TestRedisRestart:
             )
             assert new_lock is not None, "Should acquire fresh slot after restart"
 
-            await lock_mgr.release(new_lock, tenant_id, path)
+            await lock_mgr.release(new_lock, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -1189,13 +1189,13 @@ class TestRedisRestart:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/fresh-config"
 
         try:
             # Create semaphore with max_holders=5
             lock1 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1204,13 +1204,13 @@ class TestRedisRestart:
             assert lock1 is not None
 
             # Simulate Redis restart
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
-            config_key = f"nexus:semaphore_config:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
+            config_key = f"nexus:semaphore_config:{zone_id}:{path}"
             await client.client.delete(sem_key, config_key)
 
             # Now can create with different max_holders (config was cleared)
             lock2 = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1218,7 +1218,7 @@ class TestRedisRestart:
             )
             assert lock2 is not None, "Should allow new max_holders after restart"
 
-            await lock_mgr.release(lock2, tenant_id, path)
+            await lock_mgr.release(lock2, zone_id, path)
 
         finally:
             await client.disconnect()
@@ -1242,7 +1242,7 @@ class TestSemaphorePerformance:
         from nexus.core.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/boardroom/large-100"
         max_holders = 100
         num_participants = 200
@@ -1259,7 +1259,7 @@ class TestSemaphorePerformance:
 
                 try:
                     lock_id = await lock_mgr.acquire(
-                        tenant_id=tenant_id,
+                        zone_id=zone_id,
                         path=path,
                         timeout=60.0,
                         ttl=30.0,
@@ -1271,7 +1271,7 @@ class TestSemaphorePerformance:
 
                         await asyncio.sleep(hold_time)
 
-                        await lock_mgr.release(lock_id, tenant_id, path)
+                        await lock_mgr.release(lock_id, zone_id, path)
 
                         with results_lock:
                             results["released"] += 1
@@ -1318,7 +1318,7 @@ class TestSemaphorePerformance:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/rapid-cycles"
         num_cycles = 100
 
@@ -1327,14 +1327,14 @@ class TestSemaphorePerformance:
 
             for i in range(num_cycles):
                 lock_id = await lock_mgr.acquire(
-                    tenant_id=tenant_id,
+                    zone_id=zone_id,
                     path=path,
                     timeout=5.0,
                     ttl=30.0,
                     max_holders=1,
                 )
                 assert lock_id is not None, f"Failed at cycle {i}"
-                await lock_mgr.release(lock_id, tenant_id, path)
+                await lock_mgr.release(lock_id, zone_id, path)
 
             elapsed = time.time() - start_time
             print(f"\nRapid cycles: {num_cycles} acquire/release in {elapsed:.2f}s")
@@ -1363,7 +1363,7 @@ class TestHeartbeatAndExtendFailure:
         await client.connect()
         lock_mgr = RedisLockManager(client)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/heartbeat-alive"
         max_holders = 2
         short_ttl = 2.0
@@ -1372,7 +1372,7 @@ class TestHeartbeatAndExtendFailure:
         try:
             # Acquire with short TTL
             lock_id = await lock_mgr.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=short_ttl,
@@ -1386,7 +1386,7 @@ class TestHeartbeatAndExtendFailure:
 
             while time.time() - start < total_hold_time:
                 await asyncio.sleep(1.0)
-                extended = await lock_mgr.extend(lock_id, tenant_id, path, ttl=short_ttl)
+                extended = await lock_mgr.extend(lock_id, zone_id, path, ttl=short_ttl)
                 assert extended is True, f"Heartbeat failed at count {heartbeat_count}"
                 heartbeat_count += 1
 
@@ -1394,7 +1394,7 @@ class TestHeartbeatAndExtendFailure:
             assert heartbeat_count >= 4, f"Should heartbeat multiple times: {heartbeat_count}"
 
             # Clean release
-            released = await lock_mgr.release(lock_id, tenant_id, path)
+            released = await lock_mgr.release(lock_id, zone_id, path)
             assert released is True
 
         finally:
@@ -1419,7 +1419,7 @@ class TestHeartbeatAndExtendFailure:
 
         lock_mgr_a = RedisLockManager(client_a)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/detect-loss"
         max_holders = 2  # Use >1 to ensure semaphore path (ZSET)
 
@@ -1428,7 +1428,7 @@ class TestHeartbeatAndExtendFailure:
         try:
             # A acquires slot
             lock_a = await lock_mgr_a.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=5.0,
@@ -1440,7 +1440,7 @@ class TestHeartbeatAndExtendFailure:
             async def do_work_with_heartbeat():
                 for i in range(10):
                     # Check heartbeat
-                    extended = await lock_mgr_a.extend(lock_a, tenant_id, path, ttl=5.0)
+                    extended = await lock_mgr_a.extend(lock_a, zone_id, path, ttl=5.0)
                     if not extended:
                         work_should_stop["flag"] = True
                         return f"Stopped at iteration {i} (slot lost)"
@@ -1454,7 +1454,7 @@ class TestHeartbeatAndExtendFailure:
 
             # Wait a bit then simulate slot loss (admin intervention or TTL expiry)
             await asyncio.sleep(1.0)
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
             await client_admin.client.zrem(sem_key, lock_a)
 
             # Wait for work to detect and stop
@@ -1483,21 +1483,21 @@ class TestHeartbeatAndExtendFailure:
         lock_mgr_a = RedisLockManager(client_a)
         lock_mgr_b = RedisLockManager(client_b)
 
-        tenant_id = "test-tenant"
+        zone_id = "test-zone"
         path = "/test/isolated-failure"
         max_holders = 3
 
         try:
             # A and B both acquire slots
             lock_a = await lock_mgr_a.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
                 max_holders=max_holders,
             )
             lock_b = await lock_mgr_b.acquire(
-                tenant_id=tenant_id,
+                zone_id=zone_id,
                 path=path,
                 timeout=5.0,
                 ttl=30.0,
@@ -1506,19 +1506,19 @@ class TestHeartbeatAndExtendFailure:
             assert lock_a is not None and lock_b is not None
 
             # Simulate A's slot being lost (admin removes it)
-            sem_key = f"nexus:semaphore:{tenant_id}:{path}"
+            sem_key = f"nexus:semaphore:{zone_id}:{path}"
             await client_admin.client.zrem(sem_key, lock_a)
 
             # A's extend should fail
-            extended_a = await lock_mgr_a.extend(lock_a, tenant_id, path, ttl=30.0)
+            extended_a = await lock_mgr_a.extend(lock_a, zone_id, path, ttl=30.0)
             assert extended_a is False, "A's extend should fail"
 
             # B's extend should still succeed
-            extended_b = await lock_mgr_b.extend(lock_b, tenant_id, path, ttl=30.0)
+            extended_b = await lock_mgr_b.extend(lock_b, zone_id, path, ttl=30.0)
             assert extended_b is True, "B's extend should still work"
 
             # B can still release normally
-            released_b = await lock_mgr_b.release(lock_b, tenant_id, path)
+            released_b = await lock_mgr_b.release(lock_b, zone_id, path)
             assert released_b is True
 
         finally:

@@ -13,5 +13,5 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "nexus._nexus_raft"
+module-name = "_nexus_raft"
 bindings = "pyo3"

@@ -66,23 +66,23 @@ except ImportError:
     )
 
 # PyO3 FFI for local Raft nodes (built by maturin)
-# Import from nexus._nexus_raft (consistent with nexus._nexus_fast)
+# Import from _nexus_raft (top-level, like nexus_fast)
 if TYPE_CHECKING:
-    from nexus._nexus_raft import (
+    from _nexus_raft import (
         HolderInfo as HolderInfo,
     )
-    from nexus._nexus_raft import (
+    from _nexus_raft import (
         LocalRaft as LocalRaft,
     )
-    from nexus._nexus_raft import (
+    from _nexus_raft import (
         LockInfo as LockInfo,
     )
-    from nexus._nexus_raft import (
+    from _nexus_raft import (
         LockState as LockState,
     )
 
 try:
-    from nexus._nexus_raft import (
+    from _nexus_raft import (
         HolderInfo,
         LocalRaft,
         LockInfo,

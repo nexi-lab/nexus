@@ -155,8 +155,8 @@ pub struct RaftNode<S: StateMachine> {
     proposal_id: std::sync::atomic::AtomicU64,
     /// Channel for outgoing messages.
     msg_tx: mpsc::Sender<Message>,
-    /// Channel for receiving messages.
-    msg_rx: RwLock<mpsc::Receiver<Message>>,
+    /// Channel for receiving messages (used by transport layer).
+    _msg_rx: RwLock<mpsc::Receiver<Message>>,
     /// Last tick time.
     last_tick: RwLock<Instant>,
 }
@@ -188,7 +188,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             pending: RwLock::new(HashMap::new()),
             proposal_id: std::sync::atomic::AtomicU64::new(0),
             msg_tx,
-            msg_rx: RwLock::new(msg_rx),
+            _msg_rx: RwLock::new(msg_rx),
             last_tick: RwLock::new(Instant::now()),
         }))
     }

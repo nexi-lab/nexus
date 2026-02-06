@@ -1,3 +1,7 @@
+// PyO3 #[pymethods] macro generates `.into()` conversions for PyErr that
+// clippy flags as useless. This is a known PyO3 + clippy interaction.
+#![allow(clippy::useless_conversion)]
+
 //! PyO3 Python bindings for local Raft state machine access.
 //!
 //! This module provides direct FFI access to the Raft state machine,

@@ -64,6 +64,35 @@ class MemorySearchRequest(BaseModel):
     person: str | None = Field(None, description="Filter by person name")
 
 
+class MemoryQueryRequest(BaseModel):
+    """Request model for POST /api/v2/memories/query (#1185 point-in-time queries)."""
+
+    scope: str | None = Field(None, description="Filter by scope")
+    memory_type: str | None = Field(None, description="Filter by memory type")
+    namespace: str | None = Field(None, description="Filter by exact namespace")
+    namespace_prefix: str | None = Field(None, description="Filter by namespace prefix")
+    state: str | None = Field("active", description="Filter by state (active, inactive, all)")
+    limit: int | None = Field(None, ge=1, le=1000, description="Maximum results")
+    # Temporal filters
+    after: str | None = Field(None, description="Filter by created after (ISO-8601)")
+    before: str | None = Field(None, description="Filter by created before (ISO-8601)")
+    during: str | None = Field(None, description="Filter by time period")
+    # Entity filters
+    entity_type: str | None = Field(None, description="Filter by entity type")
+    person: str | None = Field(None, description="Filter by person name")
+    # Event date filters (#1028)
+    event_after: str | None = Field(None, description="Filter by event date >= (ISO-8601)")
+    event_before: str | None = Field(None, description="Filter by event date <= (ISO-8601)")
+    # Bi-temporal filters (#1185)
+    include_invalid: bool = Field(False, description="Include invalidated memories")
+    as_of_event: str | None = Field(
+        None, description="What was TRUE at time X? (ISO-8601, filters by valid_at/invalid_at)"
+    )
+    as_of_system: str | None = Field(
+        None, description="What did SYSTEM KNOW at time X? (ISO-8601, filters by created_at)"
+    )
+
+
 class MemoryBatchStoreRequest(BaseModel):
     """Request model for POST /api/v2/memories/batch."""
 

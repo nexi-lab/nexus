@@ -75,7 +75,7 @@ SELECT * FROM in_progress_work;
 ### Using SQLAlchemyMetadataStore
 
 ```python
-from nexus.storage.metadata_store import SQLAlchemy MetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Initialize metadata store
 store = SQLAlchemyMetadataStore("metadata.db")
@@ -259,4 +259,4 @@ Potential improvements for v0.2.0+:
 
 - [Architecture Document](../NEXUS_COMPREHENSIVE_ARCHITECTURE.md) - See "SQL Views for Work Detection" section
 - [Database Compatibility](./DATABASE_COMPATIBILITY.md) - SQLite vs PostgreSQL
-- [Metadata Store API](../src/nexus/storage/metadata_store.py) - Full API reference
+- [Metadata Store API](../src/nexus/storage/sqlalchemy_metadata_store.py) - Full API reference

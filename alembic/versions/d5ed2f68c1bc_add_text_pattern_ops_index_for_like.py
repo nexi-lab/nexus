@@ -15,7 +15,7 @@ Performance impact:
 - After: Bitmap Index Scan (8ms for 10k rows)
 
 Related queries in:
-- src/nexus/storage/metadata_store.py (list, is_directory)
+- src/nexus/storage/sqlalchemy_metadata_store.py (list, is_directory)
 - src/nexus/search/vector_db.py (vector search with path filter)
 """
 

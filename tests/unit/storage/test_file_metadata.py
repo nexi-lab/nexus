@@ -1,7 +1,7 @@
 """Unit tests for custom file metadata (key-value) functionality.
 
 Tests the RaftMetadataStore's ability to store and retrieve custom
-key-value metadata on files.
+key-value metadata on files (set, get, delete, list operations).
 
 Requires: Built Rust extensions and generated protobuf files.
 Skip these tests in environments without full build (e.g., lint-only CI).

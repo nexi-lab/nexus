@@ -1696,6 +1696,10 @@ class NexusFS:
 4. **SC/EC mode switching**: Within-driver mode change vs full driver replacement?
    - Prefer: `driver.set_consistency_mode(EVENTUAL)` (avoids state migration)
    - Over: Unload SC driver, load EC driver (requires migration)
+   - **Related**: Issue #1180 proposes `migrate_consistency_mode(path, target_mode)` API
+     - Challenge: LOCAL mode uses SQLite/Dragonfly, STRONG_HA mode uses Raft/sled
+     - Need metadata export/import between storage backends
+     - Requires distributed lock during migration to prevent writes
 5. **Zone-specific vs global**: Should there be a global default driver (catch-all for unconfigured zones)?
 6. **Concurrency control**: How to prevent races during driver switch? (pause? per-zone locks? read-only transition?)
 
@@ -1733,12 +1737,18 @@ class NexusFS:
   - Isolation: Agent sandboxing
   - Hot-swap: Operational flexibility
 
+**Related Issues**:
+- Issue #1180: Runtime consistency mode migration (LOCAL ↔ STRONG_HA)
+  - Proposes `migrate_consistency_mode(path, target_mode)` API
+  - Hot-swapping can enable this feature (driver replacement + state migration)
+
 **TODO** (P2-P3):
 1. Team consensus on open questions (especially state migration and fallback strategies)
-2. Design `DriverRegistry` interface in detail
+2. Design `DriverRegistry` interface in detail (Task #21)
 3. Prototype zone-aware driver resolution
 4. Implement graceful unload with drain + flush
 5. Add CLI commands and monitoring interface
+6. Coordinate with Issue #1180 on state migration strategy
 
 ---
 

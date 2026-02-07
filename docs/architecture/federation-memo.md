@@ -601,7 +601,9 @@ NEXUS_METADATA_STORE=sqlalchemy  # Use PostgreSQL (current)
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 4.3 Driver Registration & Hot-Swapping
+### 4.3 Driver Selection (Config-Driven, Startup-Time)
+
+**Current Implementation (P1)**: Config-driven driver selection at initialization.
 
 ```python
 # System initialization (kernel boot)
@@ -631,7 +633,7 @@ nexusfs = NexusFS(
 )
 ```
 
-**Hot-Swap Example** (no user space recompile):
+**Deployment-Time Driver Selection** (no user space recompile):
 ```bash
 # Production deployment A: PostgreSQL + S3
 NEXUS_METADATA_STORE=sqlalchemy
@@ -647,7 +649,14 @@ NEXUS_DATABASE_URL=sqlite:///dev.db
 NEXUS_STORAGE_BACKEND=local
 ```
 
-Same binary, different drivers loaded at runtime.
+Same binary, different drivers loaded at **startup**.
+
+**Limitations**:
+- ❌ **Not true runtime hot-swapping**: Drivers selected at startup, cannot change without restart
+- ❌ **Single driver per type**: Only one MetadataStore active at a time (no zone-specific drivers)
+- ❌ **No graceful driver removal**: Cannot unload a driver while system is running
+
+**Future**: True runtime hot-swapping (see Section 7o) will enable Linux-like `modprobe`/`rmmod` operations.
 
 ### 4.4 Deployment Modes
 
@@ -1592,6 +1601,145 @@ Agent compiled to Wasm, runs in Wasmtime:
 4. Document deployment guide with Docker Compose examples
 5. (P3) Prototype Wasm agent runtime
 
+### 7o. True Runtime Hot-Swapping (Future Design)
+
+**Status**: ⚠️ **Conceptual design, not implemented**. Current system (Section 4.3) only supports startup-time driver selection.
+
+**Priority**: P2-P3 (after Microkernel foundation in place)
+
+**Source**: Discussion on driver hot-swapping requirements (2026-02-08)
+
+#### Goal: Linux Kernel Module Semantics
+
+Users should be able to load/unload drivers at runtime without restarting Nexus, analogous to Linux kernel modules.
+
+**Linux kernel module management**:
+```bash
+sudo modprobe e1000e              # Load network driver
+sudo rmmod e1000e                 # Unload driver
+lsmod | grep e1000e               # List loaded modules
+sudo modprobe e1000e debug=1      # Load with parameters
+# System continues running when driver loaded/unloaded
+```
+
+**Nexus equivalent** (aspirational):
+```bash
+nexus load-driver raft_metadata_store --zone=A
+nexus unload-driver raft_metadata_store --zone=A
+nexus list-drivers
+nexus load-driver raft_metadata_store --zone=B --mode=eventual
+```
+
+#### Core Requirements
+
+1. **Runtime Loading/Unloading**: Load/unload drivers while Nexus is running (no restart required)
+2. **Multiple Drivers Per Type**: Multiple MetadataStore instances active (zone-specific assignment)
+3. **Graceful Degradation**: System continues if one driver fails or is removed
+4. **Consistency Mode Switching**: Runtime switch between SC and EC modes
+
+#### Design Principle: Follow Linux Kernel Analogy
+
+**Critical**: Use kernel module terminology, NOT filesystem mount terminology.
+
+| ✅ Correct (Kernel Module) | ❌ Incorrect (Confusing with DT_MOUNT) |
+|---------------------------|----------------------------------------|
+| Load/unload driver        | Mount/unmount MetadataStore           |
+| Driver registry           | Mount table                            |
+| `modprobe` / `rmmod`      | `mount` / `umount`                     |
+
+**Why**: DT_MOUNT (Section 7a) is for **cross-zone filesystem mounting** (user-facing). Driver management is **kernel module loading** (infra-facing). These are completely different concepts and must not share terminology.
+
+**Linux kernel analogy** (familiar to hackers):
+
+| Linux Kernel | Nexus Kernel | Purpose |
+|--------------|--------------|---------|
+| `modprobe e1000e` | `load_driver("raft_metadata_store")` | Load driver module |
+| `rmmod e1000e` | `unload_driver("raft_metadata_store")` | Unload driver |
+| `lsmod` | `list_drivers()` | List active drivers |
+| `/proc/modules` | `/sys/kernel/drivers` | Inspect loaded drivers |
+| Module parameters | Driver config | Initialization params |
+| Hot-pluggable NIC | Zone-specific store | Multiple instances |
+
+#### High-Level Architecture (Sketch)
+
+**Current** (Section 4.3): Single driver per type, selected at startup
+```python
+self.metadata = SQLAlchemyMetadataStore(...)  # Hardcoded, startup-only
+```
+
+**Future**: Zone-aware driver resolution (conceptual)
+```python
+class NexusFS:
+    def __init__(self):
+        self.driver_registry = DriverRegistry()  # Manages active drivers
+
+    async def get_metadata(self, path: str):
+        zone_id = self._extract_zone(path)  # "/zone:A/..." → "A"
+        driver = self.driver_registry.get_driver_for_zone(
+            driver_type=MetadataStore,
+            zone_id=zone_id
+        )
+        return await driver.get_metadata(path)
+```
+
+#### Open Questions (Need Consensus Before Implementation)
+
+1. **Driver identification**: How to uniquely identify driver instances? (by zone? by name? by type+zone?)
+2. **State migration**: When switching drivers, how to handle existing metadata?
+   - Forbid switch if data exists? (safe, restrictive)
+   - Automatic migration? (risky)
+   - Manual export/import? (safest)
+3. **Fallback strategy**: When primary driver fails, what happens?
+   - Read-only mode with cache?
+   - Fail fast with error?
+   - Automatic failover?
+4. **SC/EC mode switching**: Within-driver mode change vs full driver replacement?
+   - Prefer: `driver.set_consistency_mode(EVENTUAL)` (avoids state migration)
+   - Over: Unload SC driver, load EC driver (requires migration)
+5. **Zone-specific vs global**: Should there be a global default driver (catch-all for unconfigured zones)?
+6. **Concurrency control**: How to prevent races during driver switch? (pause? per-zone locks? read-only transition?)
+
+#### Implementation Phases
+
+**Phase 1 (P1, Current)**: Foundation
+- Task #14: NexusFS constructor injection (enable driver-agnostic design)
+- P1#7: Re-integrate RaftMetadataStore with config-driven selection
+- **Limitation**: Startup-time only, single driver, no runtime switching
+
+**Phase 2 (P2)**: Basic Runtime Hot-Swapping
+- Implement `DriverRegistry` with load/unload/list operations
+- Zone-aware driver resolution
+- Graceful driver unload (drain + flush)
+- CLI: `nexus load-driver`, `nexus unload-driver`, `nexus list-drivers`
+- **Limitation**: No state migration, no automatic fallback
+
+**Phase 3 (P3)**: Advanced Features
+- State migration between drivers
+- Fallback driver support (graceful degradation)
+- SC/EC mode runtime switching (within same driver)
+- `/sys/kernel/drivers` monitoring interface
+
+#### Relationship to Other Designs
+
+- **DT_MOUNT (Section 7a)**: DIFFERENT concept, no code reuse
+  - DT_MOUNT: Cross-zone filesystem mounting (user-facing)
+  - Driver hot-swap: Kernel module management (infra-facing)
+
+- **Microkernel (Section 7i)**: RELATED
+  - Microkernel extracts features to drivers
+  - Hot-swap enables runtime driver management
+
+- **Progressive Isolation (Section 7k)**: INDEPENDENT
+  - Isolation: Agent sandboxing
+  - Hot-swap: Operational flexibility
+
+**TODO** (P2-P3):
+1. Team consensus on open questions (especially state migration and fallback strategies)
+2. Design `DriverRegistry` interface in detail
+3. Prototype zone-aware driver resolution
+4. Implement graceful unload with drain + flush
+5. Add CLI commands and monitoring interface
+
 ---
 
 ## 8. What's Needed to Reach Production Federation
@@ -1659,14 +1807,25 @@ Agent compiled to Wasm, runs in Wasmtime:
     - Implement Nexus SDK for container communication (Unix socket)
     - Add isolation level validation in kernel
     - Document deployment guide
+22. **Runtime Hot-Swapping Foundation** (Section 7o, Phase 2):
+    - Consensus on open questions (driver ID, state migration, fallback)
+    - Design `DriverRegistry` interface with load/unload/list operations
+    - Implement zone-aware driver resolution
+    - Implement graceful driver unload (drain + flush)
+    - CLI: `nexus load-driver`, `nexus unload-driver`, `nexus list-drivers`
 
 ### P3: Future
-22. Cross-zone distributed transactions (Spanner-like 2PC)
-23. ✅ ~~Zone nesting/overlaps design~~ Design decided (Section 7a: Mount Points + Hard Link lifecycle)
-24. Write performance optimization (NexusFS.write() ~30ms/op)
-25. Raft Eventual Consistency (EC) mode (Issue #1180)
-26. Wasm-based agent runtime (Level 2 isolation, Section 7k/7n)
-27. TEE driver for privacy computing (Sign operations in enclave, Section 7l)
+23. Cross-zone distributed transactions (Spanner-like 2PC)
+24. ✅ ~~Zone nesting/overlaps design~~ Design decided (Section 7a: Mount Points + Hard Link lifecycle)
+25. Write performance optimization (NexusFS.write() ~30ms/op)
+26. Raft Eventual Consistency (EC) mode (Issue #1180)
+27. Wasm-based agent runtime (Level 2 isolation, Section 7k/7n)
+28. TEE driver for privacy computing (Sign operations in enclave, Section 7l)
+29. **Runtime Hot-Swapping Advanced** (Section 7o, Phase 3):
+    - Automatic state migration between drivers
+    - Fallback driver support (graceful degradation)
+    - SC/EC mode runtime switching within driver
+    - `/sys/kernel/drivers` monitoring interface
 
 ---
 

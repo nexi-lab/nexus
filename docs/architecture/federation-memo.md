@@ -939,7 +939,658 @@ This "full node" image will serve as the unit for `docker-compose.cross-platform
 1. ✅ Add maturin build to CI (DONE: #1234)
 2. Re-integrate RaftMetadataStore behind config flag (`NEXUS_METADATA_STORE=raft|sqlalchemy`)
 3. Ensure all existing tests pass with both store backends
-4. Blocked by: Data architecture decisions (Tasks #7-#11)
+4. Blocked by: Data architecture decisions (Tasks #7-#11) + NexusFS constructor refactor (7h)
+
+### 7h. NexusFS Constructor Pattern Refactor (Hot-Swapping Support)
+
+**Status**: ⚠️ **PENDING DISCUSSION** — Architecture improvement proposal, not yet confirmed.
+
+**Current Problem** (Line 215 in `nexus_fs.py`):
+```python
+# ❌ Hard-coded dependency on SQLAlchemyMetadataStore
+self.metadata = SQLAlchemyMetadataStore(
+    db_path=db_path,
+    enable_cache=enable_metadata_cache,
+    ...
+)
+```
+
+**Issues**:
+1. ❌ **Tight coupling**: NexusFS directly depends on concrete `SQLAlchemyMetadataStore` class
+2. ❌ **No hot-swapping**: Cannot switch to `RaftMetadataStore` at runtime
+3. ❌ **Violates Open-Closed Principle**: Adding new store requires modifying NexusFS code
+4. ❌ **Test inflexibility**: Fixtures cannot inject mock stores easily
+
+**Proposed Solution: Constructor Injection + Factory Pattern**
+
+```python
+class NexusFS(...):
+    def __init__(
+        self,
+        backend: Backend,
+        metadata_store: MetadataStore | None = None,  # Priority 1: Direct injection
+        config: dict | None = None,  # Priority 2: Config-driven factory
+        db_path: str | Path | None = None,  # Priority 3: Backward compatibility
+        # ... other parameters
+    ):
+        # Priority 1: User directly injects store
+        if metadata_store is not None:
+            self.metadata = metadata_store
+        # Priority 2: Create via config (using MetadataStoreFactory)
+        elif config is not None:
+            self.metadata = MetadataStoreFactory.create(config)
+        # Priority 3: Backward compatibility - default to SQLAlchemy
+        else:
+            if db_path is None:
+                db_path = Path("./nexus-metadata.db")
+            self.metadata = SQLAlchemyMetadataStore(db_path=db_path, ...)
+```
+
+**Benefits**:
+- ✅ **Flexibility**: Three usage modes (injection / config / default)
+- ✅ **Backward compatible**: Existing code requires no changes
+- ✅ **Test-friendly**: Fixtures can inject mocks
+- ✅ **Hot-swappable**: Config-driven switching between stores
+- ✅ **Clear dependencies**: Explicit, no global state
+
+**Alternative Patterns Considered**:
+- ❌ **Decorator Pattern**: Not applicable (we're not "adding features", we're "switching implementations")
+- ❌ **Service Locator**: Introduces global state, harder to test
+- ✅ **Factory Pattern**: Good as auxiliary (combined with constructor injection)
+
+**Usage Examples**:
+```python
+# Production: Raft mode (direct injection)
+raft_store = RaftMetadataStore(peers=["node1", "node2", "node3"])
+nexusfs = NexusFS(backend=backend, metadata_store=raft_store)
+
+# Production: Config-driven (environment variables)
+config = {"NEXUS_METADATA_STORE": "raft", "RAFT_PEERS": "node1,node2,node3"}
+nexusfs = NexusFS(backend=backend, config=config)
+
+# Production: Backward compatible (existing code)
+nexusfs = NexusFS(backend=backend, db_path="nexus.db")  # Auto-creates SQLAlchemy
+
+# Testing: Mock store
+nexusfs = NexusFS(backend=backend, metadata_store=mock_store)
+```
+
+**Implementation Priority**: P1 (as dependency for P1#7 - RaftMetadataStore re-integration)
+
+**TODO**:
+1. 📋 **Discuss and confirm** approach with team before implementation
+2. 🛠️ Implement `MetadataStoreFactory` with config parsing
+3. 🔧 Refactor `NexusFS.__init__()` to support injection + factory + backward compatibility
+4. ✅ Update all tests to use new pattern (optional, backward compatible)
+5. 📚 Document new usage patterns in README
+
+**Related**: Section 4.3 (Driver Registration & Hot-Swapping), P1#7 (RaftMetadataStore re-integration)
+
+### 7i. Microkernel Refactoring: True Kernel Extraction
+
+**Status**: Design direction from Gemini discussions. Implementation P2-P3.
+
+**Source**: `document-ai/notes/Nexus Microkernel Refactoring Cache Separation and Design Philosophy (msg143-146).md`
+
+#### Philosophy: Protocol vs Implementation
+
+Current Nexus architecture (Section 4) separates User/Kernel/Driver layers. The Microkernel refactor **deepens this separation** by moving ALL features out of the kernel, leaving only the "switchboard" (routing + consistency).
+
+**Key Principle**: For a true microkernel where `nexus-core` is "decent small" (CI < 2 minutes), we must identify what the kernel truly needs vs what can be external drivers.
+
+#### 3-Layer Architecture (Finer-Grained)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Layer 3: USER SPACE (Agents)                           │
+│   - Copilot, Worker, Boardroom Chairman                │
+│   - Application logic only                              │
+└─────────────────────────────────────────────────────────┘
+                         ↓ IPC (Everything is a File)
+┌─────────────────────────────────────────────────────────┐
+│ Layer 2: SYSTEM SERVERS (User-Mode Drivers)            │
+│   - fs-driver-s3: Real S3 read/write                   │
+│   - fs-driver-local: Real disk I/O                     │
+│   - sys-driver-timer: /sys/timer implementation        │
+│   - sys-driver-net: /sys/net/http implementation       │
+│   - sys-driver-auth: Token signing (not verify)        │
+│   - mem-driver-dragonfly: /dev/mem/hot cache           │
+│   - mem-driver-pg: /dev/mem/vector storage             │
+└─────────────────────────────────────────────────────────┘
+                         ↓ Mount Table + Message Passing
+┌─────────────────────────────────────────────────────────┐
+│ Layer 1: MICROKERNEL (nexus-core)                      │
+│   - VFS Interface: Defines read/write/list/stat        │
+│   - Message Passing (IPC): Routes Agent→Driver         │
+│   - Consistency Engine: Raft + Directory Tree topology │
+│   - Permission Gate: ACL checks                         │
+│   - Wait Queue: Block/unblock for I/O completion       │
+│                                                         │
+│   Code Size: Extremely small, CI < 2 minutes           │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Analogy for Hackers**: Nexus Microkernel is a "Local RPC Router". It doesn't do storage, networking, or timers — it only routes messages and maintains the tree structure.
+
+#### The Interrupt Model: Timer Example
+
+**Bad (Monolithic)**: Kernel contains timer loop logic
+```rust
+// ❌ In Kernel
+loop {
+   if now() > target_time { notify_agent(); }
+}
+```
+This bloats the kernel with business logic (timer features, HTTP client, etc.).
+
+**Good (Microkernel)**: Kernel only routes and unblocks
+
+1. **Agent**: `write("/sys/timer/sleep", "5000")` → blocks
+2. **Kernel**: Forwards request to `sys-driver-timer` (doesn't know what timer is)
+3. **Driver**: Calls host OS `setTimeout`, waits 5 seconds
+4. **Driver**: Sends "Done" to Kernel
+5. **Kernel**: Unblocks Agent (interrupt handler behavior)
+
+**Result**: Kernel has zero timer code, only forwarding + wait queue management.
+
+#### Decoupling Candidates (What to Extract)
+
+Following the Timer model, extract these features from `nexus-core`:
+
+| Feature | Current Location | Target Driver | Rationale |
+|---------|-----------------|---------------|-----------|
+| **Storage I/O** | Direct S3/Local imports | `fs-driver-s3`, `fs-driver-local` | Kernel only stores Inode tree, not file contents |
+| **HTTP Client** | `reqwest` imports | `sys-driver-net` | Agent writes to `/sys/net/http/request`, driver fetches |
+| **Timer/Scheduler** | APScheduler logic | `sys-driver-timer` | See Interrupt Model above |
+| **Auth Signing** | JWT generation | `sys-driver-auth` | See 7l (Kernel only verifies, driver signs) |
+| **Boardroom Logic** | Vote/Proposal code | User Space Agent | Kernel provides atomic `mkdir`/`mv`, flow is user logic |
+
+**Implementation Strategy**: Start with Timer and HTTP Client (easiest to identify), then progressively extract others.
+
+**Trade-off Discussion**:
+- **Gemini's view**: Everything extractable should be extracted for purity
+- **Our consideration**: Some "drivers" like Metadata (sled) may need to stay in-kernel for performance (see 7j for distinction)
+- **Decision pending**: Need profiling data to decide on a case-by-case basis
+
+**TODO** (P2):
+1. Audit `nexus-core` imports: Flag any `import aws_sdk`, `reqwest`, `chrono` (timers), `jsonwebtoken` (signing)
+2. Create `nexus-drivers/` directory with initial drivers (timer, http, auth)
+3. Define `/sys/*` and `/dev/*` mount point protocols
+4. Refactor Kernel to pure VFS + IPC + Permission Gate
+
+### 7j. Memory/Cache Tiering: Implementation Pattern Distinction
+
+**Status**: Design direction from Gemini discussions. Implementation P2-P3.
+
+**Source**: `document-ai/notes/Nexus Microkernel Refactoring Cache Separation and Design Philosophy (msg143-146).md`
+
+#### Conceptual Alignment: Cache = RAM in OS
+
+Since Nexus is an OS, we treat cache as "Memory (RAM)". However, **cache management has two distinct patterns**:
+
+1. **Kernel Internal Cache (L1)**: Like CPU L1/L2 cache — stays in kernel, uses **decorator pattern**
+2. **External Cache (L2/L3)**: Like RAM DIMMs — hot-pluggable, uses **ABC pattern** (HAL)
+
+**Critical Distinction**: This refines Section 4.2.6 (Memory) and 4.2.7 (Cache).
+
+#### 3-Layer Memory Tiering
+
+**Layer 0: Metadata Store (Kernel Internal)**
+- **Technology**: Sled (embedded KV store)
+- **Location**: Inside `nexus-core` (NOT extracted as driver)
+- **Content**: Inode Table, Mount Points, Raft State, Active Locks
+- **Pattern**: **Decorator** (not ABC) — internal optimization, not hot-pluggable
+- **Rationale**: Sub-microsecond latency required, cannot tolerate RPC overhead
+- **Implementation**:
+  ```rust
+  // Rust: Use macros like #[cached] for transparent caching
+  #[cached(size = 1000, time = 60)]
+  fn get_inode(path: &str) -> Option<Inode> {
+      sled_db.get(path.as_bytes())
+  }
+  ```
+- **Visibility**: Kernel exposes cache stats via `/sys/kernel/cache/stats` (read-only)
+
+**Layer 1: Hot Cache (User-Mode Driver)**
+- **Technology**: Dragonfly (Redis-compatible)
+- **Location**: `mem-driver-dragonfly` (external process)
+- **Content**: Boardroom Pub/Sub, Agent short-term memory, File write-back buffers
+- **Pattern**: **ABC** (HAL) — hot-pluggable, replaceable with Redis/Valkey
+- **Mount Point**: `/dev/mem/hot` or `/dev/mem/fast`
+- **Interface**:
+  ```python
+  class MemoryDriverProtocol(ABC):
+      @abstractmethod
+      async def read_page(key: str) -> bytes
+      async def write_page(key: str, data: bytes, ttl: int)
+      async def evict_page(key: str)
+  ```
+- **Characteristics**: Volatile, high throughput, TTL eviction
+
+**Layer 2: Warm/Vector Store (User-Mode Driver)**
+- **Technology**: PostgreSQL (pgvector)
+- **Location**: `mem-driver-pg` (external process)
+- **Content**: GraphRAG index, historical audit logs, semantic search cache
+- **Pattern**: **ABC** (HAL) — hot-pluggable
+- **Mount Point**: `/dev/mem/vector` or `/dev/mem/stable`
+- **Characteristics**: Persistent, supports complex queries
+
+#### Why HAL for L1/L2? (Benefits)
+
+1. **Testing**: CI doesn't need real Dragonfly/PG containers — mock driver in memory
+2. **Swappable Backend**:
+   - Tech Founder: Use `mem-driver-sqlite` (single file)
+   - Enterprise: Use `mem-driver-dragonfly-cluster`
+   - Kernel code unchanged
+3. **Decoupled Dependencies**: `nexus-core` has zero `redis-rs` or `sqlx` imports
+
+#### Implementation Patterns: Decorator vs ABC
+
+**Decorator Pattern (Layer 0 - Kernel Internal)**:
+```rust
+// ❌ DON'T extract as HAL driver (too slow)
+// ✅ DO use decorator/macro for transparent optimization
+#[cached]
+fn check_permission(user: &str, path: &str) -> bool {
+    // Cache hit: ~50ns
+    // Cache miss: queries Raft state machine
+}
+```
+
+**ABC Pattern (Layer 1/2 - External Drivers)**:
+```python
+# ✅ Hot-pluggable via ABC
+class DragonflyMemoryDriver(MemoryDriverProtocol):
+    async def write_page(self, key, data, ttl):
+        await self.redis.setex(key, ttl, data)
+
+class MockMemoryDriver(MemoryDriverProtocol):
+    async def write_page(self, key, data, ttl):
+        self.store[key] = (data, time.time() + ttl)  # In-memory dict
+```
+
+**Trade-off Discussion**:
+- **Gemini's view**: Unify all cache under HAL for conceptual purity
+- **Our view**: Kernel-internal cache (like Inode cache in Linux) cannot tolerate RPC latency
+- **Resolution**: Layer 0 stays in kernel with decorator, Layer 1/2 use HAL
+
+**Comparison with Current Design** (Section 4.2.7):
+- Current design has `CacheProtocol(ABC)` with Dragonfly/L1Cache/PostgreSQL drivers
+- This design **splits** into:
+  - Layer 0 (internal): Not in ABC, uses decorators (like `@cache_mixin.cached`)
+  - Layer 1/2 (external): Keep as ABC drivers
+- **Refinement needed**: Update Section 4.2.7 to distinguish these two patterns
+
+**TODO** (P2):
+1. Audit current cache usage: Which are kernel-critical (keep) vs hot-pluggable (extract)?
+2. Implement `/dev/mem/*` mount protocol
+3. Create `mem-driver-dragonfly` and `mem-driver-pg` stub implementations
+4. Remove `redis-rs`/`sqlx` from `nexus-core` dependencies (move to drivers)
+5. Update Section 4.2.7 with this Layer 0/1/2 distinction
+
+### 7k. Identity System: PCB-Based Binding
+
+**Status**: Design direction from Gemini discussions. Implementation P2-P3.
+
+**Source**: `document-ai/notes/Nexus Identity Auth Separation Verify-Sign Split and PCB Design (msg147-150).md`
+
+#### Core Principle: Identity Lockdown at Spawn Time
+
+**Problem**: Current systems allow identity to be claimed per-request (Agent can lie: "I'm Gemini Worker").
+
+**Solution**: Bind identity at process spawn (like Linux PID) — immutable for process lifetime.
+
+#### PCB (Process Control Block) Model
+
+In traditional OS, PCB stores: PID, PPID, UID, GID, open file descriptors.
+
+In Nexus OS, PCB adds:
+```rust
+struct NexusTaskStruct {
+    pid: u32,                    // Host OS process ID
+    identity: String,            // "agent-gemini-worker-01" (immutable)
+    zone_id: ZoneID,             // Access boundary
+    spawn_time: Timestamp,
+    caps: Capabilities,          // Permission capabilities
+}
+```
+
+**Key Property**: `identity` is set once at spawn, cannot be changed. Every subsequent request auto-tags with this identity.
+
+#### Progressive Isolation: 3 Levels
+
+Agent sandboxing has different isolation strengths depending on deployment mode:
+
+| Level | Mode | Identity Binding | I/O Monopoly | Mechanism | Use Case |
+|-------|------|------------------|--------------|-----------|----------|
+| **Level 0** | Host Process | Weak | ❌ No | SO_PEERCRED | Dev/Hacker mode |
+| **Level 1** | Docker | Strong | ✅ Yes | Mount point | Prod/Company |
+| **Level 2** | Wasm | Perfect | ✅ Yes | Memory isolation | Future/Lightweight |
+
+**Level 0: SO_PEERCRED (Unix Domain Socket)**
+
+No container overhead. Nexus uses Unix socket `getsockopt(SO_PEERCRED)` to get PID:
+```rust
+Agent (PID 12345) → Unix Socket → Nexus Kernel
+Kernel: getsockopt(SO_PEERCRED) → OS returns PID 12345
+Nexus: Lookup in-memory table: PID 12345 = Identity "Gemini-Worker"
+```
+
+**Advantages**:
+- No Admin/root privileges required
+- ~50ns overhead
+- Kernel trusts OS (cannot fake PID)
+
+**Limitation**: Agent can still bypass Nexus and directly access host OS (no I/O monopoly).
+
+**Level 1: Docker Mode (Production)**
+
+Full isolation, Agent cannot escape container:
+```bash
+docker run -d \
+  --network none \              # Block all network except Nexus
+  -v /nexus/agent/01:/mnt/nexus \  # Only mount point to Nexus
+  -e NEXUS_ID="agent-01" \
+  my-agent-image
+```
+
+Container has zero access to host OS. All file/network I/O must go through `/mnt/nexus` (Nexus FS).
+
+**Level 2: Wasm Mode (Future)**
+
+Agent compiled to WebAssembly, runs in sandboxed runtime (Wasmtime). Memory isolation enforced by Wasm VM.
+
+#### Identity Auto-Tagging
+
+Once identity is bound, every request is auto-tagged:
+```python
+# Agent code (no identity parameter needed)
+nexusfs.write("/data/report.txt", content)
+
+# Kernel automatically injects identity
+def write(path, data):
+    identity = current_task().identity  # From PCB
+    if not check_permission(identity, path, "write"):
+        raise PermissionDenied
+    ...
+```
+
+Agent **cannot** claim a different identity — it's locked in PCB.
+
+**Trade-off Discussion**:
+- **Gemini's view**: PCB + Progressive Isolation is essential for security
+- **Our consideration**: Level 0 (SO_PEERCRED) is pragmatic for dev/hacker workflows
+- **Consensus**: Support all 3 levels, default to Level 0 for ease of use, recommend Level 1+ for production
+
+**Comparison with Current Design**:
+- Current: Token-based auth (Agent passes JWT per request)
+- Proposed: PCB-based (identity set once at spawn, no per-request auth)
+- **Migration**: Can coexist — external clients use JWT, internal agents use PCB
+
+**TODO** (P2):
+1. Define `NexusTaskStruct` (in Rust or Python)
+2. Implement SO_PEERCRED binding for Level 0
+3. Implement Docker mount isolation for Level 1
+4. Add `NEXUS_ISOLATION_LEVEL=0|1|2` config
+5. Refactor permission checks to use `current_task().identity` instead of JWT parsing
+
+### 7l. Auth Separation: Verify/Sign Split
+
+**Status**: Design direction from Gemini discussions. Implementation P2.
+
+**Source**: `document-ai/notes/Nexus Identity Auth Separation Verify-Sign Split and PCB Design (msg147-150).md`
+
+#### Core Principle: Fast Path vs Slow Path
+
+Authentication has two operations with vastly different performance:
+
+1. **Verify** (Fast Path): Check if a token/signature is valid
+   - Latency: ~50ns (ed25519 signature verify)
+   - Frequency: Every single request
+   - **Must be in Kernel** (hot path optimization)
+
+2. **Sign** (Slow Path): Generate a new token
+   - Latency: ~50-500ms (DB lookup, OAuth flow, token generation)
+   - Frequency: Once per session (login, refresh)
+   - **Should be in Driver** (not kernel-critical)
+
+**Current Problem** (Section 4.2.9): `AuthenticationProtocol` mixes both operations.
+
+**Proposed Split**:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ KERNEL SPACE (nexus-core)                               │
+│                                                         │
+│  class AuthVerifyProtocol(ABC):                        │
+│    @abstractmethod                                      │
+│    def verify_token(token: str) -> Optional[Identity]  │  ← Fast, in kernel
+│    def verify_signature(data: bytes, sig: bytes) → bool│
+│                                                         │
+│  Implementation: ed25519_verify() — ~50ns               │
+└─────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────┐
+│ DRIVER LAYER (sys-driver-auth)                         │
+│                                                         │
+│  class AuthSignProtocol(ABC):                          │
+│    @abstractmethod                                      │
+│    async def login(credentials) → Token                │  ← Slow, in driver
+│    async def refresh_token(old_token) → Token          │
+│    async def sign_data(data: bytes) → Signature        │
+│                                                         │
+│  Implementation:                                        │
+│  - DB lookup (50ms)                                    │
+│  - OAuth flow (200-500ms)                              │
+│  - JWT generation (5ms)                                │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Data Flow Examples**:
+
+**Fast Path (Every Request)**:
+```python
+# In Kernel (hot path, zero I/O)
+@require_permission("file:read")
+async def read_file(request):
+    identity = kernel.auth_verify.verify_token(request.headers["Authorization"])
+    if identity is None:
+        raise Unauthorized
+    # Proceed with permission check (50ns verify + 50ns permission lookup)
+```
+
+**Slow Path (Login)**:
+```python
+# In Driver (cold path, DB + OAuth)
+@app.post("/api/v1/auth/login")
+async def login_api(username, password):
+    user = await db.get_user(username)  # 50ms DB query
+    if not verify_password(password, user.password_hash):  # 100ms bcrypt
+        raise InvalidCredentials
+    token = auth_driver.sign_token(user.id, ttl=86400)  # 5ms JWT generation
+    return {"token": token}
+```
+
+**Benefits**:
+1. **Kernel stays fast**: No DB/OAuth dependencies in hot path
+2. **Driver flexibility**: Swap OAuth providers (Google → GitHub) without kernel recompile
+3. **Testing**: Kernel tests don't need OAuth mock servers
+
+**Privacy Computing Extension** (from Gemini):
+- Sensitive operations (Sign) can run in TEE (Trusted Execution Environment)
+- Mount point: `/dev/tee/enclave_01/sign`
+- Kernel forwards Sign requests to TEE driver, receives signed result
+- Verify stays in kernel (public key verification doesn't need secrecy)
+
+**Trade-off Discussion**:
+- **Gemini's view**: Strict separation, kernel never does slow I/O
+- **Our consideration**: Some hybrid cases (e.g., cached OAuth tokens) might blur the line
+- **Decision**: Keep strict separation, use cache (Layer 0) for hybrid cases
+
+**TODO** (P2):
+1. Split `AuthenticationProtocol` into `AuthVerifyProtocol` (kernel) and `AuthSignProtocol` (driver)
+2. Move JWT signing logic to `sys-driver-auth`
+3. Keep only `ed25519_verify` and public key cache in kernel
+4. Update permission checks to use kernel-side `verify_token()` only
+5. (Optional) Implement TEE driver for Sign operations
+
+### 7m. Nexus Native IPC: Pipe Implementation
+
+**Status**: Design direction from Gemini discussions. Implementation P2-P3.
+
+**Source**: `document-ai/notes/Nexus Container Deployment Strategy and Agent Permission Model (msg151-160).md`
+
+#### Motivation: Why Not Linux Pipes?
+
+Linux native pipes (`mkfifo`, `pipe()`) have limitations for Nexus use cases:
+
+| Property | Linux Pipe | Nexus Native Pipe |
+|----------|-----------|-------------------|
+| **Observable** | ❌ No (opaque kernel buffer) | ✅ Yes (file-based) |
+| **Persistent** | ❌ No (lost on process exit) | ✅ Yes (survives restart) |
+| **Network Transparent** | ❌ No (local only) | ✅ Yes (Nexus FS replication) |
+| **Seekable** | ❌ No (FIFO only) | ✅ Yes (ring buffer file) |
+| **Access Control** | ❌ Limited (file permissions) | ✅ Yes (Nexus ReBAC) |
+
+**Use Case**: Boardroom agents need observable, persistent event streams that survive container restarts and work across network boundaries.
+
+#### Design: Ring Buffer File
+
+**Location**: `/nexus/pipes/{pipe_name}` (special inode type: `DT_PIPE`)
+
+**Structure**:
+```rust
+struct NexusPipe {
+    buffer: RingBuffer<u8>,    // Fixed-size circular buffer (e.g., 1MB)
+    read_ptr: AtomicU64,       // Current read position
+    write_ptr: AtomicU64,      // Current write position
+    metadata: FileMetadata,    // Standard Nexus metadata (ACL, timestamps)
+}
+```
+
+**Operations**:
+```python
+# Writer (Producer)
+pipe = nexusfs.open("/nexus/pipes/boardroom-events", mode="w")
+pipe.write(b"event: new_proposal\ndata: {...}\n\n")  # Non-blocking (if space)
+
+# Reader (Consumer)
+pipe = nexusfs.open("/nexus/pipes/boardroom-events", mode="r")
+for event in pipe:  # Blocking iterator, yields when data available
+    handle_event(event)
+```
+
+**Blocking Semantics** (similar to Interrupt Model in 7i):
+1. Reader issues `read()` on empty pipe → Kernel blocks reader (adds to wait queue)
+2. Writer issues `write()` → Kernel writes to ring buffer
+3. Kernel unblocks reader (interrupt-like wakeup)
+4. Reader receives data
+
+#### Advantages over External Message Queue (RabbitMQ/Kafka)
+
+1. **Observable**: Admin can `cat /nexus/pipes/events` to inspect current data
+2. **Persistent**: Pipe survives process restart (data persisted in Nexus FS)
+3. **Network Transparent**: If pipe is in federated zone, replication is automatic (Raft sync)
+4. **Unified ACL**: Use Nexus ReBAC (no separate queue auth system)
+5. **Everything is a File**: No external dependencies, fits Nexus philosophy
+
+#### Comparison with Dragonfly Pub/Sub (Section 3.4, Task #7)
+
+**Alternative Approaches**:
+
+| Approach | Pros | Cons | Use Case |
+|----------|------|------|----------|
+| **Raft Event Log** | Strong consistency, integrated | Higher latency (~5-10ms) | Critical events (consensus required) |
+| **Dragonfly Pub/Sub** | Low latency (~1ms), external scale | External dependency, EC only | High-throughput notifications |
+| **Nexus Native Pipe** | Observable, persistent, file-based | Ring buffer size limit | Medium-throughput, needs observability |
+
+**Decision Pending**: Can coexist — use Raft Event Log for consistency-critical, Nexus Pipe for observable streams, Dragonfly for high-throughput ephemeral.
+
+**Trade-off Discussion**:
+- **Gemini's view**: Nexus Native Pipe is superior for observability and persistence
+- **Our consideration**: Ring buffer size limits may not suit high-volume streams (billions of events/day)
+- **Hybrid approach**: Use Pipe as primary interface, backed by Dragonfly or Raft depending on consistency needs
+
+**TODO** (P2):
+1. Define `DT_PIPE` inode type in FileMetadata
+2. Implement ring buffer backend (in Rust for performance)
+3. Implement blocking read/write operations (wait queue in kernel)
+4. Add `/nexus/pipes/` namespace with special ACL handling
+5. Document pipe API and migration guide from Dragonfly pub/sub
+
+### 7n. Container Strategy: I/O Monopoly Requirement
+
+**Status**: Design direction from Gemini discussions. Implementation P2.
+
+**Source**: `document-ai/notes/Nexus Container Deployment Strategy and Agent Permission Model (msg151-160).md`
+
+#### Core Requirement: Agent Must Go Through Nexus
+
+**Problem**: If Agent can bypass Nexus and directly access Host OS (file system, network), then:
+- Identity binding (PCB) is meaningless (Agent can forge files)
+- Permission checks are bypassed
+- Audit trail is incomplete
+
+**Solution**: Enforce **I/O Monopoly** — Agent's only I/O channel is Nexus.
+
+#### Implementation: "接管 Docker 的 I/O，不替代 Docker"
+
+**Philosophy**: Use Docker for isolation, but control its I/O configuration to enforce monopoly.
+
+**Docker Command Example**:
+```bash
+docker run -d \
+  --network none \                         # ← Block all network access
+  -v /nexus/agent/01:/mnt/nexus:ro \      # ← Only one mount (read-only Nexus socket)
+  --read-only \                            # ← Root filesystem read-only
+  --tmpfs /tmp:size=100M,noexec \         # ← Temporary writes in tmpfs (no persistence)
+  -e NEXUS_ID="agent-01" \
+  --security-opt=no-new-privileges \
+  my-agent-image
+```
+
+**Key Restrictions**:
+1. `--network none`: Agent cannot access internet directly (must use `/sys/net/http` via Nexus)
+2. Single mount point: `/mnt/nexus` → Unix socket to Nexus kernel
+3. `--read-only`: Agent cannot modify container filesystem (no side channels)
+4. `/tmp` in tmpfs: Temporary files evaporate on restart (no hidden persistence)
+
+**Agent Code (Inside Container)**:
+```python
+import nexus_sdk  # SDK that talks to /mnt/nexus socket
+
+# All I/O goes through Nexus
+nexus = nexus_sdk.connect("/mnt/nexus")
+nexus.write("/data/report.txt", content)          # File I/O
+response = nexus.http_get("https://api.com/data") # Network I/O (via /sys/net/http)
+```
+
+#### Compatibility with Level 0 (Host Process Mode)
+
+**Level 0 (Dev/Hacker)**: No Docker, Agent runs as host process
+- Uses SO_PEERCRED (see 7k)
+- **No I/O monopoly** (Agent can access host FS directly)
+- **Trade-off**: Convenience vs security
+
+**Level 1 (Docker)**: Agent in container
+- Enforced I/O monopoly
+- **Production recommended**
+
+**Configuration**: `NEXUS_ISOLATION_LEVEL=0|1|2` (see 7k Progressive Isolation table)
+
+#### Alternative: Wasm-Based Isolation (Level 2, Future)
+
+Agent compiled to Wasm, runs in Wasmtime:
+- Memory isolation by default (Wasm VM sandbox)
+- All I/O via WASI (WebAssembly System Interface) → can be intercepted by Nexus
+- Lightweight (<10MB memory overhead vs Docker's ~100MB)
+
+**TODO** (P2):
+1. Create Docker image template with I/O monopoly restrictions
+2. Implement Nexus SDK for container-side communication (Unix socket client)
+3. Add validation: Kernel rejects connections from non-isolated agents (unless Level 0 mode)
+4. Document deployment guide with Docker Compose examples
+5. (P3) Prototype Wasm agent runtime
 
 ---
 
@@ -979,12 +1630,43 @@ This "full node" image will serve as the unit for `docker-compose.cross-platform
 13. Production deployment guide (both SQLAlchemy and Raft modes documented)
 14. Investigate missing Subscription/Delivery DB storage (Task #12)
 15. Clarify Dragonfly status (Task #7d)
+16. **Microkernel Refactoring** (Section 7i):
+    - Audit `nexus-core` imports for extraction candidates (Timer, HTTP, Storage I/O)
+    - Create `nexus-drivers/` directory structure
+    - Extract Timer (sys-driver-timer) and HTTP (sys-driver-net) as proof-of-concept
+    - Define `/sys/*` and `/dev/*` mount protocols
+17. **Memory HAL Implementation** (Section 7j):
+    - Implement `/dev/mem/hot` and `/dev/mem/vector` mount points
+    - Create `mem-driver-dragonfly` and `mem-driver-pg` drivers
+    - Remove `redis-rs`/`sqlx` from `nexus-core` dependencies
+    - Refine Section 4.2.7 with Layer 0/1/2 distinction
+18. **Identity System: PCB Binding** (Section 7k):
+    - Define `NexusTaskStruct` structure
+    - Implement SO_PEERCRED binding for Level 0 (Host Process Mode)
+    - Implement Docker mount isolation for Level 1
+    - Add `NEXUS_ISOLATION_LEVEL=0|1|2` configuration
+19. **Auth Verify/Sign Split** (Section 7l):
+    - Split `AuthenticationProtocol` into `AuthVerifyProtocol` (kernel) + `AuthSignProtocol` (driver)
+    - Move JWT signing to `sys-driver-auth`
+    - Keep only `ed25519_verify` in kernel
+20. **Nexus Native Pipe** (Section 7m):
+    - Define `DT_PIPE` inode type
+    - Implement ring buffer backend (Rust)
+    - Implement blocking read/write with wait queue
+    - Add `/nexus/pipes/` namespace
+21. **Container I/O Monopoly** (Section 7n):
+    - Create Docker image template with I/O restrictions
+    - Implement Nexus SDK for container communication (Unix socket)
+    - Add isolation level validation in kernel
+    - Document deployment guide
 
 ### P3: Future
-16. Cross-zone distributed transactions (Spanner-like 2PC)
-17. ✅ ~~Zone nesting/overlaps design~~ Design decided (Section 7a: Mount Points + Hard Link lifecycle)
-18. Write performance optimization (NexusFS.write() ~30ms/op)
-19. Raft Eventual Consistency (EC) mode (Issue #1180)
+22. Cross-zone distributed transactions (Spanner-like 2PC)
+23. ✅ ~~Zone nesting/overlaps design~~ Design decided (Section 7a: Mount Points + Hard Link lifecycle)
+24. Write performance optimization (NexusFS.write() ~30ms/op)
+25. Raft Eventual Consistency (EC) mode (Issue #1180)
+26. Wasm-based agent runtime (Level 2 isolation, Section 7k/7n)
+27. TEE driver for privacy computing (Sign operations in enclave, Section 7l)
 
 ---
 

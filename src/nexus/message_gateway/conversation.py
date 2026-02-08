@@ -33,6 +33,28 @@ def _call_with_context(method: Any, *args: Any, context: Any = None, **kwargs: A
         raise
 
 
+def is_channel_native_id(message_id: str) -> bool:
+    """Check if a message ID is a channel's native ID (not gateway-generated).
+
+    Gateway-generated IDs have format: msg_<hex>
+    Channel native IDs are typically:
+    - Discord: snowflake (18+ digit number)
+    - Slack: timestamp-based (e.g., "1234567890.123456")
+    - Other: varies but not "msg_" prefix
+
+    Args:
+        message_id: The message ID to check
+
+    Returns:
+        True if this looks like a channel's native ID
+    """
+    if not message_id:
+        return False
+
+    # Gateway-generated IDs start with "msg_"
+    return not message_id.startswith("msg_")
+
+
 def _get_session_dir(session_id: str) -> str:
     """Get the directory path for a session.
 
@@ -201,7 +223,8 @@ def read_session_metadata(
             logger.warning(f"Unexpected content type from {path}: {type(raw_content)}")
             return None
 
-        return json.loads(text_content)
+        result: dict[str, Any] = json.loads(text_content)
+        return result
 
     except Exception as e:
         logger.error(f"Failed to read session metadata from {path}: {e}")
@@ -331,7 +354,6 @@ def sync_messages(
 
     added = 0
     skipped = 0
-    last_added: Message | None = None
 
     for message in messages:
         if message.id in existing_ids:
@@ -343,7 +365,6 @@ def sync_messages(
             append_message(nx, session_id, message, context)
             existing_ids.add(message.id)  # Track for duplicates within batch
             added += 1
-            last_added = message
         except Exception as e:
             logger.error(f"Failed to sync message {message.id}: {e}")
             # Continue with other messages
@@ -355,3 +376,53 @@ def sync_messages(
 
     logger.info(f"Synced {session_id}: added={added}, skipped={skipped}")
     return added, skipped
+
+
+def cleanup_orphan_messages(
+    nx: NexusFS,
+    session_id: str,
+    context: OperationContext,
+) -> int:
+    """Remove messages with gateway-generated IDs (not from channel).
+
+    This cleans up any messages that were written to conversation.jsonl
+    but never actually sent to the channel. Only messages with channel-native
+    IDs (e.g., Discord snowflakes) are kept.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        context: Operation context for permissions (required)
+
+    Returns:
+        Number of messages removed
+    """
+    messages = read_messages(nx, session_id, context)
+    if not messages:
+        return 0
+
+    # Filter to only channel-native IDs
+    valid_messages = [msg for msg in messages if is_channel_native_id(msg.id)]
+    removed = len(messages) - len(valid_messages)
+
+    if removed == 0:
+        return 0
+
+    # Rewrite the conversation file with only valid messages
+    path = get_conversation_path(session_id)
+
+    try:
+        # Build new content
+        lines = []
+        for msg in valid_messages:
+            lines.append(msg.to_jsonl() + "\n")
+
+        content = "".join(lines)
+        _call_with_context(nx.write, path, content, context=context)
+
+        logger.info(f"Cleaned up {removed} orphan messages from {session_id}")
+        return removed
+
+    except Exception as e:
+        logger.error(f"Failed to cleanup orphan messages for {session_id}: {e}")
+        return 0

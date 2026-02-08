@@ -14,7 +14,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from nexus.message_gateway import Message, append_message, get_sync_cursor, sync_messages
+from nexus.message_gateway import (
+    Message,
+    append_message,
+    get_conversation_path,
+    get_sync_cursor,
+    sync_messages,
+)
 from nexus.message_gateway.dedup import Deduplicator
 from nexus.server.api.v2.models import (
     GatewayMessageRequest,
@@ -74,6 +80,41 @@ def _get_operation_context(auth_result: dict[str, Any]) -> Any:
     return get_operation_context(auth_result)
 
 
+async def _fire_gateway_event(session_id: str, actor_id: str, context: Any) -> None:
+    """Fire file_write event for subscription webhooks.
+
+    Args:
+        session_id: Session key
+        actor_id: Who triggered the event
+        context: Operation context with zone info
+    """
+    try:
+        from nexus.server.subscriptions import get_subscription_manager
+
+        manager = get_subscription_manager()
+        if manager is None:
+            return
+
+        file_path = get_conversation_path(session_id)
+        zone_id = getattr(context, "zone_id", None) or "default"
+        subject_type = "agent" if actor_id.startswith("agent:") else "user"
+
+        await manager.broadcast(
+            event_type="file_write",
+            data={
+                "file_path": file_path,
+                "zone_id": zone_id,
+                "subject_id": actor_id,
+                "subject_type": subject_type,
+            },
+            zone_id=zone_id,
+        )
+        logger.debug(f"Gateway fired file_write event for {file_path}")
+
+    except Exception as e:
+        logger.warning(f"Failed to fire gateway event: {e}")
+
+
 @router.post(
     "/messages", response_model=GatewayMessageResponse, status_code=status.HTTP_201_CREATED
 )
@@ -83,11 +124,16 @@ async def send_message(
 ) -> GatewayMessageResponse:
     """Send a message through the gateway.
 
-    Validates the message, checks for duplicates, and appends to the
-    conversation file. All conversations are treated as "boardrooms".
+    For agent messages (role="agent"):
+    - Sends to the channel adapter FIRST (Discord, Slack, etc.)
+    - Gets the channel's native message ID back
+    - THEN stores in conversation.jsonl with that ID
 
-    If `id` is provided (channel's native message ID), it will be used.
-    Otherwise, a new ID is generated.
+    This ensures conversation.jsonl only contains messages that
+    actually exist in the channel.
+
+    For human messages with an ID (from sync):
+    - Stores directly with the provided channel message ID
 
     Returns:
         - 201 Created with message_id if new message
@@ -97,36 +143,70 @@ async def send_message(
     if not app_state.nexus_fs:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    # Use provided ID or generate one
-    message_id = request.id or f"msg_{uuid.uuid4().hex[:16]}"
-    ts = request.ts or datetime.now(UTC).isoformat()
-
-    # Check for duplicate (using the actual message ID)
-    dedup = _get_deduplicator()
-    if not dedup.check_and_mark(message_id):
-        return GatewayMessageResponse(
-            message_id=message_id,
-            status="duplicate",
-            ts=ts,
-        )
-
     try:
-        # Create Message object
-        message = Message(
-            id=message_id,
-            text=request.text,
-            user=request.user,
-            role=request.role,
-            session_id=request.session_id,
-            channel=request.channel,
-            ts=ts,
-            parent_id=request.parent_id,
-            target=request.target,
-            metadata=request.metadata,
-        )
-
         # Get operation context for NexusFS
         context = _get_operation_context(auth_result)
+
+        # For agent messages, send to channel FIRST
+        if request.role == "agent":
+            adapter = _channel_adapters.get(request.channel)
+            if not adapter:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No adapter registered for channel: {request.channel}. "
+                    f"Cannot send agent messages without a channel adapter. "
+                    f"Available: {list(_channel_adapters.keys())}",
+                )
+
+            # Send to channel and get Message with native ID
+            message = await adapter.send_message(
+                session_id=request.session_id,
+                text=request.text,
+                parent_id=request.parent_id,
+            )
+
+            # Update message fields from request that adapter doesn't set
+            message = Message(
+                id=message.id,  # Channel's native ID
+                text=message.text,
+                user=request.user,  # Use requested user, not adapter's bot user
+                role="agent",
+                session_id=request.session_id,
+                channel=request.channel,
+                ts=message.ts,  # Channel's timestamp
+                parent_id=message.parent_id,
+                target=request.target,
+                metadata={**message.metadata, **(request.metadata or {})},
+            )
+
+            logger.info(f"Agent message sent to {request.channel}: {message.id}")
+
+        else:
+            # Human message (from sync or direct) - use provided ID or generate
+            message_id = request.id or f"msg_{uuid.uuid4().hex[:16]}"
+            ts = request.ts or datetime.now(UTC).isoformat()
+
+            message = Message(
+                id=message_id,
+                text=request.text,
+                user=request.user,
+                role=request.role,
+                session_id=request.session_id,
+                channel=request.channel,
+                ts=ts,
+                parent_id=request.parent_id,
+                target=request.target,
+                metadata=request.metadata,
+            )
+
+        # Check for duplicate (using the message ID)
+        dedup = _get_deduplicator()
+        if not dedup.check_and_mark(message.id):
+            return GatewayMessageResponse(
+                message_id=message.id,
+                status="duplicate",
+                ts=message.ts,
+            )
 
         # Append to conversation
         append_message(
@@ -136,14 +216,19 @@ async def send_message(
             context=context,
         )
 
-        logger.info(f"Message {message_id} appended to session {request.session_id}")
+        logger.info(f"Message {message.id} appended to session {request.session_id}")
+
+        # Fire file_write event for subscription webhooks
+        await _fire_gateway_event(request.session_id, request.user, context)
 
         return GatewayMessageResponse(
-            message_id=message_id,
+            message_id=message.id,
             status="created",
-            ts=ts,
+            ts=message.ts,
         )
 
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

@@ -37,13 +37,20 @@ class ChannelAdapter(Protocol):
         text: str,
         *,
         parent_id: str | None = None,
-    ) -> None:
-        """Send a message to the channel.
+    ) -> Message:
+        """Send a message to the channel and return with native ID.
+
+        The message is sent to the platform first, and the returned Message
+        contains the platform's native message ID. This ensures conversation.jsonl
+        only contains messages that actually exist in the channel.
 
         Args:
             session_id: Boardroom key (channel:account_id:chat_id)
             text: Message content to send
             parent_id: Optional message ID to reply to (for threading)
+
+        Returns:
+            Message with the platform's native message ID and timestamp
         """
         ...
 

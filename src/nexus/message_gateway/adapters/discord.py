@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from nexus.message_gateway.conversation import get_conversation_path
 from nexus.message_gateway.session_router import derive_session_key, parse_session_key
 from nexus.message_gateway.types import Message
 
@@ -125,13 +126,20 @@ class DiscordAdapter:
         text: str,
         *,
         parent_id: str | None = None,
-    ) -> None:
-        """Send a message to Discord.
+    ) -> Message:
+        """Send a message to Discord and return the Message with Discord's ID.
 
         Args:
             session_id: Boardroom key (discord:guild_id:channel_id)
             text: Message content
             parent_id: Optional message ID to reply to
+
+        Returns:
+            Message object with Discord's native message ID
+
+        Raises:
+            RuntimeError: If adapter is not running
+            ValueError: If session_id is not a Discord session
         """
         if not self._client or not self._running:
             raise RuntimeError("Discord adapter is not running")
@@ -145,20 +153,24 @@ class DiscordAdapter:
         channel = self._client.get_channel(channel_id)
 
         if not channel:
-            logger.error(f"Channel {channel_id} not found")
-            return
+            raise ValueError(f"Channel {channel_id} not found")
 
         try:
+            discord_msg = None
             if parent_id:
                 # Try to fetch parent message for threading
                 try:
                     parent_msg = await channel.fetch_message(int(parent_id))
-                    await parent_msg.reply(text)
+                    discord_msg = await parent_msg.reply(text)
                 except Exception:
                     # Fallback to regular message if reply fails
-                    await channel.send(text)
+                    discord_msg = await channel.send(text)
             else:
-                await channel.send(text)
+                discord_msg = await channel.send(text)
+
+            # Convert to our Message format with Discord's native ID
+            return self._discord_message_to_message(discord_msg, session_id)
+
         except Exception as e:
             logger.error(f"Failed to send Discord message: {e}")
             raise
@@ -240,7 +252,7 @@ class DiscordAdapter:
             Message object
         """
         # Determine role - bot messages are "agent", others are "human"
-        role = "agent" if discord_msg.author.bot else "human"
+        role: Literal["human", "agent"] = "agent" if discord_msg.author.bot else "human"
 
         return Message(
             id=str(discord_msg.id),
@@ -255,9 +267,44 @@ class DiscordAdapter:
             metadata={
                 "author_name": str(discord_msg.author),
                 "guild_name": discord_msg.guild.name if discord_msg.guild else None,
-                "channel_name": discord_msg.channel.name if hasattr(discord_msg.channel, "name") else None,
+                "channel_name": discord_msg.channel.name
+                if hasattr(discord_msg.channel, "name")
+                else None,
             },
         )
+
+    async def _fire_file_event(self, session_id: str, actor_id: str) -> None:
+        """Fire file_write event for subscription webhooks.
+
+        Args:
+            session_id: Session key
+            actor_id: Who triggered the event (user or agent ID)
+        """
+        try:
+            from nexus.server.subscriptions import get_subscription_manager
+
+            manager = get_subscription_manager()
+            if manager is None:
+                logger.debug("No subscription manager available")
+                return
+
+            file_path = get_conversation_path(session_id)
+            zone_id = getattr(self._context, "zone_id", None) or "default"
+
+            await manager.broadcast(
+                event_type="file_write",
+                data={
+                    "file_path": file_path,
+                    "zone_id": zone_id,
+                    "subject_id": actor_id,
+                    "subject_type": "user",
+                },
+                zone_id=zone_id,
+            )
+            logger.debug(f"Fired file_write event for {file_path}")
+
+        except Exception as e:
+            logger.warning(f"Failed to fire file_write event: {e}")
 
     async def _handle_message(self, message: Any) -> None:
         """Handle incoming Discord message.
@@ -265,12 +312,18 @@ class DiscordAdapter:
         Args:
             message: discord.py Message object
         """
+        logger.info(
+            f"Discord on_message: {message.author} in {getattr(message.channel, 'name', 'DM')}: {message.content[:50] if message.content else '(empty)'}"
+        )
+
         # Ignore bot messages
         if message.author.bot:
+            logger.debug(f"Ignoring bot message from {message.author}")
             return
 
         # Ignore DMs for now (only handle guild messages)
         if not message.guild:
+            logger.debug("Ignoring DM message")
             return
 
         from nexus.message_gateway.conversation import append_message, ensure_session_metadata
@@ -309,6 +362,10 @@ class DiscordAdapter:
             )
 
             logger.debug(f"Discord message {message.id} stored in session {session_id}")
+
+            # Fire file_write event for subscription webhooks
+            # (Direct NexusFS calls bypass RPC layer, so we fire events manually)
+            await self._fire_file_event(session_id, msg.user)
 
         except Exception as e:
             logger.error(f"Failed to handle Discord message: {e}", exc_info=True)

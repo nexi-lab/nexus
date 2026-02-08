@@ -1717,7 +1717,9 @@ def _register_routes(app: FastAPI) -> None:
         _register_pay_exception_handlers(app)
         logger.info("Nexus Pay API routes registered (8 endpoints)")
     except ImportError as e:
-        logger.warning(f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available.")
+        logger.warning(
+            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
 
     # Issue #940: Register async files router (lazy initialization via lifespan)
     try:

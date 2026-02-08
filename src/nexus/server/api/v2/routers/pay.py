@@ -49,7 +49,10 @@ def _validate_amount(v: str) -> str:
         raise ValueError(f"Invalid amount: {v!r}") from None
     if dec <= 0:
         raise ValueError("Amount must be positive")
-    if dec.as_tuple().exponent is not None and abs(int(dec.as_tuple().exponent)) > MAX_DECIMAL_PLACES:
+    if (
+        dec.as_tuple().exponent is not None
+        and abs(int(dec.as_tuple().exponent)) > MAX_DECIMAL_PLACES
+    ):
         raise ValueError(f"Amount must have at most {MAX_DECIMAL_PLACES} decimal places")
     return v
 
@@ -60,7 +63,9 @@ class TransferRequestModel(BaseModel):
     to: str = Field(..., description="Recipient agent ID or wallet address")
     amount: str = Field(..., description="Amount as decimal string (e.g. '10.50')")
     memo: str = Field(default="", description="Optional memo/description")
-    idempotency_key: str | None = Field(default=None, description="Optional idempotency key for retry safety")
+    idempotency_key: str | None = Field(
+        default=None, description="Optional idempotency key for retry safety"
+    )
     method: str = Field(default="auto", description="Payment method: 'auto', 'credits', or 'x402'")
 
     @field_validator("amount")
@@ -103,7 +108,9 @@ class ReserveRequestModel(BaseModel):
     """Request to reserve credits."""
 
     amount: str = Field(..., description="Amount to reserve as decimal string")
-    timeout: int = Field(default=300, ge=1, le=86400, description="Auto-release timeout in seconds (1-86400)")
+    timeout: int = Field(
+        default=300, ge=1, le=86400, description="Auto-release timeout in seconds (1-86400)"
+    )
     purpose: str = Field(default="general", description="Purpose of reservation")
     task_id: str | None = Field(default=None, description="Optional task identifier")
 
@@ -260,6 +267,7 @@ async def get_nexuspay(
 # =============================================================================
 # Exception Handling
 # =============================================================================
+
 
 def _register_pay_exception_handlers(app: Any) -> None:
     """Register centralized exception handlers for NexusPay errors.

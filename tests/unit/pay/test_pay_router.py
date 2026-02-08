@@ -369,12 +369,7 @@ class TestBatchTransferEndpoint:
 
     def test_batch_transfer_too_many(self, client):
         """Should reject batches exceeding 1000 items."""
-        payload = {
-            "transfers": [
-                {"to": f"agent-{i}", "amount": "1.00"}
-                for i in range(1001)
-            ]
-        }
+        payload = {"transfers": [{"to": f"agent-{i}", "amount": "1.00"} for i in range(1001)]}
 
         response = client.post("/api/v2/pay/transfer/batch", json=payload)
         assert response.status_code == 422
@@ -689,12 +684,7 @@ class TestEdgeCases:
         mock_credits_service.transfer_batch = AsyncMock(
             return_value=[f"tx-{i}" for i in range(1000)]
         )
-        payload = {
-            "transfers": [
-                {"to": f"agent-{i}", "amount": "0.01"}
-                for i in range(1000)
-            ]
-        }
+        payload = {"transfers": [{"to": f"agent-{i}", "amount": "0.01"} for i in range(1000)]}
 
         response = client.post("/api/v2/pay/transfer/batch", json=payload)
         assert response.status_code == 201
@@ -702,12 +692,7 @@ class TestEdgeCases:
 
     def test_batch_1001_rejected(self, client):
         """Should reject batch exceeding 1000."""
-        payload = {
-            "transfers": [
-                {"to": f"agent-{i}", "amount": "0.01"}
-                for i in range(1001)
-            ]
-        }
+        payload = {"transfers": [{"to": f"agent-{i}", "amount": "0.01"} for i in range(1001)]}
 
         response = client.post("/api/v2/pay/transfer/batch", json=payload)
         assert response.status_code == 422

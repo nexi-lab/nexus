@@ -105,7 +105,8 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
             await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
 
         # ReBAC tables (raw SQL for compatibility with async_rebac_manager queries)
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_tuples (
                 tuple_id TEXT PRIMARY KEY,
                 subject_type TEXT NOT NULL,
@@ -120,8 +121,10 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
                 created_at TIMESTAMPTZ,
                 updated_at TIMESTAMPTZ
             )
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_namespaces (
                 namespace_id TEXT PRIMARY KEY,
                 object_type TEXT NOT NULL UNIQUE,
@@ -129,8 +132,10 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
                 created_at TIMESTAMPTZ,
                 updated_at TIMESTAMPTZ
             )
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS rebac_group_closure (
                 member_type TEXT NOT NULL,
                 member_id TEXT NOT NULL,
@@ -141,26 +146,31 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
                 updated_at TIMESTAMPTZ,
                 PRIMARY KEY (member_type, member_id, group_type, group_id, zone_id)
             )
-        """))
+        """)
+        )
 
         # Clean any leftover test data
         try:
-            await conn.execute(text(
-                "TRUNCATE file_paths, directory_entries, version_history, "
-                "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
-            ))
+            await conn.execute(
+                text(
+                    "TRUNCATE file_paths, directory_entries, version_history, "
+                    "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
+                )
+            )
         except Exception:
             pass
 
         # Insert default namespace config: file type with owner/writer/reader → read/write
-        ns_config = json.dumps({
-            "relations": {"owner": {}, "writer": {}, "reader": {}, "direct_owner": {}},
-            "permissions": {
-                "read": {"union": ["owner", "writer", "reader", "direct_owner"]},
-                "write": {"union": ["owner", "writer", "direct_owner"]},
-                "admin": {"union": ["owner"]},
-            },
-        })
+        ns_config = json.dumps(
+            {
+                "relations": {"owner": {}, "writer": {}, "reader": {}, "direct_owner": {}},
+                "permissions": {
+                    "read": {"union": ["owner", "writer", "reader", "direct_owner"]},
+                    "write": {"union": ["owner", "writer", "direct_owner"]},
+                    "admin": {"union": ["owner"]},
+                },
+            }
+        )
         await conn.execute(
             text(
                 "INSERT INTO rebac_namespaces (namespace_id, object_type, config) "
@@ -175,10 +185,12 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
     # Cleanup after tests
     async with engine.begin() as conn:
         try:
-            await conn.execute(text(
-                "TRUNCATE file_paths, directory_entries, version_history, "
-                "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
-            ))
+            await conn.execute(
+                text(
+                    "TRUNCATE file_paths, directory_entries, version_history, "
+                    "rebac_tuples, rebac_namespaces, rebac_group_closure CASCADE"
+                )
+            )
         except Exception:
             pass
 

@@ -12,27 +12,23 @@ from nexus.message_gateway.conversation import (
     read_session_metadata,
     write_session_metadata,
 )
-from nexus.message_gateway.correlation import CorrelationTracker, request_response
 from nexus.message_gateway.dedup import Deduplicator
 from nexus.message_gateway.session_router import derive_session_key, parse_session_key
 from nexus.message_gateway.types import Message
-from nexus.message_gateway.watcher import ConversationWatcher, PollingWatcher
+from nexus.message_gateway.watcher import ConversationWatcher
 
 __all__ = [
     "ChannelAdapter",
     "ConversationWatcher",
-    "CorrelationTracker",
     "Deduplicator",
     "GatewayClient",
     "GatewayError",
     "Message",
-    "PollingWatcher",
     "append_message",
     "derive_session_key",
     "ensure_session_metadata",
     "parse_session_key",
     "read_messages",
     "read_session_metadata",
-    "request_response",
     "write_session_metadata",
 ]

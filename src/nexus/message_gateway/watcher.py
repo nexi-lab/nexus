@@ -6,10 +6,8 @@ Uses SubscriptionManager webhooks for file change notifications.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.message_gateway.conversation import read_messages
@@ -19,7 +17,6 @@ if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
     from nexus.server.subscriptions.manager import SubscriptionManager
-    from nexus.server.subscriptions.models import SubscriptionCreate
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +25,25 @@ MessageHandler = Callable[[Message, str], Awaitable[None]]  # (message, session_
 
 
 class ConversationWatcher:
-    """Watches conversations for new human messages.
+    """Watches conversations for new messages.
 
     Integrates with SubscriptionManager to receive file change events,
-    then notifies registered handlers when new human messages arrive.
+    then notifies registered handlers when new messages arrive.
+
+    Key behavior:
+    - Notifies on ALL new messages (human or agent)
+    - Skips messages from self (agent ignores its own messages to avoid loops)
 
     Usage:
         watcher = ConversationWatcher(
             nexus_fs=nx,
             context=context,
+            self_agent_id="agent:my-agent",  # Messages from this ID are skipped
             subscription_manager=sub_mgr,
         )
 
         # Register a handler
-        watcher.on_human_message(my_handler)
+        watcher.on_message(my_handler)
 
         # Start watching
         await watcher.start()
@@ -54,6 +56,7 @@ class ConversationWatcher:
         self,
         nexus_fs: NexusFS,
         context: OperationContext,
+        self_agent_id: str,
         subscription_manager: SubscriptionManager | None = None,
         *,
         zone_id: str = "default",
@@ -64,12 +67,14 @@ class ConversationWatcher:
         Args:
             nexus_fs: NexusFS instance for reading messages
             context: Operation context for permissions
+            self_agent_id: Agent's own ID - messages from this user are skipped
             subscription_manager: Optional SubscriptionManager for auto-registration
             zone_id: Zone ID for subscription
             webhook_url: URL for webhook callbacks (required if using SubscriptionManager)
         """
         self._nexus_fs = nexus_fs
         self._context = context
+        self._self_agent_id = self_agent_id
         self._subscription_manager = subscription_manager
         self._zone_id = zone_id
         self._webhook_url = webhook_url
@@ -79,11 +84,11 @@ class ConversationWatcher:
         self._last_message_ids: dict[str, set[str]] = {}  # session_id -> seen message IDs
         self._running = False
 
-    def on_human_message(self, handler: MessageHandler) -> None:
-        """Register a handler for new human messages.
+    def on_message(self, handler: MessageHandler) -> None:
+        """Register a handler for new messages.
 
         The handler is called with (message, session_id) for each new
-        human message detected.
+        message (except messages from self).
 
         Args:
             handler: Async callback function
@@ -105,7 +110,7 @@ class ConversationWatcher:
         if self._subscription_manager and self._webhook_url:
             await self._create_subscription()
 
-        logger.info("ConversationWatcher started")
+        logger.info(f"ConversationWatcher started (self_agent_id={self._self_agent_id})")
 
     async def stop(self) -> None:
         """Stop watching for messages."""
@@ -134,7 +139,7 @@ class ConversationWatcher:
                     name="conversation-watcher",
                     description="Watches for new messages in conversations",
                 ),
-                created_by="system:conversation-watcher",
+                created_by=f"system:{self._self_agent_id}",
             )
             self._subscription_id = subscription.id
             logger.info(f"Created subscription {subscription.id} for conversation watching")
@@ -181,7 +186,7 @@ class ConversationWatcher:
         """Process new messages in a session.
 
         Reads all messages, identifies new ones, and notifies handlers
-        for new human messages.
+        for messages not from self.
 
         Args:
             session_id: Session ID to process
@@ -204,13 +209,15 @@ class ConversationWatcher:
         # Update seen IDs
         self._last_message_ids[session_id] = {m.id for m in messages}
 
-        # Process new human messages
+        # Process new messages (skip messages from self)
         for message in new_messages:
-            if message.role == "human":
-                await self._notify_handlers(message, session_id)
+            if message.user == self._self_agent_id:
+                logger.debug(f"Skipping own message {message.id}")
+                continue
+            await self._notify_handlers(message, session_id)
 
     async def _notify_handlers(self, message: Message, session_id: str) -> None:
-        """Notify all handlers of a new human message.
+        """Notify all handlers of a new message.
 
         Args:
             message: The new message
@@ -239,101 +246,3 @@ class ConversationWatcher:
             return await self.handle_webhook(payload)
 
         return router
-
-
-class PollingWatcher:
-    """Alternative watcher that polls for new messages.
-
-    Use this when webhooks are not available or for simpler setups.
-
-    Usage:
-        watcher = PollingWatcher(
-            nexus_fs=nx,
-            context=context,
-            session_ids=["discord:123:456"],
-            poll_interval=1.0,
-        )
-        watcher.on_human_message(my_handler)
-        await watcher.start()
-    """
-
-    def __init__(
-        self,
-        nexus_fs: NexusFS,
-        context: OperationContext,
-        session_ids: list[str],
-        *,
-        poll_interval: float = 1.0,
-    ) -> None:
-        """Initialize the polling watcher.
-
-        Args:
-            nexus_fs: NexusFS instance
-            context: Operation context
-            session_ids: Session IDs to watch
-            poll_interval: Seconds between polls
-        """
-        self._nexus_fs = nexus_fs
-        self._context = context
-        self._session_ids = session_ids
-        self._poll_interval = poll_interval
-
-        self._handlers: list[MessageHandler] = []
-        self._last_message_ids: dict[str, set[str]] = {}
-        self._running = False
-        self._task: asyncio.Task | None = None
-
-    def on_human_message(self, handler: MessageHandler) -> None:
-        """Register a handler for new human messages."""
-        self._handlers.append(handler)
-
-    async def start(self) -> None:
-        """Start polling for new messages."""
-        if self._running:
-            return
-
-        self._running = True
-        self._task = asyncio.create_task(self._poll_loop())
-        logger.info(f"PollingWatcher started for {len(self._session_ids)} sessions")
-
-    async def stop(self) -> None:
-        """Stop polling."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        logger.info("PollingWatcher stopped")
-
-    async def _poll_loop(self) -> None:
-        """Main polling loop."""
-        while self._running:
-            for session_id in self._session_ids:
-                await self._check_session(session_id)
-            await asyncio.sleep(self._poll_interval)
-
-    async def _check_session(self, session_id: str) -> None:
-        """Check a session for new messages."""
-        try:
-            messages = read_messages(self._nexus_fs, session_id, self._context)
-        except Exception as e:
-            logger.debug(f"Failed to read {session_id}: {e}")
-            return
-
-        seen_ids = self._last_message_ids.get(session_id, set())
-        new_messages = [m for m in messages if m.id not in seen_ids]
-
-        if not new_messages:
-            return
-
-        self._last_message_ids[session_id] = {m.id for m in messages}
-
-        for message in new_messages:
-            if message.role == "human":
-                for handler in self._handlers:
-                    try:
-                        await handler(message, session_id)
-                    except Exception as e:
-                        logger.error(f"Handler error: {e}", exc_info=True)

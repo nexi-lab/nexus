@@ -1,55 +1,73 @@
-"""Unit tests for Lock REST API endpoints with mocked lock manager.
+"""Unit tests for Lock REST API endpoints (Issue #1110).
 
-These tests verify the endpoint logic by mocking the lock manager,
-allowing full code path coverage without Redis/Dragonfly.
+These tests use FastAPI TestClient with a mocked LockManagerProtocol,
+verifying the full endpoint code path: request parsing -> business logic
+-> response serialization.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi.testclient import TestClient
 
+from nexus.core.distributed_lock import ExtendResult, HolderInfo, LockInfo
 from nexus.server.fastapi_server import (
     LockAcquireRequest,
+    LockExtendRequest,
+    LockHolderResponse,
+    LockInfoMutex,
+    LockInfoSemaphore,
     LockListResponse,
     LockResponse,
     LockStatusResponse,
 )
 
 
-@pytest.fixture
-def mock_lock_manager():
-    """Create a comprehensive mock lock manager."""
-    manager = MagicMock()
-    manager.LOCK_PREFIX = "nexus:lock"
-    manager.SEMAPHORE_PREFIX = "nexus:semaphore"
+# =============================================================================
+# Fixtures
+# =============================================================================
 
-    # Mock Redis client
-    redis_client = AsyncMock()
-    redis_client.scan = AsyncMock(return_value=(0, []))
-    redis_client.zcard = AsyncMock(return_value=0)
-    redis_client.get = AsyncMock(return_value=None)
-    redis_client.zrange = AsyncMock(return_value=[])
 
-    manager._redis = MagicMock()
-    manager._redis.client = redis_client
-
-    # Async methods
-    manager.acquire = AsyncMock(return_value="lock-id-abc123")
-    manager.release = AsyncMock(return_value=True)
-    manager.extend = AsyncMock(return_value=True)
-    manager.force_release = AsyncMock(return_value=True)
-    manager.get_lock_info = AsyncMock(return_value=None)
-    manager.is_locked = AsyncMock(return_value=False)
-
-    # Helper methods
-    manager._semaphore_key = MagicMock(side_effect=lambda t, p: f"nexus:semaphore:{t}:{p}")
-    manager._semaphore_config_key = MagicMock(
-        side_effect=lambda t, p: f"nexus:semaphore_config:{t}:{p}"
+def _make_lock_info(
+    path: str = "/test/file.txt",
+    mode: str = "mutex",
+    max_holders: int = 1,
+    lock_id: str = "lock-id-abc123",
+    fence_token: int = 42,
+) -> LockInfo:
+    """Create a LockInfo for testing."""
+    return LockInfo(
+        path=path,
+        mode=mode,
+        max_holders=max_holders,
+        holders=[
+            HolderInfo(
+                lock_id=lock_id,
+                holder_info="test-holder",
+                acquired_at=1700000000.0,
+                expires_at=1700000030.0,
+            )
+        ],
+        fence_token=fence_token,
     )
 
+
+@pytest.fixture
+def mock_lock_manager():
+    """Create a mock implementing LockManagerProtocol."""
+    manager = AsyncMock()
+    manager.acquire = AsyncMock(return_value="lock-id-abc123")
+    manager.release = AsyncMock(return_value=True)
+    manager.extend = AsyncMock(
+        return_value=ExtendResult(success=True, lock_info=_make_lock_info())
+    )
+    manager.get_lock_info = AsyncMock(return_value=_make_lock_info())
+    manager.is_locked = AsyncMock(return_value=True)
+    manager.list_locks = AsyncMock(return_value=[])
+    manager.force_release = AsyncMock(return_value=True)
+    manager.health_check = AsyncMock(return_value=True)
     return manager
 
 
@@ -63,338 +81,442 @@ def mock_nexus_fs(mock_lock_manager):
 
 
 @pytest.fixture
-def app_with_mocked_locks(mock_nexus_fs):
-    """Create FastAPI test app with mocked lock manager."""
+def client(mock_nexus_fs):
+    """Create a FastAPI TestClient with mocked lock manager."""
     from nexus.server import fastapi_server as fas
 
-    # Save original state
     original_nexus_fs = fas._app_state.nexus_fs
     original_api_key = fas._app_state.api_key
 
     try:
-        # Setup mock state
-        fas._app_state.nexus_fs = mock_nexus_fs
-        fas._app_state.api_key = "test-api-key"
-
-        # We test via the module functions by patching _app_state
-        # (endpoints are defined inside create_app)
-
-        yield fas, mock_nexus_fs._lock_manager
+        app = fas.create_app(mock_nexus_fs, api_key="test-api-key")
+        yield TestClient(app), mock_nexus_fs._lock_manager
 
     finally:
         fas._app_state.nexus_fs = original_nexus_fs
         fas._app_state.api_key = original_api_key
 
 
-class TestAcquireLockEndpoint:
-    """Test POST /api/locks endpoint logic."""
+# =============================================================================
+# Acquire Lock Endpoint Tests
+# =============================================================================
 
-    @pytest.mark.asyncio
-    async def test_acquire_mutex_lock_success(self, app_with_mocked_locks):
+
+class TestAcquireLock:
+    """Test POST /api/locks endpoint."""
+
+    def test_acquire_mutex_lock_success(self, client):
         """Test successful mutex lock acquisition."""
-        fas, lock_manager = app_with_mocked_locks
+        test_client, lock_manager = client
         lock_manager.acquire.return_value = "lock-id-12345"
-
-        # Simulate endpoint call
-        request = LockAcquireRequest(path="/test/file.txt", timeout=10, ttl=30)
-        auth_result = {"zone_id": "default", "subject_id": "user1"}
-
-        # Get lock manager (this tests _get_lock_manager)
-        manager = fas._app_state.nexus_fs._lock_manager
-
-        # Call acquire
-        lock_id = await manager.acquire(
-            zone_id=auth_result["zone_id"],
-            path=request.path,
-            timeout=request.timeout,
-            ttl=request.ttl,
-            max_holders=request.max_holders,
+        lock_manager.get_lock_info.return_value = _make_lock_info(
+            lock_id="lock-id-12345", fence_token=1
         )
 
-        assert lock_id == "lock-id-12345"
-        lock_manager.acquire.assert_called_once_with(
-            zone_id="default",
-            path="/test/file.txt",
-            timeout=10,
-            ttl=30,
-            max_holders=1,
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/test/file.txt", "timeout": 10, "ttl": 30},
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
-    @pytest.mark.asyncio
-    async def test_acquire_semaphore_lock_success(self, app_with_mocked_locks):
+        assert response.status_code == 201
+        data = response.json()
+        assert data["lock_id"] == "lock-id-12345"
+        assert data["path"] == "/test/file.txt"
+        assert data["mode"] == "mutex"
+        assert data["max_holders"] == 1
+        assert data["ttl"] == 30
+        assert "expires_at" in data
+        assert "fence_token" in data
+
+    def test_acquire_semaphore_lock_success(self, client):
         """Test successful semaphore lock acquisition."""
-        fas, lock_manager = app_with_mocked_locks
+        test_client, lock_manager = client
         lock_manager.acquire.return_value = "sem-lock-id"
-
-        request = LockAcquireRequest(path="/shared/room", timeout=5, ttl=60, max_holders=5)
-        auth_result = {"zone_id": "zone1"}
-
-        lock_id = await lock_manager.acquire(
-            zone_id=auth_result["zone_id"],
-            path=request.path,
-            timeout=request.timeout,
-            ttl=request.ttl,
-            max_holders=request.max_holders,
+        lock_manager.get_lock_info.return_value = _make_lock_info(
+            mode="semaphore", max_holders=5, lock_id="sem-lock-id", fence_token=2
         )
 
-        assert lock_id == "sem-lock-id"
-        lock_manager.acquire.assert_called_with(
-            zone_id="zone1",
-            path="/shared/room",
-            timeout=5,
-            ttl=60,
-            max_holders=5,
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/shared/room", "timeout": 5, "ttl": 60, "max_holders": 5},
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
-    @pytest.mark.asyncio
-    async def test_acquire_lock_timeout(self, app_with_mocked_locks):
-        """Test lock acquisition timeout returns None."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.acquire.return_value = None  # Timeout
+        assert response.status_code == 201
+        data = response.json()
+        assert data["mode"] == "semaphore"
+        assert data["max_holders"] == 5
 
-        lock_id = await lock_manager.acquire(
-            zone_id="default",
-            path="/busy/file.txt",
-            timeout=1,
-            ttl=30,
-            max_holders=1,
-        )
-
-        assert lock_id is None
-
-    @pytest.mark.asyncio
-    async def test_acquire_non_blocking_immediate_return(self, app_with_mocked_locks):
-        """Test non-blocking mode with timeout=0."""
-        fas, lock_manager = app_with_mocked_locks
+    def test_acquire_lock_timeout(self, client):
+        """Test lock acquisition timeout returns 409."""
+        test_client, lock_manager = client
         lock_manager.acquire.return_value = None
 
-        # Non-blocking uses timeout=0
-        lock_id = await lock_manager.acquire(
-            zone_id="default",
-            path="/busy/file.txt",
-            timeout=0,  # Non-blocking
-            ttl=30,
-            max_holders=1,
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/busy/file.txt", "timeout": 1, "ttl": 30},
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
-        assert lock_id is None
-        lock_manager.acquire.assert_called_with(
-            zone_id="default",
-            path="/busy/file.txt",
-            timeout=0,
-            ttl=30,
-            max_holders=1,
+        assert response.status_code == 409
+        assert "timeout" in response.json()["detail"].lower()
+
+    def test_acquire_non_blocking_failure(self, client):
+        """Test non-blocking mode returns 409 immediately."""
+        test_client, lock_manager = client
+        lock_manager.acquire.return_value = None
+
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/busy/file.txt", "timeout": 10, "ttl": 30, "blocking": False},
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
+        assert response.status_code == 409
+        assert "non-blocking" in response.json()["detail"].lower()
+        # Verify timeout was set to 0 for non-blocking
+        lock_manager.acquire.assert_called_once()
+        call_kwargs = lock_manager.acquire.call_args
+        assert call_kwargs.kwargs.get("timeout") == 0.0 or call_kwargs[1].get("timeout") == 0.0
 
-class TestGetLockStatusEndpoint:
-    """Test GET /api/locks/{path} endpoint logic."""
+    def test_acquire_without_auth_returns_401(self, client):
+        """Test that unauthenticated request returns 401."""
+        test_client, _ = client
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/test/file.txt"},
+        )
+        assert response.status_code == 401
 
-    @pytest.mark.asyncio
-    async def test_get_status_unlocked(self, app_with_mocked_locks):
-        """Test status check on unlocked path."""
-        fas, lock_manager = app_with_mocked_locks
+    def test_acquire_path_normalization(self, client):
+        """Test that paths without leading slash are normalized."""
+        test_client, lock_manager = client
+        lock_manager.acquire.return_value = "lock-123"
+        lock_manager.get_lock_info.return_value = _make_lock_info(fence_token=1)
+
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "no-leading-slash/file.txt"},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 201
+        assert response.json()["path"] == "/no-leading-slash/file.txt"
+
+    def test_acquire_ttl_validation_too_high(self, client):
+        """Test that TTL > max is rejected with 422."""
+        test_client, _ = client
+
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/test/file.txt", "ttl": 100000},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 422
+
+    def test_acquire_ttl_validation_too_low(self, client):
+        """Test that TTL < 1 is rejected with 422."""
+        test_client, _ = client
+
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/test/file.txt", "ttl": 0},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 422
+
+    def test_acquire_max_holders_validation(self, client):
+        """Test that max_holders < 1 is rejected with 422."""
+        test_client, _ = client
+
+        response = test_client.post(
+            "/api/locks",
+            json={"path": "/test/file.txt", "max_holders": 0},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 422
+
+
+# =============================================================================
+# Get Lock Status Endpoint Tests
+# =============================================================================
+
+
+class TestGetLockStatus:
+    """Test GET /api/locks/{path} endpoint."""
+
+    def test_get_status_locked_mutex(self, client):
+        """Test status check on a mutex-locked path."""
+        test_client, lock_manager = client
+        lock_manager.get_lock_info.return_value = _make_lock_info(
+            path="/test/file.txt", fence_token=10
+        )
+
+        response = test_client.get(
+            "/api/locks/test/file.txt",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["locked"] is True
+        assert data["path"] == "/test/file.txt"
+        assert data["lock_info"]["mode"] == "mutex"
+        assert data["lock_info"]["lock_id"] == "lock-id-abc123"
+        assert "fence_token" in data["lock_info"]
+
+    def test_get_status_locked_semaphore(self, client):
+        """Test status check on a semaphore-locked path."""
+        test_client, lock_manager = client
+        lock_manager.get_lock_info.return_value = LockInfo(
+            path="/shared/room",
+            mode="semaphore",
+            max_holders=5,
+            holders=[
+                HolderInfo("h1", "holder1", 1700000000.0, 1700000030.0),
+                HolderInfo("h2", "holder2", 1700000001.0, 1700000031.0),
+            ],
+            fence_token=20,
+        )
+
+        response = test_client.get(
+            "/api/locks/shared/room",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["locked"] is True
+        assert data["lock_info"]["mode"] == "semaphore"
+        assert data["lock_info"]["current_holders"] == 2
+        assert data["lock_info"]["max_holders"] == 5
+
+    def test_get_status_unlocked(self, client):
+        """Test status check on an unlocked path."""
+        test_client, lock_manager = client
         lock_manager.get_lock_info.return_value = None
-        lock_manager._redis.client.zcard.return_value = 0
 
-        # Check mutex lock
-        info = await lock_manager.get_lock_info("default", "/test/file.txt")
-        assert info is None
-
-        # Check semaphore
-        sem_count = await lock_manager._redis.client.zcard("nexus:semaphore:default:/test/file.txt")
-        assert sem_count == 0
-
-    @pytest.mark.asyncio
-    async def test_get_status_mutex_locked(self, app_with_mocked_locks):
-        """Test status check on mutex-locked path."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.get_lock_info.return_value = {
-            "lock_id": "abc-123",
-            "ttl": 25,
-            "zone_id": "default",
-            "path": "/test/file.txt",
-        }
-
-        info = await lock_manager.get_lock_info("default", "/test/file.txt")
-
-        assert info is not None
-        assert info["lock_id"] == "abc-123"
-        assert info["ttl"] == 25
-
-    @pytest.mark.asyncio
-    async def test_get_status_semaphore_locked(self, app_with_mocked_locks):
-        """Test status check on semaphore-locked path."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.get_lock_info.return_value = None  # Not a mutex
-        lock_manager._redis.client.zcard.return_value = 3  # 3 holders
-        lock_manager._redis.client.get.return_value = b"5"  # max=5
-
-        # Check mutex first
-        mutex_info = await lock_manager.get_lock_info("default", "/shared/room")
-        assert mutex_info is None
-
-        # Check semaphore
-        holders = await lock_manager._redis.client.zcard("nexus:semaphore:default:/shared/room")
-        assert holders == 3
-
-        max_holders_raw = await lock_manager._redis.client.get(
-            "nexus:semaphore_config:default:/shared/room"
+        response = test_client.get(
+            "/api/locks/test/unlocked.txt",
+            headers={"Authorization": "Bearer test-api-key"},
         )
-        max_holders = int(max_holders_raw.decode())
-        assert max_holders == 5
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["locked"] is False
+        assert data["lock_info"] is None
 
 
-class TestReleaseLockEndpoint:
-    """Test DELETE /api/locks/{path} endpoint logic."""
+# =============================================================================
+# Release Lock Endpoint Tests
+# =============================================================================
 
-    @pytest.mark.asyncio
-    async def test_release_success(self, app_with_mocked_locks):
+
+class TestReleaseLock:
+    """Test DELETE /api/locks/{path} endpoint."""
+
+    def test_release_success(self, client):
         """Test successful lock release."""
-        fas, lock_manager = app_with_mocked_locks
+        test_client, lock_manager = client
         lock_manager.release.return_value = True
 
-        result = await lock_manager.release("lock-id-123", "default", "/test/file.txt")
+        response = test_client.delete(
+            "/api/locks/test/file.txt?lock_id=lock-id-123",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
-        assert result is True
-        lock_manager.release.assert_called_once_with("lock-id-123", "default", "/test/file.txt")
+        assert response.status_code == 200
+        assert response.json()["released"] is True
 
-    @pytest.mark.asyncio
-    async def test_release_wrong_owner(self, app_with_mocked_locks):
-        """Test release with wrong lock_id fails."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.release.return_value = False  # Not owner
+    def test_release_wrong_owner(self, client):
+        """Test release with wrong lock_id returns 403."""
+        test_client, lock_manager = client
+        lock_manager.release.return_value = False
 
-        result = await lock_manager.release("wrong-id", "default", "/test/file.txt")
+        response = test_client.delete(
+            "/api/locks/test/file.txt?lock_id=wrong-id",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
-        assert result is False
+        assert response.status_code == 403
 
-    @pytest.mark.asyncio
-    async def test_force_release_success(self, app_with_mocked_locks):
-        """Test admin force release."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.force_release.return_value = True
+    def test_force_release_requires_admin(self, client):
+        """Test that force=true requires admin privileges."""
+        test_client, _ = client
 
-        result = await lock_manager.force_release("default", "/test/file.txt")
+        # Use wrong API key to simulate non-admin auth
+        response = test_client.delete(
+            "/api/locks/test/file.txt?lock_id=any-id&force=true",
+            headers={"Authorization": "Bearer wrong-api-key"},
+        )
 
-        assert result is True
-        lock_manager.force_release.assert_called_once_with("default", "/test/file.txt")
+        # Wrong API key returns 401 unauthorized
+        assert response.status_code == 401
 
-    @pytest.mark.asyncio
-    async def test_force_release_not_found(self, app_with_mocked_locks):
-        """Test force release when lock doesn't exist."""
-        fas, lock_manager = app_with_mocked_locks
+    def test_force_release_not_found(self, client):
+        """Test force release when lock doesn't exist returns 404."""
+        test_client, lock_manager = client
         lock_manager.force_release.return_value = False
 
-        result = await lock_manager.force_release("default", "/nonexistent.txt")
+        # API key auth is admin, so force release is allowed
+        # but returns 404 when lock doesn't exist
+        response = test_client.delete(
+            "/api/locks/test/file.txt?lock_id=any-id&force=true",
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+        assert response.status_code == 404
+        assert "No lock found" in response.json()["detail"]
 
-        assert result is False
+
+# =============================================================================
+# Extend Lock Endpoint Tests
+# =============================================================================
 
 
-class TestExtendLockEndpoint:
-    """Test PATCH /api/locks/{path} endpoint logic."""
+class TestExtendLock:
+    """Test PATCH /api/locks/{path} endpoint."""
 
-    @pytest.mark.asyncio
-    async def test_extend_success(self, app_with_mocked_locks):
+    def test_extend_success(self, client):
         """Test successful lock extension."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.extend.return_value = True
-
-        result = await lock_manager.extend("lock-id-123", "default", "/test/file.txt", ttl=60)
-
-        assert result is True
-        lock_manager.extend.assert_called_once_with(
-            "lock-id-123", "default", "/test/file.txt", ttl=60
+        test_client, lock_manager = client
+        lock_manager.extend.return_value = ExtendResult(
+            success=True,
+            lock_info=_make_lock_info(fence_token=5),
         )
 
-    @pytest.mark.asyncio
-    async def test_extend_wrong_owner(self, app_with_mocked_locks):
-        """Test extend with wrong lock_id fails."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.extend.return_value = False
+        response = test_client.patch(
+            "/api/locks/test/file.txt",
+            json={"lock_id": "lock-id-123", "ttl": 60},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
-        result = await lock_manager.extend("wrong-id", "default", "/test/file.txt", ttl=60)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lock_id"] == "lock-id-123"
+        assert data["ttl"] == 60
+        assert data["mode"] == "mutex"
+        assert "fence_token" in data
+        assert "expires_at" in data
 
-        assert result is False
+    def test_extend_wrong_owner(self, client):
+        """Test extend with wrong lock_id returns 403."""
+        test_client, lock_manager = client
+        lock_manager.extend.return_value = ExtendResult(success=False)
 
-    @pytest.mark.asyncio
-    async def test_extend_expired_lock(self, app_with_mocked_locks):
-        """Test extend on expired lock fails."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager.extend.return_value = False  # Lock expired
+        response = test_client.patch(
+            "/api/locks/test/file.txt",
+            json={"lock_id": "wrong-id", "ttl": 60},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
 
-        result = await lock_manager.extend("expired-lock-id", "default", "/test/file.txt", ttl=60)
+        assert response.status_code == 403
 
-        assert result is False
+    def test_extend_returns_semaphore_info(self, client):
+        """Test extend returns correct mode for semaphore lock."""
+        test_client, lock_manager = client
+        lock_manager.extend.return_value = ExtendResult(
+            success=True,
+            lock_info=LockInfo(
+                path="/shared/room",
+                mode="semaphore",
+                max_holders=3,
+                holders=[
+                    HolderInfo("lock-id-456", "holder", 1700000000.0, 1700000060.0),
+                ],
+                fence_token=7,
+            ),
+        )
+
+        response = test_client.patch(
+            "/api/locks/shared/room",
+            json={"lock_id": "lock-id-456", "ttl": 60},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["mode"] == "semaphore"
+        assert response.json()["max_holders"] == 3
+
+    def test_extend_ttl_validation(self, client):
+        """Test that extend TTL is validated."""
+        test_client, _ = client
+
+        response = test_client.patch(
+            "/api/locks/test/file.txt",
+            json={"lock_id": "lock-id-123", "ttl": 0},
+            headers={"Authorization": "Bearer test-api-key"},
+        )
+
+        assert response.status_code == 422
 
 
-class TestListLocksEndpoint:
-    """Test GET /api/locks endpoint logic."""
+# =============================================================================
+# List Locks Endpoint Tests
+# =============================================================================
 
-    @pytest.mark.asyncio
-    async def test_list_locks_empty(self, app_with_mocked_locks):
+
+class TestListLocks:
+    """Test GET /api/locks endpoint."""
+
+    def test_list_locks_empty(self, client):
         """Test listing when no locks exist."""
-        fas, lock_manager = app_with_mocked_locks
-        lock_manager._redis.client.scan.return_value = (0, [])
+        test_client, lock_manager = client
+        lock_manager.list_locks.return_value = []
 
-        cursor, keys = await lock_manager._redis.client.scan(
-            0, match="nexus:lock:default:*", count=100
+        response = test_client.get(
+            "/api/locks",
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
-        assert cursor == 0
-        assert keys == []
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 0
+        assert data["locks"] == []
 
-    @pytest.mark.asyncio
-    async def test_list_locks_with_results(self, app_with_mocked_locks):
+    def test_list_locks_with_results(self, client):
         """Test listing with active locks."""
-        fas, lock_manager = app_with_mocked_locks
-
-        # Mock scan returning some keys
-        lock_manager._redis.client.scan.return_value = (
-            0,
-            [b"nexus:lock:default:/file1.txt", b"nexus:lock:default:/file2.txt"],
-        )
-
-        # Mock get_lock_info for each key
-        lock_manager.get_lock_info.side_effect = [
-            {"lock_id": "lock1", "ttl": 30, "path": "/file1.txt"},
-            {"lock_id": "lock2", "ttl": 25, "path": "/file2.txt"},
+        test_client, lock_manager = client
+        lock_manager.list_locks.return_value = [
+            _make_lock_info(path="/file1.txt", lock_id="lock1", fence_token=1),
+            LockInfo(
+                path="/file2.txt",
+                mode="semaphore",
+                max_holders=3,
+                holders=[
+                    HolderInfo("sem1", "h1", 1700000000.0, 1700000030.0),
+                    HolderInfo("sem2", "h2", 1700000001.0, 1700000031.0),
+                ],
+                fence_token=2,
+            ),
         ]
 
-        cursor, keys = await lock_manager._redis.client.scan(
-            0, match="nexus:lock:default:*", count=100
+        response = test_client.get(
+            "/api/locks",
+            headers={"Authorization": "Bearer test-api-key"},
         )
 
-        assert len(keys) == 2
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert data["locks"][0]["mode"] == "mutex"
+        assert data["locks"][1]["mode"] == "semaphore"
+        assert data["locks"][1]["current_holders"] == 2
 
-        # Get info for each
-        info1 = await lock_manager.get_lock_info("default", "/file1.txt")
-        info2 = await lock_manager.get_lock_info("default", "/file2.txt")
 
-        assert info1["lock_id"] == "lock1"
-        assert info2["lock_id"] == "lock2"
+# =============================================================================
+# Lock Manager Availability Tests
+# =============================================================================
 
 
 class TestLockManagerAvailability:
-    """Test _get_lock_manager helper function."""
+    """Test behavior when lock manager is not configured."""
 
-    def test_get_lock_manager_no_nexus_fs(self):
-        """Test error when NexusFS not available."""
-        from nexus.server import fastapi_server as fas
-
-        original = fas._app_state.nexus_fs
-        try:
-            fas._app_state.nexus_fs = None
-
-            # The _get_lock_manager is defined inside create_app
-            # We test the condition directly
-            assert fas._app_state.nexus_fs is None
-
-        finally:
-            fas._app_state.nexus_fs = original
-
-    def test_get_lock_manager_no_distributed_locks(self):
-        """Test error when distributed locks not configured."""
+    def test_acquire_returns_503_without_lock_manager(self):
+        """Test that POST /api/locks returns 503 when lock manager unavailable."""
         from nexus.server import fastapi_server as fas
 
         original = fas._app_state.nexus_fs
@@ -402,88 +524,121 @@ class TestLockManagerAvailability:
             mock_fs = MagicMock()
             mock_fs._has_distributed_locks = MagicMock(return_value=False)
             fas._app_state.nexus_fs = mock_fs
+            fas._app_state.api_key = "test-api-key"
 
-            # The condition should fail
-            assert not fas._app_state.nexus_fs._has_distributed_locks()
+            app = fas.create_app(mock_fs, api_key="test-api-key")
 
+            test_client = TestClient(app)
+            response = test_client.post(
+                "/api/locks",
+                json={"path": "/test/file.txt"},
+                headers={"Authorization": "Bearer test-api-key"},
+            )
+            assert response.status_code == 503
         finally:
             fas._app_state.nexus_fs = original
 
-    def test_get_lock_manager_success(self, mock_nexus_fs):
-        """Test successful lock manager retrieval."""
-        from nexus.server import fastapi_server as fas
 
-        original = fas._app_state.nexus_fs
-        try:
-            fas._app_state.nexus_fs = mock_nexus_fs
-
-            assert fas._app_state.nexus_fs._has_distributed_locks()
-            assert fas._app_state.nexus_fs._lock_manager is not None
-
-        finally:
-            fas._app_state.nexus_fs = original
+# =============================================================================
+# Response Model Tests
+# =============================================================================
 
 
 class TestLockResponseModels:
-    """Test response model construction."""
+    """Test response model construction and validation."""
 
     def test_lock_response_mutex(self):
         """Test LockResponse for mutex."""
-        now = datetime.now(UTC)
-        expires_at = now.isoformat()
-
         resp = LockResponse(
             lock_id="abc-123",
             path="/test/file.txt",
             mode="mutex",
             max_holders=1,
             ttl=30,
-            expires_at=expires_at,
+            expires_at="2025-01-01T00:00:30+00:00",
+            fence_token=42,
         )
-
         assert resp.mode == "mutex"
-        assert resp.max_holders == 1
+        assert resp.fence_token == 42
 
     def test_lock_response_semaphore(self):
         """Test LockResponse for semaphore."""
-        now = datetime.now(UTC)
-        expires_at = now.isoformat()
-
         resp = LockResponse(
             lock_id="sem-456",
             path="/shared/room",
             mode="semaphore",
             max_holders=5,
             ttl=60,
-            expires_at=expires_at,
+            expires_at="2025-01-01T00:01:00+00:00",
+            fence_token=43,
         )
-
         assert resp.mode == "semaphore"
         assert resp.max_holders == 5
 
-    def test_lock_status_response(self):
-        """Test LockStatusResponse construction."""
+    def test_lock_info_mutex_model(self):
+        """Test LockInfoMutex model."""
+        info = LockInfoMutex(
+            lock_id="abc-123",
+            holder_info="agent:test",
+            acquired_at=1700000000.0,
+            expires_at=1700000030.0,
+            fence_token=1,
+        )
+        assert info.mode == "mutex"
+        assert info.max_holders == 1
+
+    def test_lock_info_semaphore_model(self):
+        """Test LockInfoSemaphore model."""
+        info = LockInfoSemaphore(
+            max_holders=5,
+            holders=[
+                LockHolderResponse(
+                    lock_id="h1",
+                    acquired_at=1700000000.0,
+                    expires_at=1700000030.0,
+                ),
+            ],
+            current_holders=1,
+            fence_token=2,
+        )
+        assert info.mode == "semaphore"
+        assert info.current_holders == 1
+
+    def test_lock_status_response_locked(self):
+        """Test LockStatusResponse when locked."""
         status = LockStatusResponse(
             path="/test/file.txt",
             locked=True,
-            lock_info={
-                "lock_id": "abc-123",
-                "mode": "mutex",
-                "ttl": 30,
-            },
+            lock_info=LockInfoMutex(
+                lock_id="abc-123",
+                acquired_at=1700000000.0,
+                expires_at=1700000030.0,
+                fence_token=1,
+            ),
         )
-
         assert status.locked is True
-        assert status.lock_info["mode"] == "mutex"
+        assert status.lock_info.mode == "mutex"
+
+    def test_lock_status_response_unlocked(self):
+        """Test LockStatusResponse when not locked."""
+        status = LockStatusResponse(
+            path="/test/file.txt",
+            locked=False,
+            lock_info=None,
+        )
+        assert status.locked is False
 
     def test_lock_list_response(self):
         """Test LockListResponse construction."""
-        locks = [
-            {"path": "/file1.txt", "mode": "mutex"},
-            {"path": "/file2.txt", "mode": "semaphore", "holders": 3},
-        ]
-
-        resp = LockListResponse(locks=locks, count=2)
-
-        assert resp.count == 2
-        assert len(resp.locks) == 2
+        resp = LockListResponse(
+            locks=[
+                LockInfoMutex(
+                    lock_id="l1",
+                    acquired_at=1700000000.0,
+                    expires_at=1700000030.0,
+                    fence_token=1,
+                ),
+            ],
+            count=1,
+        )
+        assert resp.count == 1

@@ -8,6 +8,8 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.storage.operation_logger import OperationLogger
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -140,8 +142,6 @@ def test_rename_operation_logged(nx: NexusFS) -> None:
 def test_operation_log_filtering_by_agent(nx: NexusFS) -> None:
     """Test filtering operations by agent ID using context parameter."""
     from nexus.core.permissions_enhanced import EnhancedOperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Use context parameter with different agent IDs
     context1 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")

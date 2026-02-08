@@ -24,6 +24,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
+
 # Add src directory to Python path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
@@ -202,8 +205,6 @@ def nexus_fs(isolated_db, tmp_path):
 
     from nexus import NexusFS
     from nexus.backends.local import LocalBackend
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
-    from nexus.storage.record_store import SQLAlchemyRecordStore
 
     storage_path = tmp_path / "storage"
     storage_path.mkdir(exist_ok=True)

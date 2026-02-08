@@ -16,6 +16,9 @@ import tempfile
 import time
 from pathlib import Path
 
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -82,8 +85,6 @@ def run_benchmark(enable_deferred: bool = False):
     from nexus.backends.local import LocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     mode = "DEFERRED" if enable_deferred else "SYNC"
     print("=" * 70)

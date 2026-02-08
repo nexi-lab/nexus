@@ -11,6 +11,8 @@ from sqlalchemy import create_engine
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -215,8 +217,6 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     # Create Joe's context (subject_type must match the ReBAC tuple)
     # Since we created tuple with subject=("agent", "joe"), context must have subject_type="agent"
     from nexus.core.permissions_enhanced import EnhancedOperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     joe_ctx = EnhancedOperationContext(
         user="joe",

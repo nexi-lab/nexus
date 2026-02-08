@@ -28,6 +28,8 @@ from nexus.connectors.gmail.schemas import (
 )
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # ============================================================================
 # FIXTURES
@@ -469,8 +471,6 @@ class TestOperationTraits:
     def test_draft_traits(self, gmail_backend):
         """Test create_draft has correct traits."""
         from nexus.connectors.base import ConfirmLevel, Reversibility
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         traits = gmail_backend.get_operation_traits("create_draft")
 

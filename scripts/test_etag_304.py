@@ -42,6 +42,9 @@ from typing import TYPE_CHECKING, Self
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
@@ -49,8 +52,6 @@ sys.path.insert(0, str(project_root / "src"))
 from nexus.backends.local import LocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.server.fastapi_server import create_app  # noqa: E402
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
 if TYPE_CHECKING:
     pass

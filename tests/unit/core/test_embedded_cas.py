@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -37,8 +39,6 @@ def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     import gc
     import platform
     import time
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     gc.collect()  # Force garbage collection to release connections
     if platform.system() == "Windows":

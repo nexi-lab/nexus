@@ -18,8 +18,6 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.portability import (
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
     BundleReader,
     ZoneExportOptions,
     ZoneExportService,
@@ -27,6 +25,8 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
     inspect_bundle,
     validate_bundle,
 )
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture

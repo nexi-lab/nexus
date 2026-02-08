@@ -25,6 +25,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -379,8 +382,6 @@ async def test_async_thread_exhaustion(
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
         import nexus.core.rebac_fast as rebac_fast
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

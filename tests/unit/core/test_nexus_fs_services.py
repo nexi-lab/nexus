@@ -6,6 +6,7 @@ from pathlib import Path
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 class TestNexusFSServiceComposition:
@@ -20,8 +21,8 @@ class TestNexusFSServiceComposition:
 
         # Initialize NexusFS
         backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path.replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store), enforce_permissions=False)
+        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        fs = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
 
         # Verify all services are instantiated
         assert hasattr(fs, "version_service"), "VersionService not instantiated"
@@ -52,8 +53,8 @@ class TestNexusFSServiceComposition:
         db_path = tmp_path / "metadata.db"
 
         backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path.replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store))
+        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        fs = NexusFS(backend=backend, metadata_store=metadata_store)
 
         # VersionService should have metadata, cas, and router
         assert fs.version_service.metadata == fs.metadata
@@ -85,8 +86,8 @@ class TestNexusFSServiceComposition:
         db_path = tmp_path / "metadata.db"
 
         backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path.replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store), enforce_permissions=False)
+        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        fs = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
 
         # Verify sync methods exist (with @rpc_expose, wrap async methods)
         assert hasattr(fs, "get_version")
@@ -102,7 +103,6 @@ class TestNexusFSServiceComposition:
 
         # Verify async methods are coroutine functions
         import inspect
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         assert inspect.iscoroutinefunction(fs.aget_version)
         assert inspect.iscoroutinefunction(fs.alist_versions)

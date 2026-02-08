@@ -9,6 +9,8 @@ from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestBackendWriteStreamDefault:
@@ -544,8 +546,6 @@ class TestStatRPC:
         """Test stat() on a directory."""
         from nexus.backends.local import LocalBackend
         from nexus.core.nexus_fs import NexusFS
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"

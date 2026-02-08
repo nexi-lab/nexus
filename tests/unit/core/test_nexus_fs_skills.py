@@ -30,8 +30,8 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Mock SKILL.md content
 VALID_SKILL_MD = """---

@@ -15,6 +15,8 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -268,8 +270,6 @@ Content for skill {i}.
 
         # Try to import again without overwrite (should fail)
         from nexus.core.exceptions import ValidationError
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         with pytest.raises(ValidationError, match="already exists"):
             nexus_fs.skills_import(

@@ -20,6 +20,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -721,8 +723,6 @@ class TestOAuthWithContext:
     async def test_list_credentials_admin_sees_all(self, nx: NexusFS) -> None:
         """Test that admin can see all credentials."""
         from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         context = OperationContext(
             user="admin",

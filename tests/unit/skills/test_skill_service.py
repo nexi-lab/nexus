@@ -18,6 +18,8 @@ from nexus.core.permissions import OperationContext
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.skill_service import SkillService
 from nexus.skills.types import PromptContext, SkillContent, SkillInfo
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -31,8 +33,6 @@ def temp_dir() -> Generator[Path, None, None]:
 def mock_rebac() -> MagicMock:
     """Create a mock ReBAC manager."""
     from nexus.core.rebac_manager_enhanced import WriteResult
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     rebac = MagicMock()
     rebac.rebac_check = MagicMock(return_value=True)

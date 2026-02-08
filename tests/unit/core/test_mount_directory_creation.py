@@ -15,6 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+
 
 @pytest.fixture
 def nx_with_mount():
@@ -155,7 +157,6 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     (mount_dir / "test.txt").write_text("test content")
 
     from nexus.core.permissions import OperationContext
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Create context with zone_id and admin access for the test user
     ctx = OperationContext(user="test-user", groups=[], zone_id="test", is_admin=True)

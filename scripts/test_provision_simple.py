@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 def main() -> int:
@@ -111,7 +112,6 @@ def main() -> int:
     except Exception as e:
         print(f"✗ ERROR: {e}")
         import traceback
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
         return 1

@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def main() -> None:
@@ -151,8 +153,6 @@ def main() -> None:
         # Step 4: Verify API keys
         print("Step 4: Checking API keys...")
         from nexus.storage.models import APIKeyModel
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         session = nx.metadata.SessionLocal()
         try:

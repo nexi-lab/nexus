@@ -13,8 +13,8 @@ from freezegun import freeze_time
 from nexus.backends.local import LocalBackend
 from nexus.core.export_import import CollisionDetail, ExportFilter, ImportOptions, ImportResult
 from nexus.core.nexus_fs import NexusFS
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture

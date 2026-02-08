@@ -13,8 +13,8 @@ from pathlib import Path
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def cleanup_windows_db():

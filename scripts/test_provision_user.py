@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 
 import nexus
 from nexus.core.permissions import OperationContext
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 def test_provision_user() -> bool:
@@ -248,7 +249,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n\nTest failed with error: {e}")
         import traceback
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
         sys.exit(1)

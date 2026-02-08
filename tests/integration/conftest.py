@@ -28,7 +28,6 @@ def isolated_db(tmp_path, monkeypatch):
 
     Usage:
         def test_something(isolated_db):
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
             metadata_store = RaftMetadataStore.local(str(isolated_db).replace(".db", ""))
             nx = NexusFS(backend=..., metadata_store=metadata_store)
             # Test code here

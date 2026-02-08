@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
 
@@ -95,8 +97,6 @@ class TestGetSubjectFromContext:
     def test_get_subject_from_operation_context(self, nx: NexusFS) -> None:
         """Test _get_subject_from_context with OperationContext."""
         from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         context = OperationContext(
             user="charlie",

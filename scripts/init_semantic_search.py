@@ -28,6 +28,7 @@ sys.path.insert(0, str(src_dir))
 
 from nexus.backends.local import LocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
+from nexus.storage.raft_metadata_store import RaftMetadataStore  # noqa: E402
 
 
 async def init_semantic_search() -> bool:
@@ -94,7 +95,6 @@ async def init_semantic_search() -> bool:
     except Exception as e:
         print(f"ERROR: Failed to initialize semantic search: {e}", file=sys.stderr)
         import traceback
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
         return False

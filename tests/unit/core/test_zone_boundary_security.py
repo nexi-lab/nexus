@@ -16,8 +16,8 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.core.permissions_enhanced import AdminCapability
 from nexus.server.auth.user_helpers import add_user_to_zone
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture

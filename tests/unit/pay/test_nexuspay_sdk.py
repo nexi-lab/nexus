@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.pay.credits import TransferRequest
 from nexus.pay.sdk import (
     Balance,
     BudgetExceededError,
@@ -303,8 +304,8 @@ class TestBatchTransfers:
     async def test_transfer_batch(self, nexuspay, mock_credits_service):
         receipts = await nexuspay.transfer_batch(
             [
-                {"to": "agent-a", "amount": 0.05, "memo": "Task 1"},
-                {"to": "agent-b", "amount": 0.10, "memo": "Task 2"},
+                TransferRequest(from_id="ignored", to_id="agent-a", amount=Decimal("0.05"), memo="Task 1"),
+                TransferRequest(from_id="ignored", to_id="agent-b", amount=Decimal("0.10"), memo="Task 2"),
             ]
         )
 
@@ -321,8 +322,8 @@ class TestBatchTransfers:
     async def test_transfer_batch_preserves_memos(self, nexuspay, mock_credits_service):
         receipts = await nexuspay.transfer_batch(
             [
-                {"to": "agent-a", "amount": 1.0, "memo": "First"},
-                {"to": "agent-b", "amount": 2.0, "memo": "Second"},
+                TransferRequest(from_id="ignored", to_id="agent-a", amount=Decimal("1.0"), memo="First"),
+                TransferRequest(from_id="ignored", to_id="agent-b", amount=Decimal("2.0"), memo="Second"),
             ]
         )
         assert receipts[0].memo == "First"

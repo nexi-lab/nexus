@@ -525,7 +525,8 @@ class MemoryViewRouter:
             self.session.commit()
 
             # Create ReBAC tuple for new memory owner
-            if user_id or existing_memory.user_id:
+            owner_id = user_id or existing_memory.user_id
+            if owner_id:
                 from sqlalchemy import Engine
 
                 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
@@ -535,7 +536,7 @@ class MemoryViewRouter:
                 rebac = EnhancedReBACManager(bind)
 
                 rebac.rebac_write(
-                    subject=("user", user_id or existing_memory.user_id),
+                    subject=("user", owner_id),
                     relation="owner",
                     object=("memory", new_memory.memory_id),
                     zone_id=zone_id or existing_memory.zone_id,

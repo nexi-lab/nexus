@@ -460,6 +460,8 @@ class GatewayMessageRequest(BaseModel):
     session_id: str = Field(..., description="Boardroom key (channel:account_id:chat_id)")
     channel: str = Field(..., description="Platform (discord, slack, telegram)")
 
+    id: str | None = Field(None, description="Channel's native message ID (for sync)")
+    ts: str | None = Field(None, description="Original timestamp (ISO8601, for sync)")
     parent_id: str | None = Field(None, description="Reply-to message ID for threading")
     target: str | None = Field(None, description="@mention hint (not enforced)")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Extensible context")
@@ -471,3 +473,22 @@ class GatewayMessageResponse(BaseModel):
     message_id: str = Field(..., description="Unique message ID")
     status: Literal["created", "duplicate"] = Field(..., description="Processing result")
     ts: str = Field(..., description="ISO8601 timestamp")
+
+
+class GatewaySyncRequest(BaseModel):
+    """Request to sync conversation history from a channel."""
+
+    session_id: str = Field(..., description="Boardroom key (channel:account_id:chat_id)")
+    channel: str = Field(..., description="Platform (discord, slack, telegram)")
+    limit: int = Field(100, ge=1, le=1000, description="Maximum messages to fetch")
+    before_id: str | None = Field(None, description="Fetch messages before this ID")
+    after_id: str | None = Field(None, description="Fetch messages after this ID")
+
+
+class GatewaySyncResponse(BaseModel):
+    """Response after syncing conversation history."""
+
+    session_id: str = Field(..., description="Session that was synced")
+    added: int = Field(..., description="Number of new messages added")
+    skipped: int = Field(..., description="Number of duplicate messages skipped")
+    total_fetched: int = Field(..., description="Total messages fetched from channel")

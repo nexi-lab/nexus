@@ -163,6 +163,102 @@ class DiscordAdapter:
             logger.error(f"Failed to send Discord message: {e}")
             raise
 
+    async def fetch_history(
+        self,
+        session_id: str,
+        *,
+        limit: int = 100,
+        before_id: str | None = None,
+        after_id: str | None = None,
+    ) -> list[Message]:
+        """Fetch message history from Discord.
+
+        Args:
+            session_id: Boardroom key (discord:guild_id:channel_id)
+            limit: Maximum number of messages to fetch
+            before_id: Fetch messages before this message ID
+            after_id: Fetch messages after this message ID
+
+        Returns:
+            List of messages, oldest first
+        """
+        if not self._client or not self._running:
+            raise RuntimeError("Discord adapter is not running")
+
+        try:
+            import discord
+        except ImportError as e:
+            raise ImportError(
+                "discord.py is required for Discord adapter. Install with: pip install discord.py"
+            ) from e
+
+        # Parse session key
+        parsed = parse_session_key(session_id)
+        if parsed["channel"] != "discord":
+            raise ValueError(f"Invalid channel for Discord adapter: {parsed['channel']}")
+
+        channel_id = int(parsed["chat_id"])
+        channel = self._client.get_channel(channel_id)
+
+        if not channel:
+            raise ValueError(f"Channel {channel_id} not found")
+
+        # Build fetch parameters
+        fetch_kwargs: dict[str, Any] = {"limit": limit}
+
+        if before_id:
+            # Create a partial object for the before parameter
+            fetch_kwargs["before"] = discord.Object(id=int(before_id))
+        if after_id:
+            fetch_kwargs["after"] = discord.Object(id=int(after_id))
+
+        # Fetch messages from Discord
+        messages: list[Message] = []
+        try:
+            async for discord_msg in channel.history(**fetch_kwargs):
+                # Convert to Message
+                msg = self._discord_message_to_message(discord_msg, session_id)
+                messages.append(msg)
+        except Exception as e:
+            logger.error(f"Failed to fetch Discord history: {e}")
+            raise
+
+        # Discord returns newest first, we want oldest first
+        messages.reverse()
+
+        logger.info(f"Fetched {len(messages)} messages from Discord channel {channel_id}")
+        return messages
+
+    def _discord_message_to_message(self, discord_msg: Any, session_id: str) -> Message:
+        """Convert a Discord message to our Message format.
+
+        Args:
+            discord_msg: discord.py Message object
+            session_id: Session key
+
+        Returns:
+            Message object
+        """
+        # Determine role - bot messages are "agent", others are "human"
+        role = "agent" if discord_msg.author.bot else "human"
+
+        return Message(
+            id=str(discord_msg.id),
+            text=discord_msg.content,
+            user=str(discord_msg.author.id),
+            role=role,
+            session_id=session_id,
+            channel="discord",
+            ts=discord_msg.created_at.isoformat(),
+            parent_id=str(discord_msg.reference.message_id) if discord_msg.reference else None,
+            target=None,
+            metadata={
+                "author_name": str(discord_msg.author),
+                "guild_name": discord_msg.guild.name if discord_msg.guild else None,
+                "channel_name": discord_msg.channel.name if hasattr(discord_msg.channel, "name") else None,
+            },
+        )
+
     async def _handle_message(self, message: Any) -> None:
         """Handle incoming Discord message.
 
@@ -201,23 +297,8 @@ class DiscordAdapter:
                 context=self._context,
             )
 
-            # Create Message
-            msg = Message(
-                id=str(message.id),
-                text=message.content,
-                user=str(message.author.id),
-                role="human",
-                session_id=session_id,
-                channel="discord",
-                ts=message.created_at.isoformat(),
-                parent_id=str(message.reference.message_id) if message.reference else None,
-                target=None,
-                metadata={
-                    "author_name": str(message.author),
-                    "guild_name": message.guild.name,
-                    "channel_name": message.channel.name,
-                },
-            )
+            # Create Message using shared conversion
+            msg = self._discord_message_to_message(message, session_id)
 
             # Append to conversation
             append_message(

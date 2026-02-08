@@ -233,3 +233,48 @@ def ensure_session_metadata(
     except Exception as e:
         # Non-fatal - log and continue
         logger.warning(f"Failed to ensure session metadata for {session_id}: {e}")
+
+
+def sync_messages(
+    nx: NexusFS,
+    session_id: str,
+    messages: list[Message],
+    context: OperationContext,
+) -> tuple[int, int]:
+    """Sync messages to conversation file, skipping duplicates.
+
+    Messages are identified by their `id` field (channel's native message ID).
+    Existing messages are skipped, new messages are appended in order.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        messages: List of messages to sync (should be in chronological order)
+        context: Operation context for permissions (required)
+
+    Returns:
+        Tuple of (added_count, skipped_count)
+    """
+    # Read existing message IDs
+    existing_messages = read_messages(nx, session_id, context)
+    existing_ids = {msg.id for msg in existing_messages}
+
+    added = 0
+    skipped = 0
+
+    for message in messages:
+        if message.id in existing_ids:
+            skipped += 1
+            continue
+
+        # Append new message
+        try:
+            append_message(nx, session_id, message, context)
+            existing_ids.add(message.id)  # Track for duplicates within batch
+            added += 1
+        except Exception as e:
+            logger.error(f"Failed to sync message {message.id}: {e}")
+            # Continue with other messages
+
+    logger.info(f"Synced {session_id}: added={added}, skipped={skipped}")
+    return added, skipped

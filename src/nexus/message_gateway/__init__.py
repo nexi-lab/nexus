@@ -10,6 +10,7 @@ from nexus.message_gateway.conversation import (
     ensure_session_metadata,
     read_messages,
     read_session_metadata,
+    sync_messages,
     write_session_metadata,
 )
 from nexus.message_gateway.dedup import Deduplicator
@@ -30,5 +31,6 @@ __all__ = [
     "parse_session_key",
     "read_messages",
     "read_session_metadata",
+    "sync_messages",
     "write_session_metadata",
 ]

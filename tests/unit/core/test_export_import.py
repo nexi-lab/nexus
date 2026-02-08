@@ -13,6 +13,8 @@ from freezegun import freeze_time
 from nexus.backends.local import LocalBackend
 from nexus.core.export_import import CollisionDetail, ExportFilter, ImportOptions, ImportResult
 from nexus.core.nexus_fs import NexusFS
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
@@ -27,7 +29,8 @@ def nx(temp_dir):
     """Create Nexus filesystem instance."""
     fs = NexusFS(
         backend=LocalBackend(temp_dir / "data"),
-        db_path=temp_dir / "data" / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "data" / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "data" / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
     )

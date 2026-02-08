@@ -93,7 +93,8 @@ def nexus_fs(isolated_db, tmp_path):
     backend = LocalBackend(root_path=str(tmp_path / "storage"))
     nx = NexusFS(
         backend=backend,
-        db_path=str(isolated_db),
+        metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+        record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
         enforce_permissions=False,  # Disable permissions for testing
     )
     yield nx
@@ -267,6 +268,8 @@ Content for skill {i}.
 
         # Try to import again without overwrite (should fail)
         from nexus.core.exceptions import ValidationError
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         with pytest.raises(ValidationError, match="already exists"):
             nexus_fs.skills_import(

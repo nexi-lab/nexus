@@ -33,7 +33,8 @@ def nexus_fs(tmp_path):
 
     fs = NexusFS(
         backend=backend,
-        db_path=db_path,
+        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        record_store=SQLAlchemyRecordStore(db_path=db_path),
         enforce_permissions=True,
         allow_admin_bypass=True,  # Allow admin to create test setup
     )
@@ -214,6 +215,8 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     # Create Joe's context (subject_type must match the ReBAC tuple)
     # Since we created tuple with subject=("agent", "joe"), context must have subject_type="agent"
     from nexus.core.permissions_enhanced import EnhancedOperationContext
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     joe_ctx = EnhancedOperationContext(
         user="joe",

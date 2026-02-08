@@ -87,6 +87,8 @@ def mock_calendar_service():
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
     from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Create a mock token manager
     with patch(
@@ -298,7 +300,8 @@ class TestSkillDocGeneration:
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
         nx = NexusFS(
             backend=backend,
-            db_path=str(isolated_db),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
             enforce_permissions=False,
         )
 

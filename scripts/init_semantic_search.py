@@ -46,7 +46,8 @@ async def init_semantic_search() -> bool:
             return False
 
         backend = LocalBackend(data_dir)
-        nx = NexusFS(backend, db_path=database_url)
+        metadata_store = RaftMetadataStore.local(str(database_url).replace(".db", ""))
+        nx = NexusFS(backend, metadata_store=metadata_store)
 
         # Check if explicitly requested to use vector embeddings
         # Default: keyword-only mode (safer, more stable)
@@ -93,6 +94,7 @@ async def init_semantic_search() -> bool:
     except Exception as e:
         print(f"ERROR: Failed to initialize semantic search: {e}", file=sys.stderr)
         import traceback
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
         return False

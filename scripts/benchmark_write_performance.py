@@ -82,6 +82,8 @@ def run_benchmark(enable_deferred: bool = False):
     from nexus.backends.local import LocalBackend
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     mode = "DEFERRED" if enable_deferred else "SYNC"
     print("=" * 70)
@@ -98,7 +100,8 @@ def run_benchmark(enable_deferred: bool = False):
         # Create NexusFS with permissions ENABLED
         nx = NexusFS(
             backend=backend,
-            db_path=str(db_path),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(db_path)),
+            record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=False,
             zone_id="benchmark_zone",
             enforce_permissions=True,

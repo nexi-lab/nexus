@@ -8,6 +8,8 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
@@ -40,12 +42,16 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
 
     Configured with:
     - Local backend
+    - RaftMetadataStore (sled, single-node)
     - Permissions disabled (for raw operation benchmarks)
     - Auto-parse disabled (for raw write benchmarks)
     """
+    metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", ""))
+    record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = NexusFS(
         backend=benchmark_backend,
-        db_path=benchmark_db,
+        metadata_store=metadata_store,
+        record_store=record_store,
         is_admin=True,
         enforce_permissions=False,  # Disable for pure operation benchmarks
         auto_parse=False,  # Disable for pure write benchmarks
@@ -59,9 +65,12 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
 @pytest.fixture
 def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
+    metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", "") + "_perms")
+    record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = NexusFS(
         backend=benchmark_backend,
-        db_path=benchmark_db,
+        metadata_store=metadata_store,
+        record_store=record_store,
         is_admin=False,  # Not admin - will check permissions
         zone_id="benchmark_zone",
         agent_id="benchmark_agent",

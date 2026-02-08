@@ -41,7 +41,8 @@ class TestDeprovisionUser:
 
         nx_instance = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=db_file,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
+            record_store=SQLAlchemyRecordStore(db_path=db_file),
             auto_parse=False,
             enforce_permissions=True,
             allow_admin_bypass=True,
@@ -480,6 +481,8 @@ class TestDeprovisionUser:
 
         # 4. Verify user is soft-deleted in database
         from nexus.storage.models import UserModel
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         session = nx.metadata.SessionLocal()
         try:

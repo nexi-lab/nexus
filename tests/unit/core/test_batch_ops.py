@@ -4,6 +4,8 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
@@ -22,7 +24,8 @@ def nx(tmp_path):
 
     fs = NexusFS(
         backend=LocalBackend(data_dir),
-        db_path=db_path,
+        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality tests
     )

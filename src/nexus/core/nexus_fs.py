@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.core.entity_registry import EntityRegistry
     from nexus.core.memory_api import Memory
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core._metadata_generated import FileMetadata, MetadataStore
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -57,6 +57,7 @@ from nexus.services.search_service import SearchService
 from nexus.services.version_service import VersionService
 from nexus.storage import SQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
+from nexus.storage.record_store import RecordStoreABC
 
 
 class NexusFS(  # type: ignore[misc]
@@ -90,7 +91,9 @@ class NexusFS(  # type: ignore[misc]
     def __init__(
         self,
         backend: Backend,
-        db_path: str | Path | None = None,
+        metadata_store: MetadataStore,  # Task #14: Explicit injection (breaking change)
+        record_store: RecordStoreABC
+        | None = None,  # Task #14: Optional — Services layer (ReBAC, Auth, Audit, etc.)
         is_admin: bool = False,
         zone_id: str | None = None,  # Default zone ID for operations
         agent_id: str | None = None,  # Default agent ID for operations
@@ -130,7 +133,10 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            db_path: Path to SQLite metadata database (auto-generated if None)
+            metadata_store: MetadataStore instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
+                           User Space controls driver selection via Dependency Injection (Task #14)
+            record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
+                         Not required for pure file operations. User Space injects when Services are needed.
             is_admin: Whether this instance has admin privileges (default: False)
             zone_id: DEPRECATED - Default zone ID (for embedded mode only). Server mode should pass via context parameter.
             agent_id: DEPRECATED - Default agent ID (for embedded mode only). Server mode should pass via context parameter.
@@ -193,9 +199,6 @@ class NexusFS(  # type: ignore[misc]
         # Store backend
         self.backend = backend
 
-        # Store database path (needed for OAuth TokenManager and other components)
-        self.db_path: str | None = str(db_path) if db_path else None
-
         # Store admin flag and auto-parse setting
         self.is_admin = is_admin
         self.auto_parse = auto_parse
@@ -208,25 +211,22 @@ class NexusFS(  # type: ignore[misc]
         # When False: Write operations succeed but log at CRITICAL level
         self._audit_strict_mode = audit_strict_mode
 
-        # Initialize metadata store (using SQLAlchemy-based store)
-        if db_path is None:
-            # Default to current directory
-            db_path = Path("./nexus-metadata.db")
-        self.metadata = SQLAlchemyMetadataStore(
-            db_path=db_path,
-            enable_cache=enable_metadata_cache,
-            cache_path_size=cache_path_size,
-            cache_list_size=cache_list_size,
-            cache_kv_size=cache_kv_size,
-            cache_exists_size=cache_exists_size,
-            cache_ttl_seconds=cache_ttl_seconds,
-        )
+        # Initialize metadata store (Task #14: Dependency Injection)
+        # Kernel core: ordered KV for inodes, dentries, config, topology
+        self.metadata = metadata_store
 
-        # SQLAlchemy engine and session factory from the metadata store
-        # Used by ReBAC, AuditStore, MountManager, etc.
-        self._sql_engine = self.metadata.engine
-        self._db_session_factory = self.metadata.SessionLocal
-        self.SessionLocal = self._db_session_factory
+        # Initialize record store (Task #14: Four Pillars)
+        # Services layer: relational DB for ReBAC, Auth, Audit, etc.
+        # Optional — pure file operations (inode CRUD) don't need it.
+        self._record_store = record_store
+        if record_store is not None:
+            self._sql_engine = record_store.engine
+            self._db_session_factory = record_store.session_factory
+            self.SessionLocal = self._db_session_factory
+        else:
+            self._sql_engine = None
+            self._db_session_factory = None
+            self.SessionLocal = None
 
         # Initialize path router with default namespaces
         self.router = PathRouter()
@@ -296,58 +296,122 @@ class NexusFS(  # type: ignore[misc]
             admin_capabilities=set(),  # No capabilities for default context
         )
 
-        # P0 Fixes: Initialize EnhancedReBACManager with all GA features
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        # =====================================================================
+        # Services layer — requires RecordStore (SQL).
+        # These are NOT kernel core; they handle ReBAC, Auth, Audit, etc.
+        # When record_store is None, services are disabled (pure file ops only).
+        # =====================================================================
+        if record_store is not None:
+            # P0 Fixes: Initialize EnhancedReBACManager with all GA features
+            from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        self._rebac_manager = EnhancedReBACManager(
-            engine=self._sql_engine,  # SQLAlchemy engine for ReBAC
-            cache_ttl_seconds=cache_ttl_seconds or 300,
-            max_depth=10,
-            enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone scoping (configurable)
-            enable_graph_limits=True,  # P0-5: DoS protection
-            enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
-        )
+            self._rebac_manager = EnhancedReBACManager(
+                engine=self._sql_engine,  # SQLAlchemy engine for ReBAC
+                cache_ttl_seconds=cache_ttl_seconds or 300,
+                max_depth=10,
+                enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone scoping (configurable)
+                enable_graph_limits=True,  # P0-5: DoS protection
+                enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
+            )
 
-        # Issue #919: Initialize DirectoryVisibilityCache for O(1) directory visibility checks
-        # This eliminates the O(n) _has_descendant_access() calls that enumerate all descendants
-        from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
+            # Issue #919: Initialize DirectoryVisibilityCache for O(1) directory visibility checks
+            from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
 
-        self._dir_visibility_cache: DirectoryVisibilityCache = DirectoryVisibilityCache(
-            tiger_cache=getattr(self._rebac_manager, "_tiger_cache", None),
-            ttl=cache_ttl_seconds or 300,
-            max_entries=10000,
-        )
+            self._dir_visibility_cache: DirectoryVisibilityCache = DirectoryVisibilityCache(
+                tiger_cache=getattr(self._rebac_manager, "_tiger_cache", None),
+                ttl=cache_ttl_seconds or 300,
+                max_entries=10000,
+            )
 
-        # Issue #919: Register directory visibility cache invalidator
-        # This ensures cache is invalidated when permissions change
-        self._rebac_manager.register_dir_visibility_invalidator(
-            "nexusfs",
-            lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
-        )
+            # Issue #919: Register directory visibility cache invalidator
+            self._rebac_manager.register_dir_visibility_invalidator(
+                "nexusfs",
+                lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(
+                    path, zone_id
+                ),
+            )
 
-        # P0-4: Initialize AuditStore for admin bypass logging
-        from nexus.core.permissions_enhanced import AuditStore
+            # P0-4: Initialize AuditStore for admin bypass logging
+            from nexus.core.permissions_enhanced import AuditStore
 
-        self._audit_store = AuditStore(engine=self._sql_engine)
+            self._audit_store = AuditStore(engine=self._sql_engine)
 
-        # v0.5.0 ACE: Initialize EntityRegistry early for agent permission inheritance
-        from nexus.core.entity_registry import EntityRegistry
+            # v0.5.0 ACE: Initialize EntityRegistry early for agent permission inheritance
+            from nexus.core.entity_registry import EntityRegistry
 
-        self._entity_registry: EntityRegistry | None = EntityRegistry(self.SessionLocal)
+            self._entity_registry: EntityRegistry | None = EntityRegistry(self.SessionLocal)
 
-        # P0 Fixes: Initialize PermissionEnforcer with audit logging
-        from nexus.core.permissions import PermissionEnforcer
+            # P0 Fixes: Initialize PermissionEnforcer with audit logging
+            from nexus.core.permissions import PermissionEnforcer
 
-        self._permission_enforcer = PermissionEnforcer(
-            metadata_store=self.metadata,
-            rebac_manager=self._rebac_manager,
-            allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter
-            allow_system_bypass=True,  # P0-4: System operations still allowed
-            audit_store=self._audit_store,  # P0-4: Immutable audit log
-            admin_bypass_paths=[],  # P0-4: Scoped bypass (empty = no bypass paths)
-            router=self.router,  # For backend object type resolution
-            entity_registry=self._entity_registry,  # v0.5.0 ACE: For agent inheritance
-        )
+            self._permission_enforcer = PermissionEnforcer(
+                metadata_store=self.metadata,
+                rebac_manager=self._rebac_manager,
+                allow_admin_bypass=allow_admin_bypass,  # P0-4: Controlled by constructor parameter
+                allow_system_bypass=True,  # P0-4: System operations still allowed
+                audit_store=self._audit_store,  # P0-4: Immutable audit log
+                admin_bypass_paths=[],  # P0-4: Scoped bypass (empty = no bypass paths)
+                router=self.router,  # For backend object type resolution
+                entity_registry=self._entity_registry,  # v0.5.0 ACE: For agent inheritance
+            )
+
+            # P0-3: Initialize HierarchyManager for automatic parent tuple creation
+            from nexus.core.hierarchy_manager import HierarchyManager
+
+            self._hierarchy_manager = HierarchyManager(
+                rebac_manager=self._rebac_manager,
+                enable_inheritance=inherit_permissions,
+            )
+
+            # Issue #1071: Initialize DeferredPermissionBuffer for async write optimization
+            from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
+
+            self._deferred_permission_buffer: DeferredPermissionBuffer | None = None
+            if enable_deferred_permissions:
+                self._deferred_permission_buffer = DeferredPermissionBuffer(
+                    rebac_manager=self._rebac_manager,
+                    hierarchy_manager=self._hierarchy_manager,
+                    flush_interval_sec=deferred_flush_interval,
+                )
+                self._deferred_permission_buffer.start()
+
+            # Initialize workspace registry for managing registered workspaces/memories
+            from nexus.core.workspace_registry import WorkspaceRegistry
+
+            self._workspace_registry = WorkspaceRegistry(
+                metadata=self.metadata,
+                rebac_manager=self._rebac_manager,  # v0.5.0: Auto-grant ownership on registration
+                session_factory=self._db_session_factory,
+            )
+
+            # Initialize mount manager for persistent mount configurations
+            from nexus.core.mount_manager import MountManager
+
+            self.mount_manager = MountManager(self._db_session_factory)
+
+            # Initialize workspace manager for snapshot/versioning
+            from nexus.core.workspace_manager import WorkspaceManager
+
+            self._workspace_manager = WorkspaceManager(
+                metadata=self.metadata,
+                backend=self.backend,
+                rebac_manager=self._rebac_manager,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                session_factory=self._db_session_factory,
+            )
+        else:
+            # No RecordStore — Services disabled (pure kernel mode)
+            self._rebac_manager = None
+            self._dir_visibility_cache = None
+            self._audit_store = None
+            self._entity_registry = None
+            self._permission_enforcer = None
+            self._hierarchy_manager = None
+            self._deferred_permission_buffer = None
+            self._workspace_registry = None
+            self.mount_manager = None
+            self._workspace_manager = None
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -357,42 +421,6 @@ class NexusFS(  # type: ignore[misc]
         # Set enforce_zone_isolation=False ONLY for single-zone environments
         self._enforce_zone_isolation = enforce_zone_isolation
 
-        # P0-3: Initialize HierarchyManager for automatic parent tuple creation
-        from nexus.core.hierarchy_manager import HierarchyManager
-
-        self._hierarchy_manager = HierarchyManager(
-            rebac_manager=self._rebac_manager,
-            enable_inheritance=inherit_permissions,
-        )
-
-        # Issue #1071: Initialize DeferredPermissionBuffer for async write optimization
-        # When enabled, permission ops (rebac_write, ensure_parent_tuples) are batched
-        # in the background. Owner can still access files immediately via owner_id fast-path.
-        from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
-
-        self._deferred_permission_buffer: DeferredPermissionBuffer | None = None
-        if enable_deferred_permissions:
-            self._deferred_permission_buffer = DeferredPermissionBuffer(
-                rebac_manager=self._rebac_manager,
-                hierarchy_manager=self._hierarchy_manager,
-                flush_interval_sec=deferred_flush_interval,
-            )
-            self._deferred_permission_buffer.start()
-
-        # Initialize workspace registry for managing registered workspaces/memories
-        from nexus.core.workspace_registry import WorkspaceRegistry
-
-        self._workspace_registry = WorkspaceRegistry(
-            metadata=self.metadata,
-            rebac_manager=self._rebac_manager,  # v0.5.0: Auto-grant ownership on registration
-            session_factory=self._db_session_factory,
-        )
-
-        # Initialize mount manager for persistent mount configurations
-        from nexus.core.mount_manager import MountManager
-
-        self.mount_manager = MountManager(self._db_session_factory)
-
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
 
@@ -401,18 +429,6 @@ class NexusFS(  # type: ignore[misc]
             # Check if this came from a config object with workspaces/memories
             # This is a bit hacky but works for now
             pass  # Will be handled by separate load method
-
-        # Initialize workspace manager for snapshot/versioning
-        from nexus.core.workspace_manager import WorkspaceManager
-
-        self._workspace_manager = WorkspaceManager(
-            metadata=self.metadata,
-            backend=self.backend,
-            rebac_manager=self._rebac_manager,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            session_factory=self._db_session_factory,
-        )
 
         # Initialize semantic search - lazy initialization
         self._semantic_search = None
@@ -7575,12 +7591,16 @@ class NexusFS(  # type: ignore[misc]
         # Close metadata store after all parsers have finished
         self.metadata.close()
 
+        # Close record store (Services layer SQL connections)
+        if self._record_store is not None:
+            self._record_store.close()
+
         # Close ReBACManager to release database connection
         if hasattr(self, "_rebac_manager") and self._rebac_manager is not None:
             self._rebac_manager.close()
 
         # Close AuditStore to release database connection
-        if hasattr(self, "_audit_store"):
+        if hasattr(self, "_audit_store") and self._audit_store is not None:
             self._audit_store.close()
 
         # Close TokenManager to release database connection

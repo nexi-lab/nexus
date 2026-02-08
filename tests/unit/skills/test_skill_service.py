@@ -31,6 +31,8 @@ def temp_dir() -> Generator[Path, None, None]:
 def mock_rebac() -> MagicMock:
     """Create a mock ReBAC manager."""
     from nexus.core.rebac_manager_enhanced import WriteResult
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     rebac = MagicMock()
     rebac.rebac_check = MagicMock(return_value=True)
@@ -51,7 +53,8 @@ def nx(temp_dir: Path, mock_rebac: MagicMock) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
     )

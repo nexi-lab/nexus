@@ -13,6 +13,8 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.mcp.server import create_mcp_server
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -79,7 +81,8 @@ def nexus_fs(isolated_db, tmp_path):
     backend = LocalBackend(root_path=str(tmp_path / "storage"))
     nx = NexusFS(
         backend=backend,
-        db_path=str(isolated_db),
+        metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+        record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
         enforce_permissions=False,  # Disable permissions for testing
     )
     yield nx
@@ -535,7 +538,8 @@ class TestServerConfiguration:
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
         nx = NexusFS(
             backend=backend,
-            db_path=str(isolated_db),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
             enforce_permissions=False,
         )
 

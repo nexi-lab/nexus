@@ -15,6 +15,8 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
@@ -23,7 +25,8 @@ def nx(tmp_path):
     db_file = tmp_path / "metadata.db"
     nx_instance = NexusFS(
         backend=LocalBackend(tmp_path),
-        db_path=db_file,
+        metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
+        record_store=SQLAlchemyRecordStore(db_path=db_file),
         auto_parse=False,
         enforce_permissions=True,
         allow_admin_bypass=True,

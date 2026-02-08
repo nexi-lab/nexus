@@ -68,7 +68,8 @@ def main() -> None:
     # db_path accepts both PostgreSQL URLs and SQLite file paths
     nx = NexusFS(
         backend=LocalBackend(args.backend_path),
-        db_path=db_path,
+        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=True,
         allow_admin_bypass=True,
@@ -150,6 +151,8 @@ def main() -> None:
         # Step 4: Verify API keys
         print("Step 4: Checking API keys...")
         from nexus.storage.models import APIKeyModel
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         session = nx.metadata.SessionLocal()
         try:

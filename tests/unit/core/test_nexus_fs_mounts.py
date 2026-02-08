@@ -36,7 +36,8 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
     )
@@ -49,7 +50,8 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
     )
@@ -308,7 +310,8 @@ class TestSaveMount:
         # Create NexusFS without database (no mount manager)
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=temp_dir / "test_save_mount.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_save_mount.db"),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -354,7 +357,8 @@ class TestListSavedMounts:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=temp_dir / "test_list_saved_mounts.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_list_saved_mounts.db"),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_list_saved_mounts.db"),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -374,7 +378,8 @@ class TestLoadMount:
         """Test that load_mount raises RuntimeError without mount manager."""
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=temp_dir / "test_load_mount.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_load_mount.db"),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -394,7 +399,8 @@ class TestDeleteSavedMount:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=temp_dir / "test_delete_saved_mount.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_delete_saved_mount.db"),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_delete_saved_mount.db"),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -860,6 +866,8 @@ class TestMountContextUtilsIntegration:
     def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
         from nexus.core.permissions import OperationContext
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         mount_data_dir = temp_dir / "remove_context_mount"
         mount_data_dir.mkdir()

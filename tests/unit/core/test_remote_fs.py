@@ -35,7 +35,8 @@ def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None
     db_path = temp_dir / "test-metadata.db"
     fs = NexusFS(
         backend=mock_gcs_backend,
-        db_path=db_path,
+        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,  # Disable auto-parsing for unit tests
     )
@@ -51,7 +52,8 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         assert not db_path.exists()
 
-        fs = NexusFS(backend=mock_gcs_backend, db_path=db_path)
+        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        fs = NexusFS(backend=mock_gcs_backend, metadata_store=metadata_store)
 
         assert db_path.exists()
         fs.close()
@@ -78,7 +80,8 @@ class TestNexusFSInitialization:
 
         fs = NexusFS(
             backend=mock_gcs_backend,
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
         )
 
         assert fs.backend.bucket_name == "test-bucket"
@@ -90,7 +93,8 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         fs = NexusFS(
             backend=mock_gcs_backend,
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             zone_id="zone-123",
             agent_id="agent-456",
             is_admin=True,
@@ -772,7 +776,8 @@ class TestClose:
     def test_close(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that close releases resources."""
         db_path = temp_dir / "metadata.db"
-        fs = NexusFS(backend=mock_gcs_backend, db_path=db_path)
+        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        fs = NexusFS(backend=mock_gcs_backend, metadata_store=metadata_store)
 
         # Close should not raise
         fs.close()
@@ -869,6 +874,9 @@ class TestRmdirWithFiles:
     def test_rmdir_non_empty_non_recursive(self, remote_fs: NexusFS) -> None:
         """Test that rmdir fails on non-empty directory without recursive flag."""
         import errno
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Create file in directory
         path = "/workspace/data/file.txt"

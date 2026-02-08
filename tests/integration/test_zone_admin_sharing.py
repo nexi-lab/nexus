@@ -29,6 +29,8 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
     # Isolate ReBAC database per test to prevent cross-test state pollution
     # The global _engine cache in database.py must be reset for each test
     import nexus.storage.database as db_module
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     db_module._engine = None
 
@@ -39,7 +41,8 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
 
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
     )

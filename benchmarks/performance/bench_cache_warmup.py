@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
 from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> list[str]:
@@ -213,7 +215,8 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
         backend = LocalBackend(root_path=str(storage_path))
         nx = NexusFS(
             backend=backend,
-            db_path=str(db_path),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(db_path)),
+            record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             enforce_permissions=False,
             enable_metadata_cache=True,
             cache_ttl_seconds=300,

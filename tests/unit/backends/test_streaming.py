@@ -390,7 +390,8 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -416,7 +417,8 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -443,7 +445,8 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -465,7 +468,8 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -493,7 +497,8 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -523,7 +528,8 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )
@@ -538,12 +544,15 @@ class TestStatRPC:
         """Test stat() on a directory."""
         from nexus.backends.local import LocalBackend
         from nexus.core.nexus_fs import NexusFS
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
         nx = NexusFS(
             backend=LocalBackend(data_dir),
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
         )

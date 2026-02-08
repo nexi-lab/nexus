@@ -15,6 +15,8 @@ from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.portability import (
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
     ConflictMode,
     ZoneImportOptions,
     ZoneImportService,
@@ -38,7 +40,8 @@ def source_nexus_fs_with_permissions(temp_dir):
 
     fs = NexusFS(
         backend=LocalBackend(data_dir),
-        db_path=data_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions
     )
@@ -63,7 +66,8 @@ def target_nexus_fs_with_permissions(temp_dir):
 
     fs = NexusFS(
         backend=LocalBackend(data_dir),
-        db_path=data_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions
     )

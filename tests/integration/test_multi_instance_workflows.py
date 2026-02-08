@@ -116,7 +116,8 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = NexusFS(
             backend=backend,
-            db_path=db_path_agent1,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent1),
+            record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
             enforce_zone_isolation=False,  # Disable zone isolation for testing
@@ -157,7 +158,8 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = NexusFS(
             backend=backend,
-            db_path=db_path_agent2,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent2),
+            record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
             enforce_zone_isolation=False,  # Disable zone isolation for testing
@@ -485,6 +487,8 @@ class TestErrorHandling:
     async def test_read_nonexistent_file_after_wait(self, nexus_fs):
         """Wait returns event but file doesn't exist -> graceful error."""
         from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/nonexistent/file.txt")

@@ -232,6 +232,8 @@ def connect(
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+    from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Load configuration
     cfg = load_config(config)
@@ -314,24 +316,19 @@ def connect(
                 project_id=cfg.gcs_project_id,
                 credentials_path=cfg.gcs_credentials_path,
             )
-            # Default db_path for GCS backend
-            db_path = cfg.db_path
-            if db_path is None:
-                # Store metadata DB locally
-                db_path = str(Path("./nexus-gcs-metadata.db"))
+            # Default metadata_store for GCS backend (Task #14: Dependency Injection)
+            # Use RaftMetadataStore.local() for embedded mode (single-node, sled KV)
+            metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
+            metadata_store = RaftMetadataStore.local(metadata_path)
         else:
             # Local backend (default)
             data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
             backend = LocalBackend(root_path=Path(data_dir).resolve())
-            # Default db_path for local backend
-            # Use PostgreSQL URL if configured, otherwise SQLite
-            db_path = cfg.db_path
-            import os
-
-            if db_path is None:
-                # Check for PostgreSQL URL first
-                postgres_url = os.getenv("NEXUS_DATABASE_URL") or os.getenv("POSTGRES_URL")
-                db_path = postgres_url or str(Path(data_dir) / "metadata.db")
+            # Default metadata_store for local backend (Task #14: Dependency Injection)
+            # Use RaftMetadataStore.local() for embedded mode (single-node, sled KV)
+            # Sled is 10-100x faster than SQLite for KV operations
+            metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
+            metadata_store = RaftMetadataStore.local(metadata_path)
 
         # Embedded mode: default to no permissions (like SQLite)
         # User can explicitly enable with config={"enforce_permissions": True}
@@ -359,10 +356,15 @@ def connect(
         enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
         enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
 
-        # Create NexusFS instance
+        # Create RecordStore for Services layer (Task #14: Four Pillars)
+        # User Space selects the driver; Kernel only sees RecordStoreABC
+        record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+
+        # Create NexusFS instance (Task #14: Dependency Injection)
         nx_fs = NexusFS(
             backend=backend,
-            db_path=db_path,
+            metadata_store=metadata_store,
+            record_store=record_store,
             is_admin=cfg.is_admin,
             custom_namespaces=custom_namespaces,
             enable_metadata_cache=cfg.enable_metadata_cache,

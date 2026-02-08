@@ -91,6 +91,8 @@ class MemoryQueryRequest(BaseModel):
     as_of_system: str | None = Field(
         None, description="What did SYSTEM KNOW at time X? (ISO-8601, filters by created_at)"
     )
+    # Append-only filters (#1188)
+    include_superseded: bool = Field(False, description="Include superseded (old version) memories")
 
 
 class MemoryBatchStoreRequest(BaseModel):

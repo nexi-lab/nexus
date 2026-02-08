@@ -6,6 +6,13 @@ import uuid
 
 import pytest
 
+# Conditionally ignore MCP tests if fastmcp is not installed
+# This must be done at collection time, before any imports from test files
+try:
+    import fastmcp  # noqa: F401
+except ImportError:
+    collect_ignore_glob = ["mcp/*"]
+
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):

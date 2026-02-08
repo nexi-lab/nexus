@@ -235,9 +235,9 @@ def _extract_agent_id(auth_result: dict[str, Any]) -> str:
 
     Priority: x_agent_id header > subject_id (for agents) > subject_id (for users).
     """
-    subject_type = auth_result.get("subject_type", "user")
-    subject_id = auth_result.get("subject_id", "anonymous")
-    x_agent_id = auth_result.get("x_agent_id")
+    subject_type: str = auth_result.get("subject_type", "user")  # type: ignore[assignment]
+    subject_id: str = auth_result.get("subject_id", "anonymous")  # type: ignore[assignment]
+    x_agent_id: str | None = auth_result.get("x_agent_id")  # type: ignore[assignment]
 
     if x_agent_id:
         return x_agent_id

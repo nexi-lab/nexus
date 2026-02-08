@@ -125,9 +125,18 @@ class NexusFS(  # type: ignore[misc]
         | None = None,  # Dragonfly coordination URL (requires noeviction policy for locks)
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
+        # Issue #1258: MemGPT 3-tier memory paging
+        enable_memory_paging: bool = False,  # Enable MemGPT-style 3-tier memory paging (default: False)
+        memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
+        memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
+
+        # Store memory paging config
+        self._enable_memory_paging = enable_memory_paging
+        self._memory_main_capacity = memory_main_capacity
+        self._memory_recall_max_age_hours = memory_recall_max_age_hours
         """
         Initialize filesystem.
 
@@ -937,7 +946,6 @@ class NexusFS(  # type: ignore[misc]
         """
         if self._memory_api is None:
             from nexus.core.entity_registry import EntityRegistry
-            from nexus.core.memory_api import Memory
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
@@ -946,14 +954,32 @@ class NexusFS(  # type: ignore[misc]
             # Create a session from SessionLocal
             session = self.SessionLocal()
 
-            self._memory_api = Memory(
-                session=session,
-                backend=self.backend,
-                zone_id=self._memory_config.get("zone_id"),
-                user_id=self._memory_config.get("user_id"),
-                agent_id=self._memory_config.get("agent_id"),
-                entity_registry=self._entity_registry,
-            )
+            # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
+            if self._enable_memory_paging:
+                from nexus.core.memory_with_paging import MemoryWithPaging
+
+                self._memory_api = MemoryWithPaging(
+                    session=session,
+                    backend=self.backend,
+                    zone_id=self._memory_config.get("zone_id"),
+                    user_id=self._memory_config.get("user_id"),
+                    agent_id=self._memory_config.get("agent_id"),
+                    entity_registry=self._entity_registry,
+                    enable_paging=True,
+                    main_capacity=self._memory_main_capacity,
+                    recall_max_age_hours=self._memory_recall_max_age_hours,
+                )
+            else:
+                from nexus.core.memory_api import Memory
+
+                self._memory_api = Memory(
+                    session=session,
+                    backend=self.backend,
+                    zone_id=self._memory_config.get("zone_id"),
+                    user_id=self._memory_config.get("user_id"),
+                    agent_id=self._memory_config.get("agent_id"),
+                    entity_registry=self._entity_registry,
+                )
 
         return self._memory_api
 

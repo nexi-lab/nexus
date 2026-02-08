@@ -411,6 +411,14 @@ class Memory:
             else None
         )
 
+        # #1188: Extract change_reason from metadata for append-only pattern
+        change_reason = None
+        if _metadata:
+            if _metadata.get("correction"):
+                change_reason = "correction"
+            elif _metadata.get("change_reason"):
+                change_reason = _metadata["change_reason"]
+
         # Create memory record (upserts if namespace+path_key exists)
         memory = self.memory_router.create_memory(
             content_hash=content_hash,
@@ -437,6 +445,7 @@ class Memory:
             valid_at=valid_at_dt,  # #1183: When fact became valid
             size_bytes=len(content_bytes),  # #1184: Content size for versioning
             created_by=user_id or agent_id,  # #1184: Who created this version
+            change_reason=change_reason,  # #1188: For correction mode
         )
 
         # #1039: Store extracted entities and relationships to graph tables
@@ -597,6 +606,7 @@ class Memory:
         event_after: str | datetime | None = None,  # #1028: Filter by event date >= value
         event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
+        include_superseded: bool = False,  # #1188: Include superseded memories
         as_of: str
         | datetime
         | None = None,  # #1183: Point-in-time query (deprecated, use as_of_event)
@@ -718,6 +728,7 @@ class Memory:
             event_after=event_after_dt,  # #1028: Event date filtering
             event_before=event_before_dt,  # #1028: Event date filtering
             include_invalid=include_invalid,  # #1183: Include invalidated memories
+            include_superseded=include_superseded,  # #1188: Include superseded memories
             valid_at_point=valid_at_point,  # #1185: Point-in-time query (as_of_event)
             system_at_point=system_at_point,  # #1185: System-time query (as_of_system)
             limit=limit,
@@ -1215,6 +1226,33 @@ class Memory:
             "min_importance": min_importance,
         }
 
+    def _resolve_to_current(self, memory_id: str) -> Any:
+        """Follow the superseded_by chain to find the current memory (#1188).
+
+        If the given memory_id has been superseded, follows the chain forward
+        to find the latest (current) version.
+
+        Uses _get_memory_by_id_raw to traverse through soft-deleted nodes
+        in the chain. The caller (get()) handles filtering deleted memories.
+
+        Returns:
+            The current MemoryModel, or None if not found.
+        """
+        memory = self.memory_router._get_memory_by_id_raw(memory_id)
+        if not memory:
+            return None
+
+        # Follow superseded_by_id chain to current version
+        visited = {memory.memory_id}
+        while memory.superseded_by_id:
+            successor = self.memory_router._get_memory_by_id_raw(memory.superseded_by_id)
+            if successor is None or successor.memory_id in visited:
+                break
+            visited.add(successor.memory_id)
+            memory = successor
+
+        return memory
+
     def get(
         self,
         memory_id: str,
@@ -1239,6 +1277,16 @@ class Memory:
         memory = self.memory_router.get_memory_by_id(memory_id)
         if not memory:
             return None
+
+        # #1188: Filter out soft-deleted memories
+        if memory.state == "deleted":
+            return None
+
+        # #1188: Follow superseded chain to current version
+        if memory.superseded_by_id:
+            memory = self._resolve_to_current(memory_id)
+            if not memory or memory.state == "deleted":
+                return None
 
         # Use provided context or fall back to instance context
         check_context = context or self.context
@@ -1392,11 +1440,16 @@ class Memory:
             "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
         }
 
-    def delete(self, memory_id: str) -> bool:
-        """Delete a memory.
+    def delete(
+        self,
+        memory_id: str,
+        context: OperationContext | None = None,
+    ) -> bool:
+        """Delete a memory (#1188: soft-delete, preserves row).
 
         Args:
             memory_id: Memory ID to delete.
+            context: Optional operation context to override identity.
 
         Returns:
             True if deleted, False if not found or no permission.
@@ -1410,7 +1463,8 @@ class Memory:
             return False
 
         # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
+        check_context = context or self.context
+        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, check_context):
             return False
 
         return self.memory_router.delete_memory(memory_id)
@@ -1664,6 +1718,120 @@ class Memory:
 
         result = self.memory_router.revalidate_memory(memory_id)
         return result is not None
+
+    def get_history(self, memory_id: str) -> list[dict[str, Any]]:
+        """Get the complete version history chain for a memory (#1188).
+
+        Traverses the supersedes chain to return all versions of a memory,
+        from oldest to newest.
+
+        Args:
+            memory_id: Any memory ID in the chain (can be current or old).
+
+        Returns:
+            List of memory dicts in chronological order (oldest first).
+            Empty list if memory not found.
+        """
+        import json
+
+        memory = self.memory_router.get_memory_by_id(memory_id)
+        if not memory:
+            return []
+
+        # Walk backward to find the oldest ancestor
+        current = memory
+        while current.supersedes_id:
+            ancestor = self.memory_router.get_memory_by_id(current.supersedes_id)
+            if ancestor is None:
+                break
+            current = ancestor
+
+        # Now walk forward from oldest to newest
+        chain = []
+        visited = set()
+        node = current
+        while node and node.memory_id not in visited:
+            visited.add(node.memory_id)
+
+            # Read content for this memory
+            content = None
+            try:
+                content_bytes = self.backend.read_content(
+                    node.content_hash, context=self.context
+                ).unwrap()
+                try:
+                    content = json.loads(content_bytes.decode("utf-8"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    try:
+                        content = content_bytes.decode("utf-8")
+                    except UnicodeDecodeError:
+                        content = content_bytes.hex()
+            except Exception:
+                content = f"<content not available: {node.content_hash}>"
+
+            chain.append(
+                {
+                    "memory_id": node.memory_id,
+                    "content": content,
+                    "content_hash": node.content_hash,
+                    "version": node.current_version,
+                    "supersedes_id": node.supersedes_id,
+                    "superseded_by_id": node.superseded_by_id,
+                    "valid_at": node.valid_at.isoformat() if node.valid_at else None,
+                    "invalid_at": node.invalid_at.isoformat() if node.invalid_at else None,
+                    "created_at": node.created_at.isoformat() if node.created_at else None,
+                }
+            )
+
+            # Move to next version
+            if node.superseded_by_id:
+                next_node = self.memory_router.get_memory_by_id(node.superseded_by_id)
+                if next_node is None:
+                    break
+                node = next_node
+            else:
+                break
+
+        return chain
+
+    def gc_old_versions(self, older_than_days: int = 365) -> int:
+        """Garbage collect old superseded versions (#1188).
+
+        Removes superseded memories older than the threshold.
+        Never removes current (non-superseded) memories.
+
+        Args:
+            older_than_days: Only remove versions older than this many days.
+
+        Returns:
+            Number of versions removed.
+        """
+        from datetime import timedelta
+
+        from sqlalchemy import select
+
+        from nexus.storage.models import MemoryModel
+
+        now = datetime.now(UTC)
+        threshold = now - timedelta(days=older_than_days)
+
+        # Find superseded memories older than threshold
+        stmt = select(MemoryModel).where(
+            MemoryModel.superseded_by_id.isnot(None),  # Is superseded
+            MemoryModel.invalid_at.isnot(None),  # Has been invalidated
+            MemoryModel.invalid_at <= threshold,  # Older than threshold
+        )
+        old_memories = list(self.session.execute(stmt).scalars().all())
+
+        removed = 0
+        for memory in old_memories:
+            self.session.delete(memory)
+            removed += 1
+
+        if removed > 0:
+            self.session.commit()
+
+        return removed
 
     def list(
         self,
@@ -2914,11 +3082,54 @@ class Memory:
 
     # ========== Version Tracking Methods (#1184) ==========
 
+    def _get_chain_memory_ids(self, memory_id: str) -> builtins.list[str]:
+        """Get all memory IDs in the supersedes chain (#1188).
+
+        Walks backward to find the oldest ancestor, then forward to collect all IDs.
+
+        Args:
+            memory_id: Any memory ID in the chain.
+
+        Returns:
+            List of all memory IDs in the chain (oldest to newest).
+        """
+        # Use _get_memory_by_id_raw to include soft-deleted memories in the chain,
+        # since version history must persist for audit trail purposes (#1188).
+        memory = self.memory_router._get_memory_by_id_raw(memory_id)
+        if not memory:
+            return [memory_id]
+
+        # Walk backward to oldest ancestor
+        current = memory
+        while current.supersedes_id:
+            ancestor = self.memory_router._get_memory_by_id_raw(current.supersedes_id)
+            if ancestor is None:
+                break
+            current = ancestor
+
+        # Walk forward collecting all IDs
+        chain_ids = []
+        visited = set()
+        node = current
+        while node and node.memory_id not in visited:
+            visited.add(node.memory_id)
+            chain_ids.append(node.memory_id)
+            if node.superseded_by_id:
+                next_node = self.memory_router._get_memory_by_id_raw(node.superseded_by_id)
+                if next_node is None:
+                    break
+                node = next_node
+            else:
+                break
+
+        return chain_ids
+
     def list_versions(self, memory_id: str) -> builtins.list[dict[str, Any]]:
         """List all versions of a memory.
 
         Returns version history with metadata for each version, ordered by
-        version number (newest first).
+        version number (newest first). Follows the supersedes chain (#1188)
+        to collect versions across all memory rows.
 
         Args:
             memory_id: The memory ID to get versions for.
@@ -2943,12 +3154,15 @@ class Memory:
 
         from nexus.storage.models import VersionHistoryModel
 
-        # Query all versions for this memory
+        # #1188: Collect all memory IDs in the supersedes chain
+        chain_ids = self._get_chain_memory_ids(memory_id)
+
+        # Query all versions across the entire chain
         stmt = (
             select(VersionHistoryModel)
             .where(
                 VersionHistoryModel.resource_type == "memory",
-                VersionHistoryModel.resource_id == memory_id,
+                VersionHistoryModel.resource_id.in_(chain_ids),
             )
             .order_by(VersionHistoryModel.version_number.desc())
         )
@@ -3009,10 +3223,13 @@ class Memory:
         if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
             return None
 
-        # Get the specific version entry
+        # #1188: Search across the supersedes chain for the version
+        chain_ids = self._get_chain_memory_ids(memory_id)
+
+        # Get the specific version entry from any memory in the chain
         stmt = select(VersionHistoryModel).where(
             VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.resource_id.in_(chain_ids),
             VersionHistoryModel.version_number == version,
         )
         version_entry = self.session.scalar(stmt)
@@ -3085,10 +3302,18 @@ class Memory:
         if not self.permission_enforcer.check_memory(memory, Permission.WRITE, check_context):
             raise ValueError(f"No permission to rollback memory: {memory_id}")
 
-        # Get the target version entry
+        # #1188: Search across the supersedes chain for the version
+        chain_ids = self._get_chain_memory_ids(memory_id)
+
+        # #1188: Find the latest (current) memory in the chain for rollback
+        latest_memory = self.memory_router.get_memory_by_id(chain_ids[-1])
+        if latest_memory is None:
+            latest_memory = memory
+        latest_memory_id = latest_memory.memory_id
+
         target_stmt = select(VersionHistoryModel).where(
             VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.resource_id.in_(chain_ids),
             VersionHistoryModel.version_number == version,
         )
         target_version = self.session.scalar(target_stmt)
@@ -3099,30 +3324,30 @@ class Memory:
         # Get current version entry for lineage
         current_stmt = select(VersionHistoryModel).where(
             VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id == memory_id,
-            VersionHistoryModel.version_number == memory.current_version,
+            VersionHistoryModel.resource_id.in_(chain_ids),
+            VersionHistoryModel.version_number == latest_memory.current_version,
         )
         current_version_entry = self.session.scalar(current_stmt)
         parent_version_id = current_version_entry.version_id if current_version_entry else None
 
-        # Update memory to target version's content
-        memory.content_hash = target_version.content_hash
-        memory.updated_at = datetime.now(UTC)
+        # Update the latest memory to target version's content
+        latest_memory.content_hash = target_version.content_hash
+        latest_memory.updated_at = datetime.now(UTC)
 
-        # Atomically increment version at database level
+        # Atomically increment version at database level on the latest memory
         self.session.execute(
             update(MemoryModel)
-            .where(MemoryModel.memory_id == memory_id)
+            .where(MemoryModel.memory_id == latest_memory_id)
             .values(current_version=MemoryModel.current_version + 1)
         )
-        self.session.refresh(memory)
+        self.session.refresh(latest_memory)
 
-        # Create version history entry for the rollback
+        # Create version history entry for the rollback on the latest memory
         self.memory_router._create_version_entry(
-            memory_id=memory_id,
+            memory_id=latest_memory_id,
             content_hash=target_version.content_hash,
             size_bytes=target_version.size_bytes,
-            version_number=memory.current_version,
+            version_number=latest_memory.current_version,
             source_type="rollback",
             parent_version_id=parent_version_id,
             change_reason=f"Rollback to version {version}",
@@ -3180,10 +3405,12 @@ class Memory:
         if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
             raise ValueError(f"No permission to diff memory: {memory_id}")
 
-        # Get both versions
+        # #1188: Search across the supersedes chain for versions
+        chain_ids = self._get_chain_memory_ids(memory_id)
+
         stmt = select(VersionHistoryModel).where(
             VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id == memory_id,
+            VersionHistoryModel.resource_id.in_(chain_ids),
             VersionHistoryModel.version_number.in_([v1, v2]),
         )
 

@@ -4059,11 +4059,18 @@ async def _fire_rpc_event(
 
     try:
         zone_id = getattr(context, "zone_id", None) or "default"
-        data: dict[str, Any] = {"file_path": path}
+        # Identity: subject_type + subject_id only (no user_id/agent_id in event data)
+        data: dict[str, Any] = {"file_path": path, "zone_id": zone_id}
         if old_path:
             data["old_path"] = old_path
         if size is not None:
             data["size"] = size
+        st = getattr(context, "subject_type", None)
+        sid = getattr(context, "subject_id", None) or getattr(context, "user", None)
+        if st is not None:
+            data["subject_type"] = st
+        if sid is not None:
+            data["subject_id"] = sid
 
         # Await broadcast to ensure webhook delivery before response
         # This adds slight latency but ensures reliable event delivery

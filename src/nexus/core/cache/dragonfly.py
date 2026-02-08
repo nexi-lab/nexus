@@ -16,7 +16,8 @@ Connection Pool Optimizations (Issue #1075):
 
 import logging
 import socket
-from typing import Any
+from typing import Any, cast
+from collections.abc import Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -609,7 +610,8 @@ class DragonflyResourceMapCache:
         pipe = self._client.client.pipeline()
         for (resource_type, zone_id), mapping in groups.items():
             key = self._make_key(resource_type, zone_id)
-            pipe.hset(key, mapping=mapping)
+            # Stubs expect Mapping[str|bytes, bytes|float|int|str]; dict[str, str] is compatible at runtime
+            pipe.hset(key, mapping=cast(Mapping[str | bytes, bytes | float | int | str], mapping))
         await pipe.execute()
 
 

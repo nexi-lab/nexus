@@ -206,12 +206,21 @@ class TestNamespaceManagerVisibility:
         bot = ("agent", "bot-1")
 
         # Alice sees project-alpha but NOT project-beta
-        assert namespace_manager.is_visible(alice, "/workspace/project-alpha/data.csv", zone) is True
-        assert namespace_manager.is_visible(alice, "/workspace/project-alpha/other.txt", zone) is True
-        assert namespace_manager.is_visible(alice, "/workspace/project-beta/analysis.txt", zone) is False
+        assert (
+            namespace_manager.is_visible(alice, "/workspace/project-alpha/data.csv", zone) is True
+        )
+        assert (
+            namespace_manager.is_visible(alice, "/workspace/project-alpha/other.txt", zone) is True
+        )
+        assert (
+            namespace_manager.is_visible(alice, "/workspace/project-beta/analysis.txt", zone)
+            is False
+        )
 
         # Bot sees project-beta but NOT project-alpha
-        assert namespace_manager.is_visible(bot, "/workspace/project-beta/analysis.txt", zone) is True
+        assert (
+            namespace_manager.is_visible(bot, "/workspace/project-beta/analysis.txt", zone) is True
+        )
         assert namespace_manager.is_visible(bot, "/workspace/project-beta/other.txt", zone) is True
         assert namespace_manager.is_visible(bot, "/workspace/project-alpha/data.csv", zone) is False
 

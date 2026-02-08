@@ -158,8 +158,8 @@ class NamespaceManager:
 
         # Cache: (subject_type, subject_id) → (mount_entries, zone_revision, zone_id)
         # TTLCache provides both LRU eviction (maxsize) and TTL expiration (safety net)
-        self._cache: TTLCache[tuple[str, str], tuple[list[MountEntry], int, str | None]] = (
-            TTLCache(maxsize=cache_maxsize, ttl=cache_ttl)
+        self._cache: TTLCache[tuple[str, str], tuple[list[MountEntry], int, str | None]] = TTLCache(
+            maxsize=cache_maxsize, ttl=cache_ttl
         )
 
         # Metrics
@@ -310,9 +310,7 @@ class NamespaceManager:
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
         except Exception:
-            logger.warning(
-                f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0"
-            )
+            logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
             current_revision = 0
 
         # Cache the result

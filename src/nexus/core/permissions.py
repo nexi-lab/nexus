@@ -1090,7 +1090,9 @@ class PermissionEnforcer:
         # This runs before Tiger cache / ReBAC bulk checks for efficiency
         if self.namespace_manager is not None:
             subject = context.get_subject()
-            paths = [p for p in paths if self.namespace_manager.is_visible(subject, p, context.zone_id)]
+            paths = [
+                p for p in paths if self.namespace_manager.is_visible(subject, p, context.zone_id)
+            ]
             if not paths:
                 return []
 

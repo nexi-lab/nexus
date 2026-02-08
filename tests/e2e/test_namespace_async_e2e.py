@@ -80,7 +80,11 @@ def server():
     }
 
     proc = subprocess.Popen(
-        [PYTHON, "-c", f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{data_dir}'])"],
+        [
+            PYTHON,
+            "-c",
+            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{data_dir}'])",
+        ],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -145,7 +149,11 @@ def test_zero_grants_invisible(base_url: str, client: httpx.Client) -> None:
 
     # Alice has no grants → any path is 404 (invisible)
     # No need to create file - namespace check happens BEFORE file existence check
-    resp = client.get(f"{base_url}/api/v2/files/read", params={"path": "/workspace/anything.txt"}, headers=alice_headers)
+    resp = client.get(
+        f"{base_url}/api/v2/files/read",
+        params={"path": "/workspace/anything.txt"},
+        headers=alice_headers,
+    )
     assert resp.status_code == 404, "User without grants should get 404 on all paths"
 
 
@@ -164,17 +172,25 @@ def test_namespace_blocks_unauthorized_access(base_url: str, client: httpx.Clien
         "/workspace/data.txt",
         "/projects/readme.md",
         "/admin/config.json",
-        "/shared/docs/file.pdf"
+        "/shared/docs/file.pdf",
     ]
 
     for path in test_paths:
         # Read attempt
-        resp = client.get(f"{base_url}/api/v2/files/read", params={"path": path}, headers=alice_headers)
+        resp = client.get(
+            f"{base_url}/api/v2/files/read", params={"path": path}, headers=alice_headers
+        )
         assert resp.status_code == 404, f"Path {path} should be invisible (404) without grant"
 
         # Write attempt
-        resp = client.post(f"{base_url}/api/v2/files/write", json={"path": path, "content": "test"}, headers=alice_headers)
-        assert resp.status_code in (404, 500), f"Path {path} should be invisible for write without grant"
+        resp = client.post(
+            f"{base_url}/api/v2/files/write",
+            json={"path": path, "content": "test"},
+            headers=alice_headers,
+        )
+        assert resp.status_code in (404, 500), (
+            f"Path {path} should be invisible for write without grant"
+        )
 
 
 def test_multiple_users_all_blocked(base_url: str, client: httpx.Client) -> None:
@@ -192,14 +208,26 @@ def test_multiple_users_all_blocked(base_url: str, client: httpx.Client) -> None
     path = "/workspace/shared.txt"
 
     # All three users try to access the same path - all get 404
-    for user, headers in [("alice", alice_headers), ("bob", bob_headers), ("charlie", charlie_headers)]:
+    for user, headers in [
+        ("alice", alice_headers),
+        ("bob", bob_headers),
+        ("charlie", charlie_headers),
+    ]:
         resp = client.get(f"{base_url}/api/v2/files/read", params={"path": path}, headers=headers)
         assert resp.status_code == 404, f"{user} should get 404 (no grants = invisible)"
 
     # Verify each user also can't access other paths (namespace manager is per-subject)
-    alice_resp = client.get(f"{base_url}/api/v2/files/read", params={"path": "/alice/data.txt"}, headers=alice_headers)
-    bob_resp = client.get(f"{base_url}/api/v2/files/read", params={"path": "/bob/data.txt"}, headers=bob_headers)
-    charlie_resp = client.get(f"{base_url}/api/v2/files/read", params={"path": "/charlie/data.txt"}, headers=charlie_headers)
+    alice_resp = client.get(
+        f"{base_url}/api/v2/files/read", params={"path": "/alice/data.txt"}, headers=alice_headers
+    )
+    bob_resp = client.get(
+        f"{base_url}/api/v2/files/read", params={"path": "/bob/data.txt"}, headers=bob_headers
+    )
+    charlie_resp = client.get(
+        f"{base_url}/api/v2/files/read",
+        params={"path": "/charlie/data.txt"},
+        headers=charlie_headers,
+    )
 
     assert alice_resp.status_code == 404
     assert bob_resp.status_code == 404

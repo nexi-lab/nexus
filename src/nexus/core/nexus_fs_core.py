@@ -1896,8 +1896,12 @@ class NexusFSCoreMixin:
                 "etag": content_hash,
                 "version": new_version,
                 "zone_id": zone_id or "default",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "subject_type": getattr(context, "subject_type", None) if context else None,
+                "subject_id": (
+                    getattr(context, "subject_id", None) or getattr(context, "user", None)
+                    if context
+                    else None
+                ),
                 "created": is_new_file,
                 "timestamp": now.isoformat(),
             }
@@ -2830,8 +2834,12 @@ class NexusFSCoreMixin:
                 "size": meta.size,
                 "etag": meta.etag,
                 "zone_id": zone_id or "default",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "subject_type": getattr(context, "subject_type", None) if context else None,
+                "subject_id": (
+                    getattr(context, "subject_id", None) or getattr(context, "user", None)
+                    if context
+                    else None
+                ),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 
@@ -3136,8 +3144,12 @@ class NexusFSCoreMixin:
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
                 "zone_id": zone_id or "default",
-                "agent_id": agent_id,
-                "user_id": context.user_id if context and hasattr(context, "user_id") else None,
+                "subject_type": getattr(context, "subject_type", None) if context else None,
+                "subject_id": (
+                    getattr(context, "subject_id", None) or getattr(context, "user", None)
+                    if context
+                    else None
+                ),
                 "timestamp": datetime.now(UTC).isoformat(),
             }
 

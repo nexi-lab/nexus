@@ -423,6 +423,12 @@ class SubscriptionManager:
             "X-Nexus-Delivery-Id": f"del_{uuid.uuid4().hex[:16]}",
         }
 
+        # Add actor headers for self-loop prevention
+        if data.get("subject_id"):
+            headers["X-Nexus-Actor-Id"] = data["subject_id"]
+        if data.get("subject_type"):
+            headers["X-Nexus-Actor-Type"] = data["subject_type"]
+
         # Add HMAC signature if secret is configured
         # Note: We don't have access to the secret from the Subscription model
         # Need to fetch it separately for signing

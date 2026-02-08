@@ -49,9 +49,7 @@ def mock_app_state(mock_memory_api):
     mock_nexus_fs._get_memory_api.return_value = mock_memory_api
 
     with (
-        patch(
-            "nexus.server.fastapi_server._app_state"
-        ) as mock_state,
+        patch("nexus.server.fastapi_server._app_state") as mock_state,
         patch(
             "nexus.server.fastapi_server._get_memory_api_with_context",
             return_value=mock_memory_api,

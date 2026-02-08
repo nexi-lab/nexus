@@ -56,7 +56,11 @@ class TestMemoriesApiV2:
         )
         r2 = test_app.post(
             "/api/v2/memories",
-            json={"content": "List test agent memory", "scope": "agent", "memory_type": "preference"},
+            json={
+                "content": "List test agent memory",
+                "scope": "agent",
+                "memory_type": "preference",
+            },
         )
         assert r1.status_code == 201, f"Store 1 failed: {r1.text}"
         assert r2.status_code == 201, f"Store 2 failed: {r2.text}"

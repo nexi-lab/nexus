@@ -30,7 +30,11 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine.interfaces import DBAPIConnection
+    from sqlalchemy.pool import ConnectionPoolEntry
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +109,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         if self.database_url.startswith("sqlite"):
 
             @event.listens_for(self._engine, "connect")
-            def set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: ARG001
+            def set_sqlite_pragma(
+                dbapi_connection: DBAPIConnection, _connection_record: ConnectionPoolEntry
+            ) -> None:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.close()

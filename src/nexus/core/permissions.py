@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.hotspot_detector import HotspotDetector
+    from nexus.core.namespace_manager import NamespaceManager
     from nexus.core.permission_boundary_cache import PermissionBoundaryCache
     from nexus.core.permissions_enhanced import AuditStore
     from nexus.core.read_set import ReadSet
@@ -289,6 +290,8 @@ class PermissionEnforcer:
         # Issue #921: Hotspot detection for proactive cache prefetching
         hotspot_detector: HotspotDetector | None = None,
         enable_hotspot_tracking: bool = True,
+        # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
+        namespace_manager: NamespaceManager | None = None,
     ):
         """Initialize permission enforcer.
 
@@ -306,11 +309,15 @@ class PermissionEnforcer:
             enable_boundary_cache: Enable boundary caching (default: True)
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
+            namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.router = router  # For backend object type resolution
+
+        # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
+        self.namespace_manager: NamespaceManager | None = namespace_manager
 
         # P0-4: Enhanced features
         self.allow_admin_bypass = allow_admin_bypass
@@ -619,6 +626,20 @@ class PermissionEnforcer:
 
             self._log_bypass(context, path, permission_str, "admin", allowed=True)
             return True
+
+        # Issue #1239: Namespace visibility check (Agent OS Phase 0)
+        # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
+        # This runs AFTER admin/system bypass (admins see everything) and BEFORE
+        # fine-grained ReBAC check (defense in depth).
+        if self.namespace_manager is not None:
+            subject = context.get_subject()
+            if not self.namespace_manager.is_visible(subject, path, context.zone_id):
+                from nexus.core.exceptions import NexusFileNotFoundError
+
+                raise NexusFileNotFoundError(
+                    path=path,
+                    message="Path not found",  # Intentionally vague — path is invisible
+                )
 
         # Normal ReBAC check
         return self._check_rebac(path, permission, context)
@@ -1064,6 +1085,14 @@ class PermissionEnforcer:
             context.is_system and self.allow_system_bypass
         ):
             return paths
+
+        # Issue #1239: Namespace pre-filter — only include paths visible to subject
+        # This runs before Tiger cache / ReBAC bulk checks for efficiency
+        if self.namespace_manager is not None:
+            subject = context.get_subject()
+            paths = [p for p in paths if self.namespace_manager.is_visible(subject, p, context.zone_id)]
+            if not paths:
+                return []
 
         # OPTIMIZATION: Use bulk permission checking for better performance
         # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries

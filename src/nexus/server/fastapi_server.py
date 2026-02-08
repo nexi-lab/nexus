@@ -728,9 +728,29 @@ async def lifespan(_app: FastAPI) -> Any:
                     "yes",
                 )
 
+                # Issue #1239: Create namespace manager for per-subject visibility
+                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                namespace_manager = None
+                if enforce_permissions and hasattr(_app_state, "nexus_fs"):
+                    sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                    if sync_rebac:
+                        from nexus.core.namespace_manager import NamespaceManager
+
+                        namespace_manager = NamespaceManager(
+                            rebac_manager=sync_rebac,
+                            cache_maxsize=10_000,
+                            cache_ttl=300,
+                            revision_window=10,
+                        )
+                        logger.info(
+                            "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
+                            "(using sync rebac_manager for mount table queries)"
+                        )
+
                 # Create permission enforcer with async ReBAC
                 permission_enforcer = AsyncPermissionEnforcer(
-                    rebac_manager=_app_state.async_rebac_manager
+                    rebac_manager=_app_state.async_rebac_manager,
+                    namespace_manager=namespace_manager,
                 )
 
                 # Create AsyncNexusFS

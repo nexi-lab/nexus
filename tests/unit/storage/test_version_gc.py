@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.version_gc import GCStats, VersionGCSettings, VersionHistoryGC
 
 
@@ -313,12 +313,14 @@ class TestVersionHistoryGC:
         data_dir.mkdir(parents=True, exist_ok=True)
 
         # Create fresh NexusFS without any files
-        nx_empty = nexus.connect(
-            config={
-                "data_dir": str(data_dir),
-                "enforce_permissions": False,
-                "backend": "local",
-            }
+        db_path = Path(temp_dir) / "metadata-empty.db"
+        nx_empty = NexusFS(
+            backend=LocalBackend(data_dir),
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
+            auto_parse=False,
+            enforce_permissions=False,
+            audit_strict_mode=False,
         )
 
         try:

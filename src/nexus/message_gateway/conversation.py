@@ -235,32 +235,103 @@ def ensure_session_metadata(
         logger.warning(f"Failed to ensure session metadata for {session_id}: {e}")
 
 
+def get_sync_cursor(
+    nx: NexusFS,
+    session_id: str,
+    context: OperationContext,
+) -> dict[str, str] | None:
+    """Get the sync cursor from session metadata.
+
+    Returns the last synced message ID and timestamp, used for
+    incremental sync (fetch only messages after last sync).
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        context: Operation context for permissions (required)
+
+    Returns:
+        Dict with 'last_synced_id' and 'last_synced_ts', or None if not set
+    """
+    metadata = read_session_metadata(nx, session_id, context)
+    if not metadata:
+        return None
+
+    last_id = metadata.get("last_synced_id")
+    last_ts = metadata.get("last_synced_ts")
+
+    if last_id and last_ts:
+        return {"last_synced_id": last_id, "last_synced_ts": last_ts}
+    return None
+
+
+def update_sync_cursor(
+    nx: NexusFS,
+    session_id: str,
+    last_message: Message,
+    context: OperationContext,
+) -> None:
+    """Update the sync cursor in session metadata.
+
+    Stores the last synced message ID and timestamp for incremental sync.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        last_message: The last message that was synced
+        context: Operation context for permissions (required)
+    """
+    # Read existing metadata or create new
+    metadata = read_session_metadata(nx, session_id, context) or {}
+
+    # Update sync cursor
+    metadata["last_synced_id"] = last_message.id
+    metadata["last_synced_ts"] = last_message.ts
+
+    # Write back
+    try:
+        write_session_metadata(nx, session_id, metadata, context)
+        logger.debug(f"Updated sync cursor for {session_id}: id={last_message.id}")
+    except Exception as e:
+        logger.warning(f"Failed to update sync cursor for {session_id}: {e}")
+
+
 def sync_messages(
     nx: NexusFS,
     session_id: str,
     messages: list[Message],
     context: OperationContext,
+    *,
+    update_cursor: bool = True,
 ) -> tuple[int, int]:
     """Sync messages to conversation file, skipping duplicates.
 
     Messages are identified by their `id` field (channel's native message ID).
     Existing messages are skipped, new messages are appended in order.
 
+    After syncing, updates the sync cursor in metadata with the last
+    message's ID and timestamp (for incremental sync).
+
     Args:
         nx: NexusFS instance
         session_id: Session key
         messages: List of messages to sync (should be in chronological order)
         context: Operation context for permissions (required)
+        update_cursor: Whether to update the sync cursor after sync (default: True)
 
     Returns:
         Tuple of (added_count, skipped_count)
     """
+    if not messages:
+        return 0, 0
+
     # Read existing message IDs
     existing_messages = read_messages(nx, session_id, context)
     existing_ids = {msg.id for msg in existing_messages}
 
     added = 0
     skipped = 0
+    last_added: Message | None = None
 
     for message in messages:
         if message.id in existing_ids:
@@ -272,9 +343,15 @@ def sync_messages(
             append_message(nx, session_id, message, context)
             existing_ids.add(message.id)  # Track for duplicates within batch
             added += 1
+            last_added = message
         except Exception as e:
             logger.error(f"Failed to sync message {message.id}: {e}")
             # Continue with other messages
+
+    # Update sync cursor with the last message (newest in chronological order)
+    if update_cursor and messages:
+        # Use the last message in the list (newest) as the cursor
+        update_sync_cursor(nx, session_id, messages[-1], context)
 
     logger.info(f"Synced {session_id}: added={added}, skipped={skipped}")
     return added, skipped

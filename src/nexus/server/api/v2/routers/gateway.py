@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from nexus.message_gateway import Message, append_message, sync_messages
+from nexus.message_gateway import Message, append_message, get_sync_cursor, sync_messages
 from nexus.message_gateway.dedup import Deduplicator
 from nexus.server.api.v2.models import (
     GatewayMessageRequest,
@@ -161,6 +161,10 @@ async def sync_history(
     Fetches messages from the channel adapter and syncs them to the
     conversation file. Duplicate messages (by ID) are skipped.
 
+    If no `after_id` is provided, uses the last synced message ID from
+    session metadata (incremental sync). The sync cursor is updated
+    after each successful sync.
+
     Requires a registered channel adapter for the specified channel.
     """
     app_state = _get_app_state()
@@ -176,25 +180,49 @@ async def sync_history(
             f"Available: {list(_channel_adapters.keys())}",
         )
 
+    # Get operation context for NexusFS
+    context = _get_operation_context(auth_result)
+
     try:
+        # Determine after_id with priority:
+        # 1. history_message_id (explicit cursor from caller)
+        # 2. after_id (explicit parameter)
+        # 3. Stored cursor from session metadata
+        after_id: str | None = None
+        if request.history_message_id:
+            after_id = request.history_message_id
+            logger.debug(f"Using caller's history cursor: after_id={after_id}")
+        elif request.after_id:
+            after_id = request.after_id
+        else:
+            cursor = get_sync_cursor(app_state.nexus_fs, request.session_id, context)
+            if cursor:
+                after_id = cursor["last_synced_id"]
+                logger.debug(f"Using stored sync cursor: after_id={after_id}")
+
         # Fetch history from channel
         messages = await adapter.fetch_history(
             session_id=request.session_id,
             limit=request.limit,
             before_id=request.before_id,
-            after_id=request.after_id,
+            after_id=after_id,
         )
 
-        # Get operation context for NexusFS
-        context = _get_operation_context(auth_result)
-
-        # Sync messages to conversation file
+        # Sync messages to conversation file (also updates sync cursor)
         added, skipped = sync_messages(
             nx=app_state.nexus_fs,
             session_id=request.session_id,
             messages=messages,
             context=context,
         )
+
+        # Get the updated cursor (will be set if messages were synced)
+        last_synced_id: str | None = None
+        last_synced_ts: str | None = None
+        if messages:
+            # The cursor is set to the last message in the list
+            last_synced_id = messages[-1].id
+            last_synced_ts = messages[-1].ts
 
         logger.info(
             f"Synced {request.session_id}: fetched={len(messages)}, added={added}, skipped={skipped}"
@@ -205,6 +233,8 @@ async def sync_history(
             added=added,
             skipped=skipped,
             total_fetched=len(messages),
+            last_synced_id=last_synced_id,
+            last_synced_ts=last_synced_ts,
         )
 
     except Exception as e:

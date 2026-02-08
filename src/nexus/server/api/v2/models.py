@@ -476,13 +476,27 @@ class GatewayMessageResponse(BaseModel):
 
 
 class GatewaySyncRequest(BaseModel):
-    """Request to sync conversation history from a channel."""
+    """Request to sync conversation history from a channel.
+
+    Priority for determining the sync starting point:
+    1. `history_message_id` + `history_ts` (explicit cursor from caller)
+    2. `after_id` (explicit parameter)
+    3. Stored cursor from session metadata (incremental sync)
+    """
 
     session_id: str = Field(..., description="Boardroom key (channel:account_id:chat_id)")
     channel: str = Field(..., description="Platform (discord, slack, telegram)")
     limit: int = Field(100, ge=1, le=1000, description="Maximum messages to fetch")
     before_id: str | None = Field(None, description="Fetch messages before this ID")
     after_id: str | None = Field(None, description="Fetch messages after this ID")
+    history_message_id: str | None = Field(
+        None,
+        description="Channel's native message ID to start sync from (takes precedence over after_id)",
+    )
+    history_ts: str | None = Field(
+        None,
+        description="Timestamp of history_message_id (ISO8601, for channels that use time-based cursors)",
+    )
 
 
 class GatewaySyncResponse(BaseModel):
@@ -492,3 +506,5 @@ class GatewaySyncResponse(BaseModel):
     added: int = Field(..., description="Number of new messages added")
     skipped: int = Field(..., description="Number of duplicate messages skipped")
     total_fetched: int = Field(..., description="Total messages fetched from channel")
+    last_synced_id: str | None = Field(None, description="ID of the last synced message (cursor)")
+    last_synced_ts: str | None = Field(None, description="Timestamp of the last synced message")

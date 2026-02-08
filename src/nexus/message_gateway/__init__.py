@@ -8,9 +8,11 @@ from nexus.message_gateway.client import GatewayClient, GatewayError
 from nexus.message_gateway.conversation import (
     append_message,
     ensure_session_metadata,
+    get_sync_cursor,
     read_messages,
     read_session_metadata,
     sync_messages,
+    update_sync_cursor,
     write_session_metadata,
 )
 from nexus.message_gateway.dedup import Deduplicator
@@ -28,9 +30,11 @@ __all__ = [
     "append_message",
     "derive_session_key",
     "ensure_session_metadata",
+    "get_sync_cursor",
     "parse_session_key",
     "read_messages",
     "read_session_metadata",
     "sync_messages",
+    "update_sync_cursor",
     "write_session_metadata",
 ]

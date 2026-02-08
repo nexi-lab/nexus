@@ -177,7 +177,7 @@ class DiscordAdapter:
         if not message.guild:
             return
 
-        from nexus.message_gateway.conversation import append_message
+        from nexus.message_gateway.conversation import append_message, ensure_session_metadata
 
         try:
             # Derive session key
@@ -185,6 +185,20 @@ class DiscordAdapter:
                 channel="discord",
                 account_id=str(message.guild.id),
                 chat_id=str(message.channel.id),
+            )
+
+            # Ensure session metadata exists (human-readable info)
+            ensure_session_metadata(
+                nx=self._nexus_fs,
+                session_id=session_id,
+                metadata={
+                    "channel": "discord",
+                    "guild_id": str(message.guild.id),
+                    "guild_name": message.guild.name,
+                    "channel_id": str(message.channel.id),
+                    "channel_name": message.channel.name,
+                },
+                context=self._context,
             )
 
             # Create Message

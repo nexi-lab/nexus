@@ -5,8 +5,9 @@ Uses NexusFS for file operations - no database needed.
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.message_gateway.types import Message
 
@@ -15,6 +16,34 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
+
+
+def _call_with_context(method: Any, *args: Any, context: Any = None, **kwargs: Any) -> Any:
+    """Call a NexusFS method, handling both local and remote clients.
+
+    Local NexusFS requires context for permissions.
+    RemoteNexusFS handles auth via API key and doesn't accept context.
+    """
+    try:
+        return method(*args, context=context, **kwargs)
+    except TypeError as e:
+        if "context" in str(e):
+            # RemoteNexusFS doesn't accept context, retry without it
+            return method(*args, **kwargs)
+        raise
+
+
+def _get_session_dir(session_id: str) -> str:
+    """Get the directory path for a session.
+
+    Args:
+        session_id: Session key (e.g., "discord:guild_1:chan_1")
+
+    Returns:
+        Path to session directory
+    """
+    safe_id = session_id.replace("/", "_").replace("..", "_")
+    return f"/sessions/{safe_id}"
 
 
 def get_conversation_path(session_id: str) -> str:
@@ -26,9 +55,19 @@ def get_conversation_path(session_id: str) -> str:
     Returns:
         Path to conversation.jsonl file
     """
-    # Sanitize session_id for path safety
-    safe_id = session_id.replace("/", "_").replace("..", "_")
-    return f"/sessions/{safe_id}/conversation.jsonl"
+    return f"{_get_session_dir(session_id)}/conversation.jsonl"
+
+
+def get_metadata_path(session_id: str) -> str:
+    """Get the file path for a session's metadata.
+
+    Args:
+        session_id: Session key (e.g., "discord:guild_1:chan_1")
+
+    Returns:
+        Path to metadata.json file
+    """
+    return f"{_get_session_dir(session_id)}/metadata.json"
 
 
 def append_message(
@@ -105,3 +144,92 @@ def read_messages(
     except Exception as e:
         logger.error(f"Failed to read messages from {path}: {e}")
         raise
+
+
+def write_session_metadata(
+    nx: NexusFS,
+    session_id: str,
+    metadata: dict[str, Any],
+    context: OperationContext,
+) -> None:
+    """Write session metadata to metadata.json.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        metadata: Metadata dict (e.g., guild_name, channel_name)
+        context: Operation context for permissions (required)
+    """
+    path = get_metadata_path(session_id)
+    content = json.dumps(metadata, indent=2)
+
+    try:
+        _call_with_context(nx.write, path, content.encode("utf-8"), context=context)
+        logger.debug(f"Wrote session metadata to {path}")
+    except Exception as e:
+        logger.error(f"Failed to write session metadata to {path}: {e}")
+        raise
+
+
+def read_session_metadata(
+    nx: NexusFS,
+    session_id: str,
+    context: OperationContext,
+) -> dict[str, Any] | None:
+    """Read session metadata from metadata.json.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        context: Operation context for permissions (required)
+
+    Returns:
+        Metadata dict or None if not found
+    """
+    path = get_metadata_path(session_id)
+
+    try:
+        if not _call_with_context(nx.exists, path, context=context):
+            return None
+
+        raw_content = _call_with_context(nx.read, path, context=context)
+        if isinstance(raw_content, bytes):
+            text_content = raw_content.decode("utf-8")
+        elif isinstance(raw_content, str):
+            text_content = raw_content
+        else:
+            logger.warning(f"Unexpected content type from {path}: {type(raw_content)}")
+            return None
+
+        return json.loads(text_content)
+
+    except Exception as e:
+        logger.error(f"Failed to read session metadata from {path}: {e}")
+        return None
+
+
+def ensure_session_metadata(
+    nx: NexusFS,
+    session_id: str,
+    metadata: dict[str, Any],
+    context: OperationContext,
+) -> None:
+    """Ensure session metadata exists, creating if needed.
+
+    Only writes if metadata.json doesn't exist yet.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        metadata: Metadata dict to write if file doesn't exist
+        context: Operation context for permissions (required)
+    """
+    path = get_metadata_path(session_id)
+
+    try:
+        if not _call_with_context(nx.exists, path, context=context):
+            write_session_metadata(nx, session_id, metadata, context)
+            logger.info(f"Created session metadata for {session_id}")
+    except Exception as e:
+        # Non-fatal - log and continue
+        logger.warning(f"Failed to ensure session metadata for {session_id}: {e}")

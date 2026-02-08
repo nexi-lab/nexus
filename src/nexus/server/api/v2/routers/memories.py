@@ -1,7 +1,8 @@
 """Memory REST API endpoints.
 
-Provides 13 endpoints for memory CRUD, search, and version operations:
+Provides 14 endpoints for memory CRUD, search, and version operations:
 - POST   /api/v2/memories                      - Store memory
+- GET    /api/v2/memories                      - List memories (#1203)
 - GET    /api/v2/memories/{id}                 - Get memory by ID
 - PUT    /api/v2/memories/{id}                 - Update memory
 - DELETE /api/v2/memories/{id}                 - Delete memory
@@ -121,6 +122,64 @@ async def store_memory(
     except Exception as e:
         logger.error(f"Memory store error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
+
+
+@router.get("", response_model=dict[str, Any])
+async def list_memories(
+    scope: str | None = Query(None, description="Filter by scope (user/agent/system)"),
+    memory_type: str | None = Query(None, description="Filter by memory type"),
+    namespace: str | None = Query(None, description="Filter by namespace (exact match)"),
+    namespace_prefix: str | None = Query(None, description="Filter by namespace prefix"),
+    state: str | None = Query("active", description="Filter by state (active/inactive/deleted)"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum results"),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """List memories with optional filters (#1203).
+
+    Returns memories matching the specified filters, ordered by creation time.
+
+    Args:
+        scope: Filter by scope (user/agent/system)
+        memory_type: Filter by memory type
+        namespace: Filter by exact namespace match
+        namespace_prefix: Filter by namespace prefix (hierarchical queries)
+        state: Filter by state (default: active)
+        limit: Maximum number of results (1-100, default: 50)
+
+    Returns:
+        Dict with memories list, total count, and applied filters
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+        memories = app_state.nexus_fs.memory.list(
+            scope=scope,
+            memory_type=memory_type,
+            namespace=namespace,
+            namespace_prefix=namespace_prefix,
+            state=state,
+            limit=limit,
+            context=context,
+        )
+
+        return {
+            "memories": memories,
+            "total": len(memories),
+            "filters": {
+                "scope": scope,
+                "memory_type": memory_type,
+                "namespace": namespace,
+                "namespace_prefix": namespace_prefix,
+                "state": state,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Memory list error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory list error: {e}") from e
 
 
 @router.get("/{memory_id}", response_model=dict[str, Any])

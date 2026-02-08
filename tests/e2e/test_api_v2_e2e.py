@@ -47,6 +47,45 @@ class TestMemoriesApiV2:
         assert "memory_id" in data
         assert data["status"] == "created"
 
+    def test_list_memories(self, test_app: httpx.Client):
+        """Test GET /api/v2/memories - List memories (#1203)."""
+        # Store test memories with distinct scopes
+        test_app.post(
+            "/api/v2/memories",
+            json={"content": "List test user memory", "scope": "user", "memory_type": "fact"},
+        )
+        test_app.post(
+            "/api/v2/memories",
+            json={"content": "List test agent memory", "scope": "agent", "memory_type": "preference"},
+        )
+
+        # List all active memories
+        response = test_app.get("/api/v2/memories")
+        assert response.status_code == 200, f"Failed: {response.text}"
+        data = response.json()
+        assert "memories" in data
+        assert "total" in data
+        assert "filters" in data
+        assert data["total"] >= 2
+
+        # List with scope filter
+        response = test_app.get("/api/v2/memories?scope=user")
+        assert response.status_code == 200, f"Failed: {response.text}"
+        data = response.json()
+        assert data["filters"]["scope"] == "user"
+        assert all(m["scope"] == "user" for m in data["memories"])
+
+        # List with limit
+        response = test_app.get("/api/v2/memories?limit=1")
+        assert response.status_code == 200, f"Failed: {response.text}"
+        assert len(response.json()["memories"]) <= 1
+
+        # List with memory_type filter
+        response = test_app.get("/api/v2/memories?memory_type=preference")
+        assert response.status_code == 200, f"Failed: {response.text}"
+        data = response.json()
+        assert all(m.get("memory_type") == "preference" for m in data["memories"])
+
     def test_store_and_get_memory(self, test_app: httpx.Client):
         """Test POST then GET /api/v2/memories/{id}."""
         # Store

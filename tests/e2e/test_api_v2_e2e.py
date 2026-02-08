@@ -50,14 +50,16 @@ class TestMemoriesApiV2:
     def test_list_memories(self, test_app: httpx.Client):
         """Test GET /api/v2/memories - List memories (#1203)."""
         # Store test memories with distinct scopes
-        test_app.post(
+        r1 = test_app.post(
             "/api/v2/memories",
             json={"content": "List test user memory", "scope": "user", "memory_type": "fact"},
         )
-        test_app.post(
+        r2 = test_app.post(
             "/api/v2/memories",
             json={"content": "List test agent memory", "scope": "agent", "memory_type": "preference"},
         )
+        assert r1.status_code == 201, f"Store 1 failed: {r1.text}"
+        assert r2.status_code == 201, f"Store 2 failed: {r2.text}"
 
         # List all active memories
         response = test_app.get("/api/v2/memories")
@@ -66,7 +68,7 @@ class TestMemoriesApiV2:
         assert "memories" in data
         assert "total" in data
         assert "filters" in data
-        assert data["total"] >= 2
+        assert data["total"] >= 2, f"Expected >= 2 memories, got {data}"
 
         # List with scope filter
         response = test_app.get("/api/v2/memories?scope=user")

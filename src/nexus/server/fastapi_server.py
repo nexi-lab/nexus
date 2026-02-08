@@ -370,6 +370,8 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
+        # Discord adapter for message gateway
+        self.discord_adapter: Any = None
 
 
 # Global state (set during app creation)
@@ -813,6 +815,43 @@ async def lifespan(_app: FastAPI) -> Any:
             except Exception as e:
                 logger.warning(f"Failed to connect lock manager coordination client: {e}")
 
+    # Discord adapter for message gateway
+    # Enable with NEXUS_DISCORD_BOT_TOKEN env var
+    discord_task: asyncio.Task[Any] | None = None
+    discord_token = os.getenv("NEXUS_DISCORD_BOT_TOKEN")
+    logger.info(
+        f"Discord adapter check: token={'yes' if discord_token else 'no'}, nexus_fs={'yes' if _app_state.nexus_fs else 'no'}"
+    )
+    if discord_token and _app_state.nexus_fs:
+        try:
+            # Create system context for Discord adapter operations
+            from nexus.core.permissions import OperationContext
+            from nexus.message_gateway.adapters.discord import DiscordAdapter
+            from nexus.server.api.v2.routers.gateway import register_channel_adapter
+
+            discord_context = OperationContext(
+                user="system:discord",
+                groups=["system"],
+                zone_id="default",  # Use default zone so subscriptions match
+                is_system=True,
+            )
+
+            _app_state.discord_adapter = DiscordAdapter(
+                token=discord_token,
+                nexus_fs=_app_state.nexus_fs,
+                context=discord_context,
+            )
+
+            # Start Discord adapter in background task
+            discord_task = asyncio.create_task(_app_state.discord_adapter.start())
+
+            # Register with gateway router
+            register_channel_adapter("discord", _app_state.discord_adapter)
+
+            logger.info("Discord adapter started for message gateway")
+        except Exception as e:
+            logger.warning(f"Failed to start Discord adapter: {e}")
+
     # Hot Search Daemon (Issue #951)
     # Pre-warm search indexes for sub-50ms query response
     # Enable with NEXUS_SEARCH_DAEMON=true (default: enabled if database URL provided)
@@ -1025,6 +1064,18 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
+
+    # Stop Discord adapter
+    if discord_task:
+        discord_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await discord_task
+    if _app_state.discord_adapter:
+        try:
+            await _app_state.discord_adapter.stop()
+            logger.info("Discord adapter stopped")
+        except Exception as e:
+            logger.debug(f"Error stopping Discord adapter: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1688,6 +1739,7 @@ def _register_routes(app: FastAPI) -> None:
         from nexus.server.api.v2.routers import (
             consolidation,
             feedback,
+            gateway,
             memories,
             mobile_search,
             playbooks,
@@ -1702,7 +1754,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(reflection.router)
         app.include_router(consolidation.router)
         app.include_router(mobile_search.router)
-        logger.info("API v2 routes registered (32 endpoints)")
+        app.include_router(gateway.router)
+        logger.info("API v2 routes registered (33 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
@@ -4116,11 +4169,18 @@ async def _fire_rpc_event(
 
     try:
         zone_id = getattr(context, "zone_id", None) or "default"
-        data: dict[str, Any] = {"file_path": path}
+        # Identity: subject_type + subject_id only (no user_id/agent_id in event data)
+        data: dict[str, Any] = {"file_path": path, "zone_id": zone_id}
         if old_path:
             data["old_path"] = old_path
         if size is not None:
             data["size"] = size
+        st = getattr(context, "subject_type", None)
+        sid = getattr(context, "subject_id", None) or getattr(context, "user", None)
+        if st is not None:
+            data["subject_type"] = st
+        if sid is not None:
+            data["subject_id"] = sid
 
         # Await broadcast to ensure webhook delivery before response
         # This adds slight latency but ensures reliable event delivery

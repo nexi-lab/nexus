@@ -908,9 +908,7 @@ class AsyncLocalBackend:
             path=path,
         )
 
-    async def list_dir(
-        self, path: str, context: "OperationContext | None" = None
-    ) -> list[str]:
+    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
         List directory contents asynchronously.
 

@@ -41,11 +41,13 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 
     async with engine.begin() as conn:
         # Drop and recreate tables for clean state with current schema
-        for table in reversed([
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]):
+        for table in reversed(
+            [
+                FilePathModel.__table__,
+                DirectoryEntryModel.__table__,
+                VersionHistoryModel.__table__,
+            ]
+        ):
             await conn.run_sync(lambda sync_conn, t=table: t.drop(sync_conn, checkfirst=True))
 
         for table in [
@@ -60,9 +62,7 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest_asyncio.fixture
-async def async_fs(
-    tmp_path: Path, engine: AsyncEngine
-) -> AsyncGenerator[AsyncNexusFS, None]:
+async def async_fs(tmp_path: Path, engine: AsyncEngine) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance for testing."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
@@ -352,6 +352,7 @@ async def test_list_dir_empty(async_fs: AsyncNexusFS) -> None:
 @pytest.mark.asyncio
 async def test_concurrent_writes_different_files(async_fs: AsyncNexusFS) -> None:
     """Test concurrent writes to different files."""
+
     async def write_file(i: int) -> dict:
         path = f"/concurrent/file_{i}.txt"
         content = f"Content for file {i}".encode()
@@ -573,10 +574,12 @@ async def test_batch_read_with_missing(async_fs: AsyncNexusFS) -> None:
     """Test batch read with some missing files."""
     await async_fs.write("/batch/exists.txt", b"Content")
 
-    results = await async_fs.batch_read([
-        "/batch/exists.txt",
-        "/batch/missing.txt",
-    ])
+    results = await async_fs.batch_read(
+        [
+            "/batch/exists.txt",
+            "/batch/missing.txt",
+        ]
+    )
 
     assert results["/batch/exists.txt"] == b"Content"
     assert results["/batch/missing.txt"] is None

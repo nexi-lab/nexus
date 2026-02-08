@@ -199,7 +199,7 @@ class AsyncNexusFS:
         allowed = await self._permission_enforcer.check_permission(path, permission, ctx)
 
         if not allowed:
-            permission_name = permission.name if hasattr(permission, 'name') else str(permission)
+            permission_name = permission.name if hasattr(permission, "name") else str(permission)
             raise NexusPermissionError(
                 path=path,
                 message=f"Permission denied: {ctx.user} does not have {permission_name} permission on {path}",
@@ -575,7 +575,7 @@ class AsyncNexusFS:
             child_path = child_meta.path
             # Remove the prefix to get just the name
             if child_path.startswith(prefix):
-                name = child_path[len(prefix):]
+                name = child_path[len(prefix) :]
             else:
                 name = child_path.rsplit("/", 1)[-1]
 

@@ -723,7 +723,9 @@ async def lifespan(_app: FastAPI) -> Any:
                 backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
                 tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
                 enforce_permissions = os.getenv("NEXUS_ENFORCE_PERMISSIONS", "true").lower() in (
-                    "true", "1", "yes"
+                    "true",
+                    "1",
+                    "yes",
                 )
 
                 # Create permission enforcer with async ReBAC

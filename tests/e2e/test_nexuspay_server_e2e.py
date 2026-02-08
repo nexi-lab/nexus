@@ -331,9 +331,7 @@ async def test_premium_unlocks_with_payment_on_real_server(
 
     x402_client.verify_payment = mock_verify
 
-    payment = base64.b64encode(
-        json.dumps({"tx_hash": "0x" + "ab" * 32}).encode()
-    ).decode()
+    payment = base64.b64encode(json.dumps({"tx_hash": "0x" + "ab" * 32}).encode()).decode()
 
     resp = await client.get(
         "/api/v2/pay/premium",
@@ -351,9 +349,7 @@ async def test_premium_rejects_invalid_payment_on_real_server(
     """Invalid payment rejected on real server."""
 
     async def mock_verify(payment_header, expected_amount):
-        return X402PaymentVerification(
-            valid=False, tx_hash=None, amount=None, error="Bad sig"
-        )
+        return X402PaymentVerification(valid=False, tx_hash=None, amount=None, error="Bad sig")
 
     x402_client.verify_payment = mock_verify
 
@@ -459,9 +455,7 @@ async def test_full_lifecycle_auth_permission_payment(
         )
 
     x402_client.verify_payment = mock_verify
-    payment = base64.b64encode(
-        json.dumps({"tx_hash": "0x" + "ff" * 32}).encode()
-    ).decode()
+    payment = base64.b64encode(json.dumps({"tx_hash": "0x" + "ff" * 32}).encode()).decode()
 
     resp = await client.get(
         "/api/v2/pay/premium",

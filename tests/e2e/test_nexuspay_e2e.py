@@ -40,9 +40,7 @@ def credits_service():
     """Mock CreditsService that behaves like disabled mode."""
     service = AsyncMock(spec=CreditsService)
     service.get_balance = AsyncMock(return_value=Decimal("100.0"))
-    service.get_balance_with_reserved = AsyncMock(
-        return_value=(Decimal("100.0"), Decimal("5.0"))
-    )
+    service.get_balance_with_reserved = AsyncMock(return_value=(Decimal("100.0"), Decimal("5.0")))
     service.check_budget = AsyncMock(return_value=True)
     service.transfer = AsyncMock(return_value="tx-e2e-001")
     service.transfer_batch = AsyncMock(return_value=["tx-b1", "tx-b2"])
@@ -317,9 +315,7 @@ class TestPaymentGatedEndpoints:
 
         x402_client.verify_payment = mock_verify
 
-        payment = base64.b64encode(
-            json.dumps({"tx_hash": "0x" + "ab" * 32}).encode()
-        ).decode()
+        payment = base64.b64encode(json.dumps({"tx_hash": "0x" + "ab" * 32}).encode()).decode()
 
         response = client.get(
             "/api/premium",
@@ -393,9 +389,7 @@ class TestReservationThroughServer:
 class TestFullPaymentLifecycle:
     """Test complete payment flows end-to-end."""
 
-    def test_full_lifecycle_check_balance_transfer_meter(
-        self, client, credits_service
-    ):
+    def test_full_lifecycle_check_balance_transfer_meter(self, client, credits_service):
         """Simulate: check balance → transfer → metered search."""
         # 1. Check balance
         res = client.get("/api/balance")

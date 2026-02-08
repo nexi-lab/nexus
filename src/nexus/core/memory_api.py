@@ -1731,7 +1731,6 @@ class Memory:
         """
         import json
 
-
         memory = self.memory_router.get_memory_by_id(memory_id)
         if not memory:
             return []
@@ -1767,17 +1766,19 @@ class Memory:
             except Exception:
                 content = f"<content not available: {node.content_hash}>"
 
-            chain.append({
-                "memory_id": node.memory_id,
-                "content": content,
-                "content_hash": node.content_hash,
-                "version": node.current_version,
-                "supersedes_id": node.supersedes_id,
-                "superseded_by_id": node.superseded_by_id,
-                "valid_at": node.valid_at.isoformat() if node.valid_at else None,
-                "invalid_at": node.invalid_at.isoformat() if node.invalid_at else None,
-                "created_at": node.created_at.isoformat() if node.created_at else None,
-            })
+            chain.append(
+                {
+                    "memory_id": node.memory_id,
+                    "content": content,
+                    "content_hash": node.content_hash,
+                    "version": node.current_version,
+                    "supersedes_id": node.supersedes_id,
+                    "superseded_by_id": node.superseded_by_id,
+                    "valid_at": node.valid_at.isoformat() if node.valid_at else None,
+                    "invalid_at": node.invalid_at.isoformat() if node.invalid_at else None,
+                    "created_at": node.created_at.isoformat() if node.created_at else None,
+                }
+            )
 
             # Move to next version
             if node.superseded_by_id:

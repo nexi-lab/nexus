@@ -210,7 +210,9 @@ class TestQueryFilteringE2E:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 2, f"Expected 2 memories (current + superseded), got {data['total']}"
+        assert data["total"] == 2, (
+            f"Expected 2 memories (current + superseded), got {data['total']}"
+        )
         assert data["filters"]["include_superseded"] is True
 
         # Verify both versions are present

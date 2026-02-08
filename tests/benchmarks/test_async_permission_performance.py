@@ -38,10 +38,16 @@ async def engine():
     from nexus.storage.models import DirectoryEntryModel, FilePathModel, VersionHistoryModel
 
     async with engine.begin() as conn:
-        for table in [FilePathModel.__table__, DirectoryEntryModel.__table__, VersionHistoryModel.__table__]:
+        for table in [
+            FilePathModel.__table__,
+            DirectoryEntryModel.__table__,
+            VersionHistoryModel.__table__,
+        ]:
             await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
         try:
-            await conn.execute(text("TRUNCATE file_paths, directory_entries, version_history CASCADE"))
+            await conn.execute(
+                text("TRUNCATE file_paths, directory_entries, version_history CASCADE")
+            )
         except Exception:
             pass
 
@@ -296,18 +302,20 @@ async def test_permission_overhead_acceptable(
     with_perm_avg = statistics.mean(with_perm_latencies)
     overhead_avg = with_perm_avg - no_perm_avg
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"PERMISSION OVERHEAD ANALYSIS ({num_ops} write+read cycles)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Without permissions: P50={no_perm_p50:.2f}ms, Avg={no_perm_avg:.2f}ms")
     print(f"With permissions:    P50={with_perm_p50:.2f}ms, Avg={with_perm_avg:.2f}ms")
     print(f"Overhead:            P50={overhead_p50:.2f}ms, Avg={overhead_avg:.2f}ms")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # ASSERTION: Use P50 for stability, generous 20ms threshold for system variance
     # Permission checking adds ~2-10ms per cycle depending on system load
     # Each cycle = write (1 perm check) + read (1 perm check)
-    assert overhead_p50 < 20.0, f"Permission P50 overhead too high: {overhead_p50:.2f}ms (expected <20ms)"
+    assert overhead_p50 < 20.0, (
+        f"Permission P50 overhead too high: {overhead_p50:.2f}ms (expected <20ms)"
+    )
 
     print(f"✓ Permission overhead acceptable: P50={overhead_p50:.2f}ms (threshold: 20ms)")
-    print(f"  Per-operation overhead: ~{overhead_p50/2:.2f}ms (write or read)")
+    print(f"  Per-operation overhead: ~{overhead_p50 / 2:.2f}ms (write or read)")

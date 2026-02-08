@@ -347,11 +347,13 @@ class AsyncSQLAlchemyMetadataStore:
                     if metadata.etag is not None:
                         # Get previous version for lineage
                         prev_result = await session.execute(
-                            select(VersionHistoryModel).where(
+                            select(VersionHistoryModel)
+                            .where(
                                 VersionHistoryModel.resource_type == "file",
                                 VersionHistoryModel.resource_id == existing.path_id,
                                 VersionHistoryModel.version_number == existing.current_version,
-                            ).limit(1)
+                            )
+                            .limit(1)
                         )
                         prev_version = prev_result.scalar_one_or_none()
 
@@ -779,7 +781,11 @@ class AsyncSQLAlchemyMetadataStore:
         parent_path = "/".join(parts[:-1]) + "/" if len(parts) > 1 else "/"
 
         now = _utcnow_naive()
-        query = _QUERY_INSERT_DIR_ENTRY_POSTGRES if self.db_type == "postgresql" else _QUERY_INSERT_DIR_ENTRY_SQLITE
+        query = (
+            _QUERY_INSERT_DIR_ENTRY_POSTGRES
+            if self.db_type == "postgresql"
+            else _QUERY_INSERT_DIR_ENTRY_SQLITE
+        )
 
         # Insert entry for this file/directory
         await session.execute(
@@ -796,7 +802,9 @@ class AsyncSQLAlchemyMetadataStore:
 
         # Recursively ensure parent directories exist in index
         if parent_path != "/":
-            await self._aupdate_directory_index(session, parent_path.rstrip("/"), zone_id, is_directory=True)
+            await self._aupdate_directory_index(
+                session, parent_path.rstrip("/"), zone_id, is_directory=True
+            )
 
     async def _aremove_from_directory_index(
         self,

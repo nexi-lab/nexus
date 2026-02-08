@@ -49,8 +49,7 @@ pytestmark = pytest.mark.xdist_group("async_metadata_store")
 # Default: connect to local scorpio-postgres container
 # Override with TEST_DATABASE_URL environment variable
 TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://scorpio:scorpio@localhost:5432/scorpio"
+    "TEST_DATABASE_URL", "postgresql+asyncpg://scorpio:scorpio@localhost:5432/scorpio"
 )
 
 
@@ -81,7 +80,9 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 
         # Clean any existing test data
         try:
-            await conn.execute(text("TRUNCATE file_paths, directory_entries, version_history CASCADE"))
+            await conn.execute(
+                text("TRUNCATE file_paths, directory_entries, version_history CASCADE")
+            )
         except Exception:
             pass  # Tables might not exist yet on first run
 
@@ -90,7 +91,9 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
     # Cleanup after tests
     async with engine.begin() as conn:
         try:
-            await conn.execute(text("TRUNCATE file_paths, directory_entries, version_history CASCADE"))
+            await conn.execute(
+                text("TRUNCATE file_paths, directory_entries, version_history CASCADE")
+            )
         except Exception:
             pass
 

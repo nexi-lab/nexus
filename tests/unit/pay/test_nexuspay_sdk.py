@@ -44,9 +44,7 @@ def mock_credits_service():
     """Create a mock CreditsService."""
     service = AsyncMock()
     service.get_balance = AsyncMock(return_value=Decimal("100.0"))
-    service.get_balance_with_reserved = AsyncMock(
-        return_value=(Decimal("100.0"), Decimal("0"))
-    )
+    service.get_balance_with_reserved = AsyncMock(return_value=(Decimal("100.0"), Decimal("0")))
     service.transfer = AsyncMock(return_value="tx-123")
     service.topup = AsyncMock(return_value="topup-123")
     service.reserve = AsyncMock(return_value="res-123")
@@ -213,9 +211,7 @@ class TestTransferOperations:
     """Test transfer with auto-routing and explicit method selection."""
 
     @pytest.mark.asyncio
-    async def test_transfer_internal_auto_routes_to_credits(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_internal_auto_routes_to_credits(self, nexuspay, mock_credits_service):
         receipt = await nexuspay.transfer(
             to="agent-bob",
             amount=0.05,
@@ -230,9 +226,7 @@ class TestTransferOperations:
         mock_credits_service.transfer.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_transfer_external_auto_routes_to_x402(
-        self, nexuspay, mock_x402_client
-    ):
+    async def test_transfer_external_auto_routes_to_x402(self, nexuspay, mock_x402_client):
         receipt = await nexuspay.transfer(
             to="0x1234567890abcdef1234567890abcdef12345678",
             amount=1.0,
@@ -245,9 +239,7 @@ class TestTransferOperations:
         mock_x402_client.pay.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_transfer_explicit_credits_method(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_explicit_credits_method(self, nexuspay, mock_credits_service):
         receipt = await nexuspay.transfer(
             to="agent-bob",
             amount=5.0,
@@ -267,9 +259,7 @@ class TestTransferOperations:
         mock_x402_client.pay.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_transfer_with_idempotency_key(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_with_idempotency_key(self, nexuspay, mock_credits_service):
         await nexuspay.transfer(
             to="agent-bob",
             amount=1.0,
@@ -279,9 +269,7 @@ class TestTransferOperations:
         assert call_kwargs[1]["idempotency_key"] == "task-123-payment"
 
     @pytest.mark.asyncio
-    async def test_transfer_x402_disabled_raises_for_external(
-        self, nexuspay_no_x402
-    ):
+    async def test_transfer_x402_disabled_raises_for_external(self, nexuspay_no_x402):
         with pytest.raises(NexusPayError, match="x402 not enabled"):
             await nexuspay_no_x402.transfer(
                 to="0x1234567890abcdef1234567890abcdef12345678",
@@ -289,9 +277,7 @@ class TestTransferOperations:
             )
 
     @pytest.mark.asyncio
-    async def test_transfer_returns_receipt_with_memo(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_returns_receipt_with_memo(self, nexuspay, mock_credits_service):
         receipt = await nexuspay.transfer(
             to="agent-bob",
             amount=0.05,
@@ -300,9 +286,7 @@ class TestTransferOperations:
         assert receipt.memo == "Task payment"
 
     @pytest.mark.asyncio
-    async def test_transfer_float_amount_converted_to_decimal(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_float_amount_converted_to_decimal(self, nexuspay, mock_credits_service):
         receipt = await nexuspay.transfer(to="agent-bob", amount=0.1)
         assert receipt.amount == Decimal("0.1")
 
@@ -317,10 +301,12 @@ class TestBatchTransfers:
 
     @pytest.mark.asyncio
     async def test_transfer_batch(self, nexuspay, mock_credits_service):
-        receipts = await nexuspay.transfer_batch([
-            {"to": "agent-a", "amount": 0.05, "memo": "Task 1"},
-            {"to": "agent-b", "amount": 0.10, "memo": "Task 2"},
-        ])
+        receipts = await nexuspay.transfer_batch(
+            [
+                {"to": "agent-a", "amount": 0.05, "memo": "Task 1"},
+                {"to": "agent-b", "amount": 0.10, "memo": "Task 2"},
+            ]
+        )
 
         assert len(receipts) == 2
         assert all(isinstance(r, Receipt) for r in receipts)
@@ -332,13 +318,13 @@ class TestBatchTransfers:
         assert receipts == []
 
     @pytest.mark.asyncio
-    async def test_transfer_batch_preserves_memos(
-        self, nexuspay, mock_credits_service
-    ):
-        receipts = await nexuspay.transfer_batch([
-            {"to": "agent-a", "amount": 1.0, "memo": "First"},
-            {"to": "agent-b", "amount": 2.0, "memo": "Second"},
-        ])
+    async def test_transfer_batch_preserves_memos(self, nexuspay, mock_credits_service):
+        receipts = await nexuspay.transfer_batch(
+            [
+                {"to": "agent-a", "amount": 1.0, "memo": "First"},
+                {"to": "agent-b", "amount": 2.0, "memo": "Second"},
+            ]
+        )
         assert receipts[0].memo == "First"
         assert receipts[1].memo == "Second"
 
@@ -407,24 +393,18 @@ class TestMeteringOperations:
         mock_credits_service.deduct_fast.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_meter_insufficient_balance(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_meter_insufficient_balance(self, nexuspay, mock_credits_service):
         mock_credits_service.deduct_fast.return_value = False
         success = await nexuspay.meter(amount=0.001)
         assert success is False
 
     @pytest.mark.asyncio
-    async def test_check_rate_limit_allowed(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_check_rate_limit_allowed(self, nexuspay, mock_credits_service):
         mock_credits_service.deduct_fast.return_value = True
         assert await nexuspay.check_rate_limit(cost=1) is True
 
     @pytest.mark.asyncio
-    async def test_check_rate_limit_denied(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_check_rate_limit_denied(self, nexuspay, mock_credits_service):
         mock_credits_service.deduct_fast.return_value = False
         assert await nexuspay.check_rate_limit(cost=1) is False
 
@@ -450,9 +430,7 @@ class TestDecorators:
     """Test @metered and @budget_limited decorators."""
 
     @pytest.mark.asyncio
-    async def test_metered_decorator_charges(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_metered_decorator_charges(self, nexuspay, mock_credits_service):
         mock_credits_service.deduct_fast.return_value = True
 
         @nexuspay.metered(price=0.001)
@@ -464,9 +442,7 @@ class TestDecorators:
         mock_credits_service.deduct_fast.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_metered_decorator_blocks_on_insufficient(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_metered_decorator_blocks_on_insufficient(self, nexuspay, mock_credits_service):
         mock_credits_service.deduct_fast.return_value = False
 
         @nexuspay.metered(price=0.001)
@@ -477,9 +453,7 @@ class TestDecorators:
             await expensive_search("test")
 
     @pytest.mark.asyncio
-    async def test_budget_limited_decorator(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_limited_decorator(self, nexuspay, mock_credits_service):
         call_count = 0
 
         @nexuspay.budget_limited(max_cost=1.0)
@@ -493,9 +467,7 @@ class TestDecorators:
         assert call_count == 1
 
     @pytest.mark.asyncio
-    async def test_budget_limited_exceeds_budget(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_limited_exceeds_budget(self, nexuspay, mock_credits_service):
         mock_credits_service.check_budget.return_value = False
 
         @nexuspay.budget_limited(max_cost=1.0)
@@ -521,17 +493,13 @@ class TestBudgetContextManager:
             assert isinstance(receipt, Receipt)
 
     @pytest.mark.asyncio
-    async def test_budget_context_per_tx_exceeded(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_context_per_tx_exceeded(self, nexuspay, mock_credits_service):
         async with nexuspay.budget(daily=10.0, per_tx=1.0) as agent:
             with pytest.raises(BudgetExceededError, match="per-transaction"):
                 await agent.transfer(to="bob", amount=5.0)
 
     @pytest.mark.asyncio
-    async def test_budget_context_daily_exceeded(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_context_daily_exceeded(self, nexuspay, mock_credits_service):
         async with nexuspay.budget(daily=1.0, per_tx=0.50) as agent:
             await agent.transfer(to="bob", amount=0.50)
             await agent.transfer(to="bob", amount=0.50)
@@ -539,9 +507,7 @@ class TestBudgetContextManager:
                 await agent.transfer(to="bob", amount=0.50)
 
     @pytest.mark.asyncio
-    async def test_budget_context_tracks_spending(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_context_tracks_spending(self, nexuspay, mock_credits_service):
         async with nexuspay.budget(daily=10.0, per_tx=5.0) as agent:
             await agent.transfer(to="bob", amount=3.0)
             await agent.transfer(to="alice", amount=2.0)
@@ -676,17 +642,13 @@ class TestEdgeCases:
         assert reservation.status == "pending"
 
     @pytest.mark.asyncio
-    async def test_transfer_very_small_amount(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_very_small_amount(self, nexuspay, mock_credits_service):
         """Micro-payments should work (e.g., API metering at 0.000001)."""
         receipt = await nexuspay.transfer(to="bob", amount=Decimal("0.000001"))
         assert receipt.amount == Decimal("0.000001")
 
     @pytest.mark.asyncio
-    async def test_transfer_large_amount(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_transfer_large_amount(self, nexuspay, mock_credits_service):
         """Large transfers should work without overflow."""
         receipt = await nexuspay.transfer(to="bob", amount=Decimal("999999999"))
         assert receipt.amount == Decimal("999999999")
@@ -730,9 +692,7 @@ class TestEdgeCases:
             await quote.execute()
 
     @pytest.mark.asyncio
-    async def test_budget_context_zero_daily_blocks_all(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_budget_context_zero_daily_blocks_all(self, nexuspay, mock_credits_service):
         async with nexuspay.budget(daily=0, per_tx=1.0) as agent:
             with pytest.raises(BudgetExceededError, match="daily"):
                 await agent.transfer(to="bob", amount=0.01)
@@ -754,15 +714,11 @@ class TestEdgeCases:
         assert my_other_function.__name__ == "my_other_function"
 
     @pytest.mark.asyncio
-    async def test_credits_service_error_propagates(
-        self, nexuspay, mock_credits_service
-    ):
+    async def test_credits_service_error_propagates(self, nexuspay, mock_credits_service):
         """Errors from CreditsService should propagate through NexusPay."""
         from nexus.pay.credits import InsufficientCreditsError
 
-        mock_credits_service.transfer.side_effect = InsufficientCreditsError(
-            "Not enough"
-        )
+        mock_credits_service.transfer.side_effect = InsufficientCreditsError("Not enough")
         with pytest.raises(InsufficientCreditsError):
             await nexuspay.transfer(to="bob", amount=100.0)
 

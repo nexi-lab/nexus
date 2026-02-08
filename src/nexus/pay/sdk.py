@@ -236,9 +236,7 @@ class NexusPay:
     async def get_balance(self) -> Balance:
         """Get current balance with available and reserved breakdown."""
         credits = self._require_credits()
-        available, reserved = await credits.get_balance_with_reserved(
-            self.agent_id, self._zone_id
-        )
+        available, reserved = await credits.get_balance_with_reserved(self.agent_id, self._zone_id)
         return Balance(available=available, reserved=reserved)
 
     async def can_afford(self, amount: float | Decimal) -> bool:
@@ -399,9 +397,7 @@ class NexusPay:
         credits = self._require_credits()
         dec_amount = self._to_decimal(amount)
         self._validate_positive(dec_amount)
-        return await credits.deduct_fast(
-            self.agent_id, dec_amount, zone_id=self._zone_id
-        )
+        return await credits.deduct_fast(self.agent_id, dec_amount, zone_id=self._zone_id)
 
     async def check_rate_limit(self, cost: float | Decimal = 1) -> bool:
         """Check rate limit by attempting a deduction."""
@@ -455,13 +451,9 @@ class NexusPay:
             @wraps(func)
             async def wrapper(*args: Any, **kwargs: Any) -> Any:
                 credits = self._require_credits()
-                can = await credits.check_budget(
-                    self.agent_id, dec_max, zone_id=self._zone_id
-                )
+                can = await credits.check_budget(self.agent_id, dec_max, zone_id=self._zone_id)
                 if not can:
-                    raise BudgetExceededError(
-                        f"Cannot afford max cost {dec_max}"
-                    )
+                    raise BudgetExceededError(f"Cannot afford max cost {dec_max}")
                 return await func(*args, **kwargs)
 
             return wrapper

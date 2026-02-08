@@ -537,8 +537,7 @@ async def test_read_checks_read_permission(
     calls = mock_rebac_manager.rebac_check.call_args_list
     # Find the read permission check call
     read_call_found = any(
-        call.kwargs.get("permission") == "read" or
-        (len(call.args) > 1 and call.args[1] == "read")
+        call.kwargs.get("permission") == "read" or (len(call.args) > 1 and call.args[1] == "read")
         for call in calls
     )
     assert read_call_found, "READ permission should be checked during read operation"
@@ -566,8 +565,7 @@ async def test_write_checks_write_permission(
     # Verify WRITE permission was checked
     calls = mock_rebac_manager.rebac_check.call_args_list
     write_call_found = any(
-        call.kwargs.get("permission") == "write" or
-        (len(call.args) > 1 and call.args[1] == "write")
+        call.kwargs.get("permission") == "write" or (len(call.args) > 1 and call.args[1] == "write")
         for call in calls
     )
     assert write_call_found, "WRITE permission should be checked during write operation"
@@ -596,8 +594,7 @@ async def test_delete_checks_write_permission(
     # Verify WRITE permission was checked (delete requires write permission)
     calls = mock_rebac_manager.rebac_check.call_args_list
     write_call_found = any(
-        call.kwargs.get("permission") == "write" or
-        (len(call.args) > 1 and call.args[1] == "write")
+        call.kwargs.get("permission") == "write" or (len(call.args) > 1 and call.args[1] == "write")
         for call in calls
     )
     assert write_call_found, "WRITE permission should be checked during delete operation"
@@ -629,10 +626,7 @@ async def test_permission_check_uses_zone_id(
 
     # Verify zone_id was passed to rebac_check
     calls = mock_rebac_manager.rebac_check.call_args_list
-    tenant_check_found = any(
-        call.kwargs.get("zone_id") == "custom-tenant-123"
-        for call in calls
-    )
+    tenant_check_found = any(call.kwargs.get("zone_id") == "custom-tenant-123" for call in calls)
     assert tenant_check_found, "Tenant ID should be passed to permission check"
 
 

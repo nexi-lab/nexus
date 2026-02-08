@@ -115,9 +115,7 @@ class TestSupersededFields:
             select(MemoryModel).where(MemoryModel.memory_id == memory_id)
         ).scalar_one()
 
-        assert memory.supersedes_id is None, (
-            "Original memory should have NULL supersedes_id"
-        )
+        assert memory.supersedes_id is None, "Original memory should have NULL supersedes_id"
 
     def test_superseded_by_id_nullable(self, memory_api, session):
         """superseded_by_id should be NULL for current (non-superseded) memories."""
@@ -131,9 +129,7 @@ class TestSupersededFields:
             select(MemoryModel).where(MemoryModel.memory_id == memory_id)
         ).scalar_one()
 
-        assert memory.superseded_by_id is None, (
-            "Current memory should have NULL superseded_by_id"
-        )
+        assert memory.superseded_by_id is None, "Current memory should have NULL superseded_by_id"
 
 
 # ============================================================================
@@ -163,9 +159,7 @@ class TestAppendOnlyUpdate:
         )
 
         # The returned ID should be DIFFERENT (new row, not in-place update)
-        assert new_id != original_id, (
-            "Append-only update must create a new row with new memory_id"
-        )
+        assert new_id != original_id, "Append-only update must create a new row with new memory_id"
 
         # Both rows should exist in the database
         all_memories = session.execute(select(MemoryModel)).scalars().all()
@@ -349,12 +343,8 @@ class TestAppendOnlyUpdate:
             path_key="doc",
         )
 
-        v2 = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == v2_id)
-        ).scalar_one()
-        v3 = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == v3_id)
-        ).scalar_one()
+        v2 = session.execute(select(MemoryModel).where(MemoryModel.memory_id == v2_id)).scalar_one()
+        v3 = session.execute(select(MemoryModel).where(MemoryModel.memory_id == v3_id)).scalar_one()
 
         assert v2.supersedes_id == v1_id, "v2 should supersede v1"
         assert v3.supersedes_id == v2_id, "v3 should supersede v2"
@@ -392,9 +382,7 @@ class TestAppendOnlyUpdate:
         ).scalar_one()
 
         # For corrections, valid_at should be inherited from original
-        assert new_memory.valid_at is not None, (
-            "Correction should inherit valid_at from original"
-        )
+        assert new_memory.valid_at is not None, "Correction should inherit valid_at from original"
 
     def test_new_information_gets_fresh_valid_at(self, memory_api, session):
         """Non-correction update (new information) gets fresh valid_at."""
@@ -452,12 +440,8 @@ class TestSoftDelete:
             select(MemoryModel).where(MemoryModel.memory_id == memory_id)
         ).scalar_one_or_none()
 
-        assert memory is not None, (
-            "Soft-deleted memory must remain in database"
-        )
-        assert memory.invalid_at is not None, (
-            "Soft-deleted memory must have invalid_at set"
-        )
+        assert memory is not None, "Soft-deleted memory must remain in database"
+        assert memory.invalid_at is not None, "Soft-deleted memory must have invalid_at set"
 
     def test_delete_preserves_content(self, memory_api, session):
         """Soft-deleted memory should still have its content_hash."""
@@ -592,9 +576,7 @@ class TestIncludeSuperseded:
         results = memory_api.query(include_superseded=True, state="all")
 
         namespace_results = [r for r in results if r.get("namespace") == "test/all"]
-        assert len(namespace_results) == 3, (
-            "include_superseded=True should return all 3 versions"
-        )
+        assert len(namespace_results) == 3, "include_superseded=True should return all 3 versions"
 
     def test_include_superseded_false_excludes_old(self, memory_api, session):
         """include_superseded=False (default) should exclude superseded versions."""
@@ -817,21 +799,27 @@ class TestGarbageCollection:
             )
 
         # Count total memories before GC
-        all_mems = session.execute(
-            select(MemoryModel).where(MemoryModel.namespace == "test/gc")
-        ).scalars().all()
+        all_mems = (
+            session.execute(select(MemoryModel).where(MemoryModel.namespace == "test/gc"))
+            .scalars()
+            .all()
+        )
         assert len(all_mems) == 5, "Should have 5 memories before GC"
 
         # GC with 0-day threshold (remove all old versions)
         removed = memory_api.gc_old_versions(older_than_days=0)
 
         # After GC, only the current version should remain
-        remaining = session.execute(
-            select(MemoryModel).where(
-                MemoryModel.namespace == "test/gc",
-                MemoryModel.invalid_at.is_(None),
+        remaining = (
+            session.execute(
+                select(MemoryModel).where(
+                    MemoryModel.namespace == "test/gc",
+                    MemoryModel.invalid_at.is_(None),
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         assert len(remaining) == 1, "Only current version should remain after GC"
         assert removed >= 4, "Should have removed at least 4 old versions"
@@ -847,9 +835,11 @@ class TestGarbageCollection:
 
         memory_api.gc_old_versions(older_than_days=0)
 
-        remaining = session.execute(
-            select(MemoryModel).where(MemoryModel.namespace == "test/gc_preserve")
-        ).scalars().all()
+        remaining = (
+            session.execute(select(MemoryModel).where(MemoryModel.namespace == "test/gc_preserve"))
+            .scalars()
+            .all()
+        )
 
         assert len(remaining) == 1, "Current version must survive GC"
 
@@ -866,9 +856,11 @@ class TestGarbageCollection:
         # GC with 365-day threshold should not remove anything recent
         removed = memory_api.gc_old_versions(older_than_days=365)
 
-        all_mems = session.execute(
-            select(MemoryModel).where(MemoryModel.namespace == "test/gc_age")
-        ).scalars().all()
+        all_mems = (
+            session.execute(select(MemoryModel).where(MemoryModel.namespace == "test/gc_age"))
+            .scalars()
+            .all()
+        )
 
         # All versions should still exist since none are 365 days old
         assert len(all_mems) == 3, "No versions should be removed with 365-day threshold"
@@ -895,9 +887,7 @@ class TestBackwardCompatibility:
         results = memory_api.query(memory_type="fact", state="all")
         result_ids = [r["memory_id"] for r in results]
 
-        assert memory_id in result_ids, (
-            "Memory without supersedes_id should appear as current"
-        )
+        assert memory_id in result_ids, "Memory without supersedes_id should appear as current"
 
     def test_append_mode_still_works(self, memory_api, session):
         """Append mode (no path_key) should still create independent memories."""
@@ -914,12 +904,8 @@ class TestBackwardCompatibility:
         )
 
         # Should be two independent memories (not superseding each other)
-        mem1 = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == id1)
-        ).scalar_one()
-        mem2 = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == id2)
-        ).scalar_one()
+        mem1 = session.execute(select(MemoryModel).where(MemoryModel.memory_id == id1)).scalar_one()
+        mem2 = session.execute(select(MemoryModel).where(MemoryModel.memory_id == id2)).scalar_one()
 
         assert mem1.supersedes_id is None, "Append mode memory should have no supersedes_id"
         assert mem2.supersedes_id is None, "Append mode memory should have no supersedes_id"
@@ -943,12 +929,16 @@ class TestBackwardCompatibility:
         )
 
         # Version history entries should exist for the new memory
-        versions = session.execute(
-            select(VersionHistoryModel).where(
-                VersionHistoryModel.resource_type == "memory",
-                VersionHistoryModel.resource_id == new_id,
+        versions = (
+            session.execute(
+                select(VersionHistoryModel).where(
+                    VersionHistoryModel.resource_type == "memory",
+                    VersionHistoryModel.resource_id == new_id,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
         assert len(versions) >= 1, "Version history should still be created"
 

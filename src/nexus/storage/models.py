@@ -48,6 +48,7 @@ def _get_uuid_server_default() -> TextClause | None:
     """Get PostgreSQL server_default for UUID generation.
 
     Returns uuidv7()::text for PostgreSQL 18+ (timestamp-ordered UUIDs for better B-tree locality).
+    Falls back to gen_random_uuid()::text for PostgreSQL < 18.
     Returns None for SQLite (uses Python default).
 
     PostgreSQL 18 Benefits:
@@ -56,10 +57,22 @@ def _get_uuid_server_default() -> TextClause | None:
     - Better cache utilization for recent data
     """
     db_url = os.environ.get("NEXUS_DATABASE_URL", "")
-    if db_url.startswith(("postgres", "postgresql")):
-        # PostgreSQL 18+ has native uuidv7() function
+    if not db_url.startswith(("postgres", "postgresql")):
+        return None
+
+    # Probe whether the server actually has uuidv7() (PostgreSQL 18+)
+    try:
+        from sqlalchemy import create_engine
+        from sqlalchemy import text as sa_text
+
+        engine = create_engine(db_url)
+        with engine.connect() as conn:
+            conn.execute(sa_text("SELECT uuidv7()"))
+        engine.dispose()
         return text("uuidv7()::text")
-    return None
+    except Exception:
+        # PostgreSQL < 18: uuidv7() not available, use gen_random_uuid()
+        return text("gen_random_uuid()::text")
 
 
 class Base(DeclarativeBase):
@@ -1138,6 +1151,14 @@ class MemoryModel(Base):
         Integer, nullable=False, default=1
     )  # Current version number, incremented on each update
 
+    # Append-only lineage tracking (#1188 - Non-destructive updates)
+    supersedes_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )  # Memory this one replaces (FK to memory_id)
+    superseded_by_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True
+    )  # Memory that replaced this one (denormalized for fast lookup)
+
     # Semantic search support (#406)
     embedding_model: Mapped[str | None] = mapped_column(
         String(100), nullable=True
@@ -1231,6 +1252,8 @@ class MemoryModel(Base):
         Index("idx_memory_valid_at", "valid_at"),  # #1183 - bi-temporal validity start
         Index("idx_memory_invalid_at", "invalid_at"),  # #1183 - bi-temporal validity end
         Index("idx_memory_current_version", "current_version"),  # #1184 - version tracking
+        Index("idx_memory_supersedes", "supersedes_id"),  # #1188 - lineage lookup
+        Index("idx_memory_superseded_by", "superseded_by_id"),  # #1188 - reverse lineage
         # Unique constraint on (namespace, path_key) for upsert mode
         # Note: Only enforced when both are NOT NULL (partial index for SQLite/Postgres)
         Index(
@@ -1291,8 +1314,8 @@ class MemoryModel(Base):
                 f"visibility must be one of {valid_visibilities}, got {self.visibility}"
             )
 
-        # Validate state (#368)
-        valid_states = ["inactive", "active"]
+        # Validate state (#368, #1188)
+        valid_states = ["inactive", "active", "deleted"]
         if self.state not in valid_states:
             raise ValidationError(f"state must be one of {valid_states}, got {self.state}")
 

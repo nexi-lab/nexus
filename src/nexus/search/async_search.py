@@ -81,15 +81,23 @@ def create_async_engine_from_url(database_url: str) -> AsyncEngine:
     Returns:
         Async SQLAlchemy engine
     """
+    is_sqlite = False
     if database_url.startswith("postgresql://"):
         async_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
     elif database_url.startswith("sqlite:///"):
         async_url = database_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+        is_sqlite = True
     elif database_url.startswith("sqlite://"):
         async_url = database_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+        is_sqlite = True
     else:
         async_url = database_url
 
+    # SQLite with aiosqlite uses NullPool and doesn't support pool parameters
+    if is_sqlite:
+        return create_async_engine(async_url)
+
+    # PostgreSQL with asyncpg supports full connection pooling
     return create_async_engine(
         async_url,
         pool_pre_ping=True,

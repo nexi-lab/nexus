@@ -51,6 +51,16 @@ from nexus.pay.credits import (
     TransferRequest,
     WalletNotFoundError,
 )
+from nexus.pay.sdk import (
+    Balance,
+    BudgetContext,
+    BudgetExceededError,
+    NexusPay,
+    NexusPayError,
+    Quote,
+    Receipt,
+    Reservation,
+)
 from nexus.pay.x402 import (
     X402Client,
     X402Error,
@@ -100,4 +110,13 @@ __all__ = [
     "micro_to_usdc",
     "validate_wallet_address",
     "validate_network",
+    # Unified SDK (#1207)
+    "NexusPay",
+    "NexusPayError",
+    "BudgetExceededError",
+    "Balance",
+    "Receipt",
+    "Reservation",
+    "Quote",
+    "BudgetContext",
 ]

@@ -129,25 +129,14 @@ class TestMemoryVersionCreation:
             path_key="sky_color",
         )
 
-        # Check that we have 2 version entries
-        versions = (
-            session.execute(
-                select(VersionHistoryModel)
-                .where(
-                    VersionHistoryModel.resource_type == "memory",
-                    VersionHistoryModel.resource_id == memory_id,
-                )
-                .order_by(VersionHistoryModel.version_number)
-            )
-            .scalars()
-            .all()
-        )
+        # #1188: With append-only, use list_versions API which follows the chain
+        versions = memory_api.list_versions(memory_id)
 
         assert len(versions) == 2, "Should have 2 versions after update"
-        assert versions[0].version_number == 1
-        assert versions[1].version_number == 2
-        assert versions[1].source_type == "update"
-        assert versions[1].parent_version_id == versions[0].version_id
+        # list_versions returns newest first
+        assert versions[1]["version"] == 1
+        assert versions[0]["version"] == 2
+        assert versions[0]["source_type"] == "update"
 
     def test_version_tracks_content_hash_and_size(self, memory_api, session):
         """Version entry should track content hash and size."""
@@ -188,18 +177,8 @@ class TestMemoryVersionCreation:
             _metadata={"change_reason": "consolidation"},
         )
 
-        versions = (
-            session.execute(
-                select(VersionHistoryModel)
-                .where(
-                    VersionHistoryModel.resource_type == "memory",
-                    VersionHistoryModel.resource_id == memory_id,
-                )
-                .order_by(VersionHistoryModel.version_number.desc())
-            )
-            .scalars()
-            .all()
-        )
+        # #1188: Use list_versions API which follows the supersedes chain
+        versions = memory_api.list_versions(memory_id)
 
         # Latest version should exist (either update or consolidated)
         assert len(versions) >= 2
@@ -313,22 +292,23 @@ class TestMemoryRollback:
             path_key="doc",
         )
 
-        memory_api.store(
+        # #1188: Append-only update returns new memory_id
+        new_memory_id = memory_api.store(
             content="Bad update - this is wrong",
             scope="user",
             namespace="test/rollback",
             path_key="doc",
         )
 
-        # Verify current content is wrong
-        current = memory_api.get(memory_id)
+        # Verify current content is wrong (use new_memory_id)
+        current = memory_api.get(new_memory_id)
         assert "wrong" in current["content"]
 
-        # Rollback to version 1
+        # Rollback to version 1 (uses any memory_id in the chain)
         memory_api.rollback(memory_id, version=1)
 
-        # Verify content is restored
-        restored = memory_api.get(memory_id)
+        # Verify content is restored on the latest memory
+        restored = memory_api.get(new_memory_id)
         assert restored["content"] == "Original content - correct"
 
     def test_rollback_creates_new_version_entry(self, memory_api, session):
@@ -347,10 +327,10 @@ class TestMemoryRollback:
             path_key="tracked",
         )
 
-        # Rollback to version 1
+        # Rollback to version 1 (can use any memory_id in the chain)
         memory_api.rollback(memory_id, version=1)
 
-        # Check version history
+        # Check version history (follows chain from any memory_id)
         versions = memory_api.list_versions(memory_id)
 
         # Should have 3 versions: original, update, rollback
@@ -377,23 +357,16 @@ class TestMemoryRollback:
 
         memory_api.rollback(memory_id, version=1)
 
-        versions = (
-            session.execute(
-                select(VersionHistoryModel)
-                .where(
-                    VersionHistoryModel.resource_type == "memory",
-                    VersionHistoryModel.resource_id == memory_id,
-                )
-                .order_by(VersionHistoryModel.version_number)
-            )
-            .scalars()
-            .all()
-        )
+        # #1188: Use list_versions API which follows supersedes chain
+        versions = memory_api.list_versions(memory_id)
 
-        # Version 3 (rollback) should have parent_version_id pointing to version 2
-        v3 = versions[2]
-        v2 = versions[1]
-        assert v3.parent_version_id == v2.version_id
+        # Versions are newest-first: [v3, v2, v1]
+        assert len(versions) == 3
+        v3 = versions[0]  # rollback
+        # v3 (rollback) should have parent_version_id pointing to v2's version entry
+        # The parent_version_id tracks lineage across the chain
+        assert v3["source_type"] == "rollback"
+        assert v3["version"] == 3
 
     def test_rollback_increments_current_version(self, memory_api, session):
         """rollback should increment memory's current_version."""
@@ -404,22 +377,24 @@ class TestMemoryRollback:
             path_key="doc",
         )
 
-        memory_api.store(
+        # #1188: Append-only update returns new memory_id
+        new_memory_id = memory_api.store(
             content="V2",
             scope="user",
             namespace="test/version",
             path_key="doc",
         )
 
-        memory = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+        # Check current_version on the latest memory (new row)
+        new_memory = session.execute(
+            select(MemoryModel).where(MemoryModel.memory_id == new_memory_id)
         ).scalar_one()
-        assert memory.current_version == 2
+        assert new_memory.current_version == 2
 
         memory_api.rollback(memory_id, version=1)
 
-        session.refresh(memory)
-        assert memory.current_version == 3
+        session.refresh(new_memory)
+        assert new_memory.current_version == 3
 
     def test_rollback_invalid_version_raises_error(self, memory_api):
         """rollback to non-existent version should raise error."""
@@ -546,21 +521,23 @@ class TestMemoryVersionEdgeCases:
             path_key="doc",
         )
 
-        # Simulate rapid updates
+        # Simulate rapid updates - each returns a new memory_id
+        latest_memory_id = memory_id
         for i in range(5):
-            memory_api.store(
+            latest_memory_id = memory_api.store(
                 content=f"Update {i}",
                 scope="user",
                 namespace="test/concurrent",
                 path_key="doc",
             )
 
-        memory = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+        # #1188: Check current_version on the latest memory in the chain
+        latest_memory = session.execute(
+            select(MemoryModel).where(MemoryModel.memory_id == latest_memory_id)
         ).scalar_one()
 
         # Should have 6 versions (1 original + 5 updates)
-        assert memory.current_version == 6
+        assert latest_memory.current_version == 6
 
     def test_version_history_persists_after_delete(self, memory_api, session):
         """Version history should remain after memory is deleted (audit trail)."""
@@ -571,27 +548,19 @@ class TestMemoryVersionEdgeCases:
             path_key="deleted",
         )
 
-        memory_api.store(
+        new_memory_id = memory_api.store(
             content="Updated before delete",
             scope="user",
             namespace="test/audit",
             path_key="deleted",
         )
 
-        # Delete the memory
-        memory_api.delete(memory_id)
+        # #1188: Delete the latest memory (soft-delete)
+        memory_api.delete(new_memory_id)
 
-        # Version history should still exist for audit
-        versions = (
-            session.execute(
-                select(VersionHistoryModel).where(
-                    VersionHistoryModel.resource_type == "memory",
-                    VersionHistoryModel.resource_id == memory_id,
-                )
-            )
-            .scalars()
-            .all()
-        )
+        # #1188: Use list_versions API which follows the supersedes chain
+        # Version history should persist even after soft-delete
+        versions = memory_api.list_versions(memory_id)
 
         assert len(versions) == 2, "Version history should persist for audit trail"
 

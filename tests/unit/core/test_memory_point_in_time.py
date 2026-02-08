@@ -577,8 +577,8 @@ class TestEdgeCases:
         point_in_time = datetime.now(UTC)
         time.sleep(0.01)
 
-        # Update memory
-        memory_api.store(
+        # Update memory (#1188: append-only creates new row)
+        new_memory_id = memory_api.store(
             content="Updated content hash test",
             scope="user",
             namespace="hash_test",
@@ -586,9 +586,9 @@ class TestEdgeCases:
         )
         session.commit()
 
-        # Get updated hash
+        # #1188: Get updated hash from the NEW memory row
         memory_v2 = session.execute(
-            select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+            select(MemoryModel).where(MemoryModel.memory_id == new_memory_id)
         ).scalar_one()
         updated_hash = memory_v2.content_hash
 

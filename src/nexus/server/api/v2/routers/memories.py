@@ -1,6 +1,6 @@
 """Memory REST API endpoints.
 
-Provides 12 endpoints for memory CRUD, search, and version operations:
+Provides 13 endpoints for memory CRUD, search, and version operations:
 - POST   /api/v2/memories                      - Store memory
 - GET    /api/v2/memories/{id}                 - Get memory by ID
 - PUT    /api/v2/memories/{id}                 - Update memory
@@ -13,6 +13,7 @@ Provides 12 endpoints for memory CRUD, search, and version operations:
 - GET    /api/v2/memories/{id}/versions/{ver}  - Get specific version (#1184)
 - POST   /api/v2/memories/{id}/rollback        - Rollback to version (#1184)
 - GET    /api/v2/memories/{id}/diff            - Diff between versions (#1184)
+- GET    /api/v2/memories/{id}/lineage         - Append-only lineage chain (#1188)
 """
 
 from __future__ import annotations
@@ -216,8 +217,20 @@ async def update_memory(
 
             content = json.dumps(content)
 
-        # Use store with path_key for upsert behavior
-        # This creates a new version of the memory
+        # #1188: Use existing memory's path_key for proper append-only upsert.
+        # The upsert mechanism finds existing memories by path_key, so we must
+        # use the original's path_key. If it has none, assign memory_id as path_key
+        # so the upsert lookup can find and supersede it.
+        upsert_path_key = existing.get("path_key")
+        if not upsert_path_key:
+            memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
+            if memory_model:
+                memory_model.path_key = memory_id
+                app_state.nexus_fs.memory.memory_router.session.commit()
+            upsert_path_key = memory_id
+
+        # Use store with path_key for upsert behavior (#1188: append-only)
+        # This creates a new row and supersedes the old one
         new_memory_id = app_state.nexus_fs.memory.store(
             content=content if content is not None else existing.get("content"),
             scope=existing.get("scope", "user"),
@@ -228,7 +241,7 @@ async def update_memory(
             namespace=request.namespace
             if request.namespace is not None
             else existing.get("namespace"),
-            path_key=memory_id,  # Use memory_id as path_key for upsert
+            path_key=upsert_path_key,  # #1188: Use original's path_key for chain
             state=request.state if request.state is not None else existing.get("state", "active"),
             _metadata=request.metadata,
             context=context,
@@ -246,25 +259,25 @@ async def update_memory(
 @router.delete("/{memory_id}")
 async def delete_memory(
     memory_id: str,
-    soft: bool = Query(True, description="Soft delete (set state=inactive)"),
-    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    soft: bool = Query(True, description="Soft delete (set state=deleted, preserves row)"),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> dict[str, Any]:
-    """Delete a memory.
+    """Delete a memory (#1188: non-destructive by default).
 
-    By default performs soft delete (state='inactive').
-    Hard delete requires explicit soft=false.
+    By default performs soft delete (state='deleted', invalid_at set).
+    The memory row is preserved for audit trails and point-in-time queries.
+    Hard delete (soft=false) also uses soft-delete to maintain data integrity.
     """
     app_state = _get_app_state()
     if not app_state.nexus_fs:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
     try:
-        if soft:
-            # Soft delete - deactivate
-            deleted = app_state.nexus_fs.memory.deactivate(memory_id)
-        else:
-            # Hard delete
-            deleted = app_state.nexus_fs.memory.delete(memory_id)
+        context = _get_operation_context(auth_result)
+
+        # #1188: Both soft and hard delete use soft-delete pattern
+        # (sets state='deleted' + invalid_at, preserves row for audit)
+        deleted = app_state.nexus_fs.memory.delete(memory_id, context=context)
 
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
@@ -416,6 +429,7 @@ async def query_memories(
             event_after=request.event_after,
             event_before=request.event_before,
             include_invalid=request.include_invalid,
+            include_superseded=request.include_superseded,  # #1188
             as_of_event=request.as_of_event,
             as_of_system=request.as_of_system,
             limit=request.limit,
@@ -435,6 +449,7 @@ async def query_memories(
                 "as_of_event": request.as_of_event,
                 "as_of_system": request.as_of_system,
                 "include_invalid": request.include_invalid,
+                "include_superseded": request.include_superseded,
             },
         }
 
@@ -520,21 +535,24 @@ async def get_memory_history(
     try:
         context = _get_operation_context(auth_result)
 
-        # First verify memory exists
-        memory = app_state.nexus_fs.memory.get(memory_id, track_access=False, context=context)
+        # #1188: Resolve to current version (follows superseded chain)
+        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        if current_model is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+
+        resolved_id = current_model.memory_id
+
+        # Verify read permission on the current memory
+        memory = app_state.nexus_fs.memory.get(resolved_id, track_access=False, context=context)
         if memory is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Use the new list_versions API (#1184)
+        # Use the new list_versions API (#1184) - works with any ID in the chain
         versions = app_state.nexus_fs.memory.list_versions(memory_id)
-
-        # Get current version from memory model
-        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
-        current_version = memory_model.current_version if memory_model else 1
 
         return MemoryVersionHistoryResponse(
             memory_id=memory_id,
-            current_version=current_version,
+            current_version=current_model.current_version,
             versions=versions,
         )
 
@@ -597,11 +615,16 @@ async def rollback_memory(
 
     try:
         context = _get_operation_context(auth_result)
-        app_state.nexus_fs.memory.rollback(memory_id, version, context=context)
+
+        # #1188: Resolve to current version for rollback
+        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        resolved_id = current_model.memory_id if current_model else memory_id
+
+        app_state.nexus_fs.memory.rollback(resolved_id, version, context=context)
 
         # Get the updated memory to return current state
-        memory = app_state.nexus_fs.memory.get(memory_id, track_access=False, context=context)
-        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
+        memory = app_state.nexus_fs.memory.get(resolved_id, track_access=False, context=context)
+        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(resolved_id)
 
         return {
             "rolled_back": True,
@@ -665,3 +688,50 @@ async def diff_memory_versions(
     except Exception as e:
         logger.error(f"Memory diff error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory diff error: {e}") from e
+
+
+@router.get("/{memory_id}/lineage", response_model=dict[str, Any])
+async def get_memory_lineage(
+    memory_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Get the append-only lineage chain for a memory (#1188).
+
+    Returns all versions in the supersedes chain, from oldest to newest,
+    with their content. Unlike /history (which returns VersionHistoryModel entries),
+    this returns the actual MemoryModel rows in the chain.
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        context = _get_operation_context(auth_result)
+
+        # Verify the memory exists (any ID in the chain works)
+        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        if current_model is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+
+        # Verify read permission
+        memory = app_state.nexus_fs.memory.get(
+            current_model.memory_id, track_access=False, context=context
+        )
+        if memory is None:
+            raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
+
+        # Get the full lineage chain
+        lineage = app_state.nexus_fs.memory.get_history(memory_id)
+
+        return {
+            "memory_id": memory_id,
+            "current_memory_id": current_model.memory_id,
+            "chain_length": len(lineage),
+            "lineage": lineage,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Memory lineage error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Memory lineage error: {e}") from e

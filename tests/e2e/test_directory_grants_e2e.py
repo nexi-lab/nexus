@@ -99,7 +99,8 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     # Create NexusFS with Tiger Cache enabled
     nx = NexusFS(
         backend=backend,
-        db_path=str(db_with_migrations),
+        metadata_store=SQLAlchemyMetadataStore(db_path=str(db_with_migrations)),
+        record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
         enforce_permissions=True,
         enable_tiger_cache=True,
         is_admin=True,  # Allow admin operations by default
@@ -414,6 +415,8 @@ class TestDirectoryGrantWorker:
     def test_worker_marks_completed_on_empty_directory(self, standalone_engine):
         """Test that worker marks empty directory grants as completed."""
         from nexus.core.tiger_cache import DirectoryGrantExpander, TigerCache, TigerResourceMap
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Create Tiger Cache
         resource_map = TigerResourceMap(standalone_engine)

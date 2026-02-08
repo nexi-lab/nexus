@@ -372,7 +372,7 @@ Use same Property Dimensions as data types to ensure orthogonality.
 |----------------|-----------|------------|-------------|----------------|-----------------|------------|------------|------|---------------|
 | **PostgreSQL** | Med | Med | Serializable (ACID) | Relational (JOIN, FK, indexes, vector via pgvector) | ~1TB (practical) | Persistent (WAL) | Complex (server process) | High (CPU+RAM) | **Relational queries, ACID transactions, vector search** — No substitute for complex JOINs and referential integrity |
 | **SQLite** | High (local) | Med (single writer) | Serializable (ACID) | Relational (JOIN, FK, limited indexes, vector via sqlite-vec) | ~281TB (theoretical), ~100GB (practical) | Persistent (file) | Simple (embedded) | Low (single file) | **Embedded relational DB for dev/testing** — Same SQL interface as PostgreSQL, zero-config |
-| **sled** | Critical (~14μs) | Critical (~14μs) | Linearizable (via Raft) OR Local (single-node) | KV only (prefix scan, range queries) | Multi-TB (LSM-tree) | Persistent (log-structured) | Simple (embedded) | Low (single process) | **High-performance KV with optional Raft consensus** — Orders of magnitude faster than SQL for pure KV workloads, embedded like SQLite but KV-focused |
+| **sled** | Critical (~14μs) | Critical (~14μs) | Linearizable (via Raft) OR Local (single-node) | **Ordered** KV (prefix scan, range queries, append-only LSM-tree) | Multi-TB (LSM-tree) | Persistent (log-structured) | Simple (embedded) | Low (single process) | **High-performance ordered KV with optional Raft consensus** — Orders of magnitude faster than SQL for pure KV workloads, embedded like SQLite but KV-focused. **Ordered property critical for user root localization** (each user's first key = their `/` root in chroot model) |
 | **Dragonfly** | Critical (in-memory) | Critical (in-memory) | Eventual (async replication) | KV + pub/sub + Lua scripts | RAM-limited (~100GB typical) | Ephemeral (optional AOF) | Med (server process) | High (RAM) | **In-memory cache + pub/sub** — Needed for permission cache, event bus, TTL-based expiration; Redis protocol compatible |
 | **Redis** | Critical (in-memory) | Critical (in-memory) | Eventual (async replication) | KV + pub/sub + Lua scripts | RAM-limited (~100GB typical) | Ephemeral (optional AOF) | Med (server process) | High (RAM) | ⚠️ **REDUNDANT with Dragonfly** — Same use case, Dragonfly is drop-in replacement with better performance |
 | **S3 / GCS / Azure Blob** | Med (network latency) | Med (network latency) | Eventual (object versioning) | Blob only (by key, no queries) | Unlimited (petabytes) | Persistent (99.999999999% durability) | Simple (managed service) | Low (pay-per-GB) | **Cloud blob storage for large files** — No substitute for petabyte-scale object storage with geo-replication |
@@ -430,7 +430,7 @@ Use same Property Dimensions as data types to ensure orthogonality.
 |----------------|--------|---------------|
 | **PostgreSQL** | ✅ **KEEP** | **Relational SSOT**: Users, ReBAC, Memory (vector), Workflows, Versioning. No substitute for ACID + JOINs + vector search. |
 | **SQLite** | ✅ **KEEP** | **Dev/Test relational**: Same SQL interface as PostgreSQL, zero-config, embedded. Essential for local development. |
-| **sled** | ✅ **KEEP** | **KV SSOT with Raft**: File metadata, directory index, custom metadata, system settings. 100x faster than SQL for pure KV, Raft consensus for multi-node SC. |
+| **sled** | ✅ **KEEP** | **Ordered KV SSOT with Raft**: File metadata, directory index, custom metadata, system settings. 100x faster than SQL for pure KV, Raft consensus for multi-node SC. **Ordered property enables user root localization** (first key = user `/` in chroot). |
 | **Dragonfly** | ✅ **KEEP** | **In-memory cache + pub/sub**: Permission cache, Tiger cache, FileEvent pub/sub. TTL management, shared across nodes, Redis protocol. |
 | **Redis** | ❌ **DEPRECATE (P2)** | **REDUNDANT**: Same use case as Dragonfly, inferior performance. Migration: change connection string only. |
 | **S3/GCS/Azure** | ✅ **KEEP** | **Cloud blob storage**: Unlimited scale, geo-replication, managed service. No substitute for petabyte-scale object storage. |
@@ -469,6 +469,78 @@ Use same Property Dimensions as data types to ensure orthogonality.
 
 ---
 
+## THE NEXUS QUARTET: FOUR STORAGE PILLARS (Task #14)
+
+**Design Decision**: NexusFS (nexus-core) abstracts storage by **Capability** (Access Pattern & Consistency Guarantee),
+not by domain (`UserStore`) or implementation (`PostgresStore`).
+Inspired by Linux Kernel's `BlockDevice`/`CharDevice`/`FileSystem` model.
+Names explain the **"What"** and **"Why"**, not the **"How"**.
+
+### The Four Pillars
+
+| Pillar | ABC | Role | Backing Drivers | Kernel Status |
+|--------|-----|------|-----------------|---------------|
+| **Metastore** | `MetastoreABC` | "The Structure" — inodes, dentries, config, topology | sled (local PyO3 / gRPC Raft) | **Required** init param |
+| **RecordStore** | `RecordStoreABC` | "The Truth" — entities, relationships, logs, vectors | PostgreSQL (prod), SQLite (dev) | **Optional** — injected for Services |
+| **ObjectStore** | `ObjectStoreABC` (= current `Backend`) | "The Content" — raw file bytes, immutable objects | S3, GCS, Local Disk | **Mounted** dynamically (like Linux `mount`) |
+| **CacheStore** | `CacheStoreABC` (future) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Future** — optional |
+
+**Naming Note**: The existing proto-generated `MetadataStore` (specific to `FileMetadata` typed operations)
+will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC` (the underlying ordered KV primitive).
+`MetastoreABC` is the lower-level KV store; `FileMetadataProtocol` is a typed wrapper that sits on top of it.
+
+### Complete Data Type → Pillar Mapping
+
+**Metastore** (Ordered KV — sled):
+| Data Type | From Part | Rationale |
+|-----------|-----------|-----------|
+| FileMetadata (proto) | Part 1 | Core file attributes, KV by path |
+| DirectoryEntryModel | Part 1 | Sparse directory index, KV by parent_path |
+| FileMetadataModel (custom KV) | Part 1 | Arbitrary user metadata, KV by path_id + key |
+| ContentChunkModel | Part 2 | CAS dedup index, KV by content_hash (immutable) |
+| ReBACNamespaceModel | Part 5 | Permission config, KV by namespace_id |
+| SystemSettingsModel | Part 13 | System config, KV by key |
+| WorkspaceConfig | Part 15 | Workspace config, KV by path |
+| MemoryConfig | Part 15 | Memory config, KV by path |
+| Cluster Topology | Part 13 | Raft bootstrap, merged with metadata |
+
+**RecordStore** (Relational — PostgreSQL/SQLite):
+| Data Type | From Part | Rationale |
+|-----------|-----------|-----------|
+| UserModel, UserOAuthAccountModel, OAuthCredentialModel | Part 6 | FK, unique constraints, encryption |
+| ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Part 5 | Composite indexes, materialized view, BRIN |
+| MemoryModel, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Part 4 | Vector search (pgvector), relational FK |
+| VersionHistoryModel, WorkspaceSnapshotModel | Part 3 | Parent FK, BRIN time-series |
+| DocumentChunkModel | Part 10 | Vector index (pgvector/sqlite-vec) |
+| WorkflowModel, WorkflowExecutionModel | Part 9 | Version tracking, FK, BRIN |
+| ZoneModel, EntityRegistryModel, ExternalUserServiceModel | Part 7 | Unique constraints, hierarchical FK |
+| OperationLogModel | Part 11 | Append-only BRIN |
+| SandboxMetadataModel | Part 12 | Relational queries |
+
+**ObjectStore** (= existing `Backend` ABC — S3/Local Disk):
+| Data Type | From Part | Rationale |
+|-----------|-----------|-----------|
+| File Content (blobs) | Part 2 | Actual file bytes, petabyte scale, streaming I/O |
+
+**CacheStore** (future — Dragonfly / In-Memory):
+| Data Type | From Part | Rationale |
+|-----------|-----------|-----------|
+| UserSessionModel | Part 6 | Session tokens, TTL |
+| PermissionCacheProtocol | Part 14 | Permission check cache, TTL |
+| TigerCacheProtocol | Part 14 | Pre-materialized bitmaps, TTL |
+| FileEvent (pub/sub) | Part 8 | Change notifications |
+
+### CacheStore Implementation Status
+
+Nexus already has individual implementations scattered across the codebase:
+- **EventBus**: `EventBusProtocol` (ABC), `RedisEventBus` (Dragonfly impl) — NO in-memory impl
+- **PermissionCache**: `PermissionCacheProtocol` (ABC), `DragonflyPermissionCache`, `PostgresPermissionCache` — NO in-memory impl
+- **TigerCache**: `TigerCacheProtocol` (ABC), `DragonflyTigerCache`, `PostgresTigerCache` — NO in-memory impl
+
+**Future work**: Unify these into a single `CacheStoreABC` with `InMemoryCacheStore` fallback.
+
+---
+
 ## NEXT STEPS
 
 1. ✅ Review this matrix with user
@@ -477,7 +549,10 @@ Use same Property Dimensions as data types to ensure orthogonality.
 4. ❓ Clarify Dragonfly status post-Raft
 5. ✅ Merge redundant data types (FilePathModel → FileMetadata, WorkspaceConfig → DB only)
 6. ✅ Rewrite federation-memo.md with this data architecture
-7. ✅ **NEW**: Storage medium orthogonality analysis complete — Redis deprecation identified (P2)
+7. ✅ Storage medium orthogonality analysis complete — Redis deprecation identified (P2)
+8. ✅ **NEW**: "Nexus Quartet" — Four Pillars abstraction design decided (Metastore, RecordStore, ObjectStore, CacheStore)
+9. 🔧 **IN PROGRESS**: Task #14 — Implement MetastoreABC + RecordStoreABC in NexusFS constructor
+10. 📋 **PLANNED**: Rename proto-generated `MetadataStore` → `FileMetadataProtocol` (avoid confusion with MetastoreABC)
 
 ---
 

@@ -30,7 +30,8 @@ def nx_with_mount():
         db_file = Path(tmpdir) / "metadata.db"
 
         # Create NexusFS with metadata store
-        nx = NexusFS(backend=root_backend, db_path=db_file, enforce_permissions=False)
+        metadata_store = RaftMetadataStore.local(str(db_file).replace(".db", ""))
+        nx = NexusFS(backend=root_backend, metadata_store=metadata_store, enforce_permissions=False)
 
         yield nx, tmpdir
 
@@ -154,6 +155,7 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     (mount_dir / "test.txt").write_text("test content")
 
     from nexus.core.permissions import OperationContext
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
     # Create context with zone_id and admin access for the test user
     ctx = OperationContext(user="test-user", groups=[], zone_id="test", is_admin=True)

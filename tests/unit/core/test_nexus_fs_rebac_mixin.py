@@ -43,7 +43,8 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions for ReBAC tests
     )
@@ -56,7 +57,8 @@ def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions enforcement."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
     )
@@ -93,6 +95,8 @@ class TestGetSubjectFromContext:
     def test_get_subject_from_operation_context(self, nx: NexusFS) -> None:
         """Test _get_subject_from_context with OperationContext."""
         from nexus.core.permissions import OperationContext
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         context = OperationContext(
             user="charlie",

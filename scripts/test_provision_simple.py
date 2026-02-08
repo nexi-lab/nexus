@@ -46,7 +46,8 @@ def main() -> int:
     # Initialize NexusFS
     print("Initializing NexusFS...")
     backend = LocalBackend(root_path=data_dir)
-    nx = NexusFS(backend=backend, db_path=db_url)
+    metadata_store = RaftMetadataStore.local(str(db_url).replace(".db", ""))
+    nx = NexusFS(backend=backend, metadata_store=metadata_store)
     print("✓ NexusFS initialized")
     print()
 
@@ -110,6 +111,7 @@ def main() -> int:
     except Exception as e:
         print(f"✗ ERROR: {e}")
         import traceback
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
         return 1

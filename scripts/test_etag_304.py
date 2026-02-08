@@ -49,6 +49,8 @@ sys.path.insert(0, str(project_root / "src"))
 from nexus.backends.local import LocalBackend  # noqa: E402
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 from nexus.server.fastapi_server import create_app  # noqa: E402
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 if TYPE_CHECKING:
     pass
@@ -932,7 +934,8 @@ class NexusTestServer:
         backend = LocalBackend(root_path=str(storage_path))
         self.nexus_fs = NexusFS(
             backend=backend,
-            db_path=str(db_path),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(db_path)),
+            record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=True,  # Admin for testing
             enforce_permissions=False,  # Simplified for testing
         )

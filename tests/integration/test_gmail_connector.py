@@ -324,7 +324,8 @@ class TestSkillDocGeneration:
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
         nx = NexusFS(
             backend=backend,
-            db_path=str(isolated_db),
+            metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+            record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
             enforce_permissions=False,
         )
 
@@ -468,6 +469,8 @@ class TestOperationTraits:
     def test_draft_traits(self, gmail_backend):
         """Test create_draft has correct traits."""
         from nexus.connectors.base import ConfirmLevel, Reversibility
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         traits = gmail_backend.get_operation_traits("create_draft")
 

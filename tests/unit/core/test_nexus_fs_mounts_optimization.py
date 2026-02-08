@@ -27,7 +27,8 @@ def nx_with_hierarchy(temp_dir: Path):
 
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable to allow test operations
     )
@@ -153,6 +154,8 @@ class TestMountSyncOptimization:
                 start = time.time()
 
                 import contextlib
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
                 with contextlib.suppress(Exception):
                     nx_with_hierarchy.sync_mount("/mnt/test")
@@ -178,7 +181,8 @@ class TestMountDatabaseVsConfig:
         """Test that database-saved mounts take precedence over config."""
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            db_path=temp_dir / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
             auto_parse=False,
             enforce_permissions=False,
         )

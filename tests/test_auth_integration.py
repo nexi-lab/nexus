@@ -41,7 +41,8 @@ def test_app():
     backend = LocalBackend(root_path="/tmp/nexus-test-auth")
     nx = NexusFS(
         backend=backend,
-        db_path=":memory:",
+        metadata_store=SQLAlchemyMetadataStore(db_path=":memory:"),
+        record_store=SQLAlchemyRecordStore(db_path=":memory:"),
         enforce_permissions=False,  # Disable permissions for simpler testing
     )
 
@@ -533,6 +534,8 @@ def test_oauth_callback_race_condition_postgres():
 
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import APIKeyModel, UserModel
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # PostgreSQL connection
     database_url = "postgresql://postgres:nexus@localhost:5433/nexus"

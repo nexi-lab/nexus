@@ -76,11 +76,19 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
     fi && \
     uv pip install --system -i $PIP_INDEX docker e2b e2b-code-interpreter
 
-# ---------- Build Rust extension ----------
+# ---------- Build Rust extensions ----------
 COPY rust/ ./rust/
+
+# Build nexus_fast
 WORKDIR /build/rust/nexus_fast
 RUN maturin build --release && \
     pip install --no-cache-dir target/wheels/nexus_fast-*.whl
+
+# Build nexus_raft
+WORKDIR /build/rust/nexus_raft
+RUN maturin build --release --features python && \
+    pip install --no-cache-dir target/wheels/nexus_raft-*.whl
+
 WORKDIR /build
 
 # ---------- Production image ----------
@@ -107,7 +115,8 @@ COPY --from=builder /root/go/bin/zoekt-index /usr/local/bin/zoekt-index
 COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
 # ---------- Optional verifications ----------
-RUN python3 -c "import nexus_fast; print('✓ Rust acceleration available')" || echo "⚠ Rust not available"
+RUN python3 -c "import nexus_fast; print('✓ nexus_fast available')" || echo "⚠ nexus_fast not available"
+RUN python3 -c "from _nexus_raft import LocalRaft; print('✓ nexus_raft available')" || echo "⚠ nexus_raft not available"
 RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
 RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || echo "⚠ Zoekt not available"
 

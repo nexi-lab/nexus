@@ -1643,6 +1643,7 @@ def _register_routes(app: FastAPI) -> None:
         from nexus.server.api.v2.routers import (
             consolidation,
             feedback,
+            gateway,
             memories,
             mobile_search,
             playbooks,
@@ -1657,7 +1658,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(reflection.router)
         app.include_router(consolidation.router)
         app.include_router(mobile_search.router)
-        logger.info("API v2 routes registered (32 endpoints)")
+        app.include_router(gateway.router)
+        logger.info("API v2 routes registered (33 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."

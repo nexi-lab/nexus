@@ -441,3 +441,33 @@ class DecayResponse(BaseModel):
     skipped: int
     processed: int
     error: str | None = None
+
+
+# =============================================================================
+# Gateway Models
+# =============================================================================
+
+
+class GatewayMessageRequest(BaseModel):
+    """Request to send a message through the gateway.
+
+    All conversations are treated as "boardrooms" - same model for DMs and groups.
+    """
+
+    text: str = Field(..., description="Message content")
+    user: str = Field(..., description="Sender ID (human ID or agent ID)")
+    role: Literal["human", "agent"] = Field(..., description="Who is sending this message")
+    session_id: str = Field(..., description="Boardroom key (channel:account_id:chat_id)")
+    channel: str = Field(..., description="Platform (discord, slack, telegram)")
+
+    parent_id: str | None = Field(None, description="Reply-to message ID for threading")
+    target: str | None = Field(None, description="@mention hint (not enforced)")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Extensible context")
+
+
+class GatewayMessageResponse(BaseModel):
+    """Response after processing a message."""
+
+    message_id: str = Field(..., description="Unique message ID")
+    status: Literal["created", "duplicate"] = Field(..., description="Processing result")
+    ts: str = Field(..., description="ISO8601 timestamp")

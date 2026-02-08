@@ -532,9 +532,10 @@ class TigerCache:
             """Execute Dragonfly operation using sync Redis client."""
             import redis
 
-            # Thread-local connection with connection pooling
-            client = redis.from_url(
-                self._dragonfly_url,
+            # Thread-local connection with connection pooling (url already checked above)
+            url = self._dragonfly_url or ""
+            client: redis.Redis[bytes] = redis.Redis.from_url(
+                url,
                 decode_responses=False,
                 socket_timeout=3.0,
                 socket_connect_timeout=2.0,
@@ -554,6 +555,8 @@ class TigerCache:
                     return (data, int(rev))
 
                 elif operation == "set":
+                    if bitmap_data is None:
+                        return None  # set requires bitmap_data
                     pipe = client.pipeline()
                     pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
                     pipe.expire(key, ttl)

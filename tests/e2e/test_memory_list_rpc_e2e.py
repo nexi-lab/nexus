@@ -47,9 +47,7 @@ def _rpc_body(method: str, params: dict | None = None) -> str:
     )
 
 
-def _rpc_post_testclient(
-    client: TestClient, method: str, params: dict | None = None
-) -> dict:
+def _rpc_post_testclient(client: TestClient, method: str, params: dict | None = None) -> dict:
     """Make RPC call via TestClient. Asserts 200 status."""
     resp = client.post(
         f"/api/nfs/{method}",
@@ -62,9 +60,7 @@ def _rpc_post_testclient(
     return data["result"]
 
 
-def _rpc_post_http(
-    client: httpx.Client, method: str, params: dict | None = None
-) -> dict:
+def _rpc_post_http(client: httpx.Client, method: str, params: dict | None = None) -> dict:
     """Make RPC call via real HTTP. Asserts 200 status."""
     resp = client.post(
         f"/api/nfs/{method}",
@@ -144,9 +140,7 @@ class TestMemoryListRPCE2E:
         """Store memories via RPC, list them via RPC — full path test."""
         id1 = self._store_via_rpc(rpc_client, "User prefers dark mode")
         id2 = self._store_via_rpc(rpc_client, "Agent learned Python patterns", scope="agent")
-        id3 = self._store_via_rpc(
-            rpc_client, "Favorite color is blue", memory_type="preference"
-        )
+        id3 = self._store_via_rpc(rpc_client, "Favorite color is blue", memory_type="preference")
 
         result = _rpc_post_testclient(rpc_client, "list_memories", {"limit": 50})
         memories = result["memories"]
@@ -171,9 +165,7 @@ class TestMemoryListRPCE2E:
         active_id = self._store_via_rpc(rpc_client, "Active memory", state="active")
         inactive_id = self._store_via_rpc(rpc_client, "Inactive memory", state="inactive")
 
-        result = _rpc_post_testclient(
-            rpc_client, "list_memories", {"state": "active", "limit": 50}
-        )
+        result = _rpc_post_testclient(rpc_client, "list_memories", {"state": "active", "limit": 50})
         memories = result["memories"]
         memory_ids = {m["memory_id"] for m in memories}
         assert active_id in memory_ids
@@ -207,9 +199,7 @@ class TestMemoryListRPCServerE2E:
         scope: str = "user",
     ) -> str:
         """Store a memory via RPC over real HTTP."""
-        result = _rpc_post_http(
-            client, "store_memory", {"content": content, "scope": scope}
-        )
+        result = _rpc_post_http(client, "store_memory", {"content": content, "scope": scope})
         return result["memory_id"]
 
     def test_store_and_list_via_rpc(self, test_app: httpx.Client):
@@ -229,9 +219,7 @@ class TestMemoryListRPCServerE2E:
         self._store_via_rpc(test_app, "User scoped", scope="user")
         self._store_via_rpc(test_app, "Agent scoped", scope="agent")
 
-        result = _rpc_post_http(
-            test_app, "list_memories", {"scope": "user", "limit": 50}
-        )
+        result = _rpc_post_http(test_app, "list_memories", {"scope": "user", "limit": 50})
         assert all(m["scope"] == "user" for m in result["memories"])
 
     def test_list_empty_initially(self, test_app: httpx.Client):
@@ -357,9 +345,7 @@ def db_auth_server(tmp_path):
         process.terminate()
         stderr_out = process.stderr.read().decode("utf-8", errors="replace")
         pytest.fail(
-            f"Server not ready after init.\n"
-            f"stdout: {collected_output}\n"
-            f"stderr: {stderr_out}"
+            f"Server not ready after init.\nstdout: {collected_output}\nstderr: {stderr_out}"
         )
 
     yield {
@@ -394,9 +380,7 @@ def db_auth_client(db_auth_server):
         yield client
 
 
-def _rpc_post_auth(
-    client: httpx.Client, method: str, params: dict | None = None
-) -> dict:
+def _rpc_post_auth(client: httpx.Client, method: str, params: dict | None = None) -> dict:
     """Make RPC call via authenticated HTTP. Asserts 200 status."""
     resp = client.post(
         f"/api/nfs/{method}",
@@ -465,9 +449,7 @@ class TestMemoryListRPCDatabaseAuthE2E:
         scope: str = "user",
     ) -> str:
         """Store a memory via authenticated RPC."""
-        result = _rpc_post_auth(
-            client, "store_memory", {"content": content, "scope": scope}
-        )
+        result = _rpc_post_auth(client, "store_memory", {"content": content, "scope": scope})
         return result["memory_id"]
 
     def test_store_and_list_with_regular_user(self, regular_user_client: httpx.Client):

@@ -24,6 +24,7 @@ from nexus.core.permissions import OperationContext, Permission
 
 if TYPE_CHECKING:
     from nexus.core.async_rebac_manager import AsyncReBACManager
+    from nexus.core.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +40,18 @@ class AsyncPermissionEnforcer:
         self,
         rebac_manager: AsyncReBACManager | None = None,
         backends: dict[str, Any] | None = None,
+        namespace_manager: NamespaceManager | None = None,
     ):
         """Initialize async permission enforcer.
 
         Args:
             rebac_manager: Async ReBAC manager instance
             backends: Backend registry for determining object types
+            namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
         """
         self.rebac_manager = rebac_manager
         self.backends = backends or {}
+        self.namespace_manager = namespace_manager
 
     async def check_permission(
         self,
@@ -79,6 +83,20 @@ class AsyncPermissionEnforcer:
         # Admin bypass (P0-4)
         if context.is_admin:
             return True
+
+        # Issue #1239: Namespace visibility check (Agent OS Phase 0)
+        # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
+        # This runs AFTER admin/system bypass (admins see everything) and BEFORE
+        # fine-grained ReBAC check (defense in depth).
+        if self.namespace_manager is not None:
+            subject = context.get_subject()
+            if not self.namespace_manager.is_visible(subject, path, context.zone_id):
+                from nexus.core.exceptions import NexusFileNotFoundError
+
+                raise NexusFileNotFoundError(
+                    path=path,
+                    message="Path not found",  # Intentionally vague — path is invisible
+                )
 
         # No ReBAC manager = permissive mode
         if not self.rebac_manager:
@@ -188,6 +206,13 @@ class AsyncPermissionEnforcer:
 
         zone_id = context.zone_id or "default"
         subject = context.get_subject()
+
+        # Issue #1239: Namespace pre-filter — only include paths visible to subject
+        # This runs before ReBAC bulk checks for efficiency
+        if self.namespace_manager is not None:
+            paths = [p for p in paths if self.namespace_manager.is_visible(subject, p, zone_id)]
+            if not paths:
+                return []
 
         # Build bulk check requests
         checks = []

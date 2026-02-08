@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from nexus.core.entity_registry import EntityRegistry
@@ -176,6 +176,7 @@ class MemoryViewRouter:
         event_after: datetime | None = None,  # #1028: Filter by event date >= value
         event_before: datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
+        include_superseded: bool = False,  # #1188: Include superseded memories
         valid_at_point: datetime | None = None,  # #1183: Point-in-time query (as_of_event)
         system_at_point: datetime | None = None,  # #1185: System-time query (as_of_system)
         limit: int | None = None,
@@ -252,7 +253,19 @@ class MemoryViewRouter:
             stmt = stmt.where(MemoryModel.latest_date <= event_before)
 
         # #1183/#1185: Bi-temporal filtering
-        if valid_at_point is not None:
+        if system_at_point is not None:
+            # #1185: System-time filtering (as_of_system)
+            # Show memories that existed AND were current at system_at_point
+            # This overrides include_invalid/include_superseded filters
+            stmt = stmt.where(MemoryModel.created_at <= system_at_point)
+            # Include superseded memories that were still current at that time
+            stmt = stmt.where(
+                or_(
+                    MemoryModel.invalid_at.is_(None),
+                    MemoryModel.invalid_at > system_at_point,
+                )
+            )
+        elif valid_at_point is not None:
             # Point-in-time query (as_of_event): valid_at <= point AND (invalid_at IS NULL OR invalid_at > point)
             # This OVERRIDES include_invalid - we want facts valid at that specific time
             stmt = stmt.where(
@@ -267,14 +280,23 @@ class MemoryViewRouter:
                     MemoryModel.invalid_at > valid_at_point,
                 )
             )
-        elif not include_invalid:
-            # Exclude invalidated memories (invalid_at IS NULL = still valid)
+        elif not include_invalid and not include_superseded:
+            # Exclude invalidated/superseded memories (invalid_at IS NULL = still valid)
             stmt = stmt.where(MemoryModel.invalid_at.is_(None))
+        elif include_superseded and not include_invalid:
+            # Include superseded but exclude other invalidated (deleted, temporal invalidation)
+            # Superseded memories have superseded_by_id set; include those + current
+            stmt = stmt.where(
+                or_(
+                    MemoryModel.invalid_at.is_(None),  # Current memories
+                    MemoryModel.superseded_by_id.isnot(None),  # Superseded memories
+                )
+            )
 
-        # #1185: System-time filtering (as_of_system)
-        if system_at_point is not None:
-            # Return only memories created before the given system time
-            stmt = stmt.where(MemoryModel.created_at <= system_at_point)
+        # #1188: Filter out superseded memories by default
+        # Skip for system_at_point/valid_at_point (handled by invalid_at > point filter above)
+        if not include_superseded and valid_at_point is None and system_at_point is None:
+            stmt = stmt.where(MemoryModel.superseded_by_id.is_(None))
 
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
@@ -389,97 +411,117 @@ class MemoryViewRouter:
         if user_id is None and agent_id is not None:
             user_id = agent_id
 
-        # v0.8.0: Upsert logic - check if memory with namespace+path_key exists
+        # v0.8.0: Upsert logic - check if current memory with path_key exists
+        # #1188: Only match current (non-superseded) memories
+        # #1188: Allow upsert by path_key alone (namespace is optional filter)
         existing_memory = None
-        if namespace and path_key:
+        if path_key:
             stmt = select(MemoryModel).where(
-                MemoryModel.namespace == namespace,
                 MemoryModel.path_key == path_key,
                 MemoryModel.user_id == user_id,  # Scope to same user
+                MemoryModel.invalid_at.is_(None),  # #1188: Only match current memories
+                MemoryModel.superseded_by_id.is_(None),  # #1188: Not already superseded
             )
+            # Filter by namespace if provided
+            if namespace:
+                stmt = stmt.where(MemoryModel.namespace == namespace)
             # Filter by zone if provided
             if zone_id:
                 stmt = stmt.where(MemoryModel.zone_id == zone_id)
             existing_memory = self.session.execute(stmt).scalar_one_or_none()
 
         if existing_memory:
-            # #1184: Get current version entry for lineage tracking
-            prev_version_stmt = select(VersionHistoryModel).where(
-                VersionHistoryModel.resource_type == "memory",
-                VersionHistoryModel.resource_id == existing_memory.memory_id,
-                VersionHistoryModel.version_number == existing_memory.current_version,
+            # #1188: Append-only update - create NEW row, mark old as superseded
+            # Never overwrite existing data
+            now = datetime.now(UTC)
+            new_version = existing_memory.current_version + 1
+
+            # Determine valid_at for the new memory
+            # For corrections, inherit the original valid_at
+            is_correction = False
+            if change_reason and "correction" in change_reason.lower():
+                is_correction = True
+
+            new_valid_at = valid_at
+            if is_correction and new_valid_at is None:
+                new_valid_at = existing_memory.valid_at
+
+            # Create new memory row (append-only)
+            new_memory = MemoryModel(
+                content_hash=content_hash,
+                zone_id=existing_memory.zone_id if zone_id is None else zone_id,
+                user_id=existing_memory.user_id if user_id is None else user_id,
+                agent_id=existing_memory.agent_id if agent_id is None else agent_id,
+                scope=scope,
+                visibility=visibility,
+                memory_type=memory_type or existing_memory.memory_type,
+                importance=importance,
+                state=state,
+                namespace=namespace,
+                path_key=path_key,
+                current_version=new_version,
+                supersedes_id=existing_memory.memory_id,  # #1188: Link to predecessor
+                embedding=embedding or existing_memory.embedding,
+                embedding_model=embedding_model or existing_memory.embedding_model,
+                embedding_dim=embedding_dim or existing_memory.embedding_dim,
+                entities_json=entities_json,
+                entity_types=entity_types,
+                person_refs=person_refs,
+                temporal_refs_json=temporal_refs_json,
+                earliest_date=earliest_date,
+                latest_date=latest_date,
+                relationships_json=relationships_json,
+                relationship_count=relationship_count,
+                valid_at=new_valid_at,
             )
-            prev_version_entry = self.session.execute(prev_version_stmt).scalar_one_or_none()
-            prev_version_id = prev_version_entry.version_id if prev_version_entry else None
 
-            # Update existing memory
-            existing_memory.content_hash = content_hash
-            existing_memory.scope = scope
-            existing_memory.visibility = visibility
-            existing_memory.memory_type = memory_type
-            existing_memory.importance = importance
-            # Update other fields if provided
-            if zone_id is not None:
-                existing_memory.zone_id = zone_id
-            if user_id is not None:
-                existing_memory.user_id = user_id
-            if agent_id is not None:
-                existing_memory.agent_id = agent_id
-            # Update embedding fields (#406)
-            if embedding is not None:
-                existing_memory.embedding = embedding
-            if embedding_model is not None:
-                existing_memory.embedding_model = embedding_model
-            if embedding_dim is not None:
-                existing_memory.embedding_dim = embedding_dim
-            # Update entity extraction fields (#1025)
-            if entities_json is not None:
-                existing_memory.entities_json = entities_json
-            if entity_types is not None:
-                existing_memory.entity_types = entity_types
-            if person_refs is not None:
-                existing_memory.person_refs = person_refs
-            # Update temporal metadata fields (#1028)
-            if temporal_refs_json is not None:
-                existing_memory.temporal_refs_json = temporal_refs_json
-            if earliest_date is not None:
-                existing_memory.earliest_date = earliest_date
-            if latest_date is not None:
-                existing_memory.latest_date = latest_date
-            # Update relationship extraction fields (#1038)
-            if relationships_json is not None:
-                existing_memory.relationships_json = relationships_json
-            if relationship_count is not None:
-                existing_memory.relationship_count = relationship_count
-            # Update bi-temporal validity (#1183)
-            if valid_at is not None:
-                existing_memory.valid_at = valid_at
+            new_memory.validate()
 
-            # #1184: Atomically increment version at database level
-            self.session.execute(
-                update(MemoryModel)
-                .where(MemoryModel.memory_id == existing_memory.memory_id)
-                .values(current_version=MemoryModel.current_version + 1)
-            )
-            self.session.refresh(existing_memory)
+            # #1188: Mark old memory as superseded BEFORE inserting new row
+            # Clear path_key on old row to avoid unique constraint violation
+            # (old row is accessed via supersedes chain, not path_key)
+            existing_memory.invalid_at = now
+            existing_memory.path_key = None
+            self.session.flush()
 
-            existing_memory.validate()
+            self.session.add(new_memory)
+            self.session.flush()  # Get the new memory_id
+
+            # #1188: Set superseded_by_id on old memory (denormalized back-link)
+            existing_memory.superseded_by_id = new_memory.memory_id
             self.session.commit()
 
-            # #1184: Create version history entry for the update
+            # #1184: Create version history entry for the new memory
             self._create_version_entry(
-                memory_id=existing_memory.memory_id,
+                memory_id=new_memory.memory_id,
                 content_hash=content_hash,
                 size_bytes=size_bytes,
-                version_number=existing_memory.current_version,
+                version_number=new_version,
                 source_type="update",
-                parent_version_id=prev_version_id,
-                change_reason=change_reason or "Memory updated",
+                parent_version_id=None,
+                change_reason=change_reason or "Memory updated (append-only)",
                 created_by=created_by or user_id or agent_id,
             )
             self.session.commit()
 
-            return existing_memory
+            # Create ReBAC tuple for new memory owner
+            if user_id or existing_memory.user_id:
+                from sqlalchemy import Engine
+
+                from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+                bind = self.session.get_bind()
+                assert isinstance(bind, Engine), "Expected Engine, got Connection"
+                rebac = EnhancedReBACManager(bind)
+
+                rebac.rebac_write(
+                    subject=("user", user_id or existing_memory.user_id),
+                    relation="owner",
+                    object=("memory", new_memory.memory_id),
+                    zone_id=zone_id or existing_memory.zone_id,
+                )
+
+            return new_memory
         else:
             # Create new memory
             memory = MemoryModel(
@@ -577,17 +619,21 @@ class MemoryViewRouter:
         return memory
 
     def delete_memory(self, memory_id: str) -> bool:
-        """Delete a memory.
+        """Soft-delete a memory (#1188: non-destructive).
+
+        Sets invalid_at and state='deleted' instead of removing the row.
+        The memory remains in the database for audit trail purposes.
 
         Args:
             memory_id: Memory ID.
 
         Returns:
-            True if deleted, False if not found.
+            True if soft-deleted, False if not found.
         """
         memory = self.get_memory_by_id(memory_id)
         if memory:
-            self.session.delete(memory)
+            memory.invalid_at = datetime.now(UTC)
+            memory.state = "deleted"
             self.session.commit()
             return True
         return False

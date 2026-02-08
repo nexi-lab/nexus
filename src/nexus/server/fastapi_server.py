@@ -75,6 +75,7 @@ from nexus.server.protocol import (
 )
 
 if TYPE_CHECKING:
+    from nexus.core.async_nexus_fs import AsyncNexusFS
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,7 @@ class AppState:
 
     def __init__(self) -> None:
         self.nexus_fs: NexusFS | None = None
+        self.async_nexus_fs: AsyncNexusFS | None = None  # Issue #940: Native async fs
         self.auth_provider: Any = None
         self.api_key: str | None = None
         self.exposed_methods: dict[str, Any] = {}
@@ -712,6 +714,39 @@ async def lifespan(_app: FastAPI) -> Any:
             engine = create_async_engine_from_url(_app_state.database_url)
             _app_state.async_rebac_manager = AsyncReBACManager(engine)
             logger.info("Async ReBAC manager initialized")
+
+            # Issue #940: Initialize AsyncNexusFS with permission enforcement
+            try:
+                from nexus.core.async_nexus_fs import AsyncNexusFS
+                from nexus.core.async_permissions import AsyncPermissionEnforcer
+
+                backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
+                tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
+                enforce_permissions = os.getenv("NEXUS_ENFORCE_PERMISSIONS", "true").lower() in (
+                    "true", "1", "yes"
+                )
+
+                # Create permission enforcer with async ReBAC
+                permission_enforcer = AsyncPermissionEnforcer(
+                    rebac_manager=_app_state.async_rebac_manager
+                )
+
+                # Create AsyncNexusFS
+                _app_state.async_nexus_fs = AsyncNexusFS(
+                    backend_root=backend_root,
+                    engine=engine,
+                    tenant_id=tenant_id,
+                    enforce_permissions=enforce_permissions,
+                    permission_enforcer=permission_enforcer,
+                )
+                await _app_state.async_nexus_fs.initialize()
+                logger.info(
+                    f"AsyncNexusFS initialized (backend={backend_root}, "
+                    f"tenant={tenant_id}, enforce_permissions={enforce_permissions})"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize AsyncNexusFS: {e}")
+
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
@@ -964,6 +999,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #940: Shutdown AsyncNexusFS
+    if _app_state.async_nexus_fs:
+        try:
+            await _app_state.async_nexus_fs.close()
+            logger.info("AsyncNexusFS stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down AsyncNexusFS: {e}")
 
     # Shutdown Search Daemon (Issue #951)
     if _app_state.search_daemon:
@@ -1662,6 +1705,18 @@ def _register_routes(app: FastAPI) -> None:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
         )
+
+    # Issue #940: Register async files router (lazy initialization via lifespan)
+    try:
+        from nexus.server.api.v2.routers.async_files import create_async_files_router
+
+        async_files_router = create_async_files_router(
+            get_fs=lambda: _app_state.async_nexus_fs,
+        )
+        app.include_router(async_files_router, prefix="/api/v2/files")
+        logger.info("Async files router registered (9 endpoints)")
+    except ImportError as e:
+        logger.warning(f"Failed to import async files router: {e}")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

@@ -583,7 +583,9 @@ class SkillService:
         """Get ReBAC manager instance from gateway."""
         # Gateway wraps NexusFS which has _rebac_manager
         if hasattr(self._gw, "_fs") and hasattr(self._gw._fs, "_rebac_manager"):
-            return self._gw._fs._rebac_manager
+            mgr = self._gw._fs._rebac_manager
+            if mgr is not None:
+                return mgr
         raise RuntimeError("ReBAC manager not configured")
 
     def _extract_owner_from_path(self, skill_path: str) -> str:

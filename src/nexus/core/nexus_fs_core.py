@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSCoreMixin:
@@ -43,9 +42,10 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.core._metadata_generated import MetadataStore
         from nexus.core.permissions import PermissionEnforcer
 
-        metadata: SQLAlchemyMetadataStore
+        metadata: MetadataStore
         backend: Backend
         router: PathRouter
         is_admin: bool
@@ -55,7 +55,7 @@ class NexusFSCoreMixin:
         _default_context: OperationContext
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
-        _permission_enforcer: PermissionEnforcer
+        _permission_enforcer: PermissionEnforcer | None
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
 
         @property

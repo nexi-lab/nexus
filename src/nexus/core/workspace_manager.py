@@ -16,8 +16,8 @@ from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.core._metadata_generated import MetadataStore
     from nexus.core.rebac_manager import ReBACManager
-    from nexus.storage import SQLAlchemyMetadataStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class WorkspaceManager:
 
     def __init__(
         self,
-        metadata: SQLAlchemyMetadataStore,
+        metadata: MetadataStore,
         backend: Backend,
         rebac_manager: ReBACManager | None = None,
         zone_id: str | None = None,

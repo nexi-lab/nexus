@@ -18,9 +18,17 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
+    from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
     from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.core.entity_registry import EntityRegistry
+    from nexus.core.hierarchy_manager import HierarchyManager
     from nexus.core.memory_api import Memory
+    from nexus.core.mount_manager import MountManager
+    from nexus.core.permissions import PermissionEnforcer
+    from nexus.core.permissions_enhanced import AuditStore
+    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.workspace_manager import WorkspaceManager
+    from nexus.core.workspace_registry import WorkspaceRegistry
 from nexus.core._metadata_generated import FileMetadata, MetadataStore
 from nexus.core.export_import import (
     CollisionDetail,
@@ -213,7 +221,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Initialize metadata store (Task #14: Dependency Injection)
         # Kernel core: ordered KV for inodes, dentries, config, topology
-        self.metadata = metadata_store
+        self.metadata: MetadataStore = metadata_store
 
         # Initialize record store (Task #14: Four Pillars)
         # Services layer: relational DB for ReBAC, Auth, Audit, etc.
@@ -300,7 +308,19 @@ class NexusFS(  # type: ignore[misc]
         # Services layer — requires RecordStore (SQL).
         # These are NOT kernel core; they handle ReBAC, Auth, Audit, etc.
         # When record_store is None, services are disabled (pure file ops only).
+        # Task #23: These should eventually be injected, not created here.
         # =====================================================================
+        self._rebac_manager: EnhancedReBACManager | None
+        self._dir_visibility_cache: DirectoryVisibilityCache | None
+        self._audit_store: AuditStore | None
+        self._entity_registry: EntityRegistry | None
+        self._permission_enforcer: PermissionEnforcer | None
+        self._hierarchy_manager: HierarchyManager | None
+        self._deferred_permission_buffer: DeferredPermissionBuffer | None
+        self._workspace_registry: WorkspaceRegistry | None
+        self.mount_manager: MountManager | None
+        self._workspace_manager: WorkspaceManager | None
+
         if record_store is not None:
             # P0 Fixes: Initialize EnhancedReBACManager with all GA features
             from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
@@ -317,7 +337,7 @@ class NexusFS(  # type: ignore[misc]
             # Issue #919: Initialize DirectoryVisibilityCache for O(1) directory visibility checks
             from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
 
-            self._dir_visibility_cache: DirectoryVisibilityCache = DirectoryVisibilityCache(
+            self._dir_visibility_cache = DirectoryVisibilityCache(
                 tiger_cache=getattr(self._rebac_manager, "_tiger_cache", None),
                 ttl=cache_ttl_seconds or 300,
                 max_entries=10000,
@@ -339,7 +359,7 @@ class NexusFS(  # type: ignore[misc]
             # v0.5.0 ACE: Initialize EntityRegistry early for agent permission inheritance
             from nexus.core.entity_registry import EntityRegistry
 
-            self._entity_registry: EntityRegistry | None = EntityRegistry(self.SessionLocal)
+            self._entity_registry = EntityRegistry(self.SessionLocal)
 
             # P0 Fixes: Initialize PermissionEnforcer with audit logging
             from nexus.core.permissions import PermissionEnforcer
@@ -366,7 +386,7 @@ class NexusFS(  # type: ignore[misc]
             # Issue #1071: Initialize DeferredPermissionBuffer for async write optimization
             from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
 
-            self._deferred_permission_buffer: DeferredPermissionBuffer | None = None
+            self._deferred_permission_buffer = None
             if enable_deferred_permissions:
                 self._deferred_permission_buffer = DeferredPermissionBuffer(
                     rebac_manager=self._rebac_manager,

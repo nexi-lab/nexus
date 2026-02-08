@@ -4169,18 +4169,12 @@ async def _fire_rpc_event(
 
     try:
         zone_id = getattr(context, "zone_id", None) or "default"
+        # Identity: subject_type + subject_id only (no user_id/agent_id in event data)
         data: dict[str, Any] = {"file_path": path, "zone_id": zone_id}
         if old_path:
             data["old_path"] = old_path
         if size is not None:
             data["size"] = size
-        # Backward-compat: keep agent_id/user_id alongside subject_type/subject_id
-        agent_id = getattr(context, "agent_id", None)
-        user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
-        if agent_id is not None:
-            data["agent_id"] = agent_id
-        if user_id is not None:
-            data["user_id"] = user_id
         st = getattr(context, "subject_type", None)
         sid = getattr(context, "subject_id", None) or getattr(context, "user", None)
         if st is not None:

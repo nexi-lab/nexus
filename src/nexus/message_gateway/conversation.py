@@ -363,59 +363,6 @@ def update_sync_cursor(
         logger.warning(f"Failed to update sync cursor for {session_id}: {e}")
 
 
-def _read_recent_message_ids(
-    nx: NexusFS,
-    session_id: str,
-    context: OperationContext,
-    tail_count: int = 200,
-) -> set[str]:
-    """Read message IDs from the conversation file, optimized for dedup.
-
-    Reads the full file but only parses IDs. For large conversations where
-    a sync cursor is used, most incoming messages will be new so the dedup
-    set only needs the recent tail to catch edge-case overlaps.
-
-    Args:
-        nx: NexusFS instance
-        session_id: Session key
-        context: Operation context
-        tail_count: Number of recent lines to parse for IDs
-
-    Returns:
-        Set of message IDs from recent messages
-    """
-    path = get_conversation_path(session_id)
-
-    try:
-        if not _call_with_context(nx.exists, path, context=context):
-            return set()
-
-        raw_content = _call_with_context(nx.read, path, context=context)
-        if isinstance(raw_content, bytes):
-            text_content = raw_content.decode("utf-8")
-        elif isinstance(raw_content, str):
-            text_content = raw_content
-        else:
-            return set()
-
-        lines = [l for l in text_content.splitlines() if l.strip()]  # noqa: E741
-        # Only parse the tail for IDs (sufficient for overlap detection)
-        recent_lines = lines[-tail_count:] if len(lines) > tail_count else lines
-
-        ids: set[str] = set()
-        for line in recent_lines:
-            try:
-                msg = Message.from_jsonl(line)
-                ids.add(msg.id)
-            except Exception:
-                continue
-        return ids
-
-    except Exception as e:
-        logger.error(f"Failed to read recent message IDs from {path}: {e}")
-        return set()
-
-
 def sync_messages(
     nx: NexusFS,
     session_id: str,
@@ -428,9 +375,6 @@ def sync_messages(
 
     Messages are identified by their `id` field (channel's native message ID).
     Existing messages are skipped, new messages are appended in order.
-
-    For efficiency, only reads recent message IDs for dedup detection rather
-    than parsing the entire conversation history.
 
     After syncing, updates the sync cursor in metadata with the last
     message's ID and timestamp (for incremental sync).
@@ -448,8 +392,9 @@ def sync_messages(
     if not messages:
         return 0, 0
 
-    # Read recent message IDs for dedup (not the full history)
-    existing_ids = _read_recent_message_ids(nx, session_id, context)
+    # Read existing message IDs
+    existing_messages = read_messages(nx, session_id, context)
+    existing_ids = {msg.id for msg in existing_messages}
 
     added = 0
     skipped = 0

@@ -5,17 +5,13 @@ Tests the full HTTP request/response cycle using FastAPI's TestClient.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.a2a.models import TaskState
 from nexus.a2a.router import build_router
-from nexus.a2a.task_manager import TaskManager
-
 
 # ======================================================================
 # Fixtures

@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
-
-import pytest
 
 from nexus.a2a.agent_card import (
     _detect_auth_schemes,
@@ -17,7 +14,6 @@ from nexus.a2a.agent_card import (
     invalidate_cache,
 )
 from nexus.a2a.models import AgentCard
-
 
 # ======================================================================
 # Helpers — mock skill metadata

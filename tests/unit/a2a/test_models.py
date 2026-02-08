@@ -20,14 +20,11 @@ from nexus.a2a.models import (
     Artifact,
     AuthScheme,
     DataPart,
-    DeletePushNotificationParams,
     FileContent,
     FilePart,
-    GetPushNotificationParams,
     Message,
     PushNotificationConfig,
     SendParams,
-    SetPushNotificationParams,
     Task,
     TaskArtifactUpdateEvent,
     TaskIdParams,
@@ -38,7 +35,6 @@ from nexus.a2a.models import (
     TextPart,
     is_valid_transition,
 )
-
 
 # ======================================================================
 # TaskState Enum

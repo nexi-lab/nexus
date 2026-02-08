@@ -46,7 +46,7 @@ SSE_MAX_LIFETIME = 1800  # 30 minutes
 
 def build_router(
     *,
-    nexus_fs: Any = None,
+    _nexus_fs: Any = None,
     config: Any = None,
     base_url: str | None = None,
     task_manager: TaskManager | None = None,
@@ -370,7 +370,7 @@ async def _handle_streaming(
 
 async def _handle_send_streaming(
     params: dict[str, Any],
-    request_id: str | int,
+    _request_id: str | int,
     zone_id: str,
     agent_id: str | None,
     task_manager: TaskManager,
@@ -440,7 +440,7 @@ async def _handle_send_streaming(
 
 async def _handle_subscribe(
     params: dict[str, Any],
-    request_id: str | int,
+    _request_id: str | int,
     zone_id: str,
     task_manager: TaskManager,
 ) -> StreamingResponse:

@@ -10,18 +10,17 @@ schema generation.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 # ============================================================================
 # Task State
 # ============================================================================
 
 
-class TaskState(str, Enum):
+class TaskState(StrEnum):
     """A2A task lifecycle states."""
 
     SUBMITTED = "submitted"

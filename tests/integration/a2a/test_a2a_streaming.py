@@ -22,7 +22,6 @@ from fastapi import FastAPI
 from nexus.a2a.router import build_router
 from nexus.a2a.task_manager import TaskManager
 
-
 # ======================================================================
 # Fixtures
 # ======================================================================

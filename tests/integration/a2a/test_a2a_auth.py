@@ -17,7 +17,6 @@ from starlette.testclient import TestClient
 
 from nexus.a2a.router import build_router
 
-
 # ======================================================================
 # Fixtures
 # ======================================================================

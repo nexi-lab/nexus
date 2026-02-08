@@ -15,7 +15,6 @@ from nexus.a2a.exceptions import (
     TaskNotFoundError,
 )
 from nexus.a2a.models import (
-    TERMINAL_STATES,
     VALID_TRANSITIONS,
     Artifact,
     Message,
@@ -23,7 +22,6 @@ from nexus.a2a.models import (
     TextPart,
 )
 from nexus.a2a.task_manager import TaskManager
-
 
 # ======================================================================
 # Fixtures

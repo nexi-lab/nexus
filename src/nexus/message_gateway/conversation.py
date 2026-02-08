@@ -115,10 +115,10 @@ def read_messages(
     path = get_conversation_path(session_id)
 
     try:
-        if not nx.exists(path, context=context):
+        if not _call_with_context(nx.exists, path, context=context):
             return []
 
-        raw_content = nx.read(path, context=context)
+        raw_content = _call_with_context(nx.read, path, context=context)
         if isinstance(raw_content, bytes):
             text_content = raw_content.decode("utf-8")
         elif isinstance(raw_content, str):

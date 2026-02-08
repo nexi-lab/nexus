@@ -122,9 +122,7 @@ class WhoamiResponse(BaseModel):
 # ============================================================================
 
 # Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
-import os as _os
-
-LOCK_MAX_TTL = float(_os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
+LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
 
 
 class LockAcquireRequest(BaseModel):

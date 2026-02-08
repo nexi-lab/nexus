@@ -716,8 +716,8 @@ class RaftMetadataStore(MetadataStore):
             lock_infos = self._local.list_locks(prefix, limit)
             return [
                 {
-                    "path": l.path,
-                    "max_holders": l.max_holders,
+                    "path": lock.path,
+                    "max_holders": lock.max_holders,
                     "holders": [
                         {
                             "lock_id": h.lock_id,
@@ -725,10 +725,10 @@ class RaftMetadataStore(MetadataStore):
                             "acquired_at": h.acquired_at,
                             "expires_at": h.expires_at,
                         }
-                        for h in l.holders
+                        for h in lock.holders
                     ],
                 }
-                for l in lock_infos
+                for lock in lock_infos
             ]
         else:
             raise NotImplementedError("Remote list_locks requires async")

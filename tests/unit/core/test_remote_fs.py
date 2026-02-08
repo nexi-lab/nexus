@@ -10,6 +10,9 @@ import pytest
 from nexus import NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -874,9 +877,6 @@ class TestRmdirWithFiles:
     def test_rmdir_non_empty_non_recursive(self, remote_fs: NexusFS) -> None:
         """Test that rmdir fails on non-empty directory without recursive flag."""
         import errno
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Create file in directory
         path = "/workspace/data/file.txt"

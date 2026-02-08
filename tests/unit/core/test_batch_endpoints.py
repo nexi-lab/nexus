@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture

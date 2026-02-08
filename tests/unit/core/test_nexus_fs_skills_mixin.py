@@ -33,6 +33,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Skip all tests - they test methods that don't exist (planned but never implemented)
 # The actual NexusFSSkillsMixin uses _get_skill_service() and SkillService,
@@ -119,8 +121,6 @@ class TestGetSkillGovernance:
         governance = nx._get_skill_governance()
         assert governance is not None
         from nexus.skills import SkillGovernance
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         assert isinstance(governance, SkillGovernance)
 

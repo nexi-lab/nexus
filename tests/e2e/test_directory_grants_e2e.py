@@ -22,6 +22,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 # Add src to path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
@@ -415,8 +418,6 @@ class TestDirectoryGrantWorker:
     def test_worker_marks_completed_on_empty_directory(self, standalone_engine):
         """Test that worker marks empty directory grants as completed."""
         from nexus.core.tiger_cache import DirectoryGrantExpander, TigerCache, TigerResourceMap
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Create Tiger Cache
         resource_map = TigerResourceMap(standalone_engine)

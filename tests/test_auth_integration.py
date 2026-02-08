@@ -11,6 +11,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+
 # Set up test database URL before importing
 os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-12345"
 os.environ["NEXUS_DATABASE_URL"] = "sqlite:///:memory:"
@@ -534,8 +537,6 @@ def test_oauth_callback_race_condition_postgres():
 
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import APIKeyModel, UserModel
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # PostgreSQL connection
     database_url = "postgresql://postgres:nexus@localhost:5433/nexus"

@@ -29,6 +29,8 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Mark all tests in this module to run sequentially to avoid SQLite locking issues
 # when running tests in parallel with pytest-xdist
@@ -449,8 +451,6 @@ class TestConcurrency:
     def test_sequential_checks(self, nx: NexusFS) -> None:
         """Test that multiple permission checks work correctly."""
         import time
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Pre-create tuples with small delay to avoid SQLite locking
         for i in range(3):

@@ -672,6 +672,81 @@ class RaftMetadataStore(MetadataStore):
         else:
             raise NotImplementedError("Remote locks require async. Use extend_lock_async()")
 
+    def get_lock_info(self, path: str) -> dict[str, Any] | None:
+        """Get lock information for a path.
+
+        Args:
+            path: Lock key (typically "zone_id:resource_path")
+
+        Returns:
+            Dict with lock info if lock exists and has holders, None otherwise.
+            Dict keys: path, max_holders, holders (list of holder dicts)
+        """
+        if self._is_local:
+            lock_info = self._local.get_lock(path)
+            if lock_info is None or not lock_info.holders:
+                return None
+            return {
+                "path": lock_info.path,
+                "max_holders": lock_info.max_holders,
+                "holders": [
+                    {
+                        "lock_id": h.lock_id,
+                        "holder_info": h.holder_info,
+                        "acquired_at": h.acquired_at,
+                        "expires_at": h.expires_at,
+                    }
+                    for h in lock_info.holders
+                ],
+            }
+        else:
+            raise NotImplementedError("Remote lock info requires async")
+
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+        """List all active locks matching a prefix.
+
+        Args:
+            prefix: Key prefix to filter by (e.g., "zone_id:" for zone-scoped)
+            limit: Maximum number of results
+
+        Returns:
+            List of lock info dicts
+        """
+        if self._is_local:
+            lock_infos = self._local.list_locks(prefix, limit)
+            return [
+                {
+                    "path": l.path,
+                    "max_holders": l.max_holders,
+                    "holders": [
+                        {
+                            "lock_id": h.lock_id,
+                            "holder_info": h.holder_info,
+                            "acquired_at": h.acquired_at,
+                            "expires_at": h.expires_at,
+                        }
+                        for h in l.holders
+                    ],
+                }
+                for l in lock_infos
+            ]
+        else:
+            raise NotImplementedError("Remote list_locks requires async")
+
+    def force_release_lock(self, path: str) -> bool:
+        """Force-release all holders of a lock (admin operation).
+
+        Args:
+            path: Lock key to force-release
+
+        Returns:
+            True if a lock was found and released, False if no lock exists
+        """
+        if self._is_local:
+            return self._local.force_release_lock(path)
+        else:
+            raise NotImplementedError("Remote force_release requires async")
+
     # =========================================================================
     # Async Methods (for RemoteNexusFS using remote mode)
     # =========================================================================

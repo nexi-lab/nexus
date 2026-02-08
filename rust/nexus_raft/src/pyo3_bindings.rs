@@ -319,6 +319,52 @@ impl PyLocalRaft {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))
     }
 
+    /// List all locks matching a prefix.
+    ///
+    /// Args:
+    ///     prefix: Key prefix to filter by (e.g., "zone_id:" for zone-scoped locks).
+    ///     limit: Maximum number of results to return.
+    ///
+    /// Returns:
+    ///     List of LockInfo for matching locks.
+    #[pyo3(signature = (prefix="", limit=1000))]
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> PyResult<Vec<PyLockInfo>> {
+        self.sm
+            .list_locks(prefix, limit)
+            .map(|locks| locks.into_iter().map(|l| l.into()).collect())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to list locks: {}", e)))
+    }
+
+    /// Force-release all holders of a lock (admin operation).
+    ///
+    /// Args:
+    ///     path: Resource path to force-release.
+    ///
+    /// Returns:
+    ///     True if a lock was found and released, False if no lock exists.
+    pub fn force_release_lock(&mut self, path: &str) -> PyResult<bool> {
+        // Get current lock info
+        let lock_info = self
+            .sm
+            .get_lock(path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))?;
+
+        match lock_info {
+            Some(info) if !info.holders.is_empty() => {
+                // Release each holder
+                for holder in &info.holders {
+                    let cmd = Command::ReleaseLock {
+                        path: path.to_string(),
+                        lock_id: holder.lock_id.clone(),
+                    };
+                    let _ = self.apply_command_raw(cmd)?;
+                }
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
     // =========================================================================
     // Snapshot Operations
     // =========================================================================

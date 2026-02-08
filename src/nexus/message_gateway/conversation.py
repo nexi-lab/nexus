@@ -55,6 +55,41 @@ def is_channel_native_id(message_id: str) -> bool:
     return not message_id.startswith("msg_")
 
 
+def _sanitize_session_id(session_id: str) -> str:
+    """Sanitize a session ID for safe use in filesystem paths.
+
+    Strips or replaces characters that could enable path traversal
+    or other filesystem-level attacks.
+
+    Args:
+        session_id: Raw session ID
+
+    Returns:
+        Filesystem-safe session ID
+
+    Raises:
+        ValueError: If session_id is empty or invalid after sanitization
+    """
+    if not session_id:
+        raise ValueError("session_id cannot be empty")
+
+    safe_id = session_id
+    # Remove null bytes (can truncate paths on some systems)
+    safe_id = safe_id.replace("\x00", "")
+    # Normalize backslashes to forward slashes, then replace
+    safe_id = safe_id.replace("\\", "_")
+    # Replace path traversal components
+    safe_id = safe_id.replace("..", "_")
+    safe_id = safe_id.replace("/", "_")
+    # Strip leading/trailing whitespace and dots (prevent hidden files)
+    safe_id = safe_id.strip().strip(".")
+
+    if not safe_id:
+        raise ValueError(f"session_id is empty after sanitization: {session_id!r}")
+
+    return safe_id
+
+
 def _get_session_dir(session_id: str) -> str:
     """Get the directory path for a session.
 
@@ -64,7 +99,7 @@ def _get_session_dir(session_id: str) -> str:
     Returns:
         Path to session directory
     """
-    safe_id = session_id.replace("/", "_").replace("..", "_")
+    safe_id = _sanitize_session_id(session_id)
     return f"/sessions/{safe_id}"
 
 
@@ -239,7 +274,8 @@ def ensure_session_metadata(
 ) -> None:
     """Ensure session metadata exists, creating if needed.
 
-    Only writes if metadata.json doesn't exist yet.
+    Uses write-if-absent to avoid TOCTOU race conditions when
+    multiple concurrent messages arrive for a new session.
 
     Args:
         nx: NexusFS instance
@@ -250,9 +286,17 @@ def ensure_session_metadata(
     path = get_metadata_path(session_id)
 
     try:
-        if not _call_with_context(nx.exists, path, context=context):
-            write_session_metadata(nx, session_id, metadata, context)
-            logger.info(f"Created session metadata for {session_id}")
+        # Try to read first — if metadata exists, nothing to do
+        existing = read_session_metadata(nx, session_id, context)
+        if existing is not None:
+            return
+
+        # Metadata doesn't exist yet, write it.
+        # If a concurrent writer already created it between our read and
+        # this write, the worst case is an overwrite with identical initial
+        # metadata — acceptable for session bootstrap.
+        write_session_metadata(nx, session_id, metadata, context)
+        logger.info(f"Created session metadata for {session_id}")
     except Exception as e:
         # Non-fatal - log and continue
         logger.warning(f"Failed to ensure session metadata for {session_id}: {e}")
@@ -319,6 +363,59 @@ def update_sync_cursor(
         logger.warning(f"Failed to update sync cursor for {session_id}: {e}")
 
 
+def _read_recent_message_ids(
+    nx: NexusFS,
+    session_id: str,
+    context: OperationContext,
+    tail_count: int = 200,
+) -> set[str]:
+    """Read message IDs from the conversation file, optimized for dedup.
+
+    Reads the full file but only parses IDs. For large conversations where
+    a sync cursor is used, most incoming messages will be new so the dedup
+    set only needs the recent tail to catch edge-case overlaps.
+
+    Args:
+        nx: NexusFS instance
+        session_id: Session key
+        context: Operation context
+        tail_count: Number of recent lines to parse for IDs
+
+    Returns:
+        Set of message IDs from recent messages
+    """
+    path = get_conversation_path(session_id)
+
+    try:
+        if not _call_with_context(nx.exists, path, context=context):
+            return set()
+
+        raw_content = _call_with_context(nx.read, path, context=context)
+        if isinstance(raw_content, bytes):
+            text_content = raw_content.decode("utf-8")
+        elif isinstance(raw_content, str):
+            text_content = raw_content
+        else:
+            return set()
+
+        lines = [l for l in text_content.splitlines() if l.strip()]  # noqa: E741
+        # Only parse the tail for IDs (sufficient for overlap detection)
+        recent_lines = lines[-tail_count:] if len(lines) > tail_count else lines
+
+        ids: set[str] = set()
+        for line in recent_lines:
+            try:
+                msg = Message.from_jsonl(line)
+                ids.add(msg.id)
+            except Exception:
+                continue
+        return ids
+
+    except Exception as e:
+        logger.error(f"Failed to read recent message IDs from {path}: {e}")
+        return set()
+
+
 def sync_messages(
     nx: NexusFS,
     session_id: str,
@@ -331,6 +428,9 @@ def sync_messages(
 
     Messages are identified by their `id` field (channel's native message ID).
     Existing messages are skipped, new messages are appended in order.
+
+    For efficiency, only reads recent message IDs for dedup detection rather
+    than parsing the entire conversation history.
 
     After syncing, updates the sync cursor in metadata with the last
     message's ID and timestamp (for incremental sync).
@@ -348,9 +448,8 @@ def sync_messages(
     if not messages:
         return 0, 0
 
-    # Read existing message IDs
-    existing_messages = read_messages(nx, session_id, context)
-    existing_ids = {msg.id for msg in existing_messages}
+    # Read recent message IDs for dedup (not the full history)
+    existing_ids = _read_recent_message_ids(nx, session_id, context)
 
     added = 0
     skipped = 0

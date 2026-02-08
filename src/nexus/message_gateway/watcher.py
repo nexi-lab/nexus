@@ -7,11 +7,16 @@ Uses SubscriptionManager webhooks for file change notifications.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.message_gateway.conversation import read_messages
 from nexus.message_gateway.types import Message
+
+# Maximum number of sessions to track in the watcher's seen-message cache.
+# Oldest sessions are evicted first (LRU).
+_MAX_TRACKED_SESSIONS = 10_000
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
@@ -81,7 +86,9 @@ class ConversationWatcher:
 
         self._handlers: list[MessageHandler] = []
         self._subscription_id: str | None = None
-        self._last_message_ids: dict[str, set[str]] = {}  # session_id -> seen message IDs
+        # LRU cache: session_id -> set of seen message IDs.
+        # Bounded to _MAX_TRACKED_SESSIONS to prevent unbounded memory growth.
+        self._last_message_ids: OrderedDict[str, set[str]] = OrderedDict()
         self._running = False
 
     def on_message(self, handler: MessageHandler) -> None:
@@ -206,8 +213,13 @@ class ConversationWatcher:
         if not new_messages:
             return
 
-        # Update seen IDs
+        # Update seen IDs (only keep IDs from current messages, not cumulative)
         self._last_message_ids[session_id] = {m.id for m in messages}
+        # Move to end for LRU ordering
+        self._last_message_ids.move_to_end(session_id)
+        # Evict oldest sessions if over capacity
+        while len(self._last_message_ids) > _MAX_TRACKED_SESSIONS:
+            self._last_message_ids.popitem(last=False)
 
         # Process new messages (skip messages from self)
         for message in new_messages:

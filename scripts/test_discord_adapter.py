@@ -15,10 +15,6 @@ import asyncio
 import os
 import sys
 
-# Discord App Info (from user):
-# App ID: 1470006041012867168
-# Public Key: a5762e2ff0edbf88a0b6e50a1a9de2a15232661df2401e249e80a86a08fe2d29
-
 
 async def main():
     """Run Discord adapter test."""
@@ -27,7 +23,7 @@ async def main():
         print("Error: DISCORD_BOT_TOKEN environment variable not set")
         print("\nTo get your bot token:")
         print("1. Go to https://discord.com/developers/applications")
-        print("2. Select your app (ID: 1470006041012867168)")
+        print("2. Select your app")
         print("3. Go to Bot section")
         print("4. Click 'Reset Token' to get a new token")
         print("5. Export it: export DISCORD_BOT_TOKEN='your-token-here'")
@@ -68,10 +64,8 @@ async def main():
     mock_fs = MockNexusFS()
     mock_context = MockContext()
 
-    print(f"\nStarting Discord adapter...")
-    print(f"App ID: 1470006041012867168")
-    print(f"Token: {token[:20]}...")
-    print("\nBot will connect and log received messages.")
+    print("\nStarting Discord adapter...")
+    print("Bot will connect and log received messages.")
     print("Press Ctrl+C to stop.\n")
 
     adapter = DiscordAdapter(

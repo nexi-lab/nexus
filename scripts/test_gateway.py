@@ -9,11 +9,13 @@ Usage:
     python scripts/test_gateway.py
 """
 
+import os
+
 import httpx
 
 # Configuration
-BASE_URL = "http://localhost:8000"
-API_KEY = "test-api-key"  # Replace with your API key
+BASE_URL = os.getenv("NEXUS_BASE_URL", "http://localhost:8000")
+API_KEY = os.getenv("NEXUS_API_KEY", "test-api-key")
 
 # Test message
 TEST_MESSAGE = {

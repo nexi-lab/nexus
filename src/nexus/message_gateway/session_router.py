@@ -69,10 +69,16 @@ def derive_session_key(
     if not chat_norm:
         raise ValueError("chat_id cannot be empty after normalization")
 
-    # Validate no colons in parts
+    # Validate no dangerous characters in parts
     for part in [channel_norm, account_norm, chat_norm]:
         if ":" in part:
             raise ValueError(f"Colon not allowed in session key component: {part}")
+        if "/" in part or "\\" in part:
+            raise ValueError(f"Path separator not allowed in session key component: {part}")
+        if "\x00" in part:
+            raise ValueError(f"Null byte not allowed in session key component: {part}")
+        if ".." in part:
+            raise ValueError(f"Path traversal not allowed in session key component: {part}")
 
     return f"{channel_norm}:{account_norm}:{chat_norm}"
 

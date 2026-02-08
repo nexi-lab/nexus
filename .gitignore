@@ -92,6 +92,8 @@ cython_debug/
 # Rust
 target/
 # Cargo.lock - keep it for reproducible builds (needed for Docker)
+# uv.lock in Rust sub-crates — build artifact from maturin develop, not project-level lock
+rust/*/uv.lock
 
 # Nexus specific data directories
 nexus-data/

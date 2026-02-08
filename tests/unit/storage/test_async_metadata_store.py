@@ -64,7 +64,6 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 
     # Import only the specific models we need
     from nexus.storage.models import (
-        Base,
         DirectoryEntryModel,
         FilePathModel,
         VersionHistoryModel,
@@ -78,7 +77,7 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
             VersionHistoryModel.__table__,
         ]
         for table in tables:
-            await conn.run_sync(lambda sync_conn: table.create(sync_conn, checkfirst=True))
+            await conn.run_sync(lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True))
 
         # Clean any existing test data
         try:

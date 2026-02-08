@@ -265,10 +265,11 @@ class AsyncNexusFS:
                 # Handle race condition - another task might have created
                 # the directory between our exists check and put
                 error_str = str(e).lower()
-                if "unique" in error_str or "duplicate" in error_str:
+                if (
+                    "unique" in error_str or "duplicate" in error_str
+                ) and await self.metadata.aexists(parent):
                     # Directory was created by another task - that's fine
-                    if await self.metadata.aexists(parent):
-                        return
+                    return
                 # Re-raise if it's not a duplicate key error
                 raise
 

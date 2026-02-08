@@ -11,9 +11,9 @@ Test categories:
 4. No permission check when enforce_permissions=False
 """
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -22,8 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.async_permissions import AsyncPermissionEnforcer
 from nexus.core.exceptions import NexusPermissionError
-from nexus.core.permissions import OperationContext, Permission
-
+from nexus.core.permissions import OperationContext
 
 # === Fixtures ===
 
@@ -739,9 +738,7 @@ async def test_different_users_different_permissions(
     async def user_specific_check(**kwargs):
         subject = kwargs.get("subject", ("user", "unknown"))
         user = subject[1] if isinstance(subject, tuple) else subject
-        if "alice" in str(user):
-            return True
-        return False
+        return "alice" in str(user)
 
     mock_rebac_manager.rebac_check.side_effect = user_specific_check
 
@@ -859,8 +856,6 @@ async def test_stream_read_checks_permission(
 
     # Now deny read
     mock_rebac_manager.rebac_check.return_value = False
-
-    context = OperationContext(user="denied", groups=[], zone_id="test-tenant")
 
     # Stream read should also check permission
     # Note: stream_read doesn't have context param in current implementation

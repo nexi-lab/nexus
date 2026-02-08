@@ -816,8 +816,6 @@ class AsyncLocalBackend:
         Returns:
             HandlerResponse with content hash in data field
         """
-        start_time = time.perf_counter()
-
         # Collect all chunks
         collected_chunks: list[bytes] = []
         async for chunk in chunks:

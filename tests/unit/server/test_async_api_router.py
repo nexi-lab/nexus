@@ -4,8 +4,8 @@ Tests async API endpoints that use AsyncNexusFS for file operations.
 Uses httpx AsyncClient for testing FastAPI endpoints.
 """
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Import will fail until we implement the router
 from nexus.server.api.v2.routers.async_files import create_async_files_router
-
 
 # === Fixtures ===
 

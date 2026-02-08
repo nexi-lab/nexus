@@ -42,11 +42,10 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from nexus.core.exceptions import MetadataError
 from nexus.core._metadata_generated import FileMetadata, PaginatedResult
+from nexus.core.exceptions import MetadataError
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
-    DirectoryEntryModel,
     FilePathModel,
     VersionHistoryModel,
 )

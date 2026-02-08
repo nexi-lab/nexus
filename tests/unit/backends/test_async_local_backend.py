@@ -6,8 +6,8 @@ Follows TDD approach: write failing tests first, then implement.
 
 import asyncio
 import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -16,7 +16,6 @@ import pytest_asyncio
 from nexus.backends.async_local import AsyncLocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-
 
 # === Fixtures ===
 

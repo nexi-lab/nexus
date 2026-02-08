@@ -7,17 +7,15 @@ Compares performance:
 Goal: Permission enforcement should add <10ms overhead per operation.
 """
 
-import asyncio
 import os
 import statistics
-import tempfile
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from unittest.mock import AsyncMock
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.async_permissions import AsyncPermissionEnforcer
@@ -35,15 +33,16 @@ async def engine():
     """Create async engine."""
     engine = create_async_engine(TEST_DATABASE_URL, echo=False)
 
-    from nexus.storage.models import FilePathModel, DirectoryEntryModel, VersionHistoryModel
     from sqlalchemy import text
+
+    from nexus.storage.models import DirectoryEntryModel, FilePathModel, VersionHistoryModel
 
     async with engine.begin() as conn:
         for table in [FilePathModel.__table__, DirectoryEntryModel.__table__, VersionHistoryModel.__table__]:
             await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
         try:
             await conn.execute(text("TRUNCATE file_paths, directory_entries, version_history CASCADE"))
-        except:
+        except Exception:
             pass
 
     yield engine

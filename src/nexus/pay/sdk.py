@@ -443,7 +443,7 @@ class NexusPay:
                     )
                 return await func(*args, **kwargs)
 
-            return wrapper  # type: ignore[return-value]
+            return wrapper
 
         return decorator
 
@@ -464,7 +464,7 @@ class NexusPay:
                     )
                 return await func(*args, **kwargs)
 
-            return wrapper  # type: ignore[return-value]
+            return wrapper
 
         return decorator
 

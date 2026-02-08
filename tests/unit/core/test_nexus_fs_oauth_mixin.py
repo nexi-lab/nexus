@@ -134,8 +134,10 @@ class TestGetTokenManager:
         # Create NexusFS without database path
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
+            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
             auto_parse=False,
             enforce_permissions=False,
+            audit_strict_mode=False,
         )
 
         try:

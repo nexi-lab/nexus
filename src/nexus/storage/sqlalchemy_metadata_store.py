@@ -1159,6 +1159,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         zone_id: str | None = None,
         accessible_paths: set[str] | None = None,
         accessible_int_ids: set[int] | None = None,
+        **_kwargs: Any,
     ) -> list[FileMetadata]:
         """
         List all files with given path prefix.

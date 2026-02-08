@@ -321,7 +321,7 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List all files with given path prefix."""
         pass
 

@@ -429,13 +429,14 @@ class ZoneImportService:
             updated_at: Original modification time
         """
         try:
-            # Use metadata store to update timestamps
+            # Use metadata store to update timestamps (if supported by implementation)
+            set_fn = getattr(self.nexus_fs.metadata, "set_file_metadata", None)
+            if set_fn is None:
+                return
             if created_at:
-                self.nexus_fs.metadata.set_file_metadata(path, "created_at", created_at.isoformat())
+                set_fn(path, "created_at", created_at.isoformat())
             if updated_at:
-                self.nexus_fs.metadata.set_file_metadata(
-                    path, "modified_at", updated_at.isoformat()
-                )
+                set_fn(path, "modified_at", updated_at.isoformat())
         except Exception as e:
             logger.warning(f"Failed to update timestamps for {path}: {e}")
 

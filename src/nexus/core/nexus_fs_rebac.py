@@ -23,10 +23,18 @@ class NexusFSReBACMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        _rebac_manager: EnhancedReBACManager
+        _rebac_manager: EnhancedReBACManager | None
         _enforce_permissions: bool
 
         def _validate_path(self, path: str) -> str: ...
+
+    @property
+    def _require_rebac(self) -> EnhancedReBACManager:
+        """Get the ReBAC manager, raising if not initialized."""
+        mgr = self._rebac_manager
+        if mgr is None:
+            raise RuntimeError("ReBAC manager not available (record_store not configured)")
+        return mgr
 
     def _get_subject_from_context(self, context: Any) -> tuple[str, str] | None:
         """Extract subject from operation context.
@@ -447,7 +455,7 @@ class NexusFSReBACMixin:
             raise ValueError("column_config can only be provided when relation is 'dynamic_viewer'")
 
         # Create relationship
-        result = self._rebac_manager.rebac_write(
+        result = self._require_rebac.rebac_write(
             subject=subject,
             relation=relation,
             object=object,
@@ -509,9 +517,9 @@ class NexusFSReBACMixin:
             # Use the _fetch_zone_tuples_from_db method to get cached tuples
             # or fall back to checking the in-memory graph
             if hasattr(self._rebac_manager, "_get_cached_zone_tuples"):
-                tuples = self._rebac_manager._get_cached_zone_tuples(effective_zone)
+                tuples = self._require_rebac._get_cached_zone_tuples(effective_zone)
                 if tuples is None:
-                    tuples = self._rebac_manager._fetch_zone_tuples_from_db(effective_zone)
+                    tuples = self._require_rebac._fetch_zone_tuples_from_db(effective_zone)
             else:
                 tuples = []
 
@@ -629,7 +637,7 @@ class NexusFSReBACMixin:
         # This allows proper zone isolation testing
 
         # Check permission with optional context
-        result = self._rebac_manager.rebac_check(
+        result = self._require_rebac.rebac_check(
             subject=subject,
             permission=permission,
             object=object,
@@ -696,7 +704,7 @@ class NexusFSReBACMixin:
             raise ValueError(f"object must be (type, id) tuple, got {object}")
 
         # Expand permission
-        return self._rebac_manager.rebac_expand(permission=permission, object=object)
+        return self._require_rebac.rebac_expand(permission=permission, object=object)
 
     @rpc_expose(description="Explain ReBAC permission check")
     def rebac_explain(
@@ -773,7 +781,7 @@ class NexusFSReBACMixin:
                 effective_zone_id = context.zone_id
 
         # Get explanation
-        return self._rebac_manager.rebac_explain(
+        return self._require_rebac.rebac_explain(
             subject=subject, permission=permission, object=object, zone_id=effective_zone_id
         )
 
@@ -830,7 +838,7 @@ class NexusFSReBACMixin:
                 raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
 
         # Perform batch check with Rust acceleration
-        return self._rebac_manager.rebac_check_batch_fast(checks=checks)
+        return self._require_rebac.rebac_check_batch_fast(checks=checks)
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     def rebac_delete(self, tuple_id: str) -> bool:
@@ -861,7 +869,7 @@ class NexusFSReBACMixin:
 
         # Delete tuple - the enhanced rebac_delete already handles Tiger Cache invalidation
         # No need to fetch tuple info here; the manager does it efficiently by tuple_id
-        return self._rebac_manager.rebac_delete(tuple_id=tuple_id)
+        return self._require_rebac.rebac_delete(tuple_id=tuple_id)
 
     @rpc_expose(description="List ReBAC relationship tuples")
     def rebac_list_tuples(
@@ -919,7 +927,7 @@ class NexusFSReBACMixin:
             )
 
         # Build query
-        conn = self._rebac_manager._get_connection()
+        conn = self._require_rebac._get_connection()
         try:
             query = "SELECT * FROM rebac_tuples WHERE 1=1"
             params: list = []
@@ -942,9 +950,9 @@ class NexusFSReBACMixin:
                 params.extend([object[0], object[1]])
 
             # Fix SQL placeholders for PostgreSQL
-            query = self._rebac_manager._fix_sql_placeholders(query)
+            query = self._require_rebac._fix_sql_placeholders(query)
 
-            cursor = self._rebac_manager._create_cursor(conn)
+            cursor = self._require_rebac._create_cursor(conn)
             cursor.execute(query, params)
 
             results = []
@@ -972,7 +980,7 @@ class NexusFSReBACMixin:
 
             return results
         finally:
-            self._rebac_manager._close_connection(conn)
+            self._require_rebac._close_connection(conn)
 
     # =========================================================================
     # Public API Wrappers for Configuration (P1 - Should Do)
@@ -1007,11 +1015,11 @@ class NexusFSReBACMixin:
         if key == "max_depth":
             if not isinstance(value, int) or value < 1:
                 raise ValueError("max_depth must be a positive integer")
-            self._rebac_manager.max_depth = value
+            self._require_rebac.max_depth = value
         elif key == "cache_ttl":
             if not isinstance(value, int) or value < 0:
                 raise ValueError("cache_ttl must be a non-negative integer")
-            self._rebac_manager.cache_ttl_seconds = value
+            self._require_rebac.cache_ttl_seconds = value
         else:
             raise ValueError(f"Unknown ReBAC option: {key}. Valid options: max_depth, cache_ttl")
 
@@ -1040,9 +1048,9 @@ class NexusFSReBACMixin:
             )
 
         if key == "max_depth":
-            return self._rebac_manager.max_depth
+            return self._require_rebac.max_depth
         elif key == "cache_ttl":
-            return self._rebac_manager.cache_ttl_seconds
+            return self._require_rebac.cache_ttl_seconds
         else:
             raise ValueError(f"Unknown ReBAC option: {key}. Valid options: max_depth, cache_ttl")
 
@@ -1103,7 +1111,7 @@ class NexusFSReBACMixin:
         )
 
         # Register via manager
-        self._rebac_manager.create_namespace(ns)
+        self._require_rebac.create_namespace(ns)
 
     @rpc_expose(description="Get ReBAC namespace schema")
     def get_namespace(self, object_type: str) -> dict[str, Any] | None:
@@ -1129,7 +1137,7 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        ns = self._rebac_manager.get_namespace(object_type)
+        ns = self._require_rebac.get_namespace(object_type)
         if ns is None:
             return None
 
@@ -1190,7 +1198,7 @@ class NexusFSReBACMixin:
             updated_at=datetime.now(UTC),
         )
 
-        self._rebac_manager.create_namespace(ns)
+        self._require_rebac.create_namespace(ns)
 
     @rpc_expose(description="List all ReBAC namespaces")
     def namespace_list(self) -> list[dict[str, Any]]:
@@ -1214,12 +1222,12 @@ class NexusFSReBACMixin:
             )
 
         # Get all namespaces by querying the database
-        conn = self._rebac_manager._get_connection()
+        conn = self._require_rebac._get_connection()
         try:
-            cursor = self._rebac_manager._create_cursor(conn)
+            cursor = self._require_rebac._create_cursor(conn)
 
             cursor.execute(
-                self._rebac_manager._fix_sql_placeholders(
+                self._require_rebac._fix_sql_placeholders(
                     "SELECT namespace_id, object_type, config, created_at, updated_at FROM rebac_namespaces ORDER BY object_type"
                 )
             )
@@ -1240,7 +1248,7 @@ class NexusFSReBACMixin:
 
             return namespaces
         finally:
-            self._rebac_manager._close_connection(conn)
+            self._require_rebac._close_connection(conn)
 
     @rpc_expose(description="Delete ReBAC namespace")
     def namespace_delete(self, object_type: str) -> bool:
@@ -1265,13 +1273,13 @@ class NexusFSReBACMixin:
                 "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
             )
 
-        conn = self._rebac_manager._get_connection()
+        conn = self._require_rebac._get_connection()
         try:
-            cursor = self._rebac_manager._create_cursor(conn)
+            cursor = self._require_rebac._create_cursor(conn)
 
             # Check if exists
             cursor.execute(
-                self._rebac_manager._fix_sql_placeholders(
+                self._require_rebac._fix_sql_placeholders(
                     "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
                 ),
                 (object_type,),
@@ -1282,7 +1290,7 @@ class NexusFSReBACMixin:
 
             # Delete
             cursor.execute(
-                self._rebac_manager._fix_sql_placeholders(
+                self._require_rebac._fix_sql_placeholders(
                     "DELETE FROM rebac_namespaces WHERE object_type = ?"
                 ),
                 (object_type,),
@@ -1291,12 +1299,13 @@ class NexusFSReBACMixin:
             conn.commit()
 
             # Invalidate cache if available
-            if hasattr(self._rebac_manager, "_cache"):
-                self._rebac_manager._cache.clear()
+            cache = getattr(self._require_rebac, "_cache", None)
+            if cache is not None:
+                cache.clear()
 
             return True
         finally:
-            self._rebac_manager._close_connection(conn)
+            self._require_rebac._close_connection(conn)
 
     # =========================================================================
     # Consent & Privacy Controls (Advanced Feature)
@@ -1360,7 +1369,7 @@ class NexusFSReBACMixin:
         filtered = []
         for subject in all_subjects:
             # Check if requester can discover this subject
-            can_discover = self._rebac_manager.rebac_check(
+            can_discover = self._require_rebac.rebac_check(
                 subject=requester, permission="discover", object=subject
             )
             if can_discover:
@@ -1612,7 +1621,7 @@ class NexusFSReBACMixin:
 
         # Use shared-* relations which are allowed to cross zone boundaries
         # Call underlying manager directly to support cross-zone parameters
-        result = self._rebac_manager.rebac_write(
+        result = self._require_rebac.rebac_write(
             subject=("user", user_id),
             relation=tuple_relation,
             object=resource,
@@ -1716,7 +1725,7 @@ class NexusFSReBACMixin:
         # This allows all members of the group to have the specified permission
         # Use shared-* relations which are allowed to cross zone boundaries
         # Call underlying manager directly to support cross-zone parameters
-        result = self._rebac_manager.rebac_write(
+        result = self._require_rebac.rebac_write(
             subject=("group", group_id, "member"),  # Userset-as-subject pattern
             relation=tuple_relation,
             object=resource,
@@ -1885,7 +1894,7 @@ class NexusFSReBACMixin:
         # Try to use cursor-based pagination
         if cursor:
             try:
-                items, next_cursor, total = self._rebac_manager._iterator_cache.get_page(
+                items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
                     cursor_id=cursor,
                     offset=offset,
                     limit=limit,
@@ -1905,7 +1914,7 @@ class NexusFSReBACMixin:
         query_hash = f"outgoing:{current_zone}:{resource_str}"
 
         # Get or create cached results
-        cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
+        cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
             query_hash=query_hash,
             zone_id=current_zone,
             compute_fn=_compute_shares,
@@ -2014,7 +2023,7 @@ class NexusFSReBACMixin:
         # Try to use cursor-based pagination
         if cursor:
             try:
-                items, next_cursor, total = self._rebac_manager._iterator_cache.get_page(
+                items, next_cursor, total = self._require_rebac._iterator_cache.get_page(
                     cursor_id=cursor,
                     offset=offset,
                     limit=limit,
@@ -2033,7 +2042,7 @@ class NexusFSReBACMixin:
         query_hash = f"incoming:{current_zone}:{user_id}"
 
         # Get or create cached results
-        cursor_id, all_results, total = self._rebac_manager._iterator_cache.get_or_create(
+        cursor_id, all_results, total = self._require_rebac._iterator_cache.get_or_create(
             query_hash=query_hash,
             zone_id=current_zone,
             compute_fn=_compute_shares,
@@ -2102,11 +2111,11 @@ class NexusFSReBACMixin:
         # Parse conditions from the tuple
         import json
 
-        conn = self._rebac_manager._get_connection()
+        conn = self._require_rebac._get_connection()
         try:
-            cursor = self._rebac_manager._create_cursor(conn)
+            cursor = self._require_rebac._create_cursor(conn)
             cursor.execute(
-                self._rebac_manager._fix_sql_placeholders(
+                self._require_rebac._fix_sql_placeholders(
                     "SELECT conditions FROM rebac_tuples WHERE tuple_id = ?"
                 ),
                 (tuple_data["tuple_id"],),
@@ -2118,7 +2127,7 @@ class NexusFSReBACMixin:
                     column_config = conditions.get("column_config")
                     return column_config if column_config is not None else None
         finally:
-            self._rebac_manager._close_connection(conn)
+            self._require_rebac._close_connection(conn)
 
         return None
 
@@ -2459,7 +2468,7 @@ class NexusFSReBACMixin:
                     continue
 
                 # Create TRAVERSE permission
-                tuple_id = self._rebac_manager.rebac_write(
+                tuple_id = self._require_rebac.rebac_write(
                     subject=subject,
                     relation="traverser-of",
                     object=("file", dir_path),
@@ -2504,7 +2513,7 @@ class NexusFSReBACMixin:
             return 0
 
         if hasattr(self._rebac_manager, "tiger_process_queue"):
-            return self._rebac_manager.tiger_process_queue(batch_size=batch_size)
+            return self._require_rebac.tiger_process_queue(batch_size=batch_size)
 
         return 0
 
@@ -2563,7 +2572,7 @@ class NexusFSReBACMixin:
             if hasattr(self._rebac_manager, "tiger_queue_update"):
                 # Queue updates for common permissions
                 for permission in ["read", "write", "traverse"]:
-                    self._rebac_manager.tiger_queue_update(
+                    self._require_rebac.tiger_queue_update(
                         subject=subject,
                         permission=permission,
                         resource_type="file",
@@ -2576,7 +2585,7 @@ class NexusFSReBACMixin:
         if hasattr(self._rebac_manager, "tiger_process_queue"):
             try:
                 # Use small batch size since each entry can take 10-40 seconds
-                self._rebac_manager.tiger_process_queue(batch_size=5)
+                self._require_rebac.tiger_process_queue(batch_size=5)
             except Exception as e:
                 import logging
 

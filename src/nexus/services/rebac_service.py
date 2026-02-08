@@ -82,7 +82,7 @@ class ReBACService:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: EnhancedReBACManager | None,
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
     ):

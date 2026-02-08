@@ -169,7 +169,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSSearchMixin:
@@ -177,18 +176,19 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
+        from nexus.core._metadata_generated import MetadataStore
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        metadata: SQLAlchemyMetadataStore
+        metadata: MetadataStore
         router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext
-        _permission_enforcer: PermissionEnforcer
+        _permission_enforcer: PermissionEnforcer | None
         _semantic_search: SemanticSearch | None
         _async_search: AsyncSemanticSearch | None
-        _rebac_manager: EnhancedReBACManager
+        _rebac_manager: EnhancedReBACManager | None
 
         def _validate_path(self, path: str) -> str: ...
 

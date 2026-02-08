@@ -55,23 +55,29 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         assert not db_path.exists()
 
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        fs = NexusFS(backend=mock_gcs_backend, metadata_store=metadata_store)
+        metadata_store = SQLAlchemyMetadataStore(db_path=db_path)
+        fs = NexusFS(
+            backend=mock_gcs_backend,
+            metadata_store=metadata_store,
+            audit_strict_mode=False,
+        )
 
         assert db_path.exists()
         fs.close()
 
-    def test_init_with_default_db_path(self, mock_gcs_backend: Mock) -> None:
+    def test_init_with_default_db_path(self, mock_gcs_backend: Mock, temp_dir: Path) -> None:
         """Test initialization with default database path."""
-        fs = NexusFS(backend=mock_gcs_backend)
+        db_path = temp_dir / "metadata.db"
+        fs = NexusFS(
+            backend=mock_gcs_backend,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            audit_strict_mode=False,
+        )
 
         assert fs.backend.bucket_name == "test-bucket"
         # Should use default path
         assert fs.metadata is not None
         fs.close()
-
-        # Clean up default db
-        Path("./nexus-remote-metadata.db").unlink(missing_ok=True)
 
     def test_init_with_credentials(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with explicit credentials."""

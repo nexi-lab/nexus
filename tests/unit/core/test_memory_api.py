@@ -479,3 +479,84 @@ class TestBitemporalMemory:
 
         result = memory_api.get(memory_id)
         assert result["valid_at"] is None  # NULL = use created_at semantically
+
+
+class TestContextAwarePermissions:
+    """Test that memory methods pass context correctly to permission checks (#1203).
+
+    Bug: list() and query() used self.context for permission checks instead of
+    the passed context parameter, causing remote callers' identity to be ignored.
+    """
+
+    def test_list_uses_passed_context(self, memory_api):
+        """Test list() uses passed context for permission filtering (#1203)."""
+        from unittest.mock import patch
+
+        from nexus.core.permissions import OperationContext
+
+        memory_api.store("Test memory", scope="user")
+
+        # Create a context with same identity (so query returns memories)
+        # but different object to verify it's passed through
+        custom_context = OperationContext(
+            user="agent1",
+            groups=[],
+            is_admin=True,
+            zone_id="acme",
+            user_id="alice",
+            agent_id="agent1",
+        )
+        assert custom_context is not memory_api.context
+
+        with patch.object(
+            memory_api.permission_enforcer, "check_memory", return_value=True
+        ) as mock_check:
+            memory_api.list(context=custom_context)
+
+            assert mock_check.called
+            for call in mock_check.call_args_list:
+                passed_context = call[0][2]  # 3rd positional arg
+                assert passed_context is custom_context
+
+    def test_list_falls_back_to_self_context(self, memory_api):
+        """Test list() uses self.context when no context is passed."""
+        from unittest.mock import patch
+
+        memory_api.store("Test memory", scope="user")
+
+        with patch.object(
+            memory_api.permission_enforcer, "check_memory", return_value=True
+        ) as mock_check:
+            memory_api.list()
+
+            assert mock_check.called
+            for call in mock_check.call_args_list:
+                passed_context = call[0][2]
+                assert passed_context is memory_api.context
+
+    def test_query_uses_passed_context(self, memory_api):
+        """Test query() uses passed context for permission filtering (#1203)."""
+        from unittest.mock import patch
+
+        from nexus.core.permissions import OperationContext
+
+        memory_api.store("Test memory", scope="user")
+
+        custom_context = OperationContext(
+            user="agent1",
+            groups=[],
+            is_admin=True,
+            zone_id="acme",
+            user_id="alice",
+            agent_id="agent1",
+        )
+
+        with patch.object(
+            memory_api.permission_enforcer, "check_memory", return_value=True
+        ) as mock_check:
+            memory_api.query(context=custom_context)
+
+            assert mock_check.called
+            for call in mock_check.call_args_list:
+                passed_context = call[0][2]
+                assert passed_context is custom_context

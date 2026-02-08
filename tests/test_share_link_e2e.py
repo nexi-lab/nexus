@@ -65,7 +65,8 @@ print(f"Starting E2E server on {host}:{port}")
 print(f"Database: {database_url.split('@')[1] if '@' in database_url else database_url}")
 
 backend = LocalBackend(root_path=files_dir)
-nx = NexusFS(backend=backend, db_path=database_url, enforce_permissions=False)
+metadata_store = RaftMetadataStore.local(str(database_url).replace(".db", ""))
+nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
 
 session_factory = sessionmaker(bind=nx.metadata.engine)
 auth_provider = DatabaseLocalAuth(
@@ -589,6 +590,7 @@ def main():
     except Exception as e:
         print(f"\n\033[91mSetup failed: {e}\033[0m")
         import traceback
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
     finally:

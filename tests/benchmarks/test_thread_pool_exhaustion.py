@@ -228,7 +228,8 @@ def test_in_process_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = NexusFS(
             backend=backend,
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,
         )
 
@@ -344,7 +345,8 @@ async def test_async_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = NexusFS(
             backend=backend,
-            db_path=db_path,
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,  # Disable for setup
         )
 
@@ -377,6 +379,8 @@ async def test_async_thread_exhaustion(
 
         # FORCE WORST CASE: Disable Rust acceleration to simulate slow Python path
         import nexus.core.rebac_fast as rebac_fast
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         _original_rust_available = rebac_fast.RUST_AVAILABLE  # noqa: F841
         rebac_fast.RUST_AVAILABLE = False

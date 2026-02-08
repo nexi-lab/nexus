@@ -13,6 +13,8 @@ from pathlib import Path
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 def cleanup_windows_db():
@@ -28,7 +30,8 @@ def test_workspace_namespace_operations():
         nx = NexusFS(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            db_path=Path(tmpdir) / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,  # Test namespace routing without permissions
         )
 
@@ -70,7 +73,8 @@ def test_shared_namespace_operations():
         nx = NexusFS(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            db_path=Path(tmpdir) / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
 
@@ -108,7 +112,8 @@ def test_external_namespace_operations():
         nx = NexusFS(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            db_path=Path(tmpdir) / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
 
@@ -141,7 +146,8 @@ def test_multi_namespace_operations_single_zone():
         nx = NexusFS(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            db_path=Path(tmpdir) / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
 
@@ -174,7 +180,8 @@ def test_namespace_isolation_between_zones():
         nx = NexusFS(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            db_path=Path(tmpdir) / "metadata.db",
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
 

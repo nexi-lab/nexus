@@ -58,7 +58,8 @@ def nx(temp_dir: Path, mock_rebac: MagicMock) -> Generator[NexusFS, None, None]:
     """
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable for unit tests
     )
@@ -439,6 +440,8 @@ class TestSkillsLoad:
     ) -> None:
         """Test load fails without read permission."""
         from nexus.core.exceptions import PermissionDeniedError
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
         mock_rebac.rebac_check.return_value = False
 

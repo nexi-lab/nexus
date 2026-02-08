@@ -24,7 +24,8 @@ def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """
     emb = NexusFS(
         backend=LocalBackend(temp_dir),
-        db_path=temp_dir / "metadata.db",
+        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,  # Disable auto-parsing for unit tests
         enforce_permissions=False,  # Disable permissions for basic functionality tests
     )
@@ -36,6 +37,8 @@ def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     import gc
     import platform
     import time
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
     gc.collect()  # Force garbage collection to release connections
     if platform.system() == "Windows":

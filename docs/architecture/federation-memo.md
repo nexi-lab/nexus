@@ -601,72 +601,104 @@ NEXUS_METADATA_STORE=sqlalchemy  # Use PostgreSQL (current)
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 4.3 Driver Selection (Config-Driven, Startup-Time)
+### 4.3 The Nexus Quartet: Four Storage Pillars (Task #14)
 
-**Current Implementation (P1)**: Config-driven driver selection at initialization.
+**Design Philosophy**: Abstraction by **Capability** (Access Pattern & Consistency Guarantee),
+not by business domain (`UserStore`) or implementation (`PostgresStore`).
+Linux Kernel defines `BlockDevice`, `CharDevice`, `FileSystem` — Nexus defines four orthogonal storage primitives.
+Names explain the **"What"** and **"Why"**, not the **"How"**.
+
+**The Four Pillars**:
+
+| Pillar | Role | Capability | Backing Driver | Kernel Status |
+|--------|------|------------|----------------|---------------|
+| **MetastoreABC** | "The Structure" (Brain/Skeleton) | Ordered KV, SC (Raft), CAS, Range Scan | sled (embedded/Raft) | **Required** init param |
+| **RecordStoreABC** | "The Truth" (Memory/Library) | Relational (JOINs), ACID, Vector Search | PostgreSQL (prod) / SQLite (dev) | **Optional** — injected for Services (ReBAC, Auth, Audit, etc.) |
+| **ObjectStoreABC** | "The Content" (Flesh/Warehouse) | Streaming I/O, Immutable Objects, Petabyte Scale | S3 / GCS / Local Disk | **Mounted** dynamically (= current `Backend` ABC) |
+| **CacheStoreABC** | "The Reflexes" (Nerves/Signals) | Ephemeral KV, Pub/Sub, TTL | Dragonfly (prod) / In-Memory (dev) | **Future work** (optional) |
+
+**Naming Rationale** (see Gemini design review for full analysis):
+- **Metastore**: Industry standard for metadata engines (HDFS NameNode, Colossus Curator). Covers inodes + config + topology — not just FileMetadata.
+- **RecordStore**: "System of Record" (SoR). Covers entities, relationships, logs, vectors — broader than "Registry".
+- **ObjectStore**: Aligns with S3/GCS "Object Storage" terminology. Not a DB "Blob" field — an independent storage entity.
+- **CacheStore**: Honest about ephemerality. Avoids "State" confusion with Raft state machine.
+
+**Naming Clarification**: The existing proto-generated `MetadataStore` (from `metadata.proto`, specific to `FileMetadata` typed operations) will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC` (the underlying ordered KV primitive).
+
+**Data Type → Pillar Mapping** (see `data-storage-matrix.md` for full details):
+
+- **Metastore**: FileMetadata (inodes), DirectoryEntry (dentries), CustomMetadata, SystemSettings, WorkspaceConfig, ContentChunkModel (CAS), ClusterTopology
+- **RecordStore**: Users, ReBAC (Graph), Memory (Vector), Audit, Workflows, Versioning, Zones, Sandboxes, Search
+- **ObjectStore**: File content (actual bytes on disk/cloud) — mounted via `router.add_mount()`
+- **CacheStore**: UserSession, PermissionCache, TigerCache, FileEvent (pub/sub)
+
+**CacheStore Note**: Nexus already has individual implementations scattered across the codebase
+(`RedisEventBus`, `DragonflyPermissionCache`, `DragonflyTigerCache`, `PostgresPermissionCache`,
+`PostgresTigerCache`) with Protocol/ABC interfaces defined (`EventBusProtocol`, `PermissionCacheProtocol`,
+`TigerCacheProtocol`). However, there is no unified `CacheStoreABC` and no in-memory fallback
+implementations. Unification into a single CacheStore pillar with in-memory fallback is **future work**.
+
+**Kernel Init** (dependency injection):
 
 ```python
-# System initialization (kernel boot)
-from nexus.kernel import DriverRegistry
+class NexusFS:
+    def __init__(
+        self,
+        # Required: Kernel core
+        metastore: MetastoreABC,                    # sled: inodes, dentries, config, topology
 
-# Register drivers (config-driven)
-registry = DriverRegistry()
+        # Optional: Services layer (not kernel core)
+        record_store: RecordStoreABC | None = None, # PG/SQLite: users, ReBAC, audit, vectors
 
-if config.METADATA_STORE == "raft":
-    registry.register(MetadataStore, RaftMetadataStore(config.raft_peers))
-elif config.METADATA_STORE == "sqlalchemy":
-    registry.register(MetadataStore, SQLAlchemyMetadataStore(config.database_url))
+        # ObjectStore (= Backend) is NOT an init param — mounted dynamically:
+        #   nx.mount("/", LocalBackend(...))        # like: mount /dev/sda1 /
+        #   nx.mount("/cloud", S3Backend(...))      # like: mount nfs://... /cloud
 
-if config.STORAGE_BACKEND == "s3":
-    registry.register(StorageDriver, S3StorageDriver(config.s3_bucket))
-elif config.STORAGE_BACKEND == "local":
-    registry.register(StorageDriver, LocalStorageDriver(config.data_dir))
-
-# User space retrieves drivers from registry (dependency injection)
-metadata_store = registry.get(MetadataStore)  # Returns configured driver
-storage_driver = registry.get(StorageDriver)
-
-# NexusFS is driver-agnostic
-nexusfs = NexusFS(
-    metadata_store=metadata_store,
-    storage_driver=storage_driver,
-)
+        # CacheStore is future work — optional, in-memory fallback when omitted
+    ):
+        self.vfs = VFS(metastore=metastore)
+        # Services only initialized when record_store is provided
+        if record_store:
+            self.identity = IdentityService(record_store)
+            self.memory = SemanticMemory(record_store)     # Uses vector search
 ```
 
-**Deployment-Time Driver Selection** (no user space recompile):
+> **Why optional?** Pure kernel only needs Metastore for inode CRUD (read/write/mkdir/ls).
+> RecordStore is consumed by **Services** (ReBAC, Auth, Audit, Search, Workflows) that
+> currently live inside NexusFS but conceptually belong in User Space — like how Linux's
+> `/etc/passwd` is a file managed by user-space tools, not a kernel data structure.
+> Tests exercising pure file operations need not provide a RecordStore.
+
+**Deployment-Time Driver Selection** (config-driven, no recompile):
 ```bash
-# Production deployment A: PostgreSQL + S3
-NEXUS_METADATA_STORE=sqlalchemy
-NEXUS_STORAGE_BACKEND=s3
+# Production: sled + PostgreSQL + S3 + Dragonfly
+NEXUS_METASTORE=raft
+NEXUS_RECORD_STORE=postgresql://...
+NEXUS_OBJECT_STORE=s3://my-bucket
 
-# Production deployment B: Raft + Local (edge node)
-NEXUS_METADATA_STORE=raft
-NEXUS_STORAGE_BACKEND=local
-
-# Development: SQLite + Local
-NEXUS_METADATA_STORE=sqlalchemy
-NEXUS_DATABASE_URL=sqlite:///dev.db
-NEXUS_STORAGE_BACKEND=local
+# Development: sled + SQLite + Local Disk (no Dragonfly)
+NEXUS_METASTORE=local
+NEXUS_RECORD_STORE=sqlite:///dev.db
+NEXUS_OBJECT_STORE=local:./nexus-data
 ```
 
 Same binary, different drivers loaded at **startup**.
 
 **Limitations**:
 - ❌ **Not true runtime hot-swapping**: Drivers selected at startup, cannot change without restart
-- ❌ **Single driver per type**: Only one MetadataStore active at a time (no zone-specific drivers)
+- ❌ **Single driver per type**: Only one Metastore active at a time (no zone-specific drivers)
 - ❌ **No graceful driver removal**: Cannot unload a driver while system is running
 
 **Future**: True runtime hot-swapping (see Section 7o) will enable Linux-like `modprobe`/`rmmod` operations.
 
 ### 4.4 Deployment Modes
 
-| Mode | Metadata Store | Storage Driver | Transport | Consensus | Use Case |
-|------|---------------|----------------|-----------|-----------|----------|
-| **Single-Node (Dev)** | SQLAlchemyMetadataStore (SQLite) | LocalStorageDriver | HTTPTransport | N/A | Development, testing |
-| **Single-Node (Raft)** | RaftMetadataStore (local PyO3) | LocalStorageDriver | HTTPTransport | RaftConsensus (1-node) | Performance testing |
-| **Multi-Node (PostgreSQL)** | SQLAlchemyMetadataStore (PostgreSQL) | S3StorageDriver | HTTPTransport | N/A (DB serializable) | Current production |
-| **Multi-Node (Raft SC)** | RaftMetadataStore (gRPC remote) | S3StorageDriver | gRPCTransport | RaftConsensus (3-node) | High availability, strong consistency |
-| **Multi-Node (Raft EC)** | RaftMetadataStore (async replication) | S3StorageDriver | gRPCTransport | RaftConsensus (async) | High throughput, geo-distributed (Issue #1180) |
+| Mode | Metastore | RecordStore | ObjectStore (mounted) | CacheStore | Use Case |
+|------|-----------|-------------|----------------------|------------|----------|
+| **Single-Node (Dev)** | sled (local PyO3) | SQLite | LocalBackend | In-Memory (future) | Development, testing |
+| **Single-Node (Prod)** | sled (local PyO3) | PostgreSQL | LocalBackend / S3 | Dragonfly (future) | Small-scale production |
+| **Multi-Node (Raft SC)** | sled (gRPC, Raft consensus) | PostgreSQL | S3 | Dragonfly (future) | HA, strong consistency |
+| **Multi-Node (Raft EC)** | sled (async replication) | PostgreSQL | S3 | Dragonfly (future) | High throughput, geo-distributed (#1180) |
 
 ### 4.5 Raft Dual Mode: Strong vs Eventual Consistency (Issue #1180)
 

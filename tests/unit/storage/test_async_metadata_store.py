@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
@@ -42,8 +43,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.core._metadata_generated import FileMetadata
 
+
+def _pg_available() -> bool:
+    """Check if PostgreSQL is reachable at localhost:5432."""
+    try:
+        with socket.create_connection(("localhost", 5432), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+PG_AVAILABLE = _pg_available()
+
 # Run these PostgreSQL tests in the same xdist worker to avoid connection conflicts
-pytestmark = pytest.mark.xdist_group("async_metadata_store")
+# Skip all tests if PostgreSQL is not available (e.g., in CI)
+pytestmark = [
+    pytest.mark.xdist_group("async_metadata_store"),
+    pytest.mark.skipif(not PG_AVAILABLE, reason="PostgreSQL not available at localhost:5432"),
+]
 
 # PostgreSQL test database URL
 # Default: connect to local scorpio-postgres container

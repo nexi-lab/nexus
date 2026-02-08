@@ -1232,17 +1232,20 @@ class Memory:
         If the given memory_id has been superseded, follows the chain forward
         to find the latest (current) version.
 
+        Uses _get_memory_by_id_raw to traverse through soft-deleted nodes
+        in the chain. The caller (get()) handles filtering deleted memories.
+
         Returns:
             The current MemoryModel, or None if not found.
         """
-        memory = self.memory_router.get_memory_by_id(memory_id)
+        memory = self.memory_router._get_memory_by_id_raw(memory_id)
         if not memory:
             return None
 
         # Follow superseded_by_id chain to current version
         visited = {memory.memory_id}
         while memory.superseded_by_id:
-            successor = self.memory_router.get_memory_by_id(memory.superseded_by_id)
+            successor = self.memory_router._get_memory_by_id_raw(memory.superseded_by_id)
             if successor is None or successor.memory_id in visited:
                 break
             visited.add(successor.memory_id)
@@ -3090,14 +3093,16 @@ class Memory:
         Returns:
             List of all memory IDs in the chain (oldest to newest).
         """
-        memory = self.memory_router.get_memory_by_id(memory_id)
+        # Use _get_memory_by_id_raw to include soft-deleted memories in the chain,
+        # since version history must persist for audit trail purposes (#1188).
+        memory = self.memory_router._get_memory_by_id_raw(memory_id)
         if not memory:
             return [memory_id]
 
         # Walk backward to oldest ancestor
         current = memory
         while current.supersedes_id:
-            ancestor = self.memory_router.get_memory_by_id(current.supersedes_id)
+            ancestor = self.memory_router._get_memory_by_id_raw(current.supersedes_id)
             if ancestor is None:
                 break
             current = ancestor
@@ -3110,7 +3115,7 @@ class Memory:
             visited.add(node.memory_id)
             chain_ids.append(node.memory_id)
             if node.superseded_by_id:
-                next_node = self.memory_router.get_memory_by_id(node.superseded_by_id)
+                next_node = self.memory_router._get_memory_by_id_raw(node.superseded_by_id)
                 if next_node is None:
                     break
                 node = next_node

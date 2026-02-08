@@ -6,6 +6,7 @@ Follows TDD approach: write failing tests first, then implement.
 
 import asyncio
 import os
+import socket
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -27,8 +28,24 @@ TEST_DATABASE_URL = os.getenv(
     "postgresql+asyncpg://scorpio:scorpio@localhost:5432/scorpio",
 )
 
+
+def _pg_available() -> bool:
+    """Check if PostgreSQL is reachable at localhost:5432."""
+    try:
+        with socket.create_connection(("localhost", 5432), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+PG_AVAILABLE = _pg_available()
+
 # Run these PostgreSQL tests in the same xdist worker to avoid connection conflicts
-pytestmark = pytest.mark.xdist_group("async_nexus_fs")
+# Skip all tests if PostgreSQL is not available (e.g., in CI)
+pytestmark = [
+    pytest.mark.xdist_group("async_nexus_fs"),
+    pytest.mark.skipif(not PG_AVAILABLE, reason="PostgreSQL not available at localhost:5432"),
+]
 
 
 # === Fixtures ===

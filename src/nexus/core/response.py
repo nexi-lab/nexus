@@ -117,7 +117,7 @@ class HandlerResponse(Generic[T]):
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
         path: str | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> HandlerResponse[Any]:
         """Create an error response.
 
         Args:
@@ -131,7 +131,7 @@ class HandlerResponse(Generic[T]):
         Returns:
             HandlerResponse with ERROR status
         """
-        return HandlerResponse[None](
+        return HandlerResponse[Any](
             resp_type=ResponseType.ERROR,
             error_message=message,
             error_code=code,
@@ -148,7 +148,7 @@ class HandlerResponse(Generic[T]):
         message: str | None = None,
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> HandlerResponse[Any]:
         """Create a not-found response.
 
         Args:
@@ -160,7 +160,7 @@ class HandlerResponse(Generic[T]):
         Returns:
             HandlerResponse with NOT_FOUND status
         """
-        return HandlerResponse[None](
+        return HandlerResponse[Any](
             resp_type=ResponseType.NOT_FOUND,
             error_message=message or f"Not found: {path}",
             error_code=404,
@@ -178,7 +178,7 @@ class HandlerResponse(Generic[T]):
         current_etag: str,
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> HandlerResponse[Any]:
         """Create a conflict response for optimistic concurrency failures.
 
         Args:
@@ -195,7 +195,7 @@ class HandlerResponse(Generic[T]):
             f"Conflict detected - file was modified. "
             f"Expected etag '{expected_etag[:16]}...', got '{current_etag[:16]}...'"
         )
-        return HandlerResponse[None](
+        return HandlerResponse[Any](
             resp_type=ResponseType.CONFLICT,
             error_message=message,
             error_code=409,
@@ -212,7 +212,7 @@ class HandlerResponse(Generic[T]):
         execution_time_ms: float = 0.0,
         backend_name: str | None = None,
         path: str | None = None,
-    ) -> HandlerResponse[None]:
+    ) -> HandlerResponse[Any]:
         """Create a response from an exception.
 
         Maps common exception types to appropriate response types:
@@ -383,7 +383,7 @@ def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, Handler
             execution_time_ms = (time.perf_counter() - start) * 1000
             # Try to get backend_name from self (first arg)
             backend_name = getattr(args[0], "name", None) if args else None
-            return HandlerResponse.from_exception(  # type: ignore[return-value]
+            return HandlerResponse.from_exception(
                 e, execution_time_ms=execution_time_ms, backend_name=backend_name
             )
 

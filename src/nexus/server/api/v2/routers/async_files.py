@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -152,7 +153,7 @@ def create_async_files_router(
         if get_fs is not None:
             fs = get_fs()
             if fs is not None:
-                return fs
+                return cast("AsyncNexusFS", fs)
         raise HTTPException(
             status_code=503,
             detail="AsyncNexusFS not initialized. Server may still be starting up.",
@@ -501,7 +502,7 @@ def create_async_files_router(
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
-            async def generate():
+            async def generate() -> AsyncIterator[bytes]:
                 async for chunk in fs.stream_read(path, chunk_size=chunk_size, context=context):
                     yield chunk
 

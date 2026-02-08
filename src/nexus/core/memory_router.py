@@ -150,6 +150,26 @@ class MemoryViewRouter:
     def get_memory_by_id(self, memory_id: str) -> MemoryModel | None:
         """Get memory by canonical ID.
 
+        Excludes soft-deleted memories (#1188). Use _get_memory_by_id_raw()
+        for internal operations that need access to deleted rows.
+
+        Args:
+            memory_id: Memory ID.
+
+        Returns:
+            MemoryModel or None if not found or soft-deleted.
+        """
+        memory = self._get_memory_by_id_raw(memory_id)
+        if memory and memory.state == "deleted":
+            return None
+        return memory
+
+    def _get_memory_by_id_raw(self, memory_id: str) -> MemoryModel | None:
+        """Get memory by canonical ID, including soft-deleted rows.
+
+        Internal method for operations that need access to deleted memories
+        (e.g., delete_memory, revalidate_memory, update_memory_state).
+
         Args:
             memory_id: Memory ID.
 
@@ -630,7 +650,7 @@ class MemoryViewRouter:
         Returns:
             True if soft-deleted, False if not found.
         """
-        memory = self.get_memory_by_id(memory_id)
+        memory = self._get_memory_by_id_raw(memory_id)
         if memory:
             memory.invalid_at = datetime.now(UTC)
             memory.state = "deleted"
@@ -651,7 +671,7 @@ class MemoryViewRouter:
         Returns:
             Updated MemoryModel or None if not found.
         """
-        memory = self.get_memory_by_id(memory_id)
+        memory = self._get_memory_by_id_raw(memory_id)
         if not memory:
             return None
 
@@ -671,7 +691,7 @@ class MemoryViewRouter:
         Returns:
             Updated MemoryModel or None if not found.
         """
-        memory = self.get_memory_by_id(memory_id)
+        memory = self._get_memory_by_id_raw(memory_id)
         if not memory:
             return None
 
@@ -690,7 +710,7 @@ class MemoryViewRouter:
         Returns:
             Updated MemoryModel or None if not found.
         """
-        memory = self.get_memory_by_id(memory_id)
+        memory = self._get_memory_by_id_raw(memory_id)
         if not memory:
             return None
 

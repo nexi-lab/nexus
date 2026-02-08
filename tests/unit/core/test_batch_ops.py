@@ -4,8 +4,8 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture

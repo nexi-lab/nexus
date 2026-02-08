@@ -12,6 +12,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -154,8 +156,6 @@ class TestMountSyncOptimization:
                 start = time.time()
 
                 import contextlib
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
                 with contextlib.suppress(Exception):
                     nx_with_hierarchy.sync_mount("/mnt/test")

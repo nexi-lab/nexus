@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from nexus.storage.raft_metadata_store import RaftMetadataStore
+
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
@@ -740,7 +742,9 @@ class TestMultiThreadingContention:
                 await client.connect()
                 try:
                     metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-                    nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+                    nx = NexusFS(
+                        backend=backend, metadata_store=metadata_store, enforce_permissions=False
+                    )
                     nx._lock_manager = RedisLockManager(client)
                     try:
                         for _ in range(count):
@@ -1102,7 +1106,6 @@ class TestLockIsolation:
         from nexus.core.distributed_lock import RedisLockManager
         from nexus.core.nexus_fs import NexusFS
         from nexus.core.permissions import OperationContext
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         redis_url = os.environ.get(
             "NEXUS_DRAGONFLY_COORDINATION_URL",

@@ -21,6 +21,8 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -440,8 +442,6 @@ class TestSkillsLoad:
     ) -> None:
         """Test load fails without read permission."""
         from nexus.core.exceptions import PermissionDeniedError
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         mock_rebac.rebac_check.return_value = False
 

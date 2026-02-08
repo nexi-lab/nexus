@@ -29,6 +29,8 @@ from nexus.connectors.calendar.schemas import (
 )
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # ============================================================================
 # FIXTURES
@@ -87,8 +89,6 @@ def mock_calendar_service():
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
     from nexus.backends.gcalendar_connector import GoogleCalendarConnectorBackend
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
     # Create a mock token manager
     with patch(

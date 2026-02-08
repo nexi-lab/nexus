@@ -590,7 +590,6 @@ def main():
     except Exception as e:
         print(f"\n\033[91mSetup failed: {e}\033[0m")
         import traceback
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         traceback.print_exc()
     finally:

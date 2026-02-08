@@ -22,6 +22,8 @@ from unittest.mock import patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -866,8 +868,6 @@ class TestMountContextUtilsIntegration:
     def test_remove_mount_with_context_works(self, nx_with_permissions: NexusFS, temp_dir: Path):
         """Test that remove_mount works correctly with context (uses context_utils internally)."""
         from nexus.core.permissions import OperationContext
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
 
         mount_data_dir = temp_dir / "remove_context_mount"
         mount_data_dir.mkdir()

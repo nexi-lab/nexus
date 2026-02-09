@@ -1708,6 +1708,19 @@ def _register_routes(app: FastAPI) -> None:
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
         )
 
+    # Nexus Pay API routes (Issue #1209)
+    try:
+        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
+        from nexus.server.api.v2.routers.pay import router as pay_router
+
+        app.include_router(pay_router)
+        _register_pay_exception_handlers(app)
+        logger.info("Nexus Pay API routes registered (8 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
     # Issue #940: Register async files router (lazy initialization via lifespan)
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router

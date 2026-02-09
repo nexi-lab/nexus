@@ -170,14 +170,315 @@ docker run -p 8200:8200 \
 
 ---
 
+## Multi-Environment Strategy
+
+### Recommended Approach: Hybrid Isolation
+
+**Strategy**: Separate OpenBao for production, shared OpenBao for dev/staging, local for development.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Multi-Environment Setup                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Local Development (Developer Laptop)                           │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  docker-openbao (dev mode, ephemeral)                    │  │
+│  │  - No persistence, disposable                            │  │
+│  │  - Root token authentication                             │  │
+│  │  - Quick setup for local testing                         │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  Shared Dev/Staging (Non-Production Cluster)                    │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  shared-openbao.internal:8200                            │  │
+│  │  ├── secret/dev/nexus/...                                │  │
+│  │  └── secret/staging/nexus/...                            │  │
+│  │                                                            │  │
+│  │  - Path-based isolation (dev/ vs staging/)               │  │
+│  │  - Shared infrastructure, lower cost                     │  │
+│  │  - AppRole authentication per environment                │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  Production (Dedicated Cluster)                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  prod-openbao.example.com:8200                           │  │
+│  │  └── secret/nexus/...                                    │  │
+│  │                                                            │  │
+│  │  - Complete isolation from dev/staging                   │  │
+│  │  - High availability (3+ nodes)                          │  │
+│  │  - Auto-unseal with cloud KMS                            │  │
+│  │  - Audit logging to SIEM                                 │  │
+│  │  - TLS with mTLS client auth                             │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Environment Configuration
+
+#### Local Development
+
+```bash
+# .env.local
+NEXUS_SECRETS_BACKEND=openbao
+OPENBAO_ADDR=http://localhost:8200
+OPENBAO_TOKEN=dev-root-token
+
+# Start local OpenBao
+docker run -d -p 8200:8200 \
+  -e OPENBAO_DEV_ROOT_TOKEN_ID=dev-root-token \
+  ghcr.io/openbao/openbao:2.1.0 server -dev
+```
+
+**Path Structure**: `secret/nexus/...` (no environment prefix needed for local)
+
+**Characteristics**:
+- ✅ Ephemeral (no persistence, recreate on restart)
+- ✅ No TLS required
+- ✅ Root token authentication
+- ✅ Fast iteration
+
+#### Dev Environment
+
+```bash
+# .env.dev
+NEXUS_SECRETS_BACKEND=openbao
+OPENBAO_ADDR=https://shared-openbao.internal:8200
+OPENBAO_ROLE_ID=${DEV_ROLE_ID}
+OPENBAO_SECRET_ID=${DEV_SECRET_ID}
+
+# Or use Kubernetes auth in K8s deployment
+OPENBAO_ROLE=nexus-dev
+OPENBAO_K8S_AUTH=true
+```
+
+**Path Structure**: `secret/dev/nexus/...`
+
+**Characteristics**:
+- ✅ Persistent storage
+- ✅ Shared with staging (cost-effective)
+- ✅ AppRole or K8s authentication
+- ✅ Basic audit logging
+
+#### Staging Environment
+
+```bash
+# .env.staging
+NEXUS_SECRETS_BACKEND=openbao
+OPENBAO_ADDR=https://shared-openbao.internal:8200
+OPENBAO_ROLE_ID=${STAGING_ROLE_ID}
+OPENBAO_SECRET_ID=${STAGING_SECRET_ID}
+```
+
+**Path Structure**: `secret/staging/nexus/...`
+
+**Characteristics**:
+- ✅ Production-like setup
+- ✅ Isolated from dev via path ACLs
+- ✅ Test migration scripts safely
+- ✅ Shared infrastructure with dev
+
+#### Production Environment
+
+```bash
+# .env.production
+NEXUS_SECRETS_BACKEND=openbao
+OPENBAO_ADDR=https://prod-openbao.example.com:8200
+OPENBAO_ROLE_ID=${PROD_ROLE_ID}
+OPENBAO_SECRET_ID=${PROD_SECRET_ID}
+
+# Or use auto-unseal with cloud KMS
+OPENBAO_AUTO_UNSEAL=true
+OPENBAO_KMS_TYPE=gcpckms
+OPENBAO_KMS_KEY_ID=${GCP_KMS_KEY_ID}
+```
+
+**Path Structure**: `secret/nexus/...` (no environment prefix)
+
+**Characteristics**:
+- ✅ Dedicated cluster (HA with 3+ nodes)
+- ✅ Auto-unseal with cloud KMS
+- ✅ TLS with mTLS client authentication
+- ✅ Comprehensive audit logging → SIEM
+- ✅ Disaster recovery tested regularly
+
+### Environment-Specific Policies
+
+#### Dev/Staging Policies (Shared OpenBao)
+
+**Dev Bootstrap Policy** (`nexus-dev-bootstrap`)
+```hcl
+# Read infrastructure secrets (dev namespace)
+path "secret/data/dev/nexus/infrastructure/*" {
+  capabilities = ["read", "list"]
+}
+
+path "secret/data/dev/nexus/oauth-providers/*" {
+  capabilities = ["read", "list"]
+}
+
+path "secret/data/dev/nexus/external-services/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+**Staging Bootstrap Policy** (`nexus-staging-bootstrap`)
+```hcl
+# Read infrastructure secrets (staging namespace)
+path "secret/data/staging/nexus/infrastructure/*" {
+  capabilities = ["read", "list"]
+}
+
+path "secret/data/staging/nexus/oauth-providers/*" {
+  capabilities = ["read", "list"]
+}
+
+path "secret/data/staging/nexus/external-services/*" {
+  capabilities = ["read", "list"]
+}
+```
+
+**Isolation**: Dev tokens CANNOT access `secret/data/staging/*`, and vice versa.
+
+#### Production Policies (Dedicated OpenBao)
+
+Use the same policies as defined in [Access Control Strategy](#access-control-strategy), but with stricter controls:
+
+```hcl
+# Production runtime policy (more restrictive)
+path "secret/data/nexus/infrastructure/*" {
+  capabilities = ["read"]  # No list capability
+}
+
+# User OAuth tokens (CRUD, but with logging)
+path "secret/data/nexus/users/+/oauth/*/*" {
+  capabilities = ["create", "read", "update", "delete"]
+  # Audit all access
+}
+```
+
+### Secret Sync Strategy
+
+**Problem**: How to promote secrets from dev → staging → prod?
+
+**Solution**: Use a secrets promotion tool or script.
+
+#### Option 1: Manual Promotion (Simple)
+
+```bash
+# scripts/promote_secrets.sh
+
+#!/bin/bash
+# Promote secrets from dev to staging
+
+SOURCE_ENV="dev"
+TARGET_ENV="staging"
+
+# Read from dev
+openbao kv get -format=json secret/${SOURCE_ENV}/nexus/infrastructure/database/postgres-main \
+  | jq '.data.data' \
+  > /tmp/secret.json
+
+# Write to staging
+cat /tmp/secret.json | \
+  openbao kv put secret/${TARGET_ENV}/nexus/infrastructure/database/postgres-main -
+
+rm /tmp/secret.json
+```
+
+#### Option 2: GitOps with Sealed Secrets (Advanced)
+
+Use tools like:
+- **Sealed Secrets**: Encrypt secrets in Git, decrypt in cluster
+- **SOPS**: Mozilla's secrets management tool
+- **External Secrets Operator**: Sync from OpenBao to K8s secrets
+
+#### Option 3: Terraform/OpenTofu (Recommended)
+
+```hcl
+# terraform/secrets.tf
+
+# Dev secrets
+resource "vault_kv_secret_v2" "dev_postgres" {
+  mount = "secret"
+  name  = "dev/nexus/infrastructure/database/postgres-main"
+
+  data_json = jsonencode({
+    user     = var.dev_db_user
+    password = var.dev_db_password
+    host     = "dev-postgres.internal"
+    port     = "5432"
+    database = "nexus"
+  })
+}
+
+# Staging secrets (same structure, different values)
+resource "vault_kv_secret_v2" "staging_postgres" {
+  mount = "secret"
+  name  = "staging/nexus/infrastructure/database/postgres-main"
+
+  data_json = jsonencode({
+    user     = var.staging_db_user
+    password = var.staging_db_password
+    host     = "staging-postgres.internal"
+    port     = "5432"
+    database = "nexus"
+  })
+}
+
+# Production secrets (separate state, separate cluster)
+# Stored in different Terraform workspace/state
+```
+
+### Cost Analysis
+
+| Environment | Setup | Monthly Cost (AWS) | Notes |
+|-------------|-------|-------------------|-------|
+| **Local** | Docker dev mode | $0 | Ephemeral |
+| **Shared (Dev+Staging)** | t3.medium (2 vCPU, 4GB) | ~$30-40 | Single node acceptable |
+| **Production** | 3× t3.large (2 vCPU, 8GB) + ALB | ~$200-250 | HA cluster |
+| **Total** | - | **~$230-290/month** | Reasonable for production-grade setup |
+
+**Cost Optimization**:
+- Use spot instances for dev/staging
+- Auto-scale down during off-hours
+- Use managed secrets service for dev (AWS Secrets Manager, GCP Secret Manager) if cost-prohibitive
+
+### Migration Path
+
+**Phase 1**: Start with local development
+```bash
+# Everyone uses local docker-openbao
+docker run -d -p 8200:8200 ghcr.io/openbao/openbao:2.1.0 server -dev
+```
+
+**Phase 2**: Add shared dev/staging
+```bash
+# Deploy shared OpenBao for team
+# Use path-based isolation: secret/dev/nexus/, secret/staging/nexus/
+```
+
+**Phase 3**: Add production OpenBao
+```bash
+# Deploy dedicated production cluster
+# Complete isolation, HA setup, auto-unseal
+```
+
+---
+
 ## Secret Organization Design
 
 ### Path Hierarchy
 
+**Note**: Path structure varies by environment. Production uses `secret/nexus/`, while dev/staging use environment prefixes.
+
+#### Production Path Structure
+
 ```
-secret/                                    # KV v2 mount point
-├── nexus/
-│   ├── infrastructure/                    # Server infrastructure secrets
+secret/                                    # KV v2 mount point (production-openbao)
+└── nexus/
+    ├── infrastructure/                    # Server infrastructure secrets
 │   │   ├── database/
 │   │   │   ├── postgres-main             # Primary database
 │   │   │   │   ├── user
@@ -245,6 +546,40 @@ secret/                                    # KV v2 mount point
 │                           ├── expires_at
 │                           ├── token_type
 │                           └── scopes
+```
+
+#### Dev/Staging Path Structure (Shared OpenBao)
+
+```
+secret/                                    # KV v2 mount point (shared-openbao)
+├── dev/
+│   └── nexus/                            # Same structure as production
+│       ├── infrastructure/
+│       ├── oauth-providers/
+│       ├── external-services/
+│       ├── cloud-storage/
+│       └── users/{tenant_id}/oauth/
+│
+└── staging/
+    └── nexus/                            # Same structure as production
+        ├── infrastructure/
+        ├── oauth-providers/
+        ├── external-services/
+        ├── cloud-storage/
+        └── users/{tenant_id}/oauth/
+```
+
+**Key Differences**:
+- Environment prefix: `secret/dev/nexus/...` vs `secret/staging/nexus/...`
+- Different policies prevent cross-environment access
+- Same OpenBao instance (cost-effective)
+
+#### Local Development Path Structure
+
+```
+secret/                                    # KV v2 mount point (local docker-openbao)
+└── nexus/                                # Same as production (no env prefix)
+    └── ...                               # Ephemeral, recreated on restart
 ```
 
 ### Path Encoding

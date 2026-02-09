@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import MetadataStore
+    from nexus.core._metadata_generated import FileMetadataProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ class RaftLockManager(LockManagerBase):
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
     RETRY_MULTIPLIER = 2.0  # Double each retry
 
-    def __init__(self, raft_store: MetadataStore):
+    def __init__(self, raft_store: FileMetadataProtocol):
         """Initialize RaftLockManager.
 
         Args:
@@ -385,7 +385,7 @@ DistributedLockManager = RaftLockManager
 
 
 def create_lock_manager(
-    raft_store: MetadataStore | None = None,
+    raft_store: FileMetadataProtocol | None = None,
     **kwargs: Any,  # noqa: ARG001 - Reserved for future use
 ) -> LockManagerBase:
     """Factory function to create a lock manager instance.

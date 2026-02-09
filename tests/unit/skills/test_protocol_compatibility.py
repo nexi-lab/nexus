@@ -116,9 +116,16 @@ def test_nexus_fs_satisfies_protocol() -> None:
     expecting the Protocol interface.
     """
     import tempfile
+    from pathlib import Path
+
+    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir))
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir),
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            audit_strict_mode=False,
+        )
 
         # Verify nx satisfies the Protocol
         def accepts_protocol(fs: NexusFilesystemProtocol) -> None:
@@ -153,9 +160,16 @@ def test_protocol_runtime_checkable() -> None:
     This allows runtime validation of filesystem-like objects.
     """
     import tempfile
+    from pathlib import Path
+
+    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = NexusFS(backend=LocalBackend(tmpdir))
+        nx = NexusFS(
+            backend=LocalBackend(tmpdir),
+            metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+            audit_strict_mode=False,
+        )
 
         # Protocol should support isinstance() check
         assert isinstance(nx, NexusFilesystemProtocol)

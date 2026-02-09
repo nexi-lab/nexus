@@ -16,7 +16,12 @@ def test_mkdir_parents_true_succeeds_if_exists():
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=backend,
+            metadata_store=metadata_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
 
         # Create directory
         nx.mkdir("/workspace/foo/bar", parents=True)
@@ -39,7 +44,12 @@ def test_mkdir_parents_false_fails_if_exists():
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=backend,
+            metadata_store=metadata_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
 
         # Create directory
         nx.mkdir("/workspace/foo", parents=True)
@@ -58,7 +68,12 @@ def test_mkdir_exist_ok_succeeds_if_exists():
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=backend,
+            metadata_store=metadata_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
 
         # Create directory
         nx.mkdir("/workspace/foo", parents=True)
@@ -77,7 +92,12 @@ def test_mkdir_parents_creates_intermediate_dirs():
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=backend,
+            metadata_store=metadata_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
 
         # Create deep directory structure
         nx.mkdir("/workspace/a/b/c/d", parents=True)
@@ -100,7 +120,12 @@ def test_mkdir_no_duplicate_entries_in_list():
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
         metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=backend,
+            metadata_store=metadata_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
 
         # Create multiple directories
         nx.mkdir("/workspace/agent1", parents=True)

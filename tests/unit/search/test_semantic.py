@@ -8,9 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus import connect
+from nexus import LocalBackend, NexusFS
 from nexus.search.chunking import ChunkStrategy
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestSemanticSearchResult:
@@ -61,11 +63,16 @@ class TestSemanticSearch:
     def nx(self):
         """Create a temporary NexusFS instance."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            nx = connect(
-                config={
-                    "data_dir": str(Path(tmpdir) / "data"),
-                    "enforce_permissions": False,  # Disable permissions for tests
-                }
+            data_dir = Path(tmpdir) / "data"
+            data_dir.mkdir()
+            db_path = Path(tmpdir) / "metadata.db"
+            nx = NexusFS(
+                backend=LocalBackend(data_dir),
+                metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+                record_store=SQLAlchemyRecordStore(db_path=db_path),
+                auto_parse=False,
+                enforce_permissions=False,
+                audit_strict_mode=False,
             )
             yield nx
             nx.close()

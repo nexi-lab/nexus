@@ -211,6 +211,13 @@ def test_health(base_url: str, client: httpx.Client) -> None:
 
 def test_write(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """POST /api/v2/files/write creates a file."""
+    # Clean up if exists from previous run
+    client.delete(
+        f"{base_url}/api/v2/files/delete",
+        params={"path": "/e2e/hello.txt"},
+        headers=user_headers,
+    )
+
     resp = client.post(
         f"{base_url}/api/v2/files/write",
         json={"path": "/e2e/hello.txt", "content": "Hello E2E!"},
@@ -303,6 +310,13 @@ def test_list(base_url: str, client: httpx.Client, user_headers: dict) -> None:
 
 def test_mkdir(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """POST /api/v2/files/mkdir creates a directory."""
+    # Clean up if exists from previous run
+    client.delete(
+        f"{base_url}/api/v2/files/delete",
+        params={"path": "/e2e/newdir"},
+        headers=user_headers,
+    )
+
     resp = client.post(
         f"{base_url}/api/v2/files/mkdir",
         json={"path": "/e2e/newdir", "parents": True},
@@ -314,6 +328,13 @@ def test_mkdir(base_url: str, client: httpx.Client, user_headers: dict) -> None:
 
 def test_metadata(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/metadata returns file metadata."""
+    # Clean up if exists from previous run
+    client.delete(
+        f"{base_url}/api/v2/files/delete",
+        params={"path": "/e2e/meta.txt"},
+        headers=user_headers,
+    )
+
     client.post(
         f"{base_url}/api/v2/files/write",
         json={"path": "/e2e/meta.txt", "content": "metadata test"},
@@ -376,6 +397,13 @@ def test_stream(base_url: str, client: httpx.Client, user_headers: dict) -> None
 
 def test_version_bumps(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """Version increments on each write."""
+    # Clean up if exists from previous run
+    client.delete(
+        f"{base_url}/api/v2/files/delete",
+        params={"path": "/e2e/versioned.txt"},
+        headers=user_headers,
+    )
+
     for i in range(1, 4):
         resp = client.post(
             f"{base_url}/api/v2/files/write",

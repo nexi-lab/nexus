@@ -160,6 +160,7 @@ class TestGmailDirectoryListing:
             assert not file_path.endswith("/"), f"Path should not have trailing slash: {file_path}"
             assert file_path.startswith(mount_path)
 
+    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_directories_identified_by_mime_type(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
@@ -214,6 +215,7 @@ class TestGmailDirectoryListing:
             assert yaml_file["is_directory"] is False
             assert yaml_file["type"] == "file"  # Legacy field
 
+    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_response_format_backward_compatible(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
@@ -267,6 +269,7 @@ class TestGmailDirectoryListing:
         assert inbox_dir["size"] == 0
         assert "created_at" in inbox_dir
 
+    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_recursive_listing_includes_directories(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:

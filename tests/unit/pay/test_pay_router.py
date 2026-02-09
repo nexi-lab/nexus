@@ -750,33 +750,39 @@ class TestExtractAgentId:
         """x_agent_id header should override subject_id."""
         from nexus.server.api.v2.routers.pay import _extract_agent_id
 
-        result = _extract_agent_id({
-            "subject_type": "user",
-            "subject_id": "user-123",
-            "x_agent_id": "delegated-agent",
-        })
+        result = _extract_agent_id(
+            {
+                "subject_type": "user",
+                "subject_id": "user-123",
+                "x_agent_id": "delegated-agent",
+            }
+        )
         assert result == "delegated-agent"
 
     def test_agent_subject_returns_subject_id(self):
         """Agent subject_type should return subject_id."""
         from nexus.server.api.v2.routers.pay import _extract_agent_id
 
-        result = _extract_agent_id({
-            "subject_type": "agent",
-            "subject_id": "my-agent",
-            "x_agent_id": None,
-        })
+        result = _extract_agent_id(
+            {
+                "subject_type": "agent",
+                "subject_id": "my-agent",
+                "x_agent_id": None,
+            }
+        )
         assert result == "my-agent"
 
     def test_user_subject_returns_subject_id(self):
         """User subject_type should also return subject_id."""
         from nexus.server.api.v2.routers.pay import _extract_agent_id
 
-        result = _extract_agent_id({
-            "subject_type": "user",
-            "subject_id": "user-456",
-            "x_agent_id": None,
-        })
+        result = _extract_agent_id(
+            {
+                "subject_type": "user",
+                "subject_id": "user-456",
+                "x_agent_id": None,
+            }
+        )
         assert result == "user-456"
 
     def test_missing_fields_graceful(self):

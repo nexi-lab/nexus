@@ -381,7 +381,6 @@ class TestMeteringOperations:
         assert await nexuspay.check_rate_limit(cost=1) is False
 
 
-
 # =============================================================================
 # 6b. Task Scheduling
 # =============================================================================
@@ -393,22 +392,25 @@ class TestTaskScheduling:
     @pytest.fixture
     def mock_scheduler(self):
         """Mock SchedulerService."""
-        from nexus.scheduler.models import ScheduledTask
-        from nexus.scheduler.constants import PriorityTier
         from datetime import UTC, datetime
 
+        from nexus.scheduler.constants import PriorityTier
+        from nexus.scheduler.models import ScheduledTask
+
         scheduler = AsyncMock()
-        scheduler.submit_task = AsyncMock(return_value=ScheduledTask(
-            id="task-uuid-123",
-            agent_id="myagent",
-            executor_id="agent-b",
-            task_type="process",
-            payload={"key": "value"},
-            priority_tier=PriorityTier.NORMAL,
-            effective_tier=2,
-            enqueued_at=datetime.now(UTC),
-            status="queued",
-        ))
+        scheduler.submit_task = AsyncMock(
+            return_value=ScheduledTask(
+                id="task-uuid-123",
+                agent_id="myagent",
+                executor_id="agent-b",
+                task_type="process",
+                payload={"key": "value"},
+                priority_tier=PriorityTier.NORMAL,
+                effective_tier=2,
+                enqueued_at=datetime.now(UTC),
+                status="queued",
+            )
+        )
         return scheduler
 
     @pytest.fixture
@@ -446,6 +448,7 @@ class TestTaskScheduling:
 
         call_args = mock_scheduler.submit_task.call_args[0][0]
         from nexus.scheduler.constants import PriorityTier
+
         assert call_args.priority == PriorityTier.HIGH
 
     @pytest.mark.asyncio

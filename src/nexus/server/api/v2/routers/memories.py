@@ -42,7 +42,7 @@ router = APIRouter(prefix="/api/v2/memories", tags=["memories"])
 # Issue #1258: Memory paging stats endpoint
 @router.get("/stats")
 async def get_memory_paging_stats(
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    _auth_result: dict[str, Any] = Depends(lambda: _get_require_auth()),
 ) -> dict:
     """Get memory paging statistics (Issue #1258).
 
@@ -69,7 +69,7 @@ async def get_memory_paging_stats(
                 "message": "Memory paging not enabled on this server",
             }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}") from e
 
 
 

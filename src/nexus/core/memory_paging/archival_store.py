@@ -82,7 +82,7 @@ class ArchivalStore:
         query_embedding: list[float],
         threshold: float = 0.7,
         limit: int = 10,
-        prefer_abstracts: bool = False,
+        prefer_abstracts: bool = False,  # noqa: ARG002 - Future use with consolidation
     ) -> list[tuple[MemoryModel, float]]:
         """Search archival using semantic similarity.
 
@@ -97,8 +97,6 @@ class ArchivalStore:
         """
         # For MVP, use existing hierarchy retrieval if available
         try:
-            from nexus.core.ace.memory_hierarchy import HierarchicalMemoryManager
-
             # Get all archival memories
             archival_memories = self.router.query_memories(
                 zone_id=self.zone_id,

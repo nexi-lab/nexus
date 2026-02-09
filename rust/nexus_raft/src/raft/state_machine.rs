@@ -604,7 +604,10 @@ impl FullStateMachine {
     pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
         let mut result = Vec::new();
         // Helper closure to process iterator items
-        let mut collect = |items: &mut dyn Iterator<Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>>| -> Result<()> {
+        let mut collect = |items: &mut dyn Iterator<
+            Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>,
+        >|
+         -> Result<()> {
             for item in items {
                 if result.len() >= limit {
                     break;

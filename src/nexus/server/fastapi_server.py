@@ -3178,9 +3178,7 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
-        lock_infos = await lock_manager.list_locks(
-            zone_id=zone_id, pattern=pattern, limit=limit
-        )
+        lock_infos = await lock_manager.list_locks(zone_id=zone_id, pattern=pattern, limit=limit)
 
         locks = [_lock_info_to_response(info) for info in lock_infos]
         return LockListResponse(locks=locks, count=len(locks))

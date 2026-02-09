@@ -57,9 +57,7 @@ def mock_lock_manager():
     manager = AsyncMock()
     manager.acquire = AsyncMock(return_value="lock-id-abc123")
     manager.release = AsyncMock(return_value=True)
-    manager.extend = AsyncMock(
-        return_value=ExtendResult(success=True, lock_info=_make_lock_info())
-    )
+    manager.extend = AsyncMock(return_value=ExtendResult(success=True, lock_info=_make_lock_info()))
     manager.get_lock_info = AsyncMock(return_value=_make_lock_info())
     manager.is_locked = AsyncMock(return_value=True)
     manager.list_locks = AsyncMock(return_value=[])

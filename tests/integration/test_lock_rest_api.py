@@ -340,9 +340,7 @@ class TestLockManagerIntegration:
         """Test listing active locks."""
         ids = []
         for i in range(3):
-            lid = await lock_manager.acquire(
-                "default", f"/list-test-{i}.txt", timeout=1, ttl=30
-            )
+            lid = await lock_manager.acquire("default", f"/list-test-{i}.txt", timeout=1, ttl=30)
             assert lid is not None
             ids.append((f"/list-test-{i}.txt", lid))
 

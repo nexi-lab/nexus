@@ -42,12 +42,11 @@ def _redis_available() -> bool:
 # Tests without Redis/Dragonfly (503 error handling)
 # =============================================================================
 
+
 # NOTE: With Raft-based locks (Issue #1110), the lock manager is always available
 # via local sled storage and doesn't require Redis/Dragonfly. These tests are
 # kept for legacy documentation but are permanently skipped.
-@pytest.mark.skip(
-    reason="Obsolete: Raft-based locks are always available (no Redis required)"
-)
+@pytest.mark.skip(reason="Obsolete: Raft-based locks are always available (no Redis required)")
 class TestLockApiWithoutRedis:
     """Test lock API behavior when Redis/Dragonfly is not configured.
 
@@ -245,7 +244,7 @@ class TestLockApiWithRedis:
                 "/api/locks",
                 json={"path": path, "timeout": 5, "ttl": 30, "max_holders": max_holders},
                 headers=auth_headers,
-        )
+            )
             assert response.status_code == 201, f"Failed to acquire slot {i + 1}"
             data = response.json()
             assert data["mode"] == "semaphore"
@@ -274,7 +273,7 @@ class TestLockApiWithRedis:
                 "/api/locks",
                 json={"path": path, "timeout": 5, "ttl": 60},
                 headers=auth_headers,
-        )
+            )
             assert response.status_code == 201
             lock_ids.append((path, response.json()["lock_id"]))
 

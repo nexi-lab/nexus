@@ -1319,11 +1319,8 @@ def _initialize_oauth_provider(
         session_factory = None
         if auth_provider and hasattr(auth_provider, "session_factory"):
             session_factory = auth_provider.session_factory
-        elif hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
-            from sqlalchemy.orm import sessionmaker
-
-            # Create session factory from metadata
-            session_factory = sessionmaker(bind=nexus_fs.metadata.engine)
+        elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+            session_factory = nexus_fs.SessionLocal
         else:
             logger.warning("Cannot initialize OAuth provider: no session factory available")
             return
@@ -1424,7 +1421,11 @@ async def _graph_enhanced_search(
     # Get database URL
     db_url = _app_state.database_url
     if not db_url:
-        db_url = _app_state.nexus_fs.metadata.database_url
+        db_url = (
+            _app_state.nexus_fs._record_store.database_url
+            if _app_state.nexus_fs._record_store
+            else None
+        )
 
     # Convert to async URL
     async_url = db_url

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate Python dataclasses from proto/nexus/core/metadata.proto.
+"""Generate Python code from proto/nexus/core/metadata.proto.
 
 SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
+  - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
   - src/nexus/core/_metadata_generated.py  (FileMetadata + PaginatedResult + MetadataStore ABC)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
@@ -532,6 +533,43 @@ def clear_intern_pool() -> None:
 '''
 
 
+def generate_protobuf_stubs() -> None:
+    """Generate metadata_pb2.py via grpc_tools.protoc.
+
+    This produces the standard protobuf Python stubs used by
+    RaftMetadataStore for binary serialization into sled.
+    """
+    try:
+        from grpc_tools import protoc
+    except ImportError:
+        print(
+            "WARNING: grpcio-tools not installed, skipping metadata_pb2.py generation.\n"
+            "  Install with: uv add --dev grpcio-tools",
+            file=sys.stderr,
+        )
+        return
+
+    proto_include = str(REPO_ROOT / "proto")
+    src_out = str(REPO_ROOT / "src")
+    proto_file = "nexus/core/metadata.proto"
+
+    result = protoc.main(
+        [
+            "grpc_tools.protoc",
+            f"-I{proto_include}",
+            f"--python_out={src_out}",
+            proto_file,
+        ]
+    )
+
+    if result != 0:
+        print(f"ERROR: protoc failed with exit code {result}", file=sys.stderr)
+        sys.exit(1)
+
+    pb2_path = REPO_ROOT / "src" / "nexus" / "core" / "metadata_pb2.py"
+    print(f"Generated: {pb2_path}")
+
+
 def main() -> None:
     """Parse proto and generate Python files."""
     if not PROTO_PATH.exists():
@@ -547,10 +585,15 @@ def main() -> None:
     for f in fields:
         print(f"  {f['type']} {f['name']} = {f['number']}")
 
+    # 1. Generate protobuf stubs (metadata_pb2.py)
+    generate_protobuf_stubs()
+
+    # 2. Generate Python dataclass (FileMetadata + MetadataStore ABC)
     metadata_content = generate_metadata_py(fields)
     METADATA_OUT.write_text(metadata_content, encoding="utf-8")
-    print(f"\nGenerated: {METADATA_OUT}")
+    print(f"Generated: {METADATA_OUT}")
 
+    # 3. Generate compact metadata (CompactFileMetadata + interning)
     compact_content = generate_compact_py(fields)
     COMPACT_OUT.write_text(compact_content, encoding="utf-8")
     print(f"Generated: {COMPACT_OUT}")

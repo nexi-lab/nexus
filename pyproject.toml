@@ -608,4 +608,5 @@ line-ending = "auto"
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",
+    "grpcio-tools>=1.76.0",
 ]

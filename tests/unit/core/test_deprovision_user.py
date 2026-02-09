@@ -22,7 +22,15 @@ class TestDeprovisionUser:
         return tmp_path
 
     @pytest.fixture
-    def nx(self, temp_dir: Path, monkeypatch) -> Generator[NexusFS, None, None]:
+    def record_store(self, temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+        """Create a SQLAlchemyRecordStore for testing."""
+        db_file = temp_dir / "metadata.db"
+        rs = SQLAlchemyRecordStore(db_path=db_file)
+        yield rs
+        rs.close()
+
+    @pytest.fixture
+    def nx(self, temp_dir: Path, record_store, monkeypatch) -> Generator[NexusFS, None, None]:
         """Create a NexusFS instance with permissions enforced."""
         import time
 
@@ -44,7 +52,7 @@ class TestDeprovisionUser:
         nx_instance = NexusFS(
             backend=LocalBackend(temp_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
-            record_store=SQLAlchemyRecordStore(db_path=db_file),
+            record_store=record_store,
             auto_parse=False,
             enforce_permissions=True,
             allow_admin_bypass=True,
@@ -150,7 +158,7 @@ class TestDeprovisionUser:
                 pass
 
     def test_deprovision_deletes_api_keys(
-        self, nx: NexusFS, admin_context: OperationContext
+        self, nx: NexusFS, admin_context: OperationContext, record_store: SQLAlchemyRecordStore
     ) -> None:
         """Test that deprovisioning deletes API keys."""
         # Provision user with API key
@@ -180,7 +188,7 @@ class TestDeprovisionUser:
         # Verify API key is revoked in database
         from nexus.storage.models import APIKeyModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             key_count = (
                 session.query(APIKeyModel)
@@ -192,7 +200,7 @@ class TestDeprovisionUser:
             session.close()
 
     def test_deprovision_soft_delete_user_record(
-        self, nx: NexusFS, admin_context: OperationContext
+        self, nx: NexusFS, admin_context: OperationContext, record_store
     ) -> None:
         """Test soft-deleting user record during deprovisioning."""
         # Provision user
@@ -220,7 +228,7 @@ class TestDeprovisionUser:
         # Check database
         from nexus.storage.models import UserModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             user = session.query(UserModel).filter_by(user_id="david").first()
             assert user is not None
@@ -230,7 +238,7 @@ class TestDeprovisionUser:
             session.close()
 
     def test_deprovision_prevents_admin_deprovisioning(
-        self, nx: NexusFS, admin_context: OperationContext
+        self, nx: NexusFS, admin_context: OperationContext, record_store
     ) -> None:
         """Test that deprovisioning prevents removing admin users."""
         # Create admin user directly in database
@@ -238,7 +246,7 @@ class TestDeprovisionUser:
 
         from nexus.storage.models import UserModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             admin_user = UserModel(
                 user_id="admin_user",
@@ -267,7 +275,7 @@ class TestDeprovisionUser:
             )
 
     def test_deprovision_force_admin_deprovisioning(
-        self, nx: NexusFS, admin_context: OperationContext
+        self, nx: NexusFS, admin_context: OperationContext, record_store
     ) -> None:
         """Test force flag allows deprovisioning admin users."""
         # Create admin user
@@ -275,7 +283,7 @@ class TestDeprovisionUser:
 
         from nexus.storage.models import UserModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             admin_user = UserModel(
                 user_id="admin_user2",
@@ -432,7 +440,9 @@ class TestDeprovisionUser:
         # Verify permissions were attempted to be deleted (may be 0 in test environment)
         assert result["deleted_permissions"] >= 0
 
-    def test_deprovision_full_flow(self, nx: NexusFS, admin_context: OperationContext) -> None:
+    def test_deprovision_full_flow(
+        self, nx: NexusFS, admin_context: OperationContext, record_store
+    ) -> None:
         """Test complete deprovisioning flow (provision then deprovision)."""
         user_id = f"test_{uuid.uuid4().hex[:8]}"
 
@@ -484,7 +494,7 @@ class TestDeprovisionUser:
         # 4. Verify user is soft-deleted in database
         from nexus.storage.models import UserModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             user = session.query(UserModel).filter_by(user_id=user_id).first()
             assert user is not None

@@ -522,13 +522,15 @@ class NexusFS(  # type: ignore[misc]
                     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
                     # Locks use Raft consensus via metadata store (no Redis needed)
-                    if not isinstance(self.metadata, RaftMetadataStore):
-                        raise TypeError(
-                            f"Distributed locks require RaftMetadataStore, got {type(self.metadata).__name__}"
+                    if isinstance(self.metadata, RaftMetadataStore):
+                        self._lock_manager = RaftLockManager(self.metadata)
+                        set_distributed_lock_manager(self._lock_manager)
+                        logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
+                    else:
+                        logger.warning(
+                            f"Distributed locks require RaftMetadataStore, got {type(self.metadata).__name__}. "
+                            "Lock manager will not be initialized."
                         )
-                    self._lock_manager = RaftLockManager(self.metadata)
-                    set_distributed_lock_manager(self._lock_manager)
-                    logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
 
                 # Initialize event bus if enabled (can use evictable dragonfly)
                 if enable_distributed_events and event_url_resolved:

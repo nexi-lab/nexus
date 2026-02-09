@@ -23,6 +23,7 @@ COPY nexus-langgraph/langgraph.json ./
 COPY nexus-langgraph/webapp.py ./
 COPY nexus-langgraph/agents ./agents
 COPY nexus-langgraph/shared ./shared
+COPY nexus-langgraph/webapp.py ./
 
 # Install dependencies (nexus-fs-python from PyPI, not local build)
 # Pin langgraph-api to exact version to avoid 0.7.21 thread_ttl import error
@@ -49,6 +50,7 @@ COPY nexus-langgraph/langgraph.json ./
 COPY nexus-langgraph/webapp.py ./
 COPY nexus-langgraph/agents ./agents
 COPY nexus-langgraph/shared ./shared
+COPY nexus-langgraph/webapp.py ./
 
 # Create non-root user for security
 RUN useradd -r -m -u 1000 -s /bin/bash nexus && \

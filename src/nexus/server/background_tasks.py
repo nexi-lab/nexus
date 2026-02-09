@@ -8,7 +8,7 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.sessions import cleanup_expired_sessions, cleanup_inactive_sessions
+from nexus.services.sessions import cleanup_expired_sessions, cleanup_inactive_sessions
 from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
 
 if TYPE_CHECKING:
@@ -28,7 +28,7 @@ async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300
 
     Examples:
         >>> # Start cleanup task in server
-        >>> from nexus.core.sandbox_manager import SandboxManager
+        >>> from nexus.sandbox import SandboxManager
         >>> mgr = SandboxManager(db_session, e2b_api_key="...")
         >>> asyncio.create_task(sandbox_cleanup_task(mgr, 300))
     """

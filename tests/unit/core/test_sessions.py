@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.sessions import (
+from nexus.services.sessions import (
     cleanup_expired_sessions,
     cleanup_inactive_sessions,
     create_session,

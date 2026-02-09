@@ -56,7 +56,7 @@ class SyncJobService:
             SyncJobManager instance
         """
         if self._manager is None:
-            from nexus.core.sync_job_manager import SyncJobManager
+            from nexus.services.sync_job_manager import SyncJobManager
 
             session_factory = self._gw.session_factory
             if not session_factory:
@@ -93,7 +93,7 @@ class SyncJobService:
         Args:
             job_id: Job ID to start
         """
-        from nexus.core.sync_job_manager import SyncCancelled
+        from nexus.services.sync_job_manager import SyncCancelled
         from nexus.services.sync_service import SyncContext
 
         manager = self._get_manager()

@@ -13,7 +13,7 @@ Environment Variables:
     OTEL_TRACES_SAMPLER_ARG: Sampling ratio 0.0-1.0 (default: "1.0")
 
 Usage:
-    from nexus.core.telemetry import setup_telemetry, get_tracer
+    from nexus.server.telemetry import setup_telemetry, get_tracer
 
     # Initialize once at startup
     setup_telemetry()

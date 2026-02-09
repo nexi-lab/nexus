@@ -380,7 +380,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Issue #372: Sandbox manager - lazy initialization
-        from nexus.core.sandbox_manager import SandboxManager
+        from nexus.sandbox.sandbox_manager import SandboxManager
 
         self._sandbox_manager: SandboxManager | None = None
 
@@ -5815,7 +5815,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
-            from nexus.core.sandbox_manager import SandboxManager
+            from nexus.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             session = self.SessionLocal()

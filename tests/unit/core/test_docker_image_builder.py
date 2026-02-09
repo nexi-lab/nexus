@@ -30,7 +30,7 @@ if "docker" not in sys.modules:
     sys.modules["docker.errors"] = docker_errors_mock
     sys.modules["docker"].errors = docker_errors_mock
 
-from nexus.core.docker_image_builder import DockerImageBuilder
+from nexus.sandbox.docker_image_builder import DockerImageBuilder
 
 
 @pytest.fixture
@@ -454,7 +454,7 @@ class TestDockerImageBuilder:
     def test_initialization_without_docker_package(self, monkeypatch):
         """Test that initialization fails gracefully when docker package is not available."""
         # Mock DOCKER_AVAILABLE to False
-        import nexus.core.docker_image_builder as builder_module
+        import nexus.sandbox.docker_image_builder as builder_module
 
         monkeypatch.setattr(builder_module, "DOCKER_AVAILABLE", False)
 

@@ -13,7 +13,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from nexus.core.sandbox_provider import (
+from nexus.sandbox.sandbox_provider import (
     CodeExecutionResult,
     ExecutionTimeoutError,
     SandboxCreationError,

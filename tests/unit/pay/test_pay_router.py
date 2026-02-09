@@ -19,7 +19,7 @@ Test categories:
 from __future__ import annotations
 
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -32,49 +32,9 @@ from nexus.server.api.v2.routers.pay import (
 )
 
 # =============================================================================
-# Fixtures
+# Fixtures (mock_credits_service, mock_x402_client, mock_auth_result
+# are provided by conftest.py)
 # =============================================================================
-
-
-@pytest.fixture
-def mock_credits_service():
-    """Mock CreditsService with sensible defaults."""
-    service = AsyncMock()
-    service.get_balance = AsyncMock(return_value=Decimal("100.0"))
-    service.get_balance_with_reserved = AsyncMock(return_value=(Decimal("100.0"), Decimal("5.0")))
-    service.transfer = AsyncMock(return_value="tx-123")
-    service.topup = AsyncMock(return_value="topup-123")
-    service.reserve = AsyncMock(return_value="res-123")
-    service.commit_reservation = AsyncMock()
-    service.release_reservation = AsyncMock()
-    service.deduct_fast = AsyncMock(return_value=True)
-    service.check_budget = AsyncMock(return_value=True)
-    service.transfer_batch = AsyncMock(return_value=["tx-1", "tx-2"])
-    service.provision_wallet = AsyncMock()
-    return service
-
-
-@pytest.fixture
-def mock_x402_client():
-    """Mock X402Client."""
-    client = MagicMock()
-    client.network = "base"
-    client.wallet_address = "0x1234567890123456789012345678901234567890"
-    return client
-
-
-@pytest.fixture
-def mock_auth_result():
-    """Standard auth result for test-agent."""
-    return {
-        "authenticated": True,
-        "subject_type": "agent",
-        "subject_id": "test-agent",
-        "zone_id": "default",
-        "is_admin": False,
-        "x_agent_id": None,
-        "metadata": {},
-    }
 
 
 @pytest.fixture
@@ -776,3 +736,52 @@ class TestServiceAvailability:
 
         # Will fail at dependency injection (503 or 500)
         assert response.status_code in (500, 503)
+
+
+# =============================================================================
+# 13. Agent ID Extraction
+# =============================================================================
+
+
+class TestExtractAgentId:
+    """Test _extract_agent_id helper for auth context parsing."""
+
+    def test_x_agent_id_takes_priority(self):
+        """x_agent_id header should override subject_id."""
+        from nexus.server.api.v2.routers.pay import _extract_agent_id
+
+        result = _extract_agent_id({
+            "subject_type": "user",
+            "subject_id": "user-123",
+            "x_agent_id": "delegated-agent",
+        })
+        assert result == "delegated-agent"
+
+    def test_agent_subject_returns_subject_id(self):
+        """Agent subject_type should return subject_id."""
+        from nexus.server.api.v2.routers.pay import _extract_agent_id
+
+        result = _extract_agent_id({
+            "subject_type": "agent",
+            "subject_id": "my-agent",
+            "x_agent_id": None,
+        })
+        assert result == "my-agent"
+
+    def test_user_subject_returns_subject_id(self):
+        """User subject_type should also return subject_id."""
+        from nexus.server.api.v2.routers.pay import _extract_agent_id
+
+        result = _extract_agent_id({
+            "subject_type": "user",
+            "subject_id": "user-456",
+            "x_agent_id": None,
+        })
+        assert result == "user-456"
+
+    def test_missing_fields_graceful(self):
+        """Should handle missing fields with defaults."""
+        from nexus.server.api.v2.routers.pay import _extract_agent_id
+
+        result = _extract_agent_id({})
+        assert result == "anonymous"

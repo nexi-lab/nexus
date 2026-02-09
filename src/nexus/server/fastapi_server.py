@@ -997,10 +997,74 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
+    # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
+    _scheduler_pool = None
+    if _app_state.database_url and "postgresql" in _app_state.database_url:
+        try:
+            import asyncpg
+
+            from nexus.pay.credits import CreditsService
+            from nexus.scheduler.queue import TaskQueue
+            from nexus.scheduler.service import SchedulerService
+
+            # Convert SQLAlchemy URL to asyncpg DSN
+            pg_dsn = _app_state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+
+            # Create scheduled_tasks table if it doesn't exist
+            async with _scheduler_pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        agent_id TEXT NOT NULL,
+                        executor_id TEXT NOT NULL,
+                        task_type TEXT NOT NULL,
+                        payload JSONB NOT NULL DEFAULT '{}',
+                        priority_tier SMALLINT NOT NULL DEFAULT 2,
+                        deadline TIMESTAMPTZ,
+                        boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
+                        boost_tiers SMALLINT NOT NULL DEFAULT 0,
+                        effective_tier SMALLINT NOT NULL DEFAULT 2,
+                        enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        started_at TIMESTAMPTZ,
+                        completed_at TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        boost_reservation_id TEXT,
+                        idempotency_key TEXT UNIQUE,
+                        zone_id TEXT NOT NULL DEFAULT 'default',
+                        error_message TEXT
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
+                    ON scheduled_tasks (effective_tier, enqueued_at)
+                    WHERE status = 'queued'
+                """)
+
+            scheduler_service = SchedulerService(
+                queue=TaskQueue(),
+                db_pool=_scheduler_pool,
+                credits_service=CreditsService(enabled=False),
+            )
+            _app.state.scheduler_service = scheduler_service
+            logger.info("Scheduler service initialized (PostgreSQL)")
+        except ImportError as e:
+            logger.debug(f"Scheduler service not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Scheduler service: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1212: Shutdown scheduler pool
+    if _scheduler_pool:
+        try:
+            await _scheduler_pool.close()
+            logger.info("Scheduler pool closed")
+        except Exception as e:
+            logger.warning(f"Error closing scheduler pool: {e}")
 
     # Issue #940: Shutdown AsyncNexusFS
     if _app_state.async_nexus_fs:
@@ -1719,6 +1783,17 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(
             f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
+    # Scheduler REST API routes (Issue #1212)
+    try:
+        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
+
+        app.include_router(scheduler_router)
+        logger.info("Scheduler API routes registered (3 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
         )
 
     # Issue #940: Register async files router (lazy initialization via lifespan)

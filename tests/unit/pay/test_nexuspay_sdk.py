@@ -41,43 +41,6 @@ from nexus.pay.sdk import (
 
 
 @pytest.fixture
-def mock_credits_service():
-    """Create a mock CreditsService."""
-    service = AsyncMock()
-    service.get_balance = AsyncMock(return_value=Decimal("100.0"))
-    service.get_balance_with_reserved = AsyncMock(return_value=(Decimal("100.0"), Decimal("0")))
-    service.transfer = AsyncMock(return_value="tx-123")
-    service.topup = AsyncMock(return_value="topup-123")
-    service.reserve = AsyncMock(return_value="res-123")
-    service.commit_reservation = AsyncMock()
-    service.release_reservation = AsyncMock()
-    service.deduct_fast = AsyncMock(return_value=True)
-    service.check_budget = AsyncMock(return_value=True)
-    service.transfer_batch = AsyncMock(return_value=["tx-1", "tx-2"])
-    service.provision_wallet = AsyncMock()
-    return service
-
-
-@pytest.fixture
-def mock_x402_client():
-    """Create a mock X402Client."""
-    from nexus.pay.x402 import X402Receipt
-
-    client = AsyncMock()
-    client.pay = AsyncMock(
-        return_value=X402Receipt(
-            tx_hash="0xabc123",
-            network="eip155:8453",
-            amount=Decimal("1.00"),
-            currency="USDC",
-            timestamp=None,
-        )
-    )
-    client.close = AsyncMock()
-    return client
-
-
-@pytest.fixture
 def nexuspay(mock_credits_service, mock_x402_client):
     """Create a NexusPay instance with mocked dependencies."""
     pay = NexusPay(
@@ -417,17 +380,116 @@ class TestMeteringOperations:
         mock_credits_service.deduct_fast.return_value = False
         assert await nexuspay.check_rate_limit(cost=1) is False
 
-    @pytest.mark.asyncio
-    async def test_bid_priority(self, nexuspay, mock_credits_service):
-        reservation = await nexuspay.bid_priority(
-            queue="task_queue",
-            bid=0.10,
-            task_id="task-789",
-            timeout=300,
+
+
+# =============================================================================
+# 6b. Task Scheduling
+# =============================================================================
+
+
+class TestTaskScheduling:
+    """Test submit_task for priority scheduling."""
+
+    @pytest.fixture
+    def mock_scheduler(self):
+        """Mock SchedulerService."""
+        from nexus.scheduler.models import ScheduledTask
+        from nexus.scheduler.constants import PriorityTier
+        from datetime import UTC, datetime
+
+        scheduler = AsyncMock()
+        scheduler.submit_task = AsyncMock(return_value=ScheduledTask(
+            id="task-uuid-123",
+            agent_id="myagent",
+            executor_id="agent-b",
+            task_type="process",
+            payload={"key": "value"},
+            priority_tier=PriorityTier.NORMAL,
+            effective_tier=2,
+            enqueued_at=datetime.now(UTC),
+            status="queued",
+        ))
+        return scheduler
+
+    @pytest.fixture
+    def nexuspay_with_scheduler(self, mock_credits_service, mock_scheduler):
+        """NexusPay with scheduler configured."""
+        return NexusPay(
+            api_key="nx_live_myagent",
+            credits_service=mock_credits_service,
+            scheduler_service=mock_scheduler,
         )
-        assert isinstance(reservation, Reservation)
-        assert reservation.purpose == "priority_bid"
-        mock_credits_service.reserve.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_basic(self, nexuspay_with_scheduler, mock_scheduler):
+        """Submit task with default priority."""
+        result = await nexuspay_with_scheduler.submit_task(
+            executor="agent-b",
+            task_type="process",
+            payload={"key": "value"},
+        )
+
+        assert result.id == "task-uuid-123"
+        mock_scheduler.submit_task.assert_called_once()
+        call_args = mock_scheduler.submit_task.call_args[0][0]
+        assert call_args.agent_id == "myagent"
+        assert call_args.executor_id == "agent-b"
+
+    @pytest.mark.asyncio
+    async def test_submit_task_with_priority(self, nexuspay_with_scheduler, mock_scheduler):
+        """Submit task with explicit priority."""
+        await nexuspay_with_scheduler.submit_task(
+            executor="agent-b",
+            task_type="urgent",
+            priority="high",
+        )
+
+        call_args = mock_scheduler.submit_task.call_args[0][0]
+        from nexus.scheduler.constants import PriorityTier
+        assert call_args.priority == PriorityTier.HIGH
+
+    @pytest.mark.asyncio
+    async def test_submit_task_with_boost(self, nexuspay_with_scheduler, mock_scheduler):
+        """Submit task with boost payment."""
+        await nexuspay_with_scheduler.submit_task(
+            executor="agent-b",
+            task_type="process",
+            boost=0.02,
+        )
+
+        call_args = mock_scheduler.submit_task.call_args[0][0]
+        assert call_args.boost_amount == Decimal("0.02")
+
+    @pytest.mark.asyncio
+    async def test_submit_task_invalid_priority_raises(self, nexuspay_with_scheduler):
+        """Invalid priority string should raise."""
+        with pytest.raises(NexusPayError, match="Invalid priority"):
+            await nexuspay_with_scheduler.submit_task(
+                executor="agent-b",
+                task_type="process",
+                priority="ultra_mega",
+            )
+
+    @pytest.mark.asyncio
+    async def test_submit_task_without_scheduler_raises(self, nexuspay):
+        """Submit without scheduler configured should raise."""
+        with pytest.raises(NexusPayError, match="SchedulerService not configured"):
+            await nexuspay.submit_task(
+                executor="agent-b",
+                task_type="process",
+            )
+
+    @pytest.mark.asyncio
+    async def test_submit_task_with_idempotency_key(self, nexuspay_with_scheduler, mock_scheduler):
+        """Idempotency key should pass through."""
+        await nexuspay_with_scheduler.submit_task(
+            executor="agent-b",
+            task_type="process",
+            idempotency_key="unique-123",
+        )
+
+        call_args = mock_scheduler.submit_task.call_args[0][0]
+        assert call_args.idempotency_key == "unique-123"
 
 
 # =============================================================================

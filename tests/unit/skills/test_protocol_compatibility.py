@@ -119,11 +119,7 @@ def test_nexus_fs_satisfies_protocol() -> None:
     import tempfile
     from pathlib import Path
 
-    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        from pathlib import Path
-
         metadata_store = RaftMetadataStore.local(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
@@ -166,11 +162,7 @@ def test_protocol_runtime_checkable() -> None:
     import tempfile
     from pathlib import Path
 
-    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
-
     with tempfile.TemporaryDirectory() as tmpdir:
-        from pathlib import Path
-
         metadata_store = RaftMetadataStore.local(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
             backend=LocalBackend(tmpdir),

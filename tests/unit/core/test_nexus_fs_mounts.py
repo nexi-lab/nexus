@@ -22,8 +22,9 @@ from unittest.mock import patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -36,9 +37,9 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -50,9 +51,9 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
 @pytest.fixture
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-perms")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
@@ -310,9 +311,9 @@ class TestSaveMount:
     def test_save_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that save_mount raises RuntimeError without mount manager."""
         # Create NexusFS without database (no mount manager)
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_save_mount.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-test-save-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_save_mount.db"),
             auto_parse=False,
             enforce_permissions=False,
@@ -357,9 +358,9 @@ class TestListSavedMounts:
 
     def test_list_saved_mounts_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_list_saved_mounts.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-test-list-saved-mounts")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_list_saved_mounts.db"),
             auto_parse=False,
             enforce_permissions=False,
@@ -378,9 +379,9 @@ class TestLoadMount:
 
     def test_load_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that load_mount raises RuntimeError without mount manager."""
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_load_mount.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-test-load-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_load_mount.db"),
             auto_parse=False,
             enforce_permissions=False,
@@ -399,9 +400,9 @@ class TestDeleteSavedMount:
 
     def test_delete_saved_mount_without_mount_manager_raises_error(self, temp_dir: Path) -> None:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "test_delete_saved_mount.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-test-delete-saved-mount")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_delete_saved_mount.db"),
             auto_parse=False,
             enforce_permissions=False,

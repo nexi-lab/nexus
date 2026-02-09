@@ -445,7 +445,7 @@ module = "nexus.llm.provider"
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.core.cache.dragonfly"
+module = "nexus.cache.dragonfly"
 # redis library has complex async types that mypy struggles with
 warn_unused_ignores = false
 disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]
@@ -517,11 +517,6 @@ module = ["nexus.core._metadata_generated", "nexus.core._compact_generated"]
 disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
-module = "nexus.storage.sqlalchemy_metadata_store"
-# alembic dynamic imports
-disable_error_code = ["attr-defined"]
-
-[[tool.mypy.overrides]]
 module = [
     "nexus.raft",
     "nexus.raft.*",
@@ -588,6 +583,7 @@ ignore = [
 "alembic/*" = ["UP007", "E402"]  # Alembic: Union syntax, import order
 "src/nexus/backends/*.py" = ["ARG002"]  # Keep unused context params for API compatibility
 "src/nexus/core/ace/trajectory.py" = ["ARG002"]  # Keep unused permission param for API compatibility
+"src/nexus/core/cache_store.py" = ["ARG002"]  # NullCacheStore: Null Object pattern — unused args by design
 "src/nexus/core/nexus_fs.py" = ["ARG002"]  # Constructor accepts cache params for public API
 "src/nexus/core/distributed_lock.py" = ["ARG002"]  # Interface method signature
 "src/nexus/raft/__init__.py" = ["E402"]  # Conditional imports require try/except after TYPE_CHECKING
@@ -608,4 +604,5 @@ line-ending = "auto"
 [dependency-groups]
 dev = [
     "freezegun>=1.5.5",
+    "grpcio-tools>=1.76.0",
 ]

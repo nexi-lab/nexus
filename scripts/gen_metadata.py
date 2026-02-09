@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate Python dataclasses from proto/nexus/core/metadata.proto.
+"""Generate Python code from proto/nexus/core/metadata.proto.
 
 SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
-  - src/nexus/core/_metadata_generated.py  (FileMetadata + PaginatedResult + MetadataStore ABC)
+  - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
+  - src/nexus/core/_metadata_generated.py  (FileMetadata + PaginatedResult + FileMetadataProtocol ABC)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
 Usage:
@@ -22,6 +23,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTO_PATH = REPO_ROOT / "proto" / "nexus" / "core" / "metadata.proto"
 METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_metadata_generated.py"
 COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
+
+# --- Generated class names (SSOT) ---
+# Canonical names exported by each generated module.
+# The SSOT audit checks all downstream imports match these.
+GENERATED_NAMES: dict[str, set[str]] = {
+    "_metadata_generated": {
+        "FileMetadata",
+        "PaginatedResult",
+        "FileMetadataProtocol",
+        "AsyncFileMetadataWrapper",
+    },
+    "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
+}
+
+# --- One-time migration: old → new name ---
+# When a generated class is renamed, add old→new here. The generator
+# will update all downstream imports in src/ and tests/, then DELETE
+# the entry. This is NOT backward compatibility — no aliases are kept.
+RENAMES: dict[str, str] = {}
 
 # --- Proto field configuration ---
 # When you add a field to metadata.proto, update these mappings.
@@ -179,11 +199,13 @@ To modify FileMetadata:
 Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
-  - MetadataStore: Abstract base class for metadata storage backends
+  - FileMetadataProtocol: Abstract base class for metadata storage backends
+  - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
 """
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -291,7 +313,7 @@ class FileMetadata:
         return compact.to_file_metadata()
 
 
-class MetadataStore(ABC):
+class FileMetadataProtocol(ABC):
     """Abstract interface for metadata storage.
 
     Generated from: proto/nexus/core/metadata.proto
@@ -321,7 +343,7 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List all files with given path prefix."""
         pass
 
@@ -371,6 +393,106 @@ class MetadataStore(ABC):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         pass
+'''
+
+
+def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
+    """Extract method signatures from the generated FileMetadataProtocol text.
+
+    Returns list of (method_name, params_after_self, return_type).
+    This derives async wrapper signatures from the protocol — true SSOT.
+    """
+    # Isolate the FileMetadataProtocol class body
+    proto_match = re.search(r"class FileMetadataProtocol.*?(?=\nclass |\Z)", source, re.DOTALL)
+    if not proto_match:
+        return []
+
+    proto_text = proto_match.group()
+    methods: list[tuple[str, str, str]] = []
+
+    # Match method defs (handles multi-line signatures via DOTALL)
+    for m in re.finditer(
+        r"def\s+(\w+)\s*\((.*?)\)\s*->\s*([\w\[\], |\"]+)\s*:",
+        proto_text,
+        re.DOTALL,
+    ):
+        name = m.group(1)
+        full_params = m.group(2)
+        return_type = m.group(3).strip()
+
+        # Normalize whitespace and strip 'self'
+        params = re.sub(r"\s+", " ", full_params).strip()
+        params = re.sub(r"^self\s*,?\s*", "", params).strip()
+        # Remove inline noqa comments (match only the code, not trailing params)
+        params = re.sub(r"\s*#\s*noqa:\s*[\w,]+", "", params).strip()
+        # Clean trailing comma
+        params = params.rstrip(", ")
+
+        methods.append((name, params, return_type))
+
+    return methods
+
+
+def _params_to_call_args(params: str) -> str:
+    """Extract argument names from a parameter string for a function call.
+
+    Example: ``"prefix: str = '', recursive: bool = True, **kwargs: Any"``
+    → ``"prefix, recursive, **kwargs"``
+    """
+    if not params:
+        return ""
+    args: list[str] = []
+    for param in params.split(","):
+        param = param.strip()
+        if not param:
+            continue
+        # Name is everything before ':' or '='
+        name = param.split(":")[0].split("=")[0].strip()
+        args.append(name)
+    return ", ".join(args)
+
+
+def generate_async_wrapper(metadata_source: str) -> str:
+    """Generate AsyncFileMetadataWrapper by parsing FileMetadataProtocol.
+
+    Derives method signatures from the protocol text so that adding
+    a method to the protocol automatically produces its async counterpart.
+    """
+    methods = _extract_protocol_methods(metadata_source)
+    if not methods:
+        return ""
+
+    lines: list[str] = []
+    for name, params, return_type in methods:
+        async_name = f"a{name}"
+        call_args = _params_to_call_args(params)
+
+        sig_params = f", {params}" if params else ""
+        call_str = f", {call_args}" if call_args else ""
+
+        lines.append(
+            f"    async def {async_name}(self{sig_params}) -> {return_type}:\n"
+            f"        return await asyncio.to_thread(self._store.{name}{call_str})"
+        )
+
+    methods_block = "\n\n".join(lines)
+
+    return f'''
+
+class AsyncFileMetadataWrapper:
+    """Async wrapper around any FileMetadataProtocol implementation.
+
+    Generated from: scripts/gen_metadata.py
+    Derived from: FileMetadataProtocol method signatures (SSOT).
+
+    Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
+    Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
+    """
+
+    def __init__(self, store: FileMetadataProtocol) -> None:
+        self._store = store
+
+{methods_block}
 '''
 
 
@@ -532,6 +654,141 @@ def clear_intern_pool() -> None:
 '''
 
 
+def generate_protobuf_stubs() -> None:
+    """Generate metadata_pb2.py via grpc_tools.protoc.
+
+    This produces the standard protobuf Python stubs used by
+    RaftFileMetadataProtocol for binary serialization into sled.
+    """
+    try:
+        from grpc_tools import protoc
+    except ImportError:
+        print(
+            "WARNING: grpcio-tools not installed, skipping metadata_pb2.py generation.\n"
+            "  Install with: uv add --dev grpcio-tools",
+            file=sys.stderr,
+        )
+        return
+
+    proto_include = str(REPO_ROOT / "proto")
+    src_out = str(REPO_ROOT / "src")
+    proto_file = "nexus/core/metadata.proto"
+
+    result = protoc.main(
+        [
+            "grpc_tools.protoc",
+            f"-I{proto_include}",
+            f"--python_out={src_out}",
+            proto_file,
+        ]
+    )
+
+    if result != 0:
+        print(f"ERROR: protoc failed with exit code {result}", file=sys.stderr)
+        sys.exit(1)
+
+    pb2_path = REPO_ROOT / "src" / "nexus" / "core" / "metadata_pb2.py"
+    print(f"Generated: {pb2_path}")
+
+
+def apply_renames(renames: dict[str, str]) -> list[str]:
+    """Apply one-time renames to all downstream .py files.
+
+    Scans src/ and tests/ for word-boundary matches of old names
+    and replaces with new names. Skips generated files themselves.
+
+    Returns list of modified file paths.
+    """
+    if not renames:
+        return []
+
+    src_dir = REPO_ROOT / "src"
+    tests_dir = REPO_ROOT / "tests"
+
+    # Build a single regex matching any old name (word-boundary safe)
+    old_names = sorted(renames.keys(), key=len, reverse=True)  # longest first
+    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in old_names) + r")\b")
+
+    # Files to skip (generated by this script)
+    skip = {METADATA_OUT.resolve(), COMPACT_OUT.resolve()}
+
+    modified = []
+    for search_dir in [src_dir, tests_dir]:
+        if not search_dir.exists():
+            continue
+        for py_file in search_dir.rglob("*.py"):
+            if py_file.resolve() in skip:
+                continue
+            with open(py_file, encoding="utf-8", newline="") as fh:
+                content = fh.read()
+            new_content = pattern.sub(lambda m: renames[m.group(1)], content)
+            if new_content != content:
+                with open(py_file, "w", encoding="utf-8", newline="") as fh:
+                    fh.write(new_content)
+                modified.append(str(py_file.relative_to(REPO_ROOT)))
+
+    return modified
+
+
+def audit_ssot_coverage() -> list[str]:
+    """Audit that all downstream imports from generated modules use valid names.
+
+    Scans src/ and tests/ for imports from _metadata_generated and
+    _compact_generated, and checks every imported name is in GENERATED_NAMES.
+
+    Returns list of warnings (empty = all clean).
+    """
+    src_dir = REPO_ROOT / "src"
+    tests_dir = REPO_ROOT / "tests"
+
+    # Match single-line and multi-line imports from generated modules
+    # e.g. from nexus.core._metadata_generated import FileMetadata, PaginatedResult
+    # e.g. from nexus.core._compact_generated import (
+    #          CompactFileMetadata,
+    #          get_intern_pool_stats as get_pool_stats,
+    #      )
+    import_re = re.compile(
+        r"from\s+nexus\.core\.(_(?:metadata|compact)_generated)\s+import\s+"
+        r"(?:\(([^)]*)\)|(.+?))\s*$",
+        re.MULTILINE | re.DOTALL,
+    )
+
+    # Extract bare name from "Name as Alias" → "Name"
+    def _parse_imported_names(names_str: str) -> set[str]:
+        names = set()
+        for token in names_str.split(","):
+            token = token.strip().strip("()")
+            if not token or token.startswith("#"):
+                continue
+            # Handle "Name as Alias" — we only care about the source name
+            bare = token.split()[0] if token.split() else ""
+            if bare and bare.isidentifier():
+                names.add(bare)
+        return names
+
+    warnings = []
+    for search_dir in [src_dir, tests_dir]:
+        if not search_dir.exists():
+            continue
+        for py_file in search_dir.rglob("*.py"):
+            with open(py_file, encoding="utf-8", newline="") as fh:
+                content = fh.read()
+            for m in import_re.finditer(content):
+                module = m.group(1)
+                names_str = m.group(2) or m.group(3) or ""
+                imported = _parse_imported_names(names_str)
+                valid = GENERATED_NAMES.get(module, set())
+                for name in imported:
+                    # Skip private names (tests may legitimately import internals)
+                    if name.startswith("_"):
+                        continue
+                    if name not in valid:
+                        rel = py_file.relative_to(REPO_ROOT)
+                        warnings.append(f"  {rel}: imports '{name}' from {module} (not in SSOT)")
+
+    return warnings
+
+
 def main() -> None:
     """Parse proto and generate Python files."""
     if not PROTO_PATH.exists():
@@ -547,13 +804,49 @@ def main() -> None:
     for f in fields:
         print(f"  {f['type']} {f['name']} = {f['number']}")
 
-    metadata_content = generate_metadata_py(fields)
-    METADATA_OUT.write_text(metadata_content, encoding="utf-8")
-    print(f"\nGenerated: {METADATA_OUT}")
+    # 1. Generate protobuf stubs (metadata_pb2.py)
+    generate_protobuf_stubs()
 
+    # 2. Generate Python dataclass (FileMetadata + FileMetadataProtocol ABC)
+    metadata_content = generate_metadata_py(fields)
+
+    # 2b. Derive AsyncFileMetadataWrapper from FileMetadataProtocol (SSOT)
+    async_wrapper = generate_async_wrapper(metadata_content)
+    if async_wrapper:
+        metadata_content += async_wrapper
+        methods = _extract_protocol_methods(metadata_content)
+        print(f"  AsyncFileMetadataWrapper: {len(methods)} methods derived from protocol")
+
+    METADATA_OUT.write_text(metadata_content, encoding="utf-8")
+    print(f"Generated: {METADATA_OUT}")
+
+    # 3. Generate compact metadata (CompactFileMetadata + interning)
     compact_content = generate_compact_py(fields)
     COMPACT_OUT.write_text(compact_content, encoding="utf-8")
     print(f"Generated: {COMPACT_OUT}")
+
+    # 4. Apply one-time renames to downstream imports
+    if RENAMES:
+        print(f"\nApplying {len(RENAMES)} rename(s) to downstream files:")
+        for old, new in RENAMES.items():
+            print(f"  {old} → {new}")
+        modified = apply_renames(RENAMES)
+        if modified:
+            print(f"Updated {len(modified)} files:")
+            for f in sorted(modified):
+                print(f"  {f}")
+        else:
+            print("No downstream files needed updating.")
+
+    # 5. SSOT coverage audit
+    print("\nSSOT coverage audit:")
+    warnings = audit_ssot_coverage()
+    if warnings:
+        print(f"Found {len(warnings)} issue(s):")
+        for w in warnings:
+            print(w)
+    else:
+        print("  All downstream imports reference valid generated names.")
 
     print("\nDone. SSOT: proto/nexus/core/metadata.proto")
 

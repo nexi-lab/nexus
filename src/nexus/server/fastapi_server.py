@@ -64,6 +64,7 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    StaleSessionError,
     ValidationError,
 )
 from nexus.server.protocol import (
@@ -245,7 +246,6 @@ def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         NexusPermissionError,
         ParserError,
         PermissionDeniedError,
-        StaleSessionError,
         ValidationError,
     )
 
@@ -371,8 +371,6 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
-        # AgentRegistry for lifecycle state machine (Issue #1240)
-        self.agent_registry: Any = None
 
 
 # Global state (set during app creation)
@@ -655,26 +653,6 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         subject_type = "agent"
         subject_id = agent_id
 
-    # Issue #1240: Look up agent generation for stale-session detection.
-    # TODO(#1240): Currently both this lookup and the PermissionEnforcer check
-    # fetch generation from the same DB, so they always match. For true
-    # stale-session detection, agent_generation should come from the client's
-    # JWT token claims or an X-Agent-Generation header. Until then, this
-    # serves as the structural foundation for when token-based generation
-    # is implemented.
-    agent_generation = None
-    if subject_type == "agent" and _app_state.agent_registry:
-        try:
-            agent_record = _app_state.agent_registry.get(subject_id)
-            if agent_record:
-                agent_generation = agent_record.generation
-        except Exception:
-            logger.debug(
-                "[STALE-SESSION] Registry lookup failed for %s, proceeding without generation",
-                subject_id,
-                exc_info=True,
-            )
-
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
@@ -687,16 +665,33 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
             AdminCapability.MANAGE_REBAC,
         }
 
+    # Issue #1240: Populate agent_generation from AgentRegistry
+    # TODO: In production, agent_generation should come from client JWT token,
+    # not a server-side DB lookup (which makes stale-session detection a no-op
+    # since both sides read the same DB). This is a temporary bridge until
+    # JWT token integration is implemented.
+    agent_generation = None
+    if subject_type == "agent" and _app_state.agent_registry:
+        try:
+            agent_record = _app_state.agent_registry.get(subject_id)
+            if agent_record:
+                agent_generation = agent_record.generation
+        except Exception:
+            logger.debug(
+                "[AGENT-GEN] Failed to look up generation for agent %s",
+                subject_id,
+            )
+
     return OperationContext(
         user=user_id,
         agent_id=agent_id,
-        agent_generation=agent_generation,
         subject_type=subject_type,
         subject_id=subject_id,
         zone_id=zone_id,
         is_admin=is_admin,
         groups=[],
         admin_capabilities=admin_capabilities,
+        agent_generation=agent_generation,
     )
 
 
@@ -715,7 +710,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Initialize OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import setup_telemetry
+        from nexus.server.telemetry import setup_telemetry
 
         setup_telemetry()
     except ImportError:
@@ -778,10 +773,10 @@ async def lifespan(_app: FastAPI) -> Any:
                     agent_registry=_app_state.agent_registry,
                 )
 
-                # Create AsyncNexusFS
+                # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
                 _app_state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
-                    engine=engine,
+                    metadata_store=_app_state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
@@ -802,8 +797,8 @@ async def lifespan(_app: FastAPI) -> Any:
     dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
     if dragonfly_url:
         try:
-            from nexus.core.cache.factory import init_cache_factory
-            from nexus.core.cache.settings import CacheSettings
+            from nexus.cache.factory import init_cache_factory
+            from nexus.cache.settings import CacheSettings
 
             cache_settings = CacheSettings.from_env()
             _app_state.cache_factory = await init_cache_factory(cache_settings)
@@ -1016,7 +1011,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+                from nexus.cache.warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,
@@ -1042,44 +1037,52 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
-    # Issue #1240: Agent heartbeat flush + stale detection background tasks
-    if _app_state.agent_registry:
+    # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.server.background_tasks import (
-                heartbeat_flush_task,
-                stale_agent_detection_task,
-            )
+            from nexus.core.agent_registry import AgentRegistry
 
-            _app_state._heartbeat_task = asyncio.create_task(
-                heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+            _app_state.agent_registry = AgentRegistry(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                entity_registry=getattr(_app_state.nexus_fs, "_entity_registry", None),
+                flush_interval=60,
             )
-            _app_state._stale_detection_task = asyncio.create_task(
-                stale_agent_detection_task(
-                    _app_state.agent_registry, interval_seconds=300, threshold_seconds=300
-                )
-            )
-            logger.info("[AGENT-REGISTRY] Heartbeat flush + stale detection tasks started")
+            # Inject into NexusFS for RPC methods
+            _app_state.nexus_fs._agent_registry = _app_state.agent_registry
+
+            # Wire into sync PermissionEnforcer
+            perm_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+            if perm_enforcer is not None:
+                perm_enforcer.agent_registry = _app_state.agent_registry
+
+            logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
-            logger.warning(f"[AGENT-REGISTRY] Failed to start background tasks: {e}")
+            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            _app_state.agent_registry = None
+    else:
+        _app_state.agent_registry = None
+
+    # Issue #1240: Start agent heartbeat and stale detection background tasks
+    _heartbeat_task = None
+    _stale_detection_task = None
+    if _app_state.agent_registry:
+        from nexus.server.background_tasks import (
+            heartbeat_flush_task,
+            stale_agent_detection_task,
+        )
+
+        _heartbeat_task = asyncio.create_task(
+            heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+        )
+        _stale_detection_task = asyncio.create_task(
+            stale_agent_detection_task(_app_state.agent_registry, interval_seconds=300)
+        )
+        logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
-
-    # Issue #1240: Cancel agent heartbeat tasks and flush remaining heartbeats
-    for task_attr in ("_heartbeat_task", "_stale_detection_task"):
-        task = getattr(_app_state, task_attr, None)
-        if task and not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-    if _app_state.agent_registry:
-        try:
-            _app_state.agent_registry.flush_heartbeats()
-            logger.info("[AGENT-REGISTRY] Final heartbeat flush on shutdown")
-        except Exception:
-            logger.warning("[AGENT-REGISTRY] Failed to flush heartbeats on shutdown")
 
     # Issue #940: Shutdown AsyncNexusFS
     if _app_state.async_nexus_fs:
@@ -1104,6 +1107,19 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
+
+    # Issue #1240: Cancel agent background tasks and final flush
+    for task_ref in (_heartbeat_task, _stale_detection_task):
+        if task_ref and not task_ref.done():
+            task_ref.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_ref
+    if _app_state.agent_registry:
+        try:
+            _app_state.agent_registry.flush_heartbeats()
+            logger.info("[AGENT-REG] Final heartbeat flush completed")
+        except Exception:
+            logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1171,7 +1187,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Shutdown OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import shutdown_telemetry
+        from nexus.server.telemetry import shutdown_telemetry
 
         shutdown_telemetry()
     except ImportError:
@@ -1221,26 +1237,6 @@ def create_app(
 
     # Discover exposed methods
     _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
-
-    # Initialize AgentRegistry (Issue #1240)
-    _app_state.agent_registry = None
-    if nexus_fs.SessionLocal:
-        try:
-            from nexus.core.agent_registry import AgentRegistry
-
-            _app_state.agent_registry = AgentRegistry(
-                session_factory=nexus_fs.SessionLocal,
-                entity_registry=getattr(nexus_fs, "_entity_registry", None),
-                flush_interval=60,
-            )
-            nexus_fs._agent_registry = _app_state.agent_registry
-            # Wire into sync PermissionEnforcer for stale-session detection
-            perm_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
-            if perm_enforcer is not None:
-                perm_enforcer.agent_registry = _app_state.agent_registry
-            logger.info("[AGENT-REGISTRY] AgentRegistry initialized and injected into NexusFS")
-        except Exception as e:
-            logger.warning(f"[AGENT-REGISTRY] Failed to initialize AgentRegistry: {e}")
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1357,7 +1353,7 @@ def create_app(
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import instrument_fastapi_app
+        from nexus.server.telemetry import instrument_fastapi_app
 
         instrument_fastapi_app(app)
     except ImportError:
@@ -1398,11 +1394,8 @@ def _initialize_oauth_provider(
         session_factory = None
         if auth_provider and hasattr(auth_provider, "session_factory"):
             session_factory = auth_provider.session_factory
-        elif hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
-            from sqlalchemy.orm import sessionmaker
-
-            # Create session factory from metadata
-            session_factory = sessionmaker(bind=nexus_fs.metadata.engine)
+        elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+            session_factory = nexus_fs.SessionLocal
         else:
             logger.warning("Cannot initialize OAuth provider: no session factory available")
             return
@@ -1503,9 +1496,15 @@ async def _graph_enhanced_search(
     # Get database URL
     db_url = _app_state.database_url
     if not db_url:
-        db_url = _app_state.nexus_fs.metadata.database_url
+        db_url = (
+            _app_state.nexus_fs._record_store.database_url
+            if _app_state.nexus_fs._record_store
+            else None
+        )
 
     # Convert to async URL
+    if not db_url:
+        raise RuntimeError("No database URL available for graph search endpoint")
     async_url = db_url
     if async_url.startswith("postgresql://"):
         async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
@@ -1744,7 +1743,7 @@ def _register_routes(app: FastAPI) -> None:
 
         # Redis/Dragonfly pool stats from cache factory
         try:
-            from nexus.core.cache.factory import get_cache_factory
+            from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
             if cache_factory.is_using_dragonfly and cache_factory._cache_client:
@@ -1807,6 +1806,19 @@ def _register_routes(app: FastAPI) -> None:
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
         )
 
+    # Nexus Pay API routes (Issue #1209)
+    try:
+        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
+        from nexus.server.api.v2.routers.pay import router as pay_router
+
+        app.include_router(pay_router)
+        _register_pay_exception_handlers(app)
+        logger.info("Nexus Pay API routes registered (8 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
     # Issue #940: Register async files router (lazy initialization via lifespan)
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router
@@ -1818,6 +1830,21 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Async files router registered (9 endpoints)")
     except ImportError as e:
         logger.warning(f"Failed to import async files router: {e}")
+
+    # A2A Protocol Endpoint (Issue #1256)
+    try:
+        from nexus.a2a import create_a2a_router
+
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_router = create_a2a_router(
+            nexus_fs=_app_state.nexus_fs,
+            config=None,  # Will use defaults; config can be passed when available
+            base_url=a2a_base_url,
+        )
+        app.include_router(a2a_router)
+        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
+    except ImportError as e:
+        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
@@ -2824,7 +2851,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Warmup statistics including files warmed, duration, etc.
         """
-        from nexus.core.cache_warmer import (
+        from nexus.cache.warmer import (
             CacheWarmer,
             WarmupConfig,
             get_file_access_tracker,
@@ -2891,7 +2918,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns statistics for all cache layers including hit rates,
         memory usage, and entry counts.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         nx = _app_state.nexus_fs
         if not nx:
@@ -2949,7 +2976,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns list of hot files based on recent access patterns.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         zone_id = auth_result.get("zone_id", "default")
         tracker = get_file_access_tracker()

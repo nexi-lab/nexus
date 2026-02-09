@@ -9,8 +9,9 @@ from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestBackendWriteStreamDefault:
@@ -386,13 +387,12 @@ class TestReadRangeRPC:
     def test_read_range_basic(self, tmp_path: Path) -> None:
         """Test basic read_range functionality."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -413,13 +413,12 @@ class TestReadRangeRPC:
     def test_read_range_validates_parameters(self, tmp_path: Path) -> None:
         """Test read_range validates start/end parameters."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -441,13 +440,12 @@ class TestReadRangeRPC:
     def test_read_range_empty_range(self, tmp_path: Path) -> None:
         """Test read_range with empty range (start == end)."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -464,13 +462,12 @@ class TestReadRangeRPC:
     def test_read_range_beyond_file_size(self, tmp_path: Path) -> None:
         """Test read_range when range extends beyond file size."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -493,13 +490,12 @@ class TestStatRPC:
     def test_stat_returns_metadata_without_content(self, tmp_path: Path) -> None:
         """Test stat() returns file metadata without reading file content."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -524,13 +520,12 @@ class TestStatRPC:
         """Test stat() raises error for non-existent file."""
         from nexus.backends.local import LocalBackend
         from nexus.core.exceptions import NexusFileNotFoundError
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -545,13 +540,12 @@ class TestStatRPC:
     def test_stat_directory(self, tmp_path: Path) -> None:
         """Test stat() on a directory."""
         from nexus.backends.local import LocalBackend
-        from nexus.core.nexus_fs import NexusFS
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,

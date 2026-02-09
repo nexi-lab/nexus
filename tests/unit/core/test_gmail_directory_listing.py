@@ -18,10 +18,12 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.backends.backend import Backend
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -32,12 +34,20 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    """Create a SQLAlchemyRecordStore for testing."""
+    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=False,
     )
@@ -113,30 +123,26 @@ class MockGmailConnector(Backend):
 class TestGmailDirectoryListing:
     """Test Gmail directory listing with trailing slash fixes."""
 
-    def test_directories_have_trailing_slashes_stripped(self, nx: NexusFS) -> None:
+    def test_directories_have_trailing_slashes_stripped(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that directory paths have trailing slashes stripped before permission checks."""
         connector = MockGmailConnector()
         mount_path = "/mnt/work_gmail"
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create directory metadata entries with mime_type="inode/directory" (no trailing slash)
-        session = nx.metadata.SessionLocal()
-        try:
-            for dir_name in ["INBOX", "SENT", "STARRED", "IMPORTANT"]:
-                session.add(
-                    FilePathModel(
-                        path_id=f"{mount_path}/{dir_name}",
-                        virtual_path=f"{mount_path}/{dir_name}",
-                        backend_id="mock_gmail",
-                        physical_path=f"/{dir_name}",
-                        size_bytes=0,
-                        file_type="inode/directory",
-                        zone_id="default",
-                    )
+        for dir_name in ["INBOX", "SENT", "STARRED", "IMPORTANT"]:
+            nx.metadata.put(
+                FileMetadata(
+                    path=f"{mount_path}/{dir_name}",
+                    backend_name="mock_gmail",
+                    physical_path=f"/{dir_name}",
+                    size=0,
+                    mime_type="inode/directory",
+                    zone_id="default",
                 )
-            session.commit()
-        finally:
-            session.close()
+            )
 
         # List without details (should return paths without trailing slashes)
         files = nx.list(mount_path, recursive=False, details=False)
@@ -149,40 +155,35 @@ class TestGmailDirectoryListing:
             assert not file_path.endswith("/"), f"Path should not have trailing slash: {file_path}"
             assert file_path.startswith(mount_path)
 
-    def test_directories_identified_by_mime_type(self, nx: NexusFS) -> None:
+    def test_directories_identified_by_mime_type(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that directories are identified by mime_type instead of trailing slash."""
         connector = MockGmailConnector()
         mount_path = "/mnt/work_gmail"
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create directory entries with mime_type="inode/directory"
-        session = nx.metadata.SessionLocal()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/INBOX",
-                    virtual_path=f"{mount_path}/INBOX",
-                    backend_id="mock_gmail",
-                    physical_path="/INBOX",
-                    size_bytes=0,
-                    file_type="inode/directory",  # This marks it as directory
-                    zone_id="default",
-                )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/INBOX",
+                backend_name="mock_gmail",
+                physical_path="/INBOX",
+                size=0,
+                mime_type="inode/directory",  # This marks it as directory
+                zone_id="default",
             )
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file.yaml",
-                    virtual_path=f"{mount_path}/file.yaml",
-                    backend_id="mock_gmail",
-                    physical_path="/file.yaml",
-                    size_bytes=100,
-                    file_type="application/yaml",  # Regular file
-                    zone_id="default",
-                )
+        )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file.yaml",
+                backend_name="mock_gmail",
+                physical_path="/file.yaml",
+                size=100,
+                mime_type="application/yaml",  # Regular file
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List with details
         files = nx.list(mount_path, recursive=False, details=True)
@@ -201,29 +202,25 @@ class TestGmailDirectoryListing:
             assert yaml_file["is_directory"] is False
             assert yaml_file["type"] == "file"  # Legacy field
 
-    def test_response_format_backward_compatible(self, nx: NexusFS) -> None:
+    def test_response_format_backward_compatible(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that response includes both new and legacy fields."""
         connector = MockGmailConnector()
         mount_path = "/mnt/work_gmail"
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create directory entry
-        session = nx.metadata.SessionLocal()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/INBOX",
-                    virtual_path=f"{mount_path}/INBOX",
-                    backend_id="mock_gmail",
-                    physical_path="/INBOX",
-                    size_bytes=0,
-                    file_type="inode/directory",
-                    zone_id="default",
-                )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/INBOX",
+                backend_name="mock_gmail",
+                physical_path="/INBOX",
+                size=0,
+                mime_type="inode/directory",
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List with details
         files = nx.list(mount_path, recursive=False, details=True)
@@ -252,42 +249,37 @@ class TestGmailDirectoryListing:
         assert inbox_dir["size"] == 0
         assert "created_at" in inbox_dir
 
-    def test_recursive_listing_includes_directories(self, nx: NexusFS) -> None:
+    def test_recursive_listing_includes_directories(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that recursive listing includes directory entries."""
         connector = MockGmailConnector()
         mount_path = "/mnt/work_gmail"
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create directory and file entries
-        session = nx.metadata.SessionLocal()
-        try:
-            # Directory
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/INBOX",
-                    virtual_path=f"{mount_path}/INBOX",
-                    backend_id="mock_gmail",
-                    physical_path="/INBOX",
-                    size_bytes=0,
-                    file_type="inode/directory",
-                    zone_id="default",
-                )
+        # Directory
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/INBOX",
+                backend_name="mock_gmail",
+                physical_path="/INBOX",
+                size=0,
+                mime_type="inode/directory",
+                zone_id="default",
             )
-            # Files in directory
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/INBOX/email1.yaml",
-                    virtual_path=f"{mount_path}/INBOX/email1.yaml",
-                    backend_id="mock_gmail",
-                    physical_path="/INBOX/email1.yaml",
-                    size_bytes=500,
-                    file_type="application/yaml",
-                    zone_id="default",
-                )
+        )
+        # Files in directory
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/INBOX/email1.yaml",
+                backend_name="mock_gmail",
+                physical_path="/INBOX/email1.yaml",
+                size=500,
+                mime_type="application/yaml",
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List recursively
         files = nx.list(mount_path, recursive=True, details=True)
@@ -309,13 +301,15 @@ class TestGmailDirectoryListing:
 class TestDirectoryMarkerCreation:
     """Test directory marker creation during sync."""
 
-    def test_directory_markers_created_with_zone_id(self, nx: NexusFS) -> None:
+    def test_directory_markers_created_with_zone_id(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that directory markers are created with proper zone_id during sync."""
         # This is an integration test that would test the sync_mount functionality
         # The actual sync functionality would need to be tested with proper mount setup
         # For now, we verify the database schema supports the fields we need
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create a directory marker as sync would
             dir_marker = FilePathModel(

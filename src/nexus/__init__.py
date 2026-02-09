@@ -360,8 +360,10 @@ def connect(
         # User Space selects the driver; Kernel only sees RecordStoreABC
         record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
 
-        # Create NexusFS instance (Task #14: Dependency Injection)
-        nx_fs = NexusFS(
+        # Create NexusFS instance via factory (Task #23: kernel does not auto-create services)
+        from nexus.factory import create_nexus_fs
+
+        nx_fs = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -377,10 +379,10 @@ def connect(
             custom_parsers=cfg.parsers,
             parse_providers=cfg.parse_providers,
             enforce_permissions=enforce_permissions,
-            allow_admin_bypass=cfg.allow_admin_bypass,  # P0-4: Admin bypass setting
-            enforce_zone_isolation=enforce_zone_isolation,  # P0-2: Zone isolation setting
-            enable_workflows=cfg.enable_workflows,  # v0.7.0: Workflow automation
-            enable_tiger_cache=enable_tiger_cache,  # Tiger Cache for materialized permissions
+            allow_admin_bypass=cfg.allow_admin_bypass,
+            enforce_zone_isolation=enforce_zone_isolation,
+            enable_workflows=cfg.enable_workflows,
+            enable_tiger_cache=enable_tiger_cache,
         )
 
         # Set memory config for Memory API

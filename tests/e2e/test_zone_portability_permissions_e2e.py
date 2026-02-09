@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.portability import (
     ConflictMode,
     ZoneImportOptions,
@@ -21,8 +21,8 @@ from nexus.portability import (
     export_zone_bundle,
     import_zone_bundle,
 )
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -38,9 +38,9 @@ def source_nexus_fs_with_permissions(temp_dir):
     data_dir = temp_dir / "source_data"
     data_dir.mkdir()
 
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions
@@ -64,9 +64,9 @@ def target_nexus_fs_with_permissions(temp_dir):
     data_dir = temp_dir / "target_data"
     data_dir.mkdir()
 
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions

@@ -22,10 +22,11 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus import LocalBackend, NexusFS
+from nexus import LocalBackend
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def main() -> None:
@@ -68,10 +69,11 @@ def main() -> None:
     # Initialize NexusFS
     print("Initializing NexusFS...")
     # db_path accepts both PostgreSQL URLs and SQLite file paths
-    nx = NexusFS(
+    record_store = SQLAlchemyRecordStore(db_path=db_path)
+    nx = create_nexus_fs(
         backend=LocalBackend(args.backend_path),
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
-        record_store=SQLAlchemyRecordStore(db_path=db_path),
+        metadata_store=RaftMetadataStore.local(str(Path(args.backend_path) / "raft-metadata")),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,
         allow_admin_bypass=True,
@@ -97,7 +99,7 @@ def main() -> None:
         print("Step 1: Checking for existing test user...")
         from nexus.storage.models import UserModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             existing_user = session.query(UserModel).filter_by(user_id=test_user_id).first()
             if existing_user:
@@ -154,7 +156,7 @@ def main() -> None:
         print("Step 4: Checking API keys...")
         from nexus.storage.models import APIKeyModel
 
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             keys = (
                 session.query(APIKeyModel)
@@ -198,7 +200,7 @@ def main() -> None:
 
         # Step 6: Verify user is soft-deleted
         print("Step 6: Verifying user soft-deletion...")
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             user = session.query(UserModel).filter_by(user_id=test_user_id).first()
             if user:
@@ -218,7 +220,7 @@ def main() -> None:
 
         # Step 7: Verify API keys are revoked
         print("Step 7: Verifying API keys are revoked...")
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             active_keys = (
                 session.query(APIKeyModel)

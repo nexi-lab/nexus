@@ -3,9 +3,9 @@
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -22,9 +22,9 @@ def nx(tmp_path):
     data_dir = tmp_path / f"data_{unique_id}"
     db_path = data_dir / "metadata.db"
 
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality tests

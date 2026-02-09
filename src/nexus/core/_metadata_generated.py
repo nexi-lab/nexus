@@ -11,11 +11,13 @@ To modify FileMetadata:
 Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
-  - MetadataStore: Abstract base class for metadata storage backends
+  - FileMetadataProtocol: Abstract base class for metadata storage backends
+  - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
 """
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -135,7 +137,7 @@ class FileMetadata:
         return compact.to_file_metadata()
 
 
-class MetadataStore(ABC):
+class FileMetadataProtocol(ABC):
     """Abstract interface for metadata storage.
 
     Generated from: proto/nexus/core/metadata.proto
@@ -165,7 +167,7 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List all files with given path prefix."""
         pass
 
@@ -215,3 +217,61 @@ class MetadataStore(ABC):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         pass
+
+
+class AsyncFileMetadataWrapper:
+    """Async wrapper around any FileMetadataProtocol implementation.
+
+    Generated from: scripts/gen_metadata.py
+    Derived from: FileMetadataProtocol method signatures (SSOT).
+
+    Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
+    Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
+    """
+
+    def __init__(self, store: FileMetadataProtocol) -> None:
+        self._store = store
+
+    async def aget(self, path: str) -> FileMetadata | None:
+        return await asyncio.to_thread(self._store.get, path)
+
+    async def aput(self, metadata: FileMetadata) -> None:
+        return await asyncio.to_thread(self._store.put, metadata)
+
+    async def adelete(self, path: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._store.delete, path)
+
+    async def aexists(self, path: str) -> bool:
+        return await asyncio.to_thread(self._store.exists, path)
+
+    async def alist(
+        self, prefix: str = "", recursive: bool = True, **kwargs: Any
+    ) -> list[FileMetadata]:
+        return await asyncio.to_thread(self._store.list, prefix, recursive, **kwargs)
+
+    async def alist_paginated(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        limit: int = 1000,
+        cursor: str | None = None,
+        zone_id: str | None = None,
+    ) -> PaginatedResult:
+        return await asyncio.to_thread(
+            self._store.list_paginated, prefix, recursive, limit, cursor, zone_id
+        )
+
+    async def aget_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+        return await asyncio.to_thread(self._store.get_batch, paths)
+
+    async def adelete_batch(self, paths: Sequence[str]) -> None:
+        return await asyncio.to_thread(self._store.delete_batch, paths)
+
+    async def aput_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+        return await asyncio.to_thread(self._store.put_batch, metadata_list)
+
+    async def abatch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
+        return await asyncio.to_thread(self._store.batch_get_content_ids, paths)
+
+    async def aclose(self) -> None:
+        return await asyncio.to_thread(self._store.close)

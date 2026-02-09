@@ -257,7 +257,7 @@ class NamespaceManager:
     def get_grants_hash(
         self,
         subject: tuple[str, str],
-        zone_id: str | None = None,
+        zone_id: str | None = None,  # noqa: ARG002
     ) -> str | None:
         """Get the grants_hash for a subject's cached mount table.
 

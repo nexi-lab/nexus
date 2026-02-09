@@ -22,8 +22,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Add src to path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
@@ -91,7 +92,6 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     """Create NexusFS instance with Tiger Cache and directory grants enabled."""
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 
@@ -100,9 +100,9 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     backend = LocalBackend(root_path=str(storage_path))
 
     # Create NexusFS with Tiger Cache enabled
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=str(db_with_migrations)),
+        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
         enforce_permissions=True,
         enable_tiger_cache=True,

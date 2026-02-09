@@ -9,7 +9,7 @@ Architecture:
 - RaftLockManager: Raft consensus-based locks (SSOT for strong consistency)
 
 Lock Implementation:
-- Uses Raft consensus via SQLAlchemyMetadataStore for strong consistency
+- Uses Raft consensus via RaftMetadataStore for strong consistency
 - Lock key: path (resource to lock)
 - Lock value: holder_id (UUID) for ownership verification
 - TTL-based auto-expiry prevents deadlocks from crashed clients
@@ -27,7 +27,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+    from nexus.core._metadata_generated import FileMetadataProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,7 @@ class LockManagerBase(ABC):
 class RaftLockManager(LockManagerBase):
     """Raft-based distributed locking with strong consistency.
 
-    Uses Raft consensus via SQLAlchemyMetadataStore for CP (strong consistency) locks.
+    Uses Raft consensus via RaftMetadataStore for CP (strong consistency) locks.
     This is the SSOT for all distributed locks in Nexus.
 
     Features:
@@ -204,8 +204,8 @@ class RaftLockManager(LockManagerBase):
     - Supports mutex (max_holders=1) and semaphore (max_holders>1)
 
     Example:
-        >>> from nexus.storage import SQLAlchemyMetadataStore
-        >>> store = SQLAlchemyMetadataStore.local("/var/lib/nexus/metadata")
+        >>> from nexus.storage.raft_metadata_store import RaftMetadataStore
+        >>> store = RaftMetadataStore.local("/var/lib/nexus/metadata")
         >>> manager = RaftLockManager(store)
         >>> lock_id = await manager.acquire("default", "/file.txt", timeout=5.0)
         >>> if lock_id:
@@ -221,11 +221,11 @@ class RaftLockManager(LockManagerBase):
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
     RETRY_MULTIPLIER = 2.0  # Double each retry
 
-    def __init__(self, raft_store: SQLAlchemyMetadataStore):
+    def __init__(self, raft_store: FileMetadataProtocol):
         """Initialize RaftLockManager.
 
         Args:
-            raft_store: SQLAlchemyMetadataStore instance for lock storage
+            raft_store: RaftMetadataStore instance for lock storage
         """
         self._store = raft_store
 
@@ -359,7 +359,7 @@ class RaftLockManager(LockManagerBase):
 
     async def is_locked(self, zone_id: str, path: str) -> bool:
         """Check if a path is currently locked."""
-        # Note: SQLAlchemyMetadataStore doesn't have a direct is_locked method
+        # Note: RaftMetadataStore doesn't have a direct is_locked method
         # We could check by trying to acquire with a dummy holder
         # For now, return False (conservative)
         return False
@@ -385,13 +385,13 @@ DistributedLockManager = RaftLockManager
 
 
 def create_lock_manager(
-    raft_store: SQLAlchemyMetadataStore | None = None,
+    raft_store: FileMetadataProtocol | None = None,
     **kwargs: Any,  # noqa: ARG001 - Reserved for future use
 ) -> LockManagerBase:
     """Factory function to create a lock manager instance.
 
     Args:
-        raft_store: SQLAlchemyMetadataStore for lock storage
+        raft_store: RaftMetadataStore for lock storage
         **kwargs: Reserved for future use
 
     Returns:

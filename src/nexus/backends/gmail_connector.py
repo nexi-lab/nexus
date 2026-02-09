@@ -179,7 +179,7 @@ class GmailConnectorBackend(
                            If provided, enables persistent caching for fast grep/search.
             max_message_per_label: Maximum number of messages to fetch per label (default: 200).
                                   Set to None for unlimited. Useful for testing with small datasets.
-            metadata_store: MetadataStore instance for writing to file_paths table (optional).
+            metadata_store: FileMetadataProtocol instance for writing to file_paths table (optional).
                           Required for metadata-based listing (fast database queries).
 
         Note:

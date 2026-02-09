@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -48,7 +48,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
     """
     metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=benchmark_backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -67,7 +67,7 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
     metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", "") + "_perms")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=benchmark_backend,
         metadata_store=metadata_store,
         record_store=record_store,

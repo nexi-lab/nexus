@@ -200,7 +200,7 @@ send_notifications: true
             session_factory: SQLAlchemy session factory for content caching (optional).
                            If provided, enables persistent caching for fast grep/search.
             max_events_per_calendar: Maximum number of events to fetch per calendar (default: 250).
-            metadata_store: MetadataStore instance for writing to file_paths table (optional).
+            metadata_store: FileMetadataProtocol instance for writing to file_paths table (optional).
 
         Note:
             For single-user scenarios (demos), set user_email explicitly.

@@ -33,7 +33,7 @@ from nexus.portability.models import (
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core._metadata_generated import MetadataStore
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ class ZoneExportService:
             nexus_fs: NexusFS instance with metadata store and backend access
         """
         self.nexus_fs = nexus_fs
-        self.metadata_store: MetadataStore = nexus_fs.metadata
+        self.metadata_store: FileMetadataProtocol = nexus_fs.metadata
         self.backend: Backend = nexus_fs.backend
 
     def export_zone(

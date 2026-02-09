@@ -61,13 +61,12 @@ class GlobStrategy(StrEnum):
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import PaginatedResult
+    from nexus.core._metadata_generated import FileMetadataProtocol, PaginatedResult
     from nexus.core.mount_router import MountRouter
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class SearchService:
@@ -114,12 +113,13 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: SQLAlchemyMetadataStore,
+        metadata_store: FileMetadataProtocol,
         permission_enforcer: PermissionEnforcer | None = None,
         router: MountRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
         default_context: OperationContext | None = None,
+        record_store: Any | None = None,
     ):
         """Initialize search service.
 
@@ -130,8 +130,10 @@ class SearchService:
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
             default_context: Default operation context (embedded mode)
+            record_store: RecordStoreABC for SQL engine (needed for semantic search)
         """
         self.metadata = metadata_store
+        self._record_store = record_store
         self._permission_enforcer = permission_enforcer
         self.router = router
         self._rebac_manager = rebac_manager
@@ -506,8 +508,10 @@ class SearchService:
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
-        # Get database URL from metadata store
-        database_url = str(self.metadata.engine.url)
+        # Get database URL from record store (service dependency)
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+        database_url = str(self._record_store.engine.url)
 
         if async_mode:
             # Use async search for high-throughput (non-blocking DB operations)

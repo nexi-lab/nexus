@@ -18,10 +18,10 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.metadata_store import Base
 from nexus.core.namespace_manager import NamespaceManager
 from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.storage.models import Base
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine

@@ -26,10 +26,10 @@ from nexus.connectors.gmail.schemas import (
     ReplyEmailSchema,
     SendEmailSchema,
 )
-from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # ============================================================================
 # FIXTURES
@@ -324,9 +324,9 @@ class TestSkillDocGeneration:
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+            metadata_store=RaftMetadataStore.local(str(isolated_db).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
             enforce_permissions=False,
         )

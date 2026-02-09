@@ -32,8 +32,9 @@ import uuid
 
 import pytest
 
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Skip entire module if Redis is not available (needed for event bus)
 pytestmark = [
@@ -87,7 +88,7 @@ async def shared_event_bus(redis_client):
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.core.cache.dragonfly import DragonflyClient
+    from nexus.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379")
     client = DragonflyClient(url=redis_url)
@@ -109,7 +110,6 @@ async def redis_client():
 async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
     """Create a NexusFS instance with event bus and Raft-based locks."""
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.nexus_fs import NexusFS
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
     # Each agent gets its own sled database (sled uses exclusive file locks)
@@ -117,9 +117,14 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = NexusFS(
+        nexus = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent1),
+            metadata_store=RaftMetadataStore.local(
+                str(db_path_agent1).replace(
+                    chr(34) + chr(46) + chr(100) + chr(98) + chr(34),
+                    chr(34) + chr(45) + chr(114) + chr(97) + chr(102) + chr(116) + chr(34),
+                )
+            ),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
@@ -151,7 +156,6 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
     see test_raft_distributed.py (Docker-based).
     """
     from nexus.backends.passthrough import PassthroughBackend
-    from nexus.core.nexus_fs import NexusFS
 
     backend = PassthroughBackend(base_path=temp_nexus_dir)
     # Each agent gets its own sled database (sled uses exclusive file locks)
@@ -159,9 +163,9 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = NexusFS(
+        nexus = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent2),
+            metadata_store=RaftMetadataStore.local(str(db_path_agent2).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing

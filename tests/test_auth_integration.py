@@ -11,14 +11,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Set up test database URL before importing
 os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-12345"
 os.environ["NEXUS_DATABASE_URL"] = "sqlite:///:memory:"
 
-from nexus import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 from nexus.storage.models import Base
 
@@ -39,12 +39,15 @@ def test_app():
     Base.metadata.create_all(engine)
 
     # Create LocalBackend and NexusFS instance
+    import tempfile
+
     from nexus.backends.local import LocalBackend
 
-    backend = LocalBackend(root_path="/tmp/nexus-test-auth")
-    nx = NexusFS(
+    auth_tmpdir = tempfile.mkdtemp(prefix="nexus-test-auth-")
+    backend = LocalBackend(root_path=auth_tmpdir)
+    nx = create_nexus_fs(
         backend=backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=":memory:"),
+        metadata_store=RaftMetadataStore.local(os.path.join(auth_tmpdir, "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),
         enforce_permissions=False,  # Disable permissions for simpler testing
     )

@@ -23,11 +23,11 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class VersionService:
@@ -87,12 +87,13 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: SQLAlchemyMetadataStore,
+        metadata_store: FileMetadataProtocol,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
+        session_factory: Any | None = None,  # Task #45: For VersionManager queries
     ):
         """Initialize version service.
 
@@ -103,6 +104,7 @@ class VersionService:
             router: Path router for backend resolution
             rebac_manager: ReBAC manager for permission checks
             enforce_permissions: Whether to enforce permission checks
+            session_factory: SQLAlchemy session factory for version history queries
         """
         self.metadata = metadata_store
         self.cas = cas_store
@@ -110,6 +112,7 @@ class VersionService:
         self.router = router
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
+        self._session_factory = session_factory
 
         logger.info("[VersionService] Initialized")
 
@@ -240,8 +243,19 @@ class VersionService:
         # Check READ permission
         await self._check_read_permission(path, context)
 
-        # Get all versions from metadata store (run in thread to avoid blocking)
-        return await asyncio.to_thread(self.metadata.list_versions, path)
+        # Task #45: Query version history from RecordStore (VersionHistoryModel)
+        # instead of metadata store (sled doesn't track version history).
+        if self._session_factory:
+            from nexus.storage.version_manager import VersionManager
+
+            factory = self._session_factory  # bind for closure
+
+            def _query_versions() -> builtins.list[dict[str, Any]]:
+                with factory() as session:
+                    return VersionManager.list_versions(session, path)
+
+            return await asyncio.to_thread(_query_versions)
+        return []
 
     # =========================================================================
     # Public API: Version Operations

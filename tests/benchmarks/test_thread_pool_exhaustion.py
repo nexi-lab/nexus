@@ -25,8 +25,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -214,7 +215,6 @@ def test_in_process_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 
@@ -229,9 +229,9 @@ def test_in_process_thread_exhaustion(
         backend = LocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,
         )
@@ -333,7 +333,6 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 
@@ -346,9 +345,9 @@ async def test_async_thread_exhaustion(
         backend = LocalBackend(root_path=tmpdir)
 
         # Create NexusFS without permissions for setup
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,  # Disable for setup
         )

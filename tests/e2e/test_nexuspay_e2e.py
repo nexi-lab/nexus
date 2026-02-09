@@ -525,7 +525,146 @@ class TestNexusPayDirectE2E:
 
 
 # =============================================================================
-# 8. Module Export Verification
+# 8. Pay REST API Multi-Step Flows (Issue #1209)
+# =============================================================================
+
+
+class TestPayRestApiFlows:
+    """E2E tests for the pay router REST API endpoints.
+
+    Tests multi-step flows through the actual /api/v2/pay/* endpoints.
+    """
+
+    @pytest.fixture
+    def pay_app(self, credits_service, x402_client):
+        """FastAPI app with the pay router mounted."""
+        from nexus.server.api.v2.routers.pay import (
+            _register_pay_exception_handlers,
+            get_nexuspay,
+        )
+        from nexus.server.api.v2.routers.pay import (
+            router as pay_router,
+        )
+
+        app = FastAPI(title="NexusPay REST API E2E")
+        app.include_router(pay_router)
+        _register_pay_exception_handlers(app)
+
+        app.state.credits_service = credits_service
+        app.state.x402_client = x402_client
+
+        # Override auth dependency with a NexusPay instance
+        async def _mock_nexuspay():
+            return NexusPay(
+                api_key="nx_live_e2e_agent",
+                credits_service=credits_service,
+                x402_client=x402_client,
+            )
+
+        app.dependency_overrides[get_nexuspay] = _mock_nexuspay
+        return app
+
+    @pytest.fixture
+    def pay_client(self, pay_app):
+        return TestClient(pay_app)
+
+    def test_reserve_commit_flow(self, pay_client, credits_service):
+        """Reserve → Commit: Full two-phase transfer via REST API."""
+        # Step 1: Reserve credits
+        res = pay_client.post(
+            "/api/v2/pay/reserve",
+            json={"amount": "20.00", "timeout": 600, "purpose": "task-execution"},
+        )
+        assert res.status_code == 201
+        data = res.json()
+        assert data["status"] == "pending"
+        assert data["amount"] == "20.00"
+        reservation_id = data["id"]
+
+        # Step 2: Commit the reservation
+        res2 = pay_client.post(
+            f"/api/v2/pay/reserve/{reservation_id}/commit",
+            json={"actual_amount": "15.00"},
+        )
+        assert res2.status_code == 204
+
+        # Verify the commit was called with correct args
+        credits_service.commit_reservation.assert_called_once()
+
+    def test_reserve_release_flow(self, pay_client, credits_service):
+        """Reserve → Release: Cancel reservation via REST API."""
+        # Step 1: Reserve credits
+        res = pay_client.post(
+            "/api/v2/pay/reserve",
+            json={"amount": "30.00", "purpose": "speculative-task"},
+        )
+        assert res.status_code == 201
+        reservation_id = res.json()["id"]
+
+        # Step 2: Release (cancel) the reservation
+        res2 = pay_client.post(f"/api/v2/pay/reserve/{reservation_id}/release")
+        assert res2.status_code == 204
+
+        credits_service.release_reservation.assert_called_once_with(reservation_id)
+
+    def test_transfer_and_check_balance(self, pay_client, credits_service):
+        """Transfer → Balance: Check balance after transfer."""
+        # Step 1: Check initial balance
+        res = pay_client.get("/api/v2/pay/balance")
+        assert res.status_code == 200
+        initial = res.json()
+        assert initial["available"] == "100.0"
+
+        # Step 2: Transfer
+        res2 = pay_client.post(
+            "/api/v2/pay/transfer",
+            json={"to": "worker-agent", "amount": "25.00", "memo": "Task bounty"},
+        )
+        assert res2.status_code == 201
+        assert res2.json()["method"] == "credits"
+
+        # Step 3: Check balance again (mock still returns same, but verifies flow)
+        res3 = pay_client.get("/api/v2/pay/balance")
+        assert res3.status_code == 200
+
+    def test_meter_deduction_flow(self, pay_client, credits_service):
+        """Meter → Balance: Deduct metered usage and check affordability."""
+        # Step 1: Check affordability
+        res = pay_client.get("/api/v2/pay/can-afford?amount=0.01")
+        assert res.status_code == 200
+        assert res.json()["can_afford"] is True
+
+        # Step 2: Meter usage
+        res2 = pay_client.post(
+            "/api/v2/pay/meter",
+            json={"amount": "0.01", "event_type": "api_call"},
+        )
+        assert res2.status_code == 200
+        assert res2.json()["success"] is True
+
+        # Verify metering called deduct_fast
+        credits_service.deduct_fast.assert_called_once()
+
+    def test_batch_transfer_flow(self, pay_client, credits_service):
+        """Batch Transfer: Atomic multi-agent payment via REST API."""
+        res = pay_client.post(
+            "/api/v2/pay/transfer/batch",
+            json={
+                "transfers": [
+                    {"to": "agent-a", "amount": "5.00", "memo": "Worker A"},
+                    {"to": "agent-b", "amount": "10.00", "memo": "Worker B"},
+                ]
+            },
+        )
+        assert res.status_code == 201
+        data = res.json()
+        assert len(data) == 2
+        assert data[0]["id"] == "tx-b1"
+        assert data[1]["id"] == "tx-b2"
+
+
+# =============================================================================
+# 9. Module Export Verification
 # =============================================================================
 
 

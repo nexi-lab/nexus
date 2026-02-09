@@ -484,25 +484,31 @@ class NexusFS(  # type: ignore[misc]
 
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine
-            try:
-                from nexus.workflows.engine import init_engine
-                from nexus.workflows.storage import WorkflowStore
-
-                workflow_store = WorkflowStore(
-                    session_factory=self.SessionLocal,
-                    zone_id=zone_id or "default",
-                )
-
-                # Use init_engine to set the global engine so WorkflowAPI uses the same instance
-                self.workflow_engine = init_engine(
-                    metadata_store=self.metadata,
-                    plugin_registry=None,  # TODO: Hook up plugin registry if available
-                    workflow_store=workflow_store,
-                )
-            except ImportError:
-                # Workflow system not available, disable workflows
+            # Skip if no record store (SessionLocal is None)
+            if self.SessionLocal is None:
+                logger.warning("Workflows require record_store, disabling workflows")
                 self.enable_workflows = False
                 self.workflow_engine = None
+            else:
+                try:
+                    from nexus.workflows.engine import init_engine
+                    from nexus.workflows.storage import WorkflowStore
+
+                    workflow_store = WorkflowStore(
+                        session_factory=self.SessionLocal,
+                        zone_id=zone_id or "default",
+                    )
+
+                    # Use init_engine to set the global engine so WorkflowAPI uses the same instance
+                    self.workflow_engine = init_engine(
+                        metadata_store=self.metadata,
+                        plugin_registry=None,  # TODO: Hook up plugin registry if available
+                        workflow_store=workflow_store,
+                    )
+                except Exception:
+                    # Workflow system not available or misconfigured, disable workflows
+                    self.enable_workflows = False
+                    self.workflow_engine = None
 
         # Load all saved mounts from database and activate them
         # This ensures persisted mounts are restored on server startup

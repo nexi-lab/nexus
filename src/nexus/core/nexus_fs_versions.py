@@ -18,9 +18,9 @@ from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class NexusFSVersionsMixin:
@@ -28,7 +28,7 @@ class NexusFSVersionsMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        metadata: SQLAlchemyMetadataStore
+        metadata: FileMetadataProtocol
         router: PathRouter
         is_admin: bool
 

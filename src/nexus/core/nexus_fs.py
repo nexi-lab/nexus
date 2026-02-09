@@ -64,7 +64,6 @@ from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.version_service import VersionService
-from nexus.storage import SQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -167,7 +166,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
+            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
                            User Space controls driver selection via Dependency Injection (Task #14)
             record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
                          Not required for pure file operations. User Space injects when Services are needed.
@@ -2517,33 +2516,9 @@ class NexusFS(  # type: ignore[misc]
                 # Try to get custom metadata for this file (if any)
                 # Note: This is optional - files may not have custom metadata
                 try:
-                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
-                        # Get all custom metadata keys for this path
-                        # We need to query the database directly for all keys
-                        with self.SessionLocal() as session:
-                            from nexus.storage.models import FileMetadataModel, FilePathModel
-
-                            # Get path_id
-                            path_stmt = select(FilePathModel.path_id).where(
-                                FilePathModel.virtual_path == file_meta.path,
-                                FilePathModel.deleted_at.is_(None),
-                            )
-                            path_id = session.scalar(path_stmt)
-
-                            if path_id:
-                                # Get all custom metadata
-                                meta_stmt = select(FileMetadataModel).where(
-                                    FileMetadataModel.path_id == path_id
-                                )
-                                custom_meta = {}
-                                for meta_item in session.scalars(meta_stmt):
-                                    if meta_item.value:
-                                        custom_meta[meta_item.key] = json.loads(meta_item.value)
-
-                                if custom_meta:
-                                    metadata_dict["custom_metadata"] = custom_meta
-                except (OSError, ValueError, json.JSONDecodeError):
-                    # Ignore errors when fetching custom metadata (DB errors or JSON decode issues)
+                    if file_meta.custom_metadata:
+                        metadata_dict["custom_metadata"] = dict(file_meta.custom_metadata)
+                except (AttributeError, TypeError):
                     pass
 
                 # Write JSON line

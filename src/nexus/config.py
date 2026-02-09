@@ -71,6 +71,10 @@ class FeaturesConfig(BaseModel):
         default=True,
         description="Enable Model Context Protocol server",
     )
+    a2a_endpoint: bool = Field(
+        default=True,
+        description="Enable Google A2A (Agent-to-Agent) protocol endpoint",
+    )
 
     model_config = ConfigDict(extra="forbid")
 

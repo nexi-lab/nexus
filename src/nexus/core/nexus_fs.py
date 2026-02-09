@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from nexus.core.workspace_manager import WorkspaceManager
     from nexus.core.workspace_registry import WorkspaceRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
+from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -102,6 +103,8 @@ class NexusFS(  # type: ignore[misc]
         metadata_store: FileMetadataProtocol,  # Task #14: Explicit injection (breaking change)
         record_store: RecordStoreABC
         | None = None,  # Task #14: Optional — Services layer (ReBAC, Auth, Audit, etc.)
+        cache_store: CacheStoreABC
+        | None = None,  # Task #22: Optional — Ephemeral KV+PubSub (defaults to NullCacheStore)
         is_admin: bool = False,
         zone_id: str | None = None,  # Default zone ID for operations
         agent_id: str | None = None,  # Default agent ID for operations
@@ -145,6 +148,8 @@ class NexusFS(  # type: ignore[misc]
                            User Space controls driver selection via Dependency Injection (Task #14)
             record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
                          Not required for pure file operations. User Space injects when Services are needed.
+            cache_store: Optional CacheStoreABC instance for ephemeral KV + PubSub (permission cache,
+                        tiger cache, event bus). Defaults to NullCacheStore (no-op, graceful degrade).
             is_admin: Whether this instance has admin privileges (default: False)
             zone_id: DEPRECATED - Default zone ID (for embedded mode only). Server mode should pass via context parameter.
             agent_id: DEPRECATED - Default agent ID (for embedded mode only). Server mode should pass via context parameter.
@@ -235,6 +240,13 @@ class NexusFS(  # type: ignore[misc]
             self._sql_engine = None
             self._db_session_factory = None
             self.SessionLocal = None
+
+        # Initialize cache store (Task #22: Fourth Pillar)
+        # Ephemeral KV + PubSub for permission cache, tiger cache, event bus.
+        # NullCacheStore is the default — all ops are no-ops (graceful degrade).
+        self.cache_store: CacheStoreABC = (
+            cache_store if cache_store is not None else NullCacheStore()
+        )
 
         # Initialize path router with default namespaces
         self.router = PathRouter()

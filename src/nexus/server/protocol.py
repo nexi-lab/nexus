@@ -967,6 +967,45 @@ class DeleteAgentParams:
     agent_id: str
 
 
+# ========== Agent Lifecycle Parameters (Issue #1240) ==========
+
+
+@dataclass
+class AgentTransitionParams:
+    """Parameters for agent_transition() method (Issue #1240).
+
+    Transition an agent's lifecycle state with optimistic locking.
+    """
+
+    agent_id: str
+    target_state: str  # AgentState value: "CONNECTED", "IDLE", "SUSPENDED"
+    expected_generation: int | None = None  # For optimistic locking
+    context: dict | None = None
+
+
+@dataclass
+class AgentHeartbeatParams:
+    """Parameters for agent_heartbeat() method (Issue #1240).
+
+    Record a heartbeat for an active agent.
+    """
+
+    agent_id: str
+    context: dict | None = None
+
+
+@dataclass
+class AgentListByZoneParams:
+    """Parameters for agent_list_by_zone() method (Issue #1240).
+
+    List agents in a zone, optionally filtered by state.
+    """
+
+    zone_id: str
+    state: str | None = None  # AgentState value or None for all states
+    context: dict | None = None
+
+
 # ========== Memory API Parameters (v0.5.0) ==========
 
 
@@ -2044,6 +2083,10 @@ METHOD_PARAMS = {
     "list_agents": ListAgentsParams,  # v0.5.0
     "get_agent": GetAgentParams,  # v0.5.0
     "delete_agent": DeleteAgentParams,  # v0.5.0
+    # Agent lifecycle methods (Issue #1240)
+    "agent_transition": AgentTransitionParams,
+    "agent_heartbeat": AgentHeartbeatParams,
+    "agent_list_by_zone": AgentListByZoneParams,
     # Memory API methods (v0.5.0)
     "start_trajectory": StartTrajectoryParams,
     "log_trajectory_step": LogTrajectoryStepParams,

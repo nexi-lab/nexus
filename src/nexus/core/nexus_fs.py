@@ -3979,6 +3979,19 @@ class NexusFS(  # type: ignore[misc]
             entity_registry=self._entity_registry,
         )
 
+        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
+        if hasattr(self, "_agent_registry") and self._agent_registry:
+            try:
+                self._agent_registry.register(
+                    agent_id=agent_id,
+                    owner_id=user_id,
+                    zone_id=zone_id,
+                    name=name,
+                    metadata=metadata,
+                )
+            except Exception as reg_err:
+                logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
+
         # Create initial config data
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
@@ -4584,7 +4597,130 @@ class NexusFS(  # type: ignore[misc]
         except Exception as e:
             logger.warning(f"Failed to cleanup agent resources: {e}")
 
+        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
+        if hasattr(self, "_agent_registry") and self._agent_registry:
+            try:
+                self._agent_registry.unregister(agent_id)
+            except Exception as unreg_err:
+                logger.debug(f"[AGENT-REGISTRY] Dual-write unregister: {unreg_err}")
+
         return self._entity_registry.delete_entity("agent", agent_id)
+
+    # ===== Agent Lifecycle API (Issue #1240) =====
+
+    @rpc_expose(description="Transition agent lifecycle state")
+    def agent_transition(
+        self,
+        agent_id: str,
+        target_state: str,
+        expected_generation: int | None = None,
+        context: dict | None = None,
+    ) -> dict:
+        """Transition an agent's lifecycle state with optimistic locking.
+
+        Args:
+            agent_id: Agent identifier
+            target_state: Target state ("CONNECTED", "IDLE", "SUSPENDED")
+            expected_generation: Expected generation for optimistic locking
+            context: Operation context
+
+        Returns:
+            Dict with agent_id, state, generation
+
+        Raises:
+            ValueError: If AgentRegistry not available or invalid state
+            InvalidTransitionError: If transition is not allowed
+            StaleAgentError: If expected_generation doesn't match
+        """
+        if not hasattr(self, "_agent_registry") or not self._agent_registry:
+            raise ValueError("AgentRegistry not available")
+
+        from nexus.core.agent_record import AgentState
+
+        try:
+            target = AgentState(target_state)
+        except ValueError as err:
+            raise ValueError(
+                f"Invalid target state '{target_state}'. "
+                f"Valid states: CONNECTED, IDLE, SUSPENDED"
+            ) from err
+
+        record = self._agent_registry.transition(
+            agent_id=agent_id,
+            target_state=target,
+            expected_generation=expected_generation,
+        )
+        return {
+            "agent_id": record.agent_id,
+            "state": record.state.value,
+            "generation": record.generation,
+        }
+
+    @rpc_expose(description="Record agent heartbeat")
+    def agent_heartbeat(
+        self,
+        agent_id: str,
+        context: dict | None = None,
+    ) -> dict:
+        """Record a heartbeat for an active agent.
+
+        Args:
+            agent_id: Agent identifier
+            context: Operation context
+
+        Returns:
+            Dict with ok=True
+        """
+        if not hasattr(self, "_agent_registry") or not self._agent_registry:
+            raise ValueError("AgentRegistry not available")
+
+        self._agent_registry.heartbeat(agent_id)
+        return {"ok": True}
+
+    @rpc_expose(description="List agents in a zone")
+    def agent_list_by_zone(
+        self,
+        zone_id: str,
+        state: str | None = None,
+        context: dict | None = None,
+    ) -> list[dict]:
+        """List agents in a zone, optionally filtered by state.
+
+        Args:
+            zone_id: Zone identifier
+            state: Optional state filter ("UNKNOWN", "CONNECTED", "IDLE", "SUSPENDED")
+            context: Operation context
+
+        Returns:
+            List of agent record dicts
+        """
+        if not hasattr(self, "_agent_registry") or not self._agent_registry:
+            raise ValueError("AgentRegistry not available")
+
+        state_enum = None
+        if state:
+            from nexus.core.agent_record import AgentState
+
+            try:
+                state_enum = AgentState(state)
+            except ValueError as err:
+                raise ValueError(f"Invalid state filter '{state}'") from err
+
+        records = self._agent_registry.list_by_zone(zone_id, state=state_enum)
+        return [
+            {
+                "agent_id": r.agent_id,
+                "owner_id": r.owner_id,
+                "zone_id": r.zone_id,
+                "name": r.name,
+                "state": r.state.value,
+                "generation": r.generation,
+                "last_heartbeat": r.last_heartbeat.isoformat() if r.last_heartbeat else None,
+                "created_at": r.created_at.isoformat(),
+                "updated_at": r.updated_at.isoformat(),
+            }
+            for r in records
+        ]
 
     # ===== User Provisioning API (Issue #820) =====
 

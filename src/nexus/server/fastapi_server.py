@@ -245,6 +245,7 @@ def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         NexusPermissionError,
         ParserError,
         PermissionDeniedError,
+        StaleSessionError,
         ValidationError,
     )
 
@@ -261,7 +262,7 @@ def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, (InvalidPathError, ValidationError)):
         status_code = 400
         error_type = "Bad Request"
-    elif isinstance(exc, ConflictError):
+    elif isinstance(exc, (ConflictError, StaleSessionError)):
         status_code = 409
         error_type = "Conflict"
     elif isinstance(exc, ParserError):
@@ -370,6 +371,8 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
+        # AgentRegistry for lifecycle state machine (Issue #1240)
+        self.agent_registry: Any = None
 
 
 # Global state (set during app creation)
@@ -652,6 +655,26 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         subject_type = "agent"
         subject_id = agent_id
 
+    # Issue #1240: Look up agent generation for stale-session detection.
+    # TODO(#1240): Currently both this lookup and the PermissionEnforcer check
+    # fetch generation from the same DB, so they always match. For true
+    # stale-session detection, agent_generation should come from the client's
+    # JWT token claims or an X-Agent-Generation header. Until then, this
+    # serves as the structural foundation for when token-based generation
+    # is implemented.
+    agent_generation = None
+    if subject_type == "agent" and _app_state.agent_registry:
+        try:
+            agent_record = _app_state.agent_registry.get(subject_id)
+            if agent_record:
+                agent_generation = agent_record.generation
+        except Exception:
+            logger.debug(
+                "[STALE-SESSION] Registry lookup failed for %s, proceeding without generation",
+                subject_id,
+                exc_info=True,
+            )
+
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
@@ -667,6 +690,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     return OperationContext(
         user=user_id,
         agent_id=agent_id,
+        agent_generation=agent_generation,
         subject_type=subject_type,
         subject_id=subject_id,
         zone_id=zone_id,
@@ -751,6 +775,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 permission_enforcer = AsyncPermissionEnforcer(
                     rebac_manager=_app_state.async_rebac_manager,
                     namespace_manager=namespace_manager,
+                    agent_registry=_app_state.agent_registry,
                 )
 
                 # Create AsyncNexusFS
@@ -1017,10 +1042,44 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
+    # Issue #1240: Agent heartbeat flush + stale detection background tasks
+    if _app_state.agent_registry:
+        try:
+            from nexus.server.background_tasks import (
+                heartbeat_flush_task,
+                stale_agent_detection_task,
+            )
+
+            _app_state._heartbeat_task = asyncio.create_task(
+                heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+            )
+            _app_state._stale_detection_task = asyncio.create_task(
+                stale_agent_detection_task(
+                    _app_state.agent_registry, interval_seconds=300, threshold_seconds=300
+                )
+            )
+            logger.info("[AGENT-REGISTRY] Heartbeat flush + stale detection tasks started")
+        except Exception as e:
+            logger.warning(f"[AGENT-REGISTRY] Failed to start background tasks: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1240: Cancel agent heartbeat tasks and flush remaining heartbeats
+    for task_attr in ("_heartbeat_task", "_stale_detection_task"):
+        task = getattr(_app_state, task_attr, None)
+        if task and not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+    if _app_state.agent_registry:
+        try:
+            _app_state.agent_registry.flush_heartbeats()
+            logger.info("[AGENT-REGISTRY] Final heartbeat flush on shutdown")
+        except Exception:
+            logger.warning("[AGENT-REGISTRY] Failed to flush heartbeats on shutdown")
 
     # Issue #940: Shutdown AsyncNexusFS
     if _app_state.async_nexus_fs:
@@ -1162,6 +1221,26 @@ def create_app(
 
     # Discover exposed methods
     _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
+
+    # Initialize AgentRegistry (Issue #1240)
+    _app_state.agent_registry = None
+    if nexus_fs.SessionLocal:
+        try:
+            from nexus.core.agent_registry import AgentRegistry
+
+            _app_state.agent_registry = AgentRegistry(
+                session_factory=nexus_fs.SessionLocal,
+                entity_registry=getattr(nexus_fs, "_entity_registry", None),
+                flush_interval=60,
+            )
+            nexus_fs._agent_registry = _app_state.agent_registry
+            # Wire into sync PermissionEnforcer for stale-session detection
+            perm_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
+            if perm_enforcer is not None:
+                perm_enforcer.agent_registry = _app_state.agent_registry
+            logger.info("[AGENT-REGISTRY] AgentRegistry initialized and injected into NexusFS")
+        except Exception as e:
+            logger.warning(f"[AGENT-REGISTRY] Failed to initialize AgentRegistry: {e}")
 
     # Initialize subscription manager if we have a metadata store
     try:

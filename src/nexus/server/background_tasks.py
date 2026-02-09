@@ -158,7 +158,7 @@ async def tiger_cache_queue_task(
             rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
             if rebac_manager and hasattr(rebac_manager, "tiger_process_queue"):
                 # Run blocking queue processing in thread pool to avoid blocking event loop
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
 
                 # Bind rebac_manager to avoid B023 late-binding closure issue
                 def process_queue(mgr: Any = rebac_manager) -> int:
@@ -334,12 +334,57 @@ async def hotspot_prefetch_task(
         await asyncio.sleep(interval_seconds)
 
 
-def start_background_tasks(session_factory: Any, sandbox_manager: Any | None = None) -> list:
+async def heartbeat_flush_task(agent_registry: Any, interval_seconds: int = 60) -> None:
+    """Periodically flush agent heartbeat buffer to database (Issue #1240).
+
+    Args:
+        agent_registry: AgentRegistry instance with flush_heartbeats() method
+        interval_seconds: Flush interval in seconds (default: 60)
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            flushed = agent_registry.flush_heartbeats()
+            if flushed > 0:
+                logger.info(f"[HEARTBEAT] Flushed {flushed} agent heartbeats to database")
+        except Exception:
+            logger.exception("[HEARTBEAT] Failed to flush heartbeat buffer")
+
+
+async def stale_agent_detection_task(
+    agent_registry: Any, interval_seconds: int = 300, threshold_seconds: int = 300
+) -> None:
+    """Periodically detect agents with stale heartbeats (Issue #1240).
+
+    Args:
+        agent_registry: AgentRegistry instance with detect_stale() method
+        interval_seconds: Detection interval in seconds (default: 300)
+        threshold_seconds: Heartbeat age threshold for staleness (default: 300)
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            stale = agent_registry.detect_stale(threshold_seconds=threshold_seconds)
+            if stale:
+                stale_ids = [a.agent_id for a in stale]
+                logger.warning(
+                    f"[HEARTBEAT] {len(stale)} stale agents detected: {stale_ids[:10]}"
+                )
+        except Exception:
+            logger.exception("[HEARTBEAT] Failed to detect stale agents")
+
+
+def start_background_tasks(
+    session_factory: Any,
+    sandbox_manager: Any | None = None,
+    agent_registry: Any | None = None,
+) -> list:
     """Start all background tasks.
 
     Args:
         session_factory: SQLAlchemy session factory
         sandbox_manager: Optional SandboxManager for sandbox cleanup (Issue #372)
+        agent_registry: Optional AgentRegistry for heartbeat flush (Issue #1240)
 
     Returns:
         List of asyncio tasks
@@ -347,7 +392,7 @@ def start_background_tasks(session_factory: Any, sandbox_manager: Any | None = N
     Examples:
         >>> # In server startup
         >>> from nexus.server.background_tasks import start_background_tasks
-        >>> tasks = start_background_tasks(SessionLocal, sandbox_mgr)
+        >>> tasks = start_background_tasks(SessionLocal, sandbox_mgr, agent_registry)
         >>> # Tasks run in background
     """
     tasks = [
@@ -364,6 +409,11 @@ def start_background_tasks(session_factory: Any, sandbox_manager: Any | None = N
     gc_config = VersionGCSettings.from_env()
     if gc_config.enabled:
         tasks.append(asyncio.create_task(version_gc_task(session_factory, gc_config)))
+
+    # Add agent heartbeat flush and stale detection (Issue #1240)
+    if agent_registry is not None:
+        tasks.append(asyncio.create_task(heartbeat_flush_task(agent_registry)))
+        tasks.append(asyncio.create_task(stale_agent_detection_task(agent_registry)))
 
     logger.info(f"Started {len(tasks)} background tasks")
     return tasks

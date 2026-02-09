@@ -29,6 +29,7 @@ References:
 from __future__ import annotations
 
 import bisect
+import hashlib
 import logging
 import os
 import threading
@@ -156,11 +157,11 @@ class NamespaceManager:
         self._revision_window = revision_window
         self._lock = threading.Lock()
 
-        # Cache: (subject_type, subject_id) → (mount_entries, zone_revision, zone_id)
+        # Cache: (subject_type, subject_id) → (mount_entries, zone_revision, zone_id, grants_hash)
         # TTLCache provides both LRU eviction (maxsize) and TTL expiration (safety net)
-        self._cache: TTLCache[tuple[str, str], tuple[list[MountEntry], int, str | None]] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl
-        )
+        self._cache: TTLCache[
+            tuple[str, str], tuple[list[MountEntry], int, str | None, str]
+        ] = TTLCache(maxsize=cache_maxsize, ttl=cache_ttl)
 
         # Metrics
         self._hits = 0
@@ -186,7 +187,7 @@ class NamespaceManager:
             cached = self._cache.get(subject)
 
         if cached is not None:
-            mount_entries, cached_revision, cached_zone = cached
+            mount_entries, cached_revision, cached_zone, _grants_hash = cached
             # Check if cache is fresh via revision quantization
             if cached_zone == zone_id and self._is_cache_fresh(cached_revision, zone_id):
                 self._hits += 1
@@ -253,6 +254,34 @@ class NamespaceManager:
         with self._lock:
             self._cache.clear()
 
+    def get_grants_hash(
+        self,
+        subject: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> str | None:
+        """Get the grants_hash for a subject's cached mount table.
+
+        The grants_hash is a SHA-256 digest (truncated to 16 hex chars) of the
+        sorted, canonical representation of all granted paths. This enables
+        downstream caches to detect when grants have changed without rebuilding
+        the full mount table (Twizzler persistent namespace pattern, Decision #14A).
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            zone_id: Zone ID (unused, for future multi-zone hash partitioning)
+
+        Returns:
+            16-char hex string if cached, None if subject is not in cache.
+        """
+        with self._lock:
+            cached = self._cache.get(subject)
+
+        if cached is None:
+            return None
+
+        _mount_entries, _revision, _zone, grants_hash = cached
+        return grants_hash
+
     @property
     def metrics(self) -> dict[str, Any]:
         """Return cache metrics for monitoring."""
@@ -306,6 +335,10 @@ class NamespaceManager:
         # Build mount entries from granted paths
         mount_entries = build_mount_entries(object_paths)
 
+        # Compute grants_hash — deterministic, order-independent (Decision #14A)
+        sorted_paths = sorted(f"{t}:{p}" for t, p in object_paths)
+        grants_hash = hashlib.sha256("|".join(sorted_paths).encode()).hexdigest()[:16]
+
         # Get current zone revision for cache freshness tracking
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
@@ -313,9 +346,9 @@ class NamespaceManager:
             logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
             current_revision = 0
 
-        # Cache the result
+        # Cache the result (4-tuple: mount_entries, revision, zone_id, grants_hash)
         with self._lock:
-            self._cache[subject] = (mount_entries, current_revision, zone_id)
+            self._cache[subject] = (mount_entries, current_revision, zone_id, grants_hash)
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.debug(

@@ -27,14 +27,17 @@ Embedding Cache (Issue #950):
 """
 
 from nexus.core.cache.base import PermissionCacheProtocol, TigerCacheProtocol
-from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
+from nexus.core.cache.dragonfly import DragonflyCacheStore, DragonflyEmbeddingCache
 from nexus.core.cache.factory import CacheFactory
+from nexus.core.cache.inmemory import InMemoryCacheStore
 from nexus.core.cache.settings import CacheSettings
 
 __all__ = [
     "CacheSettings",
     "CacheFactory",
+    "DragonflyCacheStore",
     "DragonflyEmbeddingCache",
+    "InMemoryCacheStore",
     "PermissionCacheProtocol",
     "TigerCacheProtocol",
 ]

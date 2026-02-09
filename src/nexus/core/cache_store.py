@@ -138,26 +138,26 @@ class NullCacheStore(CacheStoreABC):
     NullCacheStore makes "no cache" invisible to the kernel.
     """
 
-    async def get(self, _key: str) -> bytes | None:
+    async def get(self, key: str) -> bytes | None:
         return None
 
-    async def set(self, _key: str, _value: bytes, _ttl: int | None = None) -> None:
+    async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:
         pass
 
-    async def delete(self, _key: str) -> bool:
+    async def delete(self, key: str) -> bool:
         return False
 
-    async def exists(self, _key: str) -> bool:
+    async def exists(self, key: str) -> bool:
         return False
 
-    async def delete_by_prefix(self, _prefix: str) -> int:
+    async def delete_by_prefix(self, prefix: str) -> int:
         return 0
 
-    async def publish(self, _channel: str, _message: bytes) -> int:
+    async def publish(self, channel: str, message: bytes) -> int:
         return 0
 
     @asynccontextmanager
-    async def subscribe(self, _channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
+    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
         async def _empty() -> AsyncIterator[bytes]:
             return
             yield  # type: ignore[misc]  # make it an async generator

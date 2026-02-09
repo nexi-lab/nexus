@@ -612,7 +612,7 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
         for py_file in search_dir.rglob("*.py"):
             if py_file.resolve() in skip:
                 continue
-            with open(py_file, "r", encoding="utf-8", newline="") as fh:
+            with open(py_file, encoding="utf-8", newline="") as fh:
                 content = fh.read()
             new_content = pattern.sub(lambda m: renames[m.group(1)], content)
             if new_content != content:
@@ -664,7 +664,7 @@ def audit_ssot_coverage() -> list[str]:
         if not search_dir.exists():
             continue
         for py_file in search_dir.rglob("*.py"):
-            with open(py_file, "r", encoding="utf-8", newline="") as fh:
+            with open(py_file, encoding="utf-8", newline="") as fh:
                 content = fh.read()
             for m in import_re.finditer(content):
                 module = m.group(1)

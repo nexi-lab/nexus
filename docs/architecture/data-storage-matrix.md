@@ -1,18 +1,29 @@
 # Data-to-Storage Properties Matrix
 
-**Date:** 2026-02-07
-**Status:** Draft - First Principles Analysis
+**Date:** 2026-02-09
+**Status:** Step 1 — Data Layer Review (Data-Storage Affinity Analysis)
 **Purpose:** Catalog ALL data types in Nexus and determine optimal storage for each
 
 ---
 
 ## Methodology
 
-1. **Catalog**: List all existing data types (50+ found)
-2. **Properties**: Define dimensions that matter for storage decisions
-3. **First Principles**: For each data type, ask "why does this exist?"
-4. **Merge**: Identify redundancies (like tenant→zone merge)
-5. **Assign**: Map each to optimal storage medium
+Three-step **Data-Storage Affinity** analysis:
+
+### Step 1: Data Layer
+Eliminate or merge redundant data types based on **properties** and **use cases**.
+- For each data type ask: "why does this exist?" and "is it redundant with another type?"
+- Merge types that share the same properties and lifecycle (e.g. tenant→zone, FilePathModel→FileMetadata)
+
+### Step 2: Storage Layer
+Verify storage medium **orthogonality** — no two stores should serve the same role.
+- Each storage medium must have a unique capability profile
+- Identify and deprecate redundant stores (e.g. Redis/Dragonfly post-Raft)
+
+### Step 3: Affinity Matching
+Map **data requiring properties** ↔ **storage providing properties**.
+- Match each surviving data type to the storage medium whose properties best fit
+- Result: each data type has exactly one canonical storage home
 
 ---
 

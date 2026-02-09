@@ -18,7 +18,6 @@ from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-12345"
 os.environ["NEXUS_DATABASE_URL"] = "sqlite:///:memory:"
 
-from nexus import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.server.fastapi_server import create_app
 from nexus.storage.models import Base

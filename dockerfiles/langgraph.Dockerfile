@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 COPY nexus-langgraph/pyproject.toml ./
 COPY nexus-langgraph/langgraph.json ./
+COPY nexus-langgraph/webapp.py ./
 COPY nexus-langgraph/agents ./agents
 COPY nexus-langgraph/shared ./shared
 
@@ -45,6 +46,7 @@ COPY --from=builder /usr/local/bin/ /usr/local/bin/
 # Copy application files
 WORKDIR /app
 COPY nexus-langgraph/langgraph.json ./
+COPY nexus-langgraph/webapp.py ./
 COPY nexus-langgraph/agents ./agents
 COPY nexus-langgraph/shared ./shared
 

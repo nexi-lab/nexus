@@ -691,7 +691,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Initialize OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import setup_telemetry
+        from nexus.server.telemetry import setup_telemetry
 
         setup_telemetry()
     except ImportError:
@@ -1112,7 +1112,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Shutdown OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import shutdown_telemetry
+        from nexus.server.telemetry import shutdown_telemetry
 
         shutdown_telemetry()
     except ImportError:
@@ -1278,7 +1278,7 @@ def create_app(
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import instrument_fastapi_app
+        from nexus.server.telemetry import instrument_fastapi_app
 
         instrument_fastapi_app(app)
     except ImportError:

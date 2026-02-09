@@ -164,7 +164,7 @@ class NullCacheStore(CacheStoreABC):
     async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
         async def _empty() -> AsyncIterator[bytes]:
             return
-            yield  # type: ignore[misc]  # make it an async generator
+            yield  # make it an async generator
 
         yield _empty()
 

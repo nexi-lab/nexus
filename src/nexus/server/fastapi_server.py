@@ -1753,6 +1753,21 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import async files router: {e}")
 
+    # A2A Protocol Endpoint (Issue #1256)
+    try:
+        from nexus.a2a import create_a2a_router
+
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_router = create_a2a_router(
+            nexus_fs=_app_state.nexus_fs,
+            config=None,  # Will use defaults; config can be passed when available
+            base_url=a2a_base_url,
+        )
+        app.include_router(a2a_router)
+        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
+    except ImportError as e:
+        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
     async def debug_asyncio() -> dict[str, Any]:

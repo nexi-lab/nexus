@@ -330,7 +330,8 @@ async def _handle_extended_card() -> dict[str, Any]:
     card = get_cached_card()
     if card is None:
         card_bytes = get_cached_card_bytes()
-        return json.loads(card_bytes)
+        result: dict[str, Any] = json.loads(card_bytes)
+        return result
     return card.model_dump(mode="json", exclude_none=True)
 
 
@@ -529,7 +530,8 @@ async def _get_auth_result_safe(request: Request) -> dict[str, Any] | None:
 def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:
     """Extract zone_id from auth result."""
     if auth_result and auth_result.get("zone_id"):
-        return auth_result["zone_id"]
+        zone_id: str = auth_result["zone_id"]
+        return zone_id
     return "default"
 
 

@@ -95,14 +95,30 @@ class MemoryWithPaging(Memory):
         else:
             self.pager = None
 
-    def store(  # type: ignore[override]
+    def store(
         self,
         content: str | bytes | dict[str, Any],
-        scope: str = "agent",
+        scope: str = "user",
         memory_type: str | None = None,
         importance: float | None = None,
         namespace: str | None = None,
-        **kwargs: Any,
+        path_key: str | None = None,
+        state: str = "active",
+        _metadata: dict[str, Any] | None = None,
+        context: Any = None,
+        generate_embedding: bool = True,
+        embedding_provider: Any = None,
+        resolve_coreferences: bool = False,
+        coreference_context: str | None = None,
+        resolve_temporal: bool = False,
+        temporal_reference_time: Any = None,
+        extract_entities: bool = True,
+        extract_temporal: bool = True,
+        extract_relationships: bool = False,
+        relationship_types: list[str] | None = None,
+        store_to_graph: bool = False,
+        valid_at: Any = None,
+        auto_page: bool = True,  # Memory paging specific parameter
     ) -> str:
         """Store memory with automatic paging.
 
@@ -112,15 +128,27 @@ class MemoryWithPaging(Memory):
             memory_type: Memory type
             importance: Importance score (0-1)
             namespace: Hierarchical namespace
-            **kwargs: Additional arguments passed to parent store()
-                     auto_page: Automatically page to main context (default: True)
+            path_key: Optional key for upsert mode
+            state: Memory state ('inactive', 'active')
+            _metadata: Additional metadata
+            context: Operation context
+            generate_embedding: Generate embedding for semantic search
+            embedding_provider: Optional embedding provider
+            resolve_coreferences: Resolve pronouns to entity names
+            coreference_context: Prior conversation context
+            resolve_temporal: Resolve temporal expressions to absolute dates
+            temporal_reference_time: Reference time for temporal resolution
+            extract_entities: Extract named entities
+            extract_temporal: Extract temporal metadata for date queries
+            extract_relationships: Extract relationships (triplets)
+            relationship_types: Custom relationship types
+            store_to_graph: Store entities/relationships to graph tables
+            valid_at: When fact became valid in real world
+            auto_page: Automatically page to main context (default: True)
 
         Returns:
             Memory ID
         """
-        # Extract auto_page from kwargs
-        auto_page = kwargs.pop("auto_page", True)
-
         # Store using parent API
         memory_id = super().store(
             content=content,
@@ -128,7 +156,22 @@ class MemoryWithPaging(Memory):
             memory_type=memory_type,
             importance=importance,
             namespace=namespace,
-            **kwargs,
+            path_key=path_key,
+            state=state,
+            _metadata=_metadata,
+            context=context,
+            generate_embedding=generate_embedding,
+            embedding_provider=embedding_provider,
+            resolve_coreferences=resolve_coreferences,
+            coreference_context=coreference_context,
+            resolve_temporal=resolve_temporal,
+            temporal_reference_time=temporal_reference_time,
+            extract_entities=extract_entities,
+            extract_temporal=extract_temporal,
+            extract_relationships=extract_relationships,
+            relationship_types=relationship_types,
+            store_to_graph=store_to_graph,
+            valid_at=valid_at,
         )
 
         # Add to paging system if enabled

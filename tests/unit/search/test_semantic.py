@@ -11,6 +11,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.search.chunking import ChunkStrategy
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
@@ -64,9 +65,11 @@ class TestSemanticSearch:
         with tempfile.TemporaryDirectory() as tmpdir:
             data_dir = Path(tmpdir) / "data"
             data_dir.mkdir()
+            db_path = Path(tmpdir) / "metadata.db"
             nx = NexusFS(
                 backend=LocalBackend(data_dir),
-                metadata_store=SQLAlchemyMetadataStore(db_path=Path(tmpdir) / "metadata.db"),
+                metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+                record_store=SQLAlchemyRecordStore(db_path=db_path),
                 auto_parse=False,
                 enforce_permissions=False,
                 audit_strict_mode=False,

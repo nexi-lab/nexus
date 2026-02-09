@@ -321,9 +321,8 @@ class DragonflyCacheStore(CacheStoreABC):
         result = await self._client.client.exists(key)
         return result > 0
 
-    async def delete_by_prefix(self, prefix: str) -> int:
+    async def delete_by_pattern(self, pattern: str) -> int:
         deleted = 0
-        pattern = f"{prefix}*"
         async for key in self._client.client.scan_iter(match=pattern, count=1000):
             await self._client.client.delete(key)
             deleted += 1

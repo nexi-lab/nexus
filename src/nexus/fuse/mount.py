@@ -242,7 +242,7 @@ class NexusFUSE:
 
         def warmup_thread() -> None:
             try:
-                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+                from nexus.cache.warmer import CacheWarmer, WarmupConfig
 
                 logger.info(
                     f"[WARMUP] Starting automatic warmup for mount at / "

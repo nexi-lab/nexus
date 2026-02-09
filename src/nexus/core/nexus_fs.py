@@ -416,7 +416,7 @@ class NexusFS(  # type: ignore[misc]
                 import logging
                 import os
 
-                from nexus.core.cache.dragonfly import DragonflyClient
+                from nexus.cache.dragonfly import DragonflyClient
 
                 logger = logging.getLogger(__name__)
 

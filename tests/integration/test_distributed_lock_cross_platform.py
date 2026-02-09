@@ -83,7 +83,7 @@ class TestCrossPlatformLocking:
         3. Windows releases lock
         4. Linux can now acquire the lock
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -115,7 +115,7 @@ class TestCrossPlatformLocking:
 import asyncio
 import sys
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def try_acquire():
@@ -160,7 +160,7 @@ asyncio.run(try_acquire())
 import asyncio
 import sys
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def acquire_and_release():
@@ -208,7 +208,7 @@ asyncio.run(acquire_and_release())
         3. Linux releases lock
         4. Windows can now acquire the lock
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -225,7 +225,7 @@ import asyncio
 import sys
 import time
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def hold_lock():
@@ -317,7 +317,7 @@ asyncio.run(hold_lock())
         Both platforms try to acquire the same lock at the same time.
         Only one should succeed, the other should wait and then acquire.
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -335,7 +335,7 @@ import asyncio
 import sys
 import time
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def compete():
@@ -439,7 +439,7 @@ asyncio.run(compete())
         Each platform increments the counter 5 times.
         Final count should be exactly 10 (no lost updates).
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -468,7 +468,7 @@ asyncio.run(compete())
 import asyncio
 import sys
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def increment():
@@ -569,7 +569,7 @@ asyncio.run(increment())
 
         This tests the distributed system's resilience to node failures.
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -605,7 +605,7 @@ import asyncio
 import sys
 import time
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def acquire_after_crash():
@@ -678,7 +678,7 @@ asyncio.run(acquire_after_crash())
 
         This tests that extend() properly keeps locks alive.
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -726,7 +726,7 @@ import asyncio
 import sys
 import time
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def try_acquire():
@@ -803,7 +803,7 @@ class TestHighContention:
         """
         import threading
 
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -893,7 +893,7 @@ class TestHighContention:
         """
         import threading
 
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.distributed_lock import RedisLockManager
 
         redis_url = os.environ.get(
@@ -952,7 +952,7 @@ class TestHighContention:
 import asyncio
 import sys
 sys.path.insert(0, "/app/src")
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.distributed_lock import RedisLockManager
 
 async def work():

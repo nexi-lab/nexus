@@ -4,6 +4,7 @@ This module defines protocols (interfaces) that all cache backends must implemen
 Using Protocol allows for structural subtyping without requiring inheritance.
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
 
@@ -326,4 +327,66 @@ class ResourceMapCacheProtocol(Protocol):
         Args:
             mappings: Dict mapping (resource_type, resource_id, zone_id) to integer IDs
         """
+        ...
+
+
+@runtime_checkable
+class EmbeddingCacheProtocol(Protocol):
+    """Protocol for embedding vector caches.
+
+    Caches embedding vectors by content hash to avoid redundant API calls.
+    Supports batch operations with deduplication for efficiency.
+    """
+
+    async def get(self, text: str, model: str) -> list[float] | None:
+        """Get cached embedding for text.
+
+        Returns:
+            Embedding vector if cached, None otherwise.
+        """
+        ...
+
+    async def set(self, text: str, model: str, embedding: list[float]) -> None:
+        """Cache embedding for text."""
+        ...
+
+    async def get_batch(self, texts: list[str], model: str) -> dict[str, list[float] | None]:
+        """Get cached embeddings for multiple texts.
+
+        Returns:
+            Dict mapping text -> embedding (None if not cached).
+        """
+        ...
+
+    async def set_batch(self, embeddings: dict[str, list[float]], model: str) -> None:
+        """Cache multiple embeddings."""
+        ...
+
+    async def get_or_embed_batch(
+        self,
+        texts: list[str],
+        model: str,
+        embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]],
+    ) -> list[list[float]]:
+        """Get cached embeddings or generate new ones.
+
+        Main entry point: deduplicates texts, checks cache, calls embed_fn
+        only for uncached texts, caches results, returns in original order.
+        """
+        ...
+
+    async def invalidate(self, text: str, model: str) -> bool:
+        """Invalidate cached embedding. Returns True if key existed."""
+        ...
+
+    async def clear(self, model: str | None = None) -> int:
+        """Clear cached embeddings. Returns number of entries deleted."""
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if cache backend is healthy."""
+        ...
+
+    def get_metrics(self) -> dict:
+        """Get cache statistics (hits, misses, errors, hit_rate, etc.)."""
         ...

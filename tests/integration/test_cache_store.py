@@ -10,10 +10,10 @@ import asyncio
 
 import pytest
 
-from nexus.core.cache.domain import PermissionCache, TigerCache
-from nexus.core.cache.factory import CacheFactory
-from nexus.core.cache.inmemory import InMemoryCacheStore
-from nexus.core.cache.settings import CacheSettings
+from nexus.cache.domain import PermissionCache, TigerCache
+from nexus.cache.factory import CacheFactory
+from nexus.cache.inmemory import InMemoryCacheStore
+from nexus.cache.settings import CacheSettings
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------

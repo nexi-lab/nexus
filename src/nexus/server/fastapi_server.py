@@ -777,8 +777,8 @@ async def lifespan(_app: FastAPI) -> Any:
     dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
     if dragonfly_url:
         try:
-            from nexus.core.cache.factory import init_cache_factory
-            from nexus.core.cache.settings import CacheSettings
+            from nexus.cache.factory import init_cache_factory
+            from nexus.cache.settings import CacheSettings
 
             cache_settings = CacheSettings.from_env()
             _app_state.cache_factory = await init_cache_factory(cache_settings)
@@ -991,7 +991,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+                from nexus.cache.warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,
@@ -1668,7 +1668,7 @@ def _register_routes(app: FastAPI) -> None:
 
         # Redis/Dragonfly pool stats from cache factory
         try:
-            from nexus.core.cache.factory import get_cache_factory
+            from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
             if cache_factory.is_using_dragonfly and cache_factory._cache_client:
@@ -2776,7 +2776,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Warmup statistics including files warmed, duration, etc.
         """
-        from nexus.core.cache_warmer import (
+        from nexus.cache.warmer import (
             CacheWarmer,
             WarmupConfig,
             get_file_access_tracker,
@@ -2843,7 +2843,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns statistics for all cache layers including hit rates,
         memory usage, and entry counts.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         nx = _app_state.nexus_fs
         if not nx:
@@ -2901,7 +2901,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns list of hot files based on recent access patterns.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         zone_id = auth_result.get("zone_id", "default")
         tracker = get_file_access_tracker()

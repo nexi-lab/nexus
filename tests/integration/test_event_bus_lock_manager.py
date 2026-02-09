@@ -37,7 +37,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 async def redis_client():
     """Create a DragonflyClient for testing."""
-    from nexus.core.cache.dragonfly import DragonflyClient
+    from nexus.cache.dragonfly import DragonflyClient
 
     redis_url = os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379")
     client = DragonflyClient(url=redis_url)
@@ -1871,7 +1871,7 @@ class TestStressAndPerformance:
         """Test that events maintain ordering under load."""
         import uuid
 
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import FileEvent, FileEventType, RedisEventBus
 
         zone_id = f"order-load-{uuid.uuid4().hex[:8]}"

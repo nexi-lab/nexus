@@ -100,9 +100,7 @@ class CacheStoreABC(ABC):
         """
         return {k: await self.get(k) for k in keys}
 
-    async def set_many(
-        self, mapping: dict[str, bytes], ttl: int | None = None
-    ) -> None:
+    async def set_many(self, mapping: dict[str, bytes], ttl: int | None = None) -> None:
         """Set multiple keys in one call.
 
         Default: sequential set() calls. Drivers SHOULD override with

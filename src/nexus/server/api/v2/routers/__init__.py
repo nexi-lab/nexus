@@ -5,6 +5,7 @@ from nexus.server.api.v2.routers import (
     feedback,
     memories,
     mobile_search,
+    pay,
     playbooks,
     reflection,
     trajectories,
@@ -18,4 +19,5 @@ __all__ = [
     "reflection",
     "consolidation",
     "mobile_search",
+    "pay",
 ]

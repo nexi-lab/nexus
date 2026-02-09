@@ -263,6 +263,17 @@ class AsyncReBACManager:
         """Check if using PostgreSQL."""
         return "postgresql" in str(self.engine.url)
 
+    def _now(self) -> datetime | str:
+        """Return current UTC time in the format required by the database backend.
+
+        PostgreSQL (asyncpg) requires native datetime objects.
+        SQLite (aiosqlite) requires ISO format strings for text comparison.
+        """
+        now = datetime.now(UTC)
+        if self._is_postgresql():
+            return now
+        return now.isoformat()
+
     async def _load_namespaces(self) -> None:
         """Load namespace configurations from database."""
         if self._namespaces_loaded:
@@ -461,7 +472,7 @@ class AsyncReBACManager:
         Uses prepared statement constants for optimal query plan caching.
         """
         async with self._session() as session:
-            now_iso = datetime.now(UTC).isoformat()
+            now_iso = self._now()
 
             # Check direct concrete tuple (uses prepared statement)
             result = await session.execute(
@@ -591,7 +602,7 @@ class AsyncReBACManager:
                     "subject_id": obj.entity_id,
                     "relation": relation,
                     "zone_id": zone_id,
-                    "now": datetime.now(UTC).isoformat(),
+                    "now": self._now(),
                 },
             )
 
@@ -726,7 +737,7 @@ class AsyncReBACManager:
                 all_objects.add(("file", "/"))
 
         async with self._session() as session:
-            now_iso = datetime.now(UTC).isoformat()
+            now_iso = self._now()
 
             # Use a simpler approach - fetch tuples matching subjects OR objects
             # (filtering done in Python for simplicity vs complex SQL IN clauses)

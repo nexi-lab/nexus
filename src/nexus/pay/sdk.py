@@ -31,6 +31,7 @@ from decimal import Decimal
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
+from nexus.pay.credits import TransferRequest
 from nexus.pay.x402 import validate_wallet_address
 
 if TYPE_CHECKING:
@@ -302,24 +303,28 @@ class NexusPay:
 
     async def transfer_batch(
         self,
-        transfers: list[dict[str, Any]],
+        transfers: list[TransferRequest],
     ) -> list[Receipt]:
-        """Execute atomic batch transfer."""
+        """Execute atomic batch transfer.
+
+        Args:
+            transfers: List of TransferRequest objects (from nexus.pay.credits).
+                       Each must have from_id, to_id, amount, and optional memo.
+                       Note: from_id is overridden with this SDK's agent_id.
+        """
         if not transfers:
             return []
 
-        from nexus.pay.credits import TransferRequest
-
-        requests = []
-        for t in transfers:
-            requests.append(
-                TransferRequest(
-                    from_id=self.agent_id,
-                    to_id=t["to"],
-                    amount=self._to_decimal(t.get("amount", 0)),
-                    memo=t.get("memo", ""),
-                )
+        # Override from_id to enforce agent identity
+        requests = [
+            TransferRequest(
+                from_id=self.agent_id,
+                to_id=t.to_id,
+                amount=t.amount,
+                memo=t.memo,
             )
+            for t in transfers
+        ]
 
         credits = self._require_credits()
         tx_ids = await credits.transfer_batch(requests, zone_id=self._zone_id)
@@ -329,10 +334,10 @@ class NexusPay:
             Receipt(
                 id=tx_id,
                 method="credits",
-                amount=self._to_decimal(t.get("amount", 0)),
+                amount=t.amount,
                 from_agent=self.agent_id,
-                to_agent=t["to"],
-                memo=t.get("memo", ""),
+                to_agent=t.to_id,
+                memo=t.memo,
                 timestamp=now,
                 tx_hash=None,
             )

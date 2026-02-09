@@ -33,7 +33,7 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -3132,6 +3132,10 @@ def _register_routes(app: FastAPI) -> None:
         expires_at = datetime.now(UTC).timestamp() + request.ttl
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
+        # Get lock info to retrieve fence token
+        lock_info = await lock_manager.get_lock_info(zone_id, request.path)
+        fence_token = lock_info.fence_token if lock_info else 0
+
         return LockResponse(
             lock_id=lock_id,
             path=request.path,
@@ -3139,6 +3143,7 @@ def _register_routes(app: FastAPI) -> None:
             max_holders=request.max_holders,
             ttl=int(request.ttl),
             expires_at=expires_at_iso,
+            fence_token=fence_token,
         )
 
     @app.get("/api/locks", tags=["locks"], response_model=LockListResponse)
@@ -3158,55 +3163,40 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
-        # Use SCAN to find locks (non-blocking)
-        redis_client = lock_manager._redis.client
-        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{zone_id}:"
-        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{zone_id}:"
+        # Use lock manager's list_locks method
+        lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
 
-        locks: list[dict[str, Any]] = []
-
-        # Scan mutex locks
-        cursor = 0
-        while len(locks) < limit:
-            cursor, keys = await redis_client.scan(
-                cursor, match=f"{lock_prefix}{pattern}", count=100
-            )
-            for key in keys:
-                if len(locks) >= limit:
-                    break
-                key_str = key.decode() if isinstance(key, bytes) else key
-                path = key_str[len(lock_prefix) :]
-                lock_info = await lock_manager.get_lock_info(zone_id, path)
-                if lock_info:
-                    lock_info["mode"] = "mutex"
-                    locks.append(lock_info)
-            if cursor == 0:
-                break
-
-        # Scan semaphore locks
-        cursor = 0
-        while len(locks) < limit:
-            cursor, keys = await redis_client.scan(
-                cursor, match=f"{sem_prefix}{pattern}", count=100
-            )
-            for key in keys:
-                if len(locks) >= limit:
-                    break
-                key_str = key.decode() if isinstance(key, bytes) else key
-                path = key_str[len(sem_prefix) :]
-                # Get semaphore info
-                members = await redis_client.zrange(key, 0, -1, withscores=True)
-                if members:
-                    locks.append(
-                        {
-                            "path": path,
-                            "mode": "semaphore",
-                            "holders": len(members),
-                            "zone_id": zone_id,
-                        }
+        # Convert LockInfo dataclasses to response models
+        locks: list[LockInfoMutex | LockInfoSemaphore] = []
+        for lock_info in lock_infos:
+            if lock_info.mode == "mutex" and lock_info.holders:
+                h = lock_info.holders[0]
+                locks.append(
+                    LockInfoMutex(
+                        lock_id=h.lock_id,
+                        holder_info=h.holder_info,
+                        acquired_at=h.acquired_at,
+                        expires_at=h.expires_at,
+                        fence_token=lock_info.fence_token,
                     )
-            if cursor == 0:
-                break
+                )
+            else:
+                locks.append(
+                    LockInfoSemaphore(
+                        max_holders=lock_info.max_holders,
+                        holders=[
+                            LockHolderResponse(
+                                lock_id=h.lock_id,
+                                holder_info=h.holder_info,
+                                acquired_at=h.acquired_at,
+                                expires_at=h.expires_at,
+                            )
+                            for h in lock_info.holders
+                        ],
+                        current_holders=len(lock_info.holders),
+                        fence_token=lock_info.fence_token,
+                    )
+                )
 
         return LockListResponse(locks=locks, count=len(locks))
 
@@ -3228,37 +3218,38 @@ def _register_routes(app: FastAPI) -> None:
         if not path.startswith("/"):
             path = "/" + path
 
-        # Check mutex lock first (most common)
+        # Check lock status
         lock_info = await lock_manager.get_lock_info(zone_id, path)
-        if lock_info:
-            lock_info["mode"] = "mutex"
-            return LockStatusResponse(path=path, locked=True, lock_info=lock_info)
+        if not lock_info:
+            return LockStatusResponse(path=path, locked=False, lock_info=None)
 
-        # Check semaphore
-        sem_key = lock_manager._semaphore_key(zone_id, path)
-        members = await lock_manager._redis.client.zcard(sem_key)
-        if members > 0:
-            # Get semaphore details
-            config_key = lock_manager._semaphore_config_key(zone_id, path)
-            max_holders = await lock_manager._redis.client.get(config_key)
-            max_holders_int = (
-                int(max_holders.decode() if isinstance(max_holders, bytes) else max_holders)
-                if max_holders
-                else 0
+        # Convert LockInfo dataclass to response model
+        if lock_info.mode == "mutex" and lock_info.holders:
+            h = lock_info.holders[0]
+            lock_info_response = LockInfoMutex(
+                lock_id=h.lock_id,
+                holder_info=h.holder_info,
+                acquired_at=h.acquired_at,
+                expires_at=h.expires_at,
+                fence_token=lock_info.fence_token,
             )
-            return LockStatusResponse(
-                path=path,
-                locked=True,
-                lock_info={
-                    "mode": "semaphore",
-                    "holders": members,
-                    "max_holders": max_holders_int,
-                    "path": path,
-                    "zone_id": zone_id,
-                },
+        else:
+            lock_info_response = LockInfoSemaphore(
+                max_holders=lock_info.max_holders,
+                holders=[
+                    LockHolderResponse(
+                        lock_id=h.lock_id,
+                        holder_info=h.holder_info,
+                        acquired_at=h.acquired_at,
+                        expires_at=h.expires_at,
+                    )
+                    for h in lock_info.holders
+                ],
+                current_holders=len(lock_info.holders),
+                fence_token=lock_info.fence_token,
             )
 
-        return LockStatusResponse(path=path, locked=False, lock_info=None)
+        return LockStatusResponse(path=path, locked=True, lock_info=lock_info_response)
 
     @app.delete("/api/locks/{path:path}", tags=["locks"])
     async def release_lock(
@@ -3342,7 +3333,11 @@ def _register_routes(app: FastAPI) -> None:
         lock_info = await lock_manager.get_lock_info(zone_id, path)
         mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
         max_holders = 1
-        if mode == "semaphore":
+        fence_token = 0
+        if lock_info:
+            fence_token = lock_info.fence_token
+            max_holders = lock_info.max_holders
+        elif mode == "semaphore":
             config_key = lock_manager._semaphore_config_key(zone_id, path)
             max_raw = await lock_manager._redis.client.get(config_key)
             if max_raw:
@@ -3355,6 +3350,7 @@ def _register_routes(app: FastAPI) -> None:
             max_holders=max_holders,
             ttl=int(request.ttl),
             expires_at=expires_at_iso,
+            fence_token=fence_token,
         )
 
     # ========================================================================

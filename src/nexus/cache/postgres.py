@@ -514,10 +514,7 @@ class PostgresResourceMapCache:
                 db_map[(row.resource_type, row.resource_id)] = int(row.resource_int_id)
 
         # Map back to input tuples (including zone_id)
-        return {
-            (rt, rid, zid): db_map.get((rt, rid))
-            for rt, rid, zid in resources
-        }
+        return {(rt, rid, zid): db_map.get((rt, rid)) for rt, rid, zid in resources}
 
     async def set_int_id(
         self,

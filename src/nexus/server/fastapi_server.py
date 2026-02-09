@@ -772,39 +772,45 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
-    # Initialize cache factory for Dragonfly/Redis (Issue #1075)
+    # Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)
     # Provides optimized connection pooling for permission/tiger caches
-    dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
-    if dragonfly_url:
-        try:
-            from nexus.cache.factory import init_cache_factory
-            from nexus.cache.settings import CacheSettings
+    try:
+        from nexus.cache.factory import init_cache_factory
+        from nexus.cache.settings import CacheSettings
 
-            cache_settings = CacheSettings.from_env()
-            _app_state.cache_factory = await init_cache_factory(cache_settings)
-            logger.info(
-                f"Cache factory initialized with Dragonfly "
-                f"(pool_size={cache_settings.dragonfly_pool_size}, "
-                f"keepalive={cache_settings.dragonfly_keepalive})"
+        cache_settings = CacheSettings.from_env()
+
+        # Get PostgreSQL engine for cache fallback when Dragonfly is not available
+        pg_engine = getattr(
+            getattr(_app_state.nexus_fs, "_rebac_manager", None),
+            "engine",
+            None,
+        )
+
+        _app_state.cache_factory = await init_cache_factory(
+            cache_settings, postgres_engine=pg_engine
+        )
+        logger.info(
+            f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
+        )
+
+        # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
+        # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
+        if _app_state.cache_factory.is_using_dragonfly:
+            tiger_cache = getattr(
+                getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                "_tiger_cache",
+                None,
             )
-
-            # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
-            # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
-            if _app_state.cache_factory.is_using_dragonfly:
-                tiger_cache = getattr(
-                    getattr(_app_state.nexus_fs, "_rebac_manager", None),
-                    "_tiger_cache",
-                    None,
+            if tiger_cache:
+                dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+                logger.info(
+                    "[TIGER] Dragonfly L2 cache wired up - "
+                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
                 )
-                if tiger_cache:
-                    dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
-                    tiger_cache.set_dragonfly_cache(dragonfly_tiger)
-                    logger.info(
-                        "[TIGER] Dragonfly L2 cache wired up - "
-                        "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to initialize cache factory: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize cache factory: {e}")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications

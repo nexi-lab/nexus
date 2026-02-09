@@ -31,8 +31,8 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Mock SKILL.md content
 VALID_SKILL_MD = """---
@@ -72,7 +72,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx_instance = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,

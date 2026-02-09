@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from nexus import LocalBackend
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def main() -> None:
@@ -72,7 +72,7 @@ def main() -> None:
     record_store = SQLAlchemyRecordStore(db_path=db_path)
     nx = create_nexus_fs(
         backend=LocalBackend(args.backend_path),
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        metadata_store=RaftMetadataStore.local(str(Path(args.backend_path) / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,

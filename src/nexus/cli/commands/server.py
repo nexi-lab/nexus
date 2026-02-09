@@ -390,6 +390,24 @@ def unmount(mount_point: str) -> None:
     default=True,
     help="Use async FastAPI server (default: enabled, 10-50x throughput improvement)",
 )
+@click.option(
+    "--enable-memory-paging/--no-memory-paging",
+    "enable_memory_paging",
+    default=False,
+    help="Enable MemGPT 3-tier memory paging (Issue #1258, default: disabled)",
+)
+@click.option(
+    "--memory-main-capacity",
+    default=100,
+    type=int,
+    help="Main context capacity for memory paging (default: 100)",
+)
+@click.option(
+    "--memory-recall-max-age-hours",
+    default=24.0,
+    type=float,
+    help="Max age in hours before recall→archival paging (default: 24.0)",
+)
 @add_backend_options
 def serve(
     host: str,
@@ -400,6 +418,9 @@ def serve(
     reset: bool,
     admin_user: str,
     use_async: bool,
+    enable_memory_paging: bool,
+    memory_main_capacity: int,
+    memory_recall_max_age_hours: float,
     backend_config: BackendConfig,
 ) -> None:
     """Start Nexus RPC server.
@@ -631,6 +652,9 @@ def serve(
             force_local=True,  # Force local mode to prevent RemoteNexusFS
             allow_admin_bypass=allow_admin_bypass,
             enforce_zone_isolation=enforce_zone_isolation,
+            enable_memory_paging=enable_memory_paging,  # Issue #1258
+            memory_main_capacity=memory_main_capacity,  # Issue #1258
+            memory_recall_max_age_hours=memory_recall_max_age_hours,  # Issue #1258
         )
 
         # Load backends from config file if specified

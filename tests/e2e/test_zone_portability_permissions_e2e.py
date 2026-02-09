@@ -21,8 +21,8 @@ from nexus.portability import (
     export_zone_bundle,
     import_zone_bundle,
 )
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def source_nexus_fs_with_permissions(temp_dir):
 
     fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions
@@ -66,7 +66,7 @@ def target_nexus_fs_with_permissions(temp_dir):
 
     fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,  # Enable permissions

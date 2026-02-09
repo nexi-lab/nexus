@@ -11,8 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import select
-
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -64,7 +62,6 @@ from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.version_service import VersionService
-from nexus.storage import SQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -136,6 +133,10 @@ class NexusFS(  # type: ignore[misc]
         | None = None,  # Dragonfly coordination URL (requires noeviction policy for locks)
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
+        # Issue #1258: MemGPT 3-tier memory paging
+        enable_memory_paging: bool = False,  # Enable MemGPT-style 3-tier memory paging (default: False)
+        memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
+        memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
         # Task #23: Dependency injection for services and router.
         # Kernel does NOT auto-create services. Use nexus.factory.create_nexus_fs()
         # or nexus.factory.create_nexus_services() for convenience.
@@ -153,12 +154,17 @@ class NexusFS(  # type: ignore[misc]
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
+
+        # Store memory paging config (Issue #1258)
+        self._enable_memory_paging = enable_memory_paging
+        self._memory_main_capacity = memory_main_capacity
+        self._memory_recall_max_age_hours = memory_recall_max_age_hours
         """
         Initialize filesystem.
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
+            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
                            User Space controls driver selection via Dependency Injection (Task #14)
             record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
                          Not required for pure file operations. User Space injects when Services are needed.
@@ -880,7 +886,6 @@ class NexusFS(  # type: ignore[misc]
         """
         if self._memory_api is None:
             from nexus.core.entity_registry import EntityRegistry
-            from nexus.core.memory_api import Memory
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
@@ -889,14 +894,32 @@ class NexusFS(  # type: ignore[misc]
             # Create a session from SessionLocal
             session = self.SessionLocal()
 
-            self._memory_api = Memory(
-                session=session,
-                backend=self.backend,
-                zone_id=self._memory_config.get("zone_id"),
-                user_id=self._memory_config.get("user_id"),
-                agent_id=self._memory_config.get("agent_id"),
-                entity_registry=self._entity_registry,
-            )
+            # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
+            if self._enable_memory_paging:
+                from nexus.core.memory_with_paging import MemoryWithPaging
+
+                self._memory_api = MemoryWithPaging(
+                    session=session,
+                    backend=self.backend,
+                    zone_id=self._memory_config.get("zone_id"),
+                    user_id=self._memory_config.get("user_id"),
+                    agent_id=self._memory_config.get("agent_id"),
+                    entity_registry=self._entity_registry,
+                    enable_paging=True,
+                    main_capacity=self._memory_main_capacity,
+                    recall_max_age_hours=self._memory_recall_max_age_hours,
+                )
+            else:
+                from nexus.core.memory_api import Memory
+
+                self._memory_api = Memory(
+                    session=session,
+                    backend=self.backend,
+                    zone_id=self._memory_config.get("zone_id"),
+                    user_id=self._memory_config.get("user_id"),
+                    agent_id=self._memory_config.get("agent_id"),
+                    entity_registry=self._entity_registry,
+                )
 
         return self._memory_api
 
@@ -2498,33 +2521,9 @@ class NexusFS(  # type: ignore[misc]
                 # Try to get custom metadata for this file (if any)
                 # Note: This is optional - files may not have custom metadata
                 try:
-                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
-                        # Get all custom metadata keys for this path
-                        # We need to query the database directly for all keys
-                        with self.SessionLocal() as session:
-                            from nexus.storage.models import FileMetadataModel, FilePathModel
-
-                            # Get path_id
-                            path_stmt = select(FilePathModel.path_id).where(
-                                FilePathModel.virtual_path == file_meta.path,
-                                FilePathModel.deleted_at.is_(None),
-                            )
-                            path_id = session.scalar(path_stmt)
-
-                            if path_id:
-                                # Get all custom metadata
-                                meta_stmt = select(FileMetadataModel).where(
-                                    FileMetadataModel.path_id == path_id
-                                )
-                                custom_meta = {}
-                                for meta_item in session.scalars(meta_stmt):
-                                    if meta_item.value:
-                                        custom_meta[meta_item.key] = json.loads(meta_item.value)
-
-                                if custom_meta:
-                                    metadata_dict["custom_metadata"] = custom_meta
-                except (OSError, ValueError, json.JSONDecodeError):
-                    # Ignore errors when fetching custom metadata (DB errors or JSON decode issues)
+                    if file_meta.custom_metadata:
+                        metadata_dict["custom_metadata"] = dict(file_meta.custom_metadata)
+                except (AttributeError, TypeError):
                     pass
 
                 # Write JSON line

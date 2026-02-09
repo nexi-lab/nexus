@@ -10,7 +10,7 @@ Architecture:
 
 Lock Implementation:
 - Uses Raft consensus via RaftMetadataStore for strong consistency
-- Lock key: "{zone_id}:{path}" (resource to lock)
+- Lock key: path (resource to lock)
 - Lock value: holder_id (UUID) for ownership verification
 - TTL-based auto-expiry prevents deadlocks from crashed clients
 - Supports both mutex (max_holders=1) and semaphore (max_holders>1)

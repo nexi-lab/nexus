@@ -11,8 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import select
-
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content

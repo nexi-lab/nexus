@@ -11,7 +11,6 @@ import json
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.mcp.server import create_mcp_server
 from nexus.storage.record_store import SQLAlchemyRecordStore

@@ -178,7 +178,7 @@ class DragonflyClient:
         logger.info("Disconnected from Dragonfly")
 
     @property
-    def client(self) -> "redis.Redis":
+    def client(self) -> redis.Redis:
         """Get the Redis client.
 
         Raises:
@@ -268,7 +268,7 @@ class DragonflyClient:
         except Exception as e:
             return {"pool_status": "error", "error": str(e)}
 
-    async def __aenter__(self) -> "DragonflyClient":
+    async def __aenter__(self) -> DragonflyClient:
         """Async context manager entry."""
         await self.connect()
         return self

@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
-import nexus
+from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import NotFoundError
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestTimeTravelDebug:
@@ -25,13 +27,15 @@ class TestTimeTravelDebug:
         """Create NexusFS instance for testing."""
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
+        db_path = Path(temp_dir) / "metadata.db"
 
-        nx = nexus.connect(
-            config={
-                "data_dir": str(data_dir),
-                "enforce_permissions": False,  # Disable permissions for tests
-                "backend": "local",
-            }
+        nx = NexusFS(
+            backend=LocalBackend(data_dir),
+            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            record_store=SQLAlchemyRecordStore(db_path=db_path),
+            auto_parse=False,
+            enforce_permissions=False,
+            audit_strict_mode=False,
         )
         yield nx
         nx.close()

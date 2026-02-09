@@ -394,112 +394,120 @@ Performance cache, TTL, pub/sub
 
 ---
 
-## STORAGE MEDIUM ORTHOGONALITY ANALYSIS (Task #2)
+## STORAGE MEDIUM ORTHOGONALITY ANALYSIS (Step 2 — DECIDED)
 
-### Purpose
-Every storage medium must justify its existence. No overlaps, no redundancy.
-Use same Property Dimensions as data types to ensure orthogonality.
+### Core Insight: Storage Mediums = Pillars, not Implementations
 
-### Storage Medium Properties Matrix
+Orthogonality analysis operates at the **storage medium** level, not the driver/implementation level.
+Drivers within the same pillar are interchangeable (deployment-time config via ABC), not architectural choices.
 
-| Storage Medium | Read Perf | Write Perf | Consistency | Query Patterns | Data Size Limit | Durability | Deployment | Cost | Justification |
-|----------------|-----------|------------|-------------|----------------|-----------------|------------|------------|------|---------------|
-| **PostgreSQL** | Med | Med | Serializable (ACID) | Relational (JOIN, FK, indexes, vector via pgvector) | ~1TB (practical) | Persistent (WAL) | Complex (server process) | High (CPU+RAM) | **Relational queries, ACID transactions, vector search** — No substitute for complex JOINs and referential integrity |
-| **SQLite** | High (local) | Med (single writer) | Serializable (ACID) | Relational (JOIN, FK, limited indexes, vector via sqlite-vec) | ~281TB (theoretical), ~100GB (practical) | Persistent (file) | Simple (embedded) | Low (single file) | **Embedded relational DB for dev/testing** — Same SQL interface as PostgreSQL, zero-config |
-| **sled** | Critical (~14μs) | Critical (~14μs) | Linearizable (via Raft) OR Local (single-node) | **Ordered** KV (prefix scan, range queries, append-only LSM-tree) | Multi-TB (LSM-tree) | Persistent (log-structured) | Simple (embedded) | Low (single process) | **High-performance ordered KV with optional Raft consensus** — Orders of magnitude faster than SQL for pure KV workloads, embedded like SQLite but KV-focused. **Ordered property critical for user root localization** (each user's first key = their `/` root in chroot model) |
-| **Dragonfly** | Critical (in-memory) | Critical (in-memory) | Eventual (async replication) | KV + pub/sub + Lua scripts | RAM-limited (~100GB typical) | Ephemeral (optional AOF) | Med (server process) | High (RAM) | **In-memory cache + pub/sub** — Needed for permission cache, event bus, TTL-based expiration; Redis protocol compatible |
-| **Redis** | Critical (in-memory) | Critical (in-memory) | Eventual (async replication) | KV + pub/sub + Lua scripts | RAM-limited (~100GB typical) | Ephemeral (optional AOF) | Med (server process) | High (RAM) | ⚠️ **REDUNDANT with Dragonfly** — Same use case, Dragonfly is drop-in replacement with better performance |
-| **S3 / GCS / Azure Blob** | Med (network latency) | Med (network latency) | Eventual (object versioning) | Blob only (by key, no queries) | Unlimited (petabytes) | Persistent (99.999999999% durability) | Simple (managed service) | Low (pay-per-GB) | **Cloud blob storage for large files** — No substitute for petabyte-scale object storage with geo-replication |
-| **Local Disk** | High (SSD) | High (SSD) | Local (filesystem) | Blob only (by path) | Multi-TB per disk | Persistent (filesystem) | Simple (OS filesystem) | Med (hardware cost) | **Local blob storage for single-node deployments** — Zero network latency, good for dev/edge nodes |
-| **In-Memory (Python dict)** | Critical (<1μs) | Critical (<1μs) | Local (process-only) | KV only (hashmap) | RAM-limited (~10GB typical for Python process) | Ephemeral (lost on restart) | Simple (no setup) | Low (process RAM) | **L1 cache for hot data** — No persistence, fastest possible access, process-local only |
-| **In-Memory (DashMap, Rust)** | Critical (<100ns) | Critical (<100ns) | Local (process-only) | KV only (lock-free hashmap) | RAM-limited (~10GB typical) | Ephemeral (lost on restart) | Simple (PyO3 FFI) | Low (process RAM) | **L1 cache for CompactFileMetadata** — Lock-free concurrent access, string interning, faster than Python dict |
+> **Principle**: If two "storage mediums" serve the same query pattern and are abstracted behind the same ABC,
+> they are **drivers** of one medium, not separate mediums.
 
-### Orthogonality Analysis
+This collapses 9 listed implementations → **4 storage mediums** (1:1 with Four Pillars):
 
-#### ✅ **NO OVERLAP**: PostgreSQL vs SQLite
-- **PostgreSQL**: Multi-user, networked, high concurrency, production relational workloads
-- **SQLite**: Single-user, embedded, dev/testing, zero-config relational workloads
-- **Verdict**: **Keep both** — Different deployment models, same query interface (SQL)
+| Pillar | Storage Medium | Unique Properties | Drivers (interchangeable via ABC) |
+|--------|---------------|-------------------|-----------------------------------|
+| **Metastore** | Ordered KV | Persistent, ordered prefix scan, optional Raft SC, ~14μs ops | sled (local PyO3), sled (gRPC Raft) |
+| **RecordStore** | Relational ACID | JOINs, FK, unique constraints, vector search, BRIN indexes | PostgreSQL (networked, multi-writer), SQLite (embedded, single-writer) |
+| **ObjectStore** | Blob | Streaming I/O, petabyte scale, content-addressed | S3, GCS, Azure Blob (cloud), Local Disk (embedded) |
+| **CacheStore** | Ephemeral KV + Pub/Sub | TTL, pub/sub, no persistence guarantee | Dragonfly (networked), In-Memory (process-local: Python dict / DashMap) |
 
-#### ✅ **NO OVERLAP**: PostgreSQL/SQLite vs sled
-- **PostgreSQL/SQLite**: Relational queries (JOIN, FK, transactions across tables)
-- **sled**: Pure KV (no relations), extreme performance (100x faster for simple get/set)
-- **Verdict**: **Keep both** — Orthogonal query patterns (Relational vs KV)
+### Kernel Self-Inclusiveness Check
 
-#### ✅ **NO OVERLAP**: sled vs Dragonfly
-- **sled**: Persistent KV with optional Raft consensus, embedded (no network)
-- **Dragonfly**: In-memory cache with TTL, networked (shared across nodes), pub/sub
-- **Verdict**: **Keep both** — Different durability (persistent vs ephemeral) and use case (SSOT vs cache)
+With kernel-only (Metastore required + ObjectStore required, no services):
 
-#### ❌ **OVERLAP DETECTED**: Redis vs Dragonfly
-- **Same use case**: In-memory cache, pub/sub, TTL-based eviction
-- **Same protocol**: Redis wire protocol
-- **Dragonfly advantages**:
-  - 25x better memory efficiency (jemalloc + custom allocator)
-  - Multi-threaded (Redis is single-threaded)
-  - Drop-in replacement (no code changes)
-- **Redis advantages**: None in our context
-- **Verdict**: ⚠️ **DEPRECATE Redis, standardize on Dragonfly**
-  - Migration: Change connection string, zero code changes
-  - Timeline: P2 (after Raft migration)
+| Kernel need | Provided by | Storage property used |
+|-------------|------------|----------------------|
+| File metadata (inode) | Metastore (sled) | KV by path |
+| Directory index (dentry) | Metastore (sled) | Ordered prefix scan |
+| Zone revision tracking | Metastore (sled) | `/__sys__/` KV entries |
+| System settings | Metastore (sled) | KV by key |
+| File content (bytes) | ObjectStore (Backend) | Blob by path |
 
-#### ✅ **NO OVERLAP**: Cloud Blob (S3/GCS/Azure) vs Local Disk
-- **Cloud Blob**: Geo-replicated, unlimited scale, managed service, higher latency
-- **Local Disk**: Single-node, limited scale, self-managed, zero network latency
-- **Verdict**: **Keep both** — Different deployment contexts (cloud vs edge/dev)
+Kernel does NOT need: JOINs, FK, vector search, BRIN, TTL, pub/sub, composite indexes.
+Those are all service-layer concerns (RecordStore/CacheStore).
 
-#### ✅ **NO OVERLAP**: Dragonfly vs In-Memory (Python dict / DashMap)
-- **Dragonfly**: Networked (shared across processes/nodes), durable with AOF, TTL management
-- **In-Memory**: Process-local only, no persistence, no TTL (manual eviction)
-- **Verdict**: **Keep both** — Different scope (multi-node vs single-process)
+**Verdict**: ✅ Kernel is **self-inclusive** with 2 storage mediums (Ordered KV + Blob). Zero unnecessary properties.
 
-#### ✅ **NO OVERLAP**: In-Memory Python dict vs DashMap
-- **Python dict**: Simple, no FFI overhead, good for non-critical paths
-- **DashMap**: Lock-free, 10x faster, string interning, critical path (CompactFileMetadata L1 cache)
-- **Verdict**: **Keep both** — Different performance tiers (DashMap for critical hot paths only)
+CompactFileMetadata (DashMap L1 cache) is process-internal optimization, not a storage medium — like a CPU cache.
 
-### Storage Medium Justification Summary
+### Orthogonality Between Pillars (4 mediums)
 
-| Storage Medium | Status | Justification |
-|----------------|--------|---------------|
-| **PostgreSQL** | ✅ **KEEP** | **Relational SSOT**: Users, ReBAC, Memory (vector), Workflows, Versioning. No substitute for ACID + JOINs + vector search. |
-| **SQLite** | ✅ **KEEP** | **Dev/Test relational**: Same SQL interface as PostgreSQL, zero-config, embedded. Essential for local development. |
-| **sled** | ✅ **KEEP** | **Ordered KV SSOT with Raft**: File metadata, directory index, custom metadata, system settings. 100x faster than SQL for pure KV, Raft consensus for multi-node SC. **Ordered property enables user root localization** (first key = user `/` in chroot). |
-| **Dragonfly** | ✅ **KEEP** | **In-memory cache + pub/sub**: Permission cache, Tiger cache, FileEvent pub/sub. TTL management, shared across nodes, Redis protocol. |
-| **Redis** | ❌ **DEPRECATE (P2)** | **REDUNDANT**: Same use case as Dragonfly, inferior performance. Migration: change connection string only. |
-| **S3/GCS/Azure** | ✅ **KEEP** | **Cloud blob storage**: Unlimited scale, geo-replication, managed service. No substitute for petabyte-scale object storage. |
-| **Local Disk** | ✅ **KEEP** | **Local blob storage**: Zero network latency, good for dev/edge nodes. Essential for single-node deployments. |
-| **In-Memory (Python dict)** | ✅ **KEEP** | **L1 cache (non-critical)**: Simple process-local cache, no FFI overhead. Used sparingly. |
-| **In-Memory (DashMap)** | ✅ **KEEP** | **L1 cache (critical)**: Lock-free, string interning, 10x faster than Python dict. CompactFileMetadata hot path. |
+#### ✅ Ordered KV (Metastore) vs Relational ACID (RecordStore)
+- **Metastore**: Pure KV, ordered prefix scan, ~14μs, no JOINs, no FK
+- **RecordStore**: JOINs, FK, unique constraints, vector search, BRIN indexes, ~1ms
+- **Verdict**: **Orthogonal** — fundamentally different query patterns (KV vs relational)
 
-### Deployment Mode → Storage Mapping
+#### ✅ Ordered KV (Metastore) vs Ephemeral KV (CacheStore)
+- **Metastore**: Persistent SSOT, linearizable (Raft), embedded
+- **CacheStore**: Ephemeral cache, eventual consistency, TTL eviction, pub/sub
+- **Verdict**: **Orthogonal** — different durability (persistent vs ephemeral) and consistency guarantees
 
-| Deployment Mode | Relational | KV (metadata) | KV (CAS) | Cache | Pub/Sub | Blob |
-|-----------------|------------|---------------|----------|-------|---------|------|
-| **Dev (single-node)** | SQLite | sled (local) | sled (local) | In-Memory | In-Memory | Local Disk |
-| **Production (single-node)** | PostgreSQL | sled (local) | sled (local) | Dragonfly | Dragonfly | S3/Local |
-| **Production (multi-node, Raft SC)** | PostgreSQL | sled (Raft) | sled (local) | Dragonfly | Dragonfly | S3 |
-| **Production (multi-node, Raft EC)** | PostgreSQL | sled (async) | sled (local) | Dragonfly | Dragonfly | S3 |
+#### ✅ Relational ACID (RecordStore) vs Blob (ObjectStore)
+- **RecordStore**: Structured data, small records, complex queries
+- **ObjectStore**: Unstructured bytes, huge objects, no queries (by-key only)
+- **Verdict**: **Orthogonal** — different data shape (structured vs unstructured)
+
+#### ✅ Ephemeral KV (CacheStore) vs Blob (ObjectStore)
+- **CacheStore**: Tiny KV entries, TTL, pub/sub, in-memory
+- **ObjectStore**: Huge blobs, persistent, streaming I/O
+- **Verdict**: **Orthogonal** — different size profile and durability
+
+### Driver Merges Within Pillars (Step 2 decisions)
+
+#### ❌ **DEPRECATE Redis** → merge into Dragonfly (CacheStore driver)
+- Same storage medium (Ephemeral KV + Pub/Sub), same protocol
+- Dragonfly: 25x memory efficiency, multi-threaded, drop-in replacement
+- **Migration**: Change connection string only, zero code changes
+
+#### ✅ **MERGE In-Memory Python dict + DashMap** → single "In-Memory" driver (CacheStore)
+- Same storage medium: process-local ephemeral KV, no persistence, no TTL
+- DashMap is a faster engine (~100ns vs ~1μs), not a different medium
+- Under CacheStoreABC: `InMemoryCacheStore(engine="dict")` vs `InMemoryCacheStore(engine="dashmap")`
+
+#### ✅ **PostgreSQL + SQLite** are drivers, not separate mediums (RecordStore)
+- Same query patterns (SQL, JOINs, FK, ACID), same ABC (RecordStoreABC via SQLAlchemy)
+- Difference is operational (networked multi-writer vs embedded single-writer), not architectural
+- Driver selection is deployment-time configuration, not storage architecture
+
+#### ✅ **S3/GCS/Azure + Local Disk** are drivers, not separate mediums (ObjectStore)
+- Same access pattern (blob by key, streaming I/O), same ABC (ObjectStoreABC = Backend)
+- Difference is operational (cloud managed vs local embedded)
+
+### Storage Medium Properties Matrix (4 mediums)
+
+| Medium | Read Perf | Write Perf | Consistency | Query Patterns | Durability | Unique Capability |
+|--------|-----------|------------|-------------|----------------|------------|-------------------|
+| **Ordered KV** | Critical (~14μs) | Critical (~14μs) | Linearizable (Raft) / Local | Ordered KV, prefix scan, range queries | Persistent (LSM) | **Ordered iteration** for user root localization (first key = `/` in chroot) |
+| **Relational ACID** | Med (~1ms) | Med (~1ms) | Serializable (ACID) | JOIN, FK, vector (pgvector), BRIN | Persistent (WAL) | **Complex queries** — JOINs, referential integrity, vector similarity search |
+| **Blob** | Med (variable) | Med (variable) | Eventual / Local | By-key only, streaming I/O | Persistent (11-nines) | **Unbounded size** — petabyte-scale object storage |
+| **Ephemeral KV** | Critical (<1μs) | Critical (<1μs) | Eventual / Local | KV + pub/sub + TTL | Ephemeral (lost on restart) | **TTL + pub/sub** — cache invalidation, event bus, session management |
+
+### Deployment Mode → Driver Selection
+
+| Deployment Mode | RecordStore driver | Metastore driver | ObjectStore driver | CacheStore driver |
+|-----------------|-------------------|------------------|-------------------|-------------------|
+| **Dev (single-node)** | SQLite | sled (local) | Local Disk | In-Memory (dict/DashMap) |
+| **Production (single-node)** | PostgreSQL | sled (local) | S3 / Local | Dragonfly |
+| **Production (multi-node)** | PostgreSQL | sled (Raft) | S3 | Dragonfly |
 
 ### Key Insights
 
-1. **Relational vs KV**: PostgreSQL/SQLite handle relational data (20 types), sled handles KV data (8 types). No overlap due to orthogonal query patterns.
+1. **4 storage mediums, 1:1 with Four Pillars**: Orthogonality is between pillars (different query patterns), not between drivers within a pillar (same pattern, different operational profiles).
 
-2. **Persistent vs Ephemeral**: sled is persistent SSOT, Dragonfly is ephemeral cache. No overlap due to orthogonal durability requirements.
+2. **Kernel needs exactly 2 mediums**: Ordered KV (Metastore) + Blob (ObjectStore). Services optionally add Relational ACID (RecordStore) and/or Ephemeral KV (CacheStore). Kernel is self-inclusive.
 
-3. **Networked vs Embedded**: Dragonfly is networked (shared across nodes), sled is embedded (PyO3 FFI, same process). No overlap due to orthogonal deployment contexts.
+3. **Drivers are deployment-time config**: PostgreSQL vs SQLite, S3 vs Local Disk, Dragonfly vs In-Memory — all selected by deployment context, abstracted behind ABCs.
 
-4. **Redis redundancy**: Dragonfly is a strict superset of Redis (same protocol, better performance). Redis should be deprecated.
-
-5. **Cloud vs Local blob storage**: S3 for cloud deployments (unlimited scale), Local Disk for edge/dev (zero latency). Both needed for different contexts.
-
-6. **L1 cache tiers**: DashMap for critical hot paths (CompactFileMetadata), Python dict for non-critical. Different performance tiers, both justified.
+4. **3 driver merges**: Redis → Dragonfly (redundant), In-Memory dict + DashMap → single driver with engine selection, PostgreSQL + SQLite → conceptually one medium.
 
 ### Action Items
 
-1. ✅ **No storage medium merges needed** (except Redis → Dragonfly migration)
-2. ⚠️ **Deprecate Redis** (P2): Migrate all Redis usage to Dragonfly (change connection string, zero code changes)
-3. ✅ **Orthogonality verified**: All remaining storage mediums have distinct, non-overlapping responsibilities
+1. ✅ **Step 2 COMPLETE**: 4 orthogonal storage mediums verified (1:1 with Pillars)
+2. ⚠️ **Deprecate Redis** (P2): Merge into Dragonfly driver (change connection string only)
+3. ✅ **Kernel self-inclusiveness verified**: 2 mediums sufficient (Ordered KV + Blob)
+4. ✅ **New principle**: Orthogonality = between pillars; drivers = within pillars
 
 ---
 

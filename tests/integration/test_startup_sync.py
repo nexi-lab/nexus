@@ -157,7 +157,7 @@ class TestStartupSyncBasic:
     @pytest.mark.asyncio
     async def test_startup_sync_with_missed_events(self, db_session_factory, clean_db):
         """Test that startup_sync processes missed events from PostgreSQL."""
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import FileEvent, RedisEventBus
         from nexus.storage.models import OperationLogModel
 
@@ -219,7 +219,7 @@ class TestStartupSyncBasic:
     @pytest.mark.asyncio
     async def test_startup_sync_no_missed_events(self, db_session_factory, clean_db):
         """Test startup_sync when there are no missed events."""
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import RedisEventBus
 
         redis_url = os.environ.get(
@@ -257,7 +257,7 @@ class TestStartupSyncBasic:
     @pytest.mark.asyncio
     async def test_startup_sync_respects_checkpoint(self, db_session_factory, clean_db):
         """Test that startup_sync only processes events after the checkpoint."""
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import RedisEventBus
         from nexus.storage.models import OperationLogModel, SystemSettingsModel
 
@@ -321,7 +321,7 @@ class TestStartupSyncBasic:
     @pytest.mark.asyncio
     async def test_startup_sync_updates_checkpoint(self, db_session_factory, clean_db):
         """Test that startup_sync updates the checkpoint after processing."""
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import RedisEventBus
         from nexus.storage.models import OperationLogModel
 
@@ -418,7 +418,7 @@ sys.path.insert(0, "/app/src")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.event_bus import RedisEventBus
 
 async def sync_and_verify():
@@ -493,7 +493,7 @@ asyncio.run(sync_and_verify())
         2. Linux syncs and creates operations file5-9
         3. Windows syncs and should see file5-9
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import RedisEventBus
         from nexus.storage.models import OperationLogModel
 
@@ -529,7 +529,7 @@ sys.path.insert(0, "/app/src")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.event_bus import RedisEventBus
 from nexus.storage.models import OperationLogModel
 
@@ -657,7 +657,7 @@ class TestEventBusLockIntegration:
 
         This verifies the Event Bus + Lock integration works correctly.
         """
-        from nexus.core.cache.dragonfly import DragonflyClient
+        from nexus.cache.dragonfly import DragonflyClient
         from nexus.core.event_bus import RedisEventBus
 
         redis_url = os.environ.get(
@@ -674,7 +674,7 @@ import asyncio
 import sys
 sys.path.insert(0, "/app/src")
 
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.event_bus import RedisEventBus
 
 async def subscribe_and_wait():
@@ -839,7 +839,7 @@ sys.path.insert(0, "/app/src")
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from nexus.core.cache.dragonfly import DragonflyClient
+from nexus.cache.dragonfly import DragonflyClient
 from nexus.core.event_bus import RedisEventBus
 
 async def sync_during_writes():

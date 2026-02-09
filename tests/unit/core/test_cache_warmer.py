@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.cache_warmer import (
+from nexus.cache.warmer import (
     BackgroundCacheWarmer,
     BackgroundWarmupConfig,
     CacheWarmer,

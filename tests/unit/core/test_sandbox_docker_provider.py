@@ -25,8 +25,8 @@ if "docker" not in sys.modules:
     sys.modules["docker.errors"] = docker_errors_mock
     sys.modules["docker"].errors = docker_errors_mock
 
-from nexus.core.sandbox_docker_provider import DockerSandboxProvider
-from nexus.core.sandbox_provider import (
+from nexus.sandbox.sandbox_docker_provider import DockerSandboxProvider
+from nexus.sandbox.sandbox_provider import (
     CodeExecutionResult,
     ExecutionTimeoutError,
     SandboxInfo,

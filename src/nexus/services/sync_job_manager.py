@@ -8,7 +8,7 @@ Manages the lifecycle of async sync_mount jobs:
 - Job listing and status queries
 
 Example:
-    >>> from nexus.core.sync_job_manager import SyncJobManager
+    >>> from nexus.services.sync_job_manager import SyncJobManager
     >>>
     >>> manager = SyncJobManager(session_factory)
     >>>

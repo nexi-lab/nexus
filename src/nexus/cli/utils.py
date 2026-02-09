@@ -186,6 +186,9 @@ def get_filesystem(
     force_local: bool = False,
     allow_admin_bypass: bool | None = None,
     enforce_zone_isolation: bool | None = None,
+    enable_memory_paging: bool = False,
+    memory_main_capacity: int = 100,
+    memory_recall_max_age_hours: float = 24.0,
 ) -> NexusFilesystem:
     """Get Nexus filesystem instance from backend configuration.
 
@@ -225,6 +228,10 @@ def get_filesystem(
                     config_dict["allow_admin_bypass"] = allow_admin_bypass
                 if enforce_zone_isolation is not None:
                     config_dict["enforce_zone_isolation"] = enforce_zone_isolation
+                # Issue #1258: Add memory paging config
+                config_dict["enable_memory_paging"] = enable_memory_paging
+                config_dict["memory_main_capacity"] = memory_main_capacity
+                config_dict["memory_recall_max_age_hours"] = memory_recall_max_age_hours
                 nx_fs = nexus.connect(config=config_dict)
                 # Store full config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
@@ -256,6 +263,10 @@ def get_filesystem(
                 config["allow_admin_bypass"] = allow_admin_bypass
             if enforce_zone_isolation is not None:
                 config["enforce_zone_isolation"] = enforce_zone_isolation
+            # Issue #1258: Add memory paging config
+            config["enable_memory_paging"] = enable_memory_paging
+            config["memory_main_capacity"] = memory_main_capacity
+            config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
@@ -271,6 +282,10 @@ def get_filesystem(
                 config["allow_admin_bypass"] = allow_admin_bypass
             if enforce_zone_isolation is not None:
                 config["enforce_zone_isolation"] = enforce_zone_isolation
+            # Issue #1258: Add memory paging config
+            config["enable_memory_paging"] = enable_memory_paging
+            config["memory_main_capacity"] = memory_main_capacity
+            config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
             nx_fs = nexus.connect(config=config)
             # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs

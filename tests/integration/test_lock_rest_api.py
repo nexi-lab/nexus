@@ -6,20 +6,15 @@ dependencies) to verify the full lock lifecycle through the REST API.
 
 from __future__ import annotations
 
-import asyncio
-import time
-
 import pytest
 from pydantic import ValidationError
 
-from nexus.core.distributed_lock import ExtendResult, HolderInfo, LockInfo, RaftLockManager
+from nexus.core.distributed_lock import RaftLockManager
 from nexus.server.fastapi_server import (
     LOCK_MAX_TTL,
     LockAcquireRequest,
     LockExtendRequest,
-    LockHolderResponse,
     LockInfoMutex,
-    LockInfoSemaphore,
     LockListResponse,
     LockResponse,
     LockStatusResponse,

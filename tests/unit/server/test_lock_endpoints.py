@@ -14,8 +14,6 @@ from fastapi.testclient import TestClient
 
 from nexus.core.distributed_lock import ExtendResult, HolderInfo, LockInfo
 from nexus.server.fastapi_server import (
-    LockAcquireRequest,
-    LockExtendRequest,
     LockHolderResponse,
     LockInfoMutex,
     LockInfoSemaphore,
@@ -23,7 +21,6 @@ from nexus.server.fastapi_server import (
     LockResponse,
     LockStatusResponse,
 )
-
 
 # =============================================================================
 # Fixtures

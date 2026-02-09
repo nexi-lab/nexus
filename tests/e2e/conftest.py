@@ -138,7 +138,11 @@ def nexus_server(isolated_db, tmp_path):
         [
             sys.executable,
             "-c",
-            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_path}'])",
+            (
+                f"from nexus.cli import main; "
+                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"'--data-dir', '{tmp_path}'])"
+            ),
         ],
         env=env,
         stdout=subprocess.PIPE,

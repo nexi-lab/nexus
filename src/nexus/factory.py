@@ -205,6 +205,26 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
+    # --- RecordStore Syncer (Task #45) ---
+    # Bundles OperationLogger + VersionRecorder into one write observer.
+    # Kernel calls on_write()/on_delete() without knowing the concrete class.
+    from nexus.storage.record_store_syncer import RecordStoreSyncer
+
+    write_observer = RecordStoreSyncer(session_factory)
+
+    # --- VersionService (Task #45) ---
+    # Version history queries go through RecordStore (VersionHistoryModel),
+    # not through Metastore (sled doesn't track version history).
+    from nexus.services.version_service import VersionService
+
+    version_service = VersionService(
+        metadata_store=metadata_store,
+        cas_store=backend,
+        router=router,
+        enforce_permissions=False,  # Permission checks done at NexusFS level
+        session_factory=session_factory,
+    )
+
     return {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -216,6 +236,8 @@ def create_nexus_services(
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
+        "write_observer": write_observer,
+        "version_service": version_service,
     }
 
 

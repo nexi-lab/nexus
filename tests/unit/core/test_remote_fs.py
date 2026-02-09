@@ -13,7 +13,6 @@ from nexus.core.response import HandlerResponse
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -39,7 +38,7 @@ def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None
     db_path = temp_dir / "test-metadata.db"
     fs = create_nexus_fs(
         backend=mock_gcs_backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,
@@ -90,7 +89,7 @@ class TestNexusFSInitialization:
 
         fs = create_nexus_fs(
             backend=mock_gcs_backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-creds")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
         )
 
@@ -103,7 +102,7 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         fs = create_nexus_fs(
             backend=mock_gcs_backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-zone")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             zone_id="zone-123",
             agent_id="agent-456",
@@ -798,7 +797,7 @@ class TestClose:
         fs.close()
 
         # Metadata store should be closed
-        # (SQLAlchemy handles this internally)
+        # (RaftMetadataStore handles this internally)
 
 
 class TestComputeEtag:

@@ -11,8 +11,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from sqlalchemy import select
-
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -63,8 +61,6 @@ from nexus.services.mount_service import MountService
 from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
-from nexus.services.version_service import VersionService
-from nexus.storage import SQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -154,6 +150,12 @@ class NexusFS(  # type: ignore[misc]
         workspace_registry: WorkspaceRegistry | None = None,
         mount_manager: MountManager | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        # Task #45: Optional RecordStore write-through observer (duck-typed).
+        # Created by factory.py (RecordStoreSyncer), injected here.
+        # Kernel calls on_write()/on_delete() — never imports the concrete class.
+        write_observer: Any | None = None,
+        # Task #45: VersionService (created by factory, not kernel)
+        version_service: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -167,7 +169,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
+            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
                            User Space controls driver selection via Dependency Injection (Task #14)
             record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
                          Not required for pure file operations. User Space injects when Services are needed.
@@ -356,6 +358,7 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_registry = workspace_registry
         self.mount_manager = mount_manager
         self._workspace_manager = workspace_manager
+        self._write_observer = write_observer  # Task #45: RecordStore sync
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -542,14 +545,10 @@ class NexusFS(  # type: ignore[misc]
         # Phase 2: Service Composition - Extract from mixins into services
         # These services are independent, testable, and follow single-responsibility principle
         # All services use async-first architecture with asyncio.to_thread() for blocking operations
+        # TODO(Task #40-44): Move remaining service creation to factory.py
 
-        # VersionService: File versioning operations (4 methods)
-        self.version_service = VersionService(
-            metadata_store=self.metadata,
-            cas_store=self.backend,  # For CAS operations
-            router=self.router,
-            enforce_permissions=self._enforce_permissions,
-        )
+        # VersionService: injected by factory (Task #45)
+        self.version_service = version_service
 
         # ReBACService: Permission and access control operations (12 core + 15 advanced methods)
         self.rebac_service = ReBACService(
@@ -2517,33 +2516,9 @@ class NexusFS(  # type: ignore[misc]
                 # Try to get custom metadata for this file (if any)
                 # Note: This is optional - files may not have custom metadata
                 try:
-                    if isinstance(self.metadata, SQLAlchemyMetadataStore):
-                        # Get all custom metadata keys for this path
-                        # We need to query the database directly for all keys
-                        with self.SessionLocal() as session:
-                            from nexus.storage.models import FileMetadataModel, FilePathModel
-
-                            # Get path_id
-                            path_stmt = select(FilePathModel.path_id).where(
-                                FilePathModel.virtual_path == file_meta.path,
-                                FilePathModel.deleted_at.is_(None),
-                            )
-                            path_id = session.scalar(path_stmt)
-
-                            if path_id:
-                                # Get all custom metadata
-                                meta_stmt = select(FileMetadataModel).where(
-                                    FileMetadataModel.path_id == path_id
-                                )
-                                custom_meta = {}
-                                for meta_item in session.scalars(meta_stmt):
-                                    if meta_item.value:
-                                        custom_meta[meta_item.key] = json.loads(meta_item.value)
-
-                                if custom_meta:
-                                    metadata_dict["custom_metadata"] = custom_meta
-                except (OSError, ValueError, json.JSONDecodeError):
-                    # Ignore errors when fetching custom metadata (DB errors or JSON decode issues)
+                    if file_meta.custom_metadata:
+                        metadata_dict["custom_metadata"] = dict(file_meta.custom_metadata)
+                except (AttributeError, TypeError):
                     pass
 
                 # Write JSON line

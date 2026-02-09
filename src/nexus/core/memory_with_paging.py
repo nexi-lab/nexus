@@ -50,7 +50,7 @@ class MemoryWithPaging(Memory):
         zone_id: str | None = None,
         user_id: str | None = None,
         agent_id: str | None = None,
-        entity_registry=None,
+        entity_registry: Any = None,
         enable_paging: bool = True,
         main_capacity: int = 100,
         recall_max_age_hours: float = 24.0,
@@ -78,6 +78,7 @@ class MemoryWithPaging(Memory):
         )
 
         self.enable_paging = enable_paging
+        self.pager: MemoryPager | None
 
         if enable_paging:
             self.pager = MemoryPager(
@@ -94,14 +95,13 @@ class MemoryWithPaging(Memory):
         else:
             self.pager = None
 
-    def store(
+    def store(  # type: ignore[override]
         self,
-        content: str | bytes,
+        content: str | bytes | dict[str, Any],
         scope: str = "agent",
         memory_type: str | None = None,
         importance: float | None = None,
         namespace: str | None = None,
-        auto_page: bool = True,
         **kwargs: Any,
     ) -> str:
         """Store memory with automatic paging.
@@ -112,12 +112,15 @@ class MemoryWithPaging(Memory):
             memory_type: Memory type
             importance: Importance score (0-1)
             namespace: Hierarchical namespace
-            auto_page: Automatically page to main context (default: True)
             **kwargs: Additional arguments passed to parent store()
+                     auto_page: Automatically page to main context (default: True)
 
         Returns:
             Memory ID
         """
+        # Extract auto_page from kwargs
+        auto_page = kwargs.pop("auto_page", True)
+
         # Store using parent API
         memory_id = super().store(
             content=content,
@@ -173,7 +176,7 @@ class MemoryWithPaging(Memory):
             archival_threshold=archival_threshold,
         )
 
-    def get_recent_context(self, limit: int = 50) -> list[dict]:
+    def get_recent_context(self, limit: int = 50) -> list[dict[str, Any]]:
         """Get recent memories for LLM context.
 
         Args:
@@ -184,12 +187,11 @@ class MemoryWithPaging(Memory):
         """
         if not self.enable_paging or not self.pager:
             # Fallback to regular query
-            memories = self.query(limit=limit)
-            return memories
+            return self.query(limit=limit)
 
         # Use paging system
-        memories = self.pager.get_recent_context(limit=limit)
-        return [self._memory_to_dict(m) for m in memories]
+        memory_models = self.pager.get_recent_context(limit=limit)
+        return [self._memory_to_dict(m) for m in memory_models]
 
     def get_paging_stats(self) -> dict:
         """Get memory distribution across tiers.

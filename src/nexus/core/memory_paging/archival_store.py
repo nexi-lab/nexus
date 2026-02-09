@@ -7,6 +7,7 @@ Optimized for knowledge queries: "What do I know about X?", "Find similar to Y"
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -207,7 +208,7 @@ class ArchivalStore:
         """
         return self.router.delete_memory(memory_id)
 
-    def get_newest_timestamp(self):
+    def get_newest_timestamp(self) -> datetime | None:
         """Get timestamp of newest memory in archival."""
         from sqlalchemy import select
 

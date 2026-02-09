@@ -108,7 +108,7 @@ class MemoryPager:
         recall_count: int = 3,
         archival_count: int = 2,
         archival_threshold: float = 0.7,
-    ) -> dict[str, list]:
+    ) -> dict[str, list[MemoryModel] | list[tuple[MemoryModel, float]]]:
         """Search across all tiers for relevant memories.
 
         Args:
@@ -126,7 +126,7 @@ class MemoryPager:
                 'archival': [(MemoryModel, score), ...]
             }
         """
-        results = {}
+        results: dict[str, list[MemoryModel] | list[tuple[MemoryModel, float]]] = {}
 
         # Get from main context (most recent)
         main_memories = self.context.get_all()[:main_count]
@@ -189,8 +189,13 @@ class MemoryPager:
             self.archival.store(memory)
             return True
 
-        # Try recall store
-        memory = self.session.get(memory_id)
+        # Try recall store - query by memory_id
+        from sqlalchemy import select
+
+        from nexus.storage.models import MemoryModel
+
+        stmt = select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+        memory = self.session.execute(stmt).scalar_one_or_none()
         if memory:
             self.recall.remove(memory_id)
             self.archival.store(memory)

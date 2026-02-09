@@ -13,8 +13,8 @@ import zipfile
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -93,7 +93,7 @@ This skill demonstrates the import/export lifecycle.
 def nexus_fs(isolated_db, tmp_path):
     """Create a real NexusFS instance with LocalBackend for testing."""
     backend = LocalBackend(root_path=str(tmp_path / "storage"))
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),

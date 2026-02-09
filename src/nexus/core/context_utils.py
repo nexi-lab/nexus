@@ -83,7 +83,7 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
     1. TOKEN_MANAGER_DB environment variable
     2. obj._config.db_path (if available)
     3. obj.db_path (direct attribute, if available)
-    4. obj.metadata.database_url (if available)
+    4. obj._record_store.database_url (if available)
 
     Args:
         obj: Object to check for configuration (typically self)
@@ -115,9 +115,13 @@ def get_database_url(obj: Any, context: Any = None) -> str:  # noqa: ARG001
         elif hasattr(obj, "db_path") and obj.db_path:
             database_url = str(obj.db_path)
             logger.debug(f"Using obj.db_path: {database_url}")
-        elif hasattr(obj, "metadata") and hasattr(obj.metadata, "database_url"):
-            database_url = obj.metadata.database_url
-            logger.debug(f"Using obj.metadata.database_url: {database_url}")
+        elif (
+            hasattr(obj, "_record_store")
+            and obj._record_store
+            and hasattr(obj._record_store, "database_url")
+        ):
+            database_url = obj._record_store.database_url
+            logger.debug(f"Using obj._record_store.database_url: {database_url}")
 
     if not database_url:
         raise RuntimeError(

@@ -387,7 +387,7 @@ class SearchDaemon:
     async def _check_embedding_cache(self) -> None:
         """Check if embedding cache (Dragonfly) is connected."""
         try:
-            from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
+            from nexus.cache.dragonfly import DragonflyEmbeddingCache
 
             cache = DragonflyEmbeddingCache()  # type: ignore[call-arg]
             self.stats.embedding_cache_connected = await cache.is_connected()  # type: ignore[attr-defined]

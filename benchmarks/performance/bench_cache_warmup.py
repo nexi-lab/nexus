@@ -23,9 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
-from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+from nexus.cache.warmer import CacheWarmer, WarmupConfig
 from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> list[str]:

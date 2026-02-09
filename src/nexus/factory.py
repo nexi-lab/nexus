@@ -1,0 +1,338 @@
+"""Nexus Service Factory — userspace init system for NexusFS.
+
+.. important:: ARCHITECTURAL DECISION (Task #23)
+
+    This module is **NOT kernel code**. It lives at ``nexus/factory.py``
+    (top-level, alongside ``server/``, ``cli/``, ``services/``) by design.
+
+    **Linux analogy**: NexusFS kernel = ``/kernel/``. This factory = ``systemd``
+    (``/usr/lib/systemd/``). Systemd knows which services to start and how to
+    wire them together, but it is not part of the kernel.
+
+    **Why it exists**: The NexusFS kernel (``nexus.core.nexus_fs.NexusFS``)
+    accepts pre-built services via dependency injection and never auto-creates
+    them. This factory provides the default wiring so that callers don't have
+    to manually construct 10 services every time.
+
+    **Future**: This module can be extracted into a separate package
+    (e.g. ``nexus-bootstrap``) when the repo is split. The kernel
+    (``nexus-core``) would have zero dependency on it. All coupling flows
+    one way: factory → kernel, never kernel → factory.
+
+    **Decision rationale**:
+    - ``nexus/core/`` was rejected because that's the kernel tree.
+    - ``nexus/services/`` was rejected because those are service facades
+      (Phase 2 extractions), not the bootstrap orchestrator.
+    - Top-level ``nexus/factory.py`` mirrors systemd's position as an
+      independent top-level system component.
+
+Usage::
+
+    # Quick: single call creates kernel + services
+    from nexus.factory import create_nexus_fs
+
+    nx = create_nexus_fs(
+        backend=LocalBackend(root_path="./data"),
+        metadata_store=RaftMetadataStore.local("./raft"),
+        record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
+        enforce_permissions=False,
+    )
+
+    # Advanced: create services separately, inject into kernel
+    from nexus.factory import create_nexus_services
+
+    services = create_nexus_services(
+        record_store=record_store,
+        metadata_store=metadata_store,
+        backend=backend,
+        router=my_router,
+    )
+    nx = NexusFS(backend=backend, metadata_store=metadata_store, **services)
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
+    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.router import PathRouter
+    from nexus.storage.record_store import RecordStoreABC
+
+
+def create_nexus_services(
+    record_store: RecordStoreABC,
+    metadata_store: FileMetadataProtocol,
+    backend: Backend,
+    router: PathRouter,
+    *,
+    cache_ttl_seconds: int | None = 300,
+    enforce_zone_isolation: bool = True,
+    enable_tiger_cache: bool = True,
+    allow_admin_bypass: bool = False,
+    inherit_permissions: bool = True,
+    enable_deferred_permissions: bool = True,
+    deferred_flush_interval: float = 0.05,
+    zone_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Create default services for NexusFS dependency injection.
+
+    Builds all service instances that NexusFS accepts via constructor params.
+    Services are wired together internally (e.g. PermissionEnforcer receives
+    the rebac_manager created here).
+
+    Args:
+        record_store: RecordStoreABC instance (provides engine + session_factory).
+        metadata_store: FileMetadataProtocol instance (for PermissionEnforcer).
+        backend: Backend instance (for WorkspaceManager).
+        router: PathRouter instance (for PermissionEnforcer object type resolution).
+        cache_ttl_seconds: Cache TTL for ReBAC manager (default: 300).
+        enforce_zone_isolation: Enable zone isolation in ReBAC (default: True).
+        enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True).
+        allow_admin_bypass: Allow admin users to bypass permission checks (default: False).
+        inherit_permissions: Enable automatic parent tuple creation (default: True).
+        enable_deferred_permissions: Enable async permission write batching (default: True).
+        deferred_flush_interval: Flush interval in seconds (default: 0.05).
+        zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
+        agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
+
+    Returns:
+        Dict of keyword arguments ready to spread into ``NexusFS()``::
+
+            services = create_nexus_services(record_store, metadata_store, backend, router)
+            nx = NexusFS(backend=backend, metadata_store=metadata_store, **services)
+    """
+    engine = record_store.engine
+    session_factory = record_store.session_factory
+
+    # --- ReBAC Manager ---
+    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+
+    rebac_manager = EnhancedReBACManager(
+        engine=engine,
+        cache_ttl_seconds=cache_ttl_seconds or 300,
+        max_depth=10,
+        enforce_zone_isolation=enforce_zone_isolation,
+        enable_graph_limits=True,
+        enable_tiger_cache=enable_tiger_cache,
+    )
+
+    # --- Directory Visibility Cache ---
+    from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
+
+    dir_visibility_cache = DirectoryVisibilityCache(
+        tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
+        ttl=cache_ttl_seconds or 300,
+        max_entries=10000,
+    )
+
+    # Wire: rebac invalidation -> dir visibility cache
+    rebac_manager.register_dir_visibility_invalidator(
+        "nexusfs",
+        lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
+    )
+
+    # --- Audit Store ---
+    from nexus.core.permissions_enhanced import AuditStore
+
+    audit_store = AuditStore(engine=engine)
+
+    # --- Entity Registry ---
+    from nexus.core.entity_registry import EntityRegistry
+
+    entity_registry = EntityRegistry(session_factory)
+
+    # --- Permission Enforcer ---
+    from nexus.core.permissions import PermissionEnforcer
+
+    permission_enforcer = PermissionEnforcer(
+        metadata_store=metadata_store,
+        rebac_manager=rebac_manager,
+        allow_admin_bypass=allow_admin_bypass,
+        allow_system_bypass=True,
+        audit_store=audit_store,
+        admin_bypass_paths=[],
+        router=router,
+        entity_registry=entity_registry,
+    )
+
+    # --- Hierarchy Manager ---
+    from nexus.core.hierarchy_manager import HierarchyManager
+
+    hierarchy_manager = HierarchyManager(
+        rebac_manager=rebac_manager,
+        enable_inheritance=inherit_permissions,
+    )
+
+    # --- Deferred Permission Buffer ---
+    from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
+
+    deferred_permission_buffer = None
+    if enable_deferred_permissions:
+        deferred_permission_buffer = DeferredPermissionBuffer(
+            rebac_manager=rebac_manager,
+            hierarchy_manager=hierarchy_manager,
+            flush_interval_sec=deferred_flush_interval,
+        )
+        deferred_permission_buffer.start()
+
+    # --- Workspace Registry ---
+    from nexus.core.workspace_registry import WorkspaceRegistry
+
+    workspace_registry = WorkspaceRegistry(
+        metadata=metadata_store,
+        rebac_manager=rebac_manager,
+        session_factory=session_factory,
+    )
+
+    # --- Mount Manager ---
+    from nexus.core.mount_manager import MountManager
+
+    mount_manager = MountManager(session_factory)
+
+    # --- Workspace Manager ---
+    from nexus.core.workspace_manager import WorkspaceManager
+
+    workspace_manager = WorkspaceManager(
+        metadata=metadata_store,
+        backend=backend,
+        rebac_manager=rebac_manager,
+        zone_id=zone_id,
+        agent_id=agent_id,
+        session_factory=session_factory,
+    )
+
+    return {
+        "rebac_manager": rebac_manager,
+        "dir_visibility_cache": dir_visibility_cache,
+        "audit_store": audit_store,
+        "entity_registry": entity_registry,
+        "permission_enforcer": permission_enforcer,
+        "hierarchy_manager": hierarchy_manager,
+        "deferred_permission_buffer": deferred_permission_buffer,
+        "workspace_registry": workspace_registry,
+        "mount_manager": mount_manager,
+        "workspace_manager": workspace_manager,
+    }
+
+
+def create_nexus_fs(
+    backend: Backend,
+    metadata_store: FileMetadataProtocol,
+    record_store: RecordStoreABC | None = None,
+    *,
+    # Kernel config
+    cache_store: Any = None,
+    is_admin: bool = False,
+    zone_id: str | None = None,
+    agent_id: str | None = None,
+    custom_namespaces: list[Any] | None = None,
+    enable_metadata_cache: bool = True,
+    cache_path_size: int = 512,
+    cache_list_size: int = 1024,
+    cache_kv_size: int = 256,
+    cache_exists_size: int = 1024,
+    cache_ttl_seconds: int | None = 300,
+    enable_content_cache: bool = True,
+    content_cache_size_mb: int = 256,
+    auto_parse: bool = True,
+    custom_parsers: list[dict[str, Any]] | None = None,
+    parse_providers: list[dict[str, Any]] | None = None,
+    enforce_permissions: bool = True,
+    allow_admin_bypass: bool = False,
+    enforce_zone_isolation: bool = True,
+    audit_strict_mode: bool = True,
+    enable_workflows: bool = True,
+    workflow_engine: Any = None,
+    coordination_url: str | None = None,
+    enable_distributed_events: bool = True,
+    enable_distributed_locks: bool = True,
+    # Service config (only used when record_store is provided)
+    inherit_permissions: bool = True,
+    enable_tiger_cache: bool = True,
+    enable_deferred_permissions: bool = True,
+    deferred_flush_interval: float = 0.05,
+) -> NexusFS:
+    """Create NexusFS with default services — the recommended entry point.
+
+    Handles router creation, service wiring, and kernel initialization in one
+    call. Equivalent to what ``nexus.connect()`` does for embedded mode.
+
+    For pure kernel mode (no services), use ``NexusFS()`` directly.
+
+    Args:
+        backend: Backend instance for file storage.
+        metadata_store: FileMetadataProtocol instance.
+        record_store: Optional RecordStoreABC. When provided, all services
+            (ReBAC, Audit, Permissions, etc.) are created and injected.
+        **config: All NexusFS kernel and service configuration parameters.
+
+    Returns:
+        Fully configured NexusFS instance with services injected.
+    """
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.router import NamespaceConfig, PathRouter
+
+    # Create and configure router (kernel component, but needed by services
+    # before NexusFS is constructed — so we build it here and inject it)
+    router = PathRouter()
+    if custom_namespaces:
+        for ns_config in custom_namespaces:
+            if isinstance(ns_config, dict):
+                ns_config = NamespaceConfig(**ns_config)
+            router.register_namespace(ns_config)
+    router.add_mount("/", backend, priority=0)
+
+    # Create services if record_store is provided
+    services: dict[str, Any] = {}
+    if record_store is not None:
+        services = create_nexus_services(
+            record_store=record_store,
+            metadata_store=metadata_store,
+            backend=backend,
+            router=router,
+            cache_ttl_seconds=cache_ttl_seconds,
+            enforce_zone_isolation=enforce_zone_isolation,
+            enable_tiger_cache=enable_tiger_cache,
+            allow_admin_bypass=allow_admin_bypass,
+            inherit_permissions=inherit_permissions,
+            enable_deferred_permissions=enable_deferred_permissions,
+            deferred_flush_interval=deferred_flush_interval,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
+
+    return NexusFS(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        cache_store=cache_store,
+        is_admin=is_admin,
+        zone_id=zone_id,
+        agent_id=agent_id,
+        router=router,
+        enable_metadata_cache=enable_metadata_cache,
+        cache_path_size=cache_path_size,
+        cache_list_size=cache_list_size,
+        cache_kv_size=cache_kv_size,
+        cache_exists_size=cache_exists_size,
+        cache_ttl_seconds=cache_ttl_seconds,
+        enable_content_cache=enable_content_cache,
+        content_cache_size_mb=content_cache_size_mb,
+        auto_parse=auto_parse,
+        custom_parsers=custom_parsers,
+        parse_providers=parse_providers,
+        enforce_permissions=enforce_permissions,
+        allow_admin_bypass=allow_admin_bypass,
+        enforce_zone_isolation=enforce_zone_isolation,
+        audit_strict_mode=audit_strict_mode,
+        enable_workflows=enable_workflows,
+        workflow_engine=workflow_engine,
+        coordination_url=coordination_url,
+        enable_distributed_events=enable_distributed_events,
+        enable_distributed_locks=enable_distributed_locks,
+        **services,
+    )

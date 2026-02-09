@@ -176,12 +176,12 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core._metadata_generated import MetadataStore
+        from nexus.core._metadata_generated import FileMetadataProtocol
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        metadata: MetadataStore
+        metadata: FileMetadataProtocol
         router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext
@@ -898,6 +898,11 @@ class NexusFSSearchMixin:
                             # Path may have been deleted, skip it
                             pass
 
+        # Filter out internal system entries from user-visible results
+        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+
+        all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
+
         # Apply recursive filter if needed
         if prefix is not None:
             results = all_files
@@ -1315,6 +1320,13 @@ class NexusFSSearchMixin:
             logger.info(
                 f"[LIST-PAGINATED] DB batch: {len(batch.items)} items in {_db_elapsed:.1f}ms, sample: {sample_paths}"
             )
+
+            # Filter out internal system entries
+            from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+
+            batch.items = [
+                item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)
+            ]
 
             # Filter by permissions
             if self._enforce_permissions and context:
@@ -2700,8 +2712,10 @@ class NexusFSSearchMixin:
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
-        # Get database URL from metadata store
-        database_url = str(self.metadata.engine.url)
+        # Semantic search requires RecordStore (SQL engine for vector DB)
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+        database_url = str(self._record_store.engine.url)
 
         if async_mode:
             # Use async search for high-throughput (non-blocking DB operations)
@@ -2723,6 +2737,7 @@ class NexusFSSearchMixin:
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                engine=self._record_store.engine,
             )
             self._semantic_search.initialize()
         else:
@@ -2734,6 +2749,7 @@ class NexusFSSearchMixin:
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                engine=self._record_store.engine,
             )
             self._semantic_search.initialize()
             self._async_search = None

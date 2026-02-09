@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from nexus.core.sandbox_provider import (
+from nexus.sandbox.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
 )
@@ -23,7 +23,7 @@ from nexus.storage.models import SandboxMetadataModel
 
 # Try to import E2B provider
 try:
-    from nexus.core.sandbox_e2b_provider import E2BSandboxProvider
+    from nexus.sandbox.sandbox_e2b_provider import E2BSandboxProvider
 
     E2B_PROVIDER_AVAILABLE = True
 except ImportError:
@@ -31,7 +31,7 @@ except ImportError:
 
 # Try to import Docker provider
 try:
-    from nexus.core.sandbox_docker_provider import DockerSandboxProvider
+    from nexus.sandbox.sandbox_docker_provider import DockerSandboxProvider
 
     DOCKER_PROVIDER_AVAILABLE = True
 except ImportError:

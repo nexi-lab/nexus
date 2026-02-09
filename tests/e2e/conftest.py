@@ -24,6 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -210,7 +211,6 @@ def nexus_fs(isolated_db, tmp_path):
     """
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
 
     storage_path = tmp_path / "storage"
@@ -219,7 +219,7 @@ def nexus_fs(isolated_db, tmp_path):
 
     metadata_store = RaftMetadataStore.local(str(isolated_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,

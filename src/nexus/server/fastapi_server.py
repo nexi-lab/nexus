@@ -33,7 +33,7 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -52,7 +52,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -118,52 +118,18 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
-# Lock API Models (Issue #1110, #1186)
+# Lock API Models (Issue #1186)
 # ============================================================================
-
-# Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
-LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
 
 
 class LockAcquireRequest(BaseModel):
     """Request model for acquiring a lock."""
 
     path: str
-    timeout: float = Field(default=30.0, ge=0, le=3600, description="Max seconds to wait")
-    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="Lock TTL in seconds")
-    max_holders: int = Field(default=1, ge=1, le=10000, description="1=mutex, >1=semaphore")
+    timeout: float = 30.0  # Max time to wait for lock acquisition
+    ttl: float = 30.0  # Lock TTL (auto-expires after this)
+    max_holders: int = 1  # 1 = mutex, >1 = semaphore
     blocking: bool = True  # If false, return immediately without waiting
-
-
-class LockHolderResponse(BaseModel):
-    """Information about a single lock holder."""
-
-    lock_id: str
-    holder_info: str = ""
-    acquired_at: float  # Unix timestamp
-    expires_at: float  # Unix timestamp
-
-
-class LockInfoMutex(BaseModel):
-    """Lock info for a mutex (exclusive) lock."""
-
-    mode: Literal["mutex"] = "mutex"
-    max_holders: Literal[1] = 1
-    lock_id: str  # The single holder's lock ID
-    holder_info: str = ""
-    acquired_at: float
-    expires_at: float
-    fence_token: int
-
-
-class LockInfoSemaphore(BaseModel):
-    """Lock info for a semaphore (shared) lock."""
-
-    mode: Literal["semaphore"] = "semaphore"
-    max_holders: int
-    holders: list[LockHolderResponse]
-    current_holders: int
-    fence_token: int
 
 
 class LockResponse(BaseModel):
@@ -175,7 +141,6 @@ class LockResponse(BaseModel):
     max_holders: int
     ttl: int
     expires_at: str  # ISO 8601 timestamp
-    fence_token: int
 
 
 class LockStatusResponse(BaseModel):
@@ -183,20 +148,27 @@ class LockStatusResponse(BaseModel):
 
     path: str
     locked: bool
-    lock_info: LockInfoMutex | LockInfoSemaphore | None = None
+    lock_info: dict[str, Any] | None = None
 
 
 class LockExtendRequest(BaseModel):
     """Request model for extending a lock."""
 
     lock_id: str
-    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="New TTL in seconds")
+    ttl: float = 30.0
+
+
+class LockReleaseRequest(BaseModel):
+    """Request model for releasing a lock."""
+
+    lock_id: str
+    force: bool = False  # Admin-only: force release regardless of owner
 
 
 class LockListResponse(BaseModel):
     """Response model for listing locks."""
 
-    locks: list[LockInfoMutex | LockInfoSemaphore]
+    locks: list[dict[str, Any]]
     count: int
 
 
@@ -719,7 +691,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Initialize OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import setup_telemetry
+        from nexus.server.telemetry import setup_telemetry
 
         setup_telemetry()
     except ImportError:
@@ -805,8 +777,8 @@ async def lifespan(_app: FastAPI) -> Any:
     dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
     if dragonfly_url:
         try:
-            from nexus.core.cache.factory import init_cache_factory
-            from nexus.core.cache.settings import CacheSettings
+            from nexus.cache.factory import init_cache_factory
+            from nexus.cache.settings import CacheSettings
 
             cache_settings = CacheSettings.from_env()
             _app_state.cache_factory = await init_cache_factory(cache_settings)
@@ -1019,7 +991,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
-                from nexus.core.cache_warmer import CacheWarmer, WarmupConfig
+                from nexus.cache.warmer import CacheWarmer, WarmupConfig
 
                 config = WarmupConfig(
                     max_files=warmup_max_files,
@@ -1140,7 +1112,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Shutdown OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import shutdown_telemetry
+        from nexus.server.telemetry import shutdown_telemetry
 
         shutdown_telemetry()
     except ImportError:
@@ -1306,7 +1278,7 @@ def create_app(
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
-        from nexus.core.telemetry import instrument_fastapi_app
+        from nexus.server.telemetry import instrument_fastapi_app
 
         instrument_fastapi_app(app)
     except ImportError:
@@ -1347,11 +1319,8 @@ def _initialize_oauth_provider(
         session_factory = None
         if auth_provider and hasattr(auth_provider, "session_factory"):
             session_factory = auth_provider.session_factory
-        elif hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
-            from sqlalchemy.orm import sessionmaker
-
-            # Create session factory from metadata
-            session_factory = sessionmaker(bind=nexus_fs.metadata.engine)
+        elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+            session_factory = nexus_fs.SessionLocal
         else:
             logger.warning("Cannot initialize OAuth provider: no session factory available")
             return
@@ -1452,9 +1421,15 @@ async def _graph_enhanced_search(
     # Get database URL
     db_url = _app_state.database_url
     if not db_url:
-        db_url = _app_state.nexus_fs.metadata.database_url
+        db_url = (
+            _app_state.nexus_fs._record_store.database_url
+            if _app_state.nexus_fs._record_store
+            else None
+        )
 
     # Convert to async URL
+    if not db_url:
+        raise RuntimeError("No database URL available for graph search endpoint")
     async_url = db_url
     if async_url.startswith("postgresql://"):
         async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
@@ -1693,7 +1668,7 @@ def _register_routes(app: FastAPI) -> None:
 
         # Redis/Dragonfly pool stats from cache factory
         try:
-            from nexus.core.cache.factory import get_cache_factory
+            from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
             if cache_factory.is_using_dragonfly and cache_factory._cache_client:
@@ -1780,6 +1755,21 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Async files router registered (9 endpoints)")
     except ImportError as e:
         logger.warning(f"Failed to import async files router: {e}")
+
+    # A2A Protocol Endpoint (Issue #1256)
+    try:
+        from nexus.a2a import create_a2a_router
+
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_router = create_a2a_router(
+            nexus_fs=_app_state.nexus_fs,
+            config=None,  # Will use defaults; config can be passed when available
+            base_url=a2a_base_url,
+        )
+        app.include_router(a2a_router)
+        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
+    except ImportError as e:
+        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
@@ -2786,7 +2776,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Warmup statistics including files warmed, duration, etc.
         """
-        from nexus.core.cache_warmer import (
+        from nexus.cache.warmer import (
             CacheWarmer,
             WarmupConfig,
             get_file_access_tracker,
@@ -2853,7 +2843,7 @@ def _register_routes(app: FastAPI) -> None:
         Returns statistics for all cache layers including hit rates,
         memory usage, and entry counts.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         nx = _app_state.nexus_fs
         if not nx:
@@ -2911,7 +2901,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns list of hot files based on recent access patterns.
         """
-        from nexus.core.cache_warmer import get_file_access_tracker
+        from nexus.cache.warmer import get_file_access_tracker
 
         zone_id = auth_result.get("zone_id", "default")
         tracker = get_file_access_tracker()
@@ -3049,7 +3039,7 @@ def _register_routes(app: FastAPI) -> None:
         return JSONResponse(content=result)
 
     # =========================================================================
-    # Lock API Endpoints (Issue #1110, #1186)
+    # Lock API Endpoints (Issue #1186)
     # =========================================================================
 
     def _get_lock_manager() -> Any:
@@ -3060,52 +3050,9 @@ def _register_routes(app: FastAPI) -> None:
             raise HTTPException(
                 status_code=503,
                 detail="Distributed lock manager not configured. "
-                "Set up Raft metadata store for distributed locking.",
+                "Enable Redis/Dragonfly for distributed locking.",
             )
         return _app_state.nexus_fs._lock_manager
-
-    def _normalize_lock_path(path: str) -> str:
-        """Normalize a lock path to ensure leading slash.
-
-        URL path captures in FastAPI strip the leading slash, so we
-        re-add it for consistency with the rest of the filesystem API.
-        """
-        if not path.startswith("/"):
-            return "/" + path
-        return path
-
-    def _compute_expires_at(ttl: float) -> str:
-        """Compute ISO 8601 expiration timestamp from a TTL in seconds."""
-        return (datetime.now(UTC) + timedelta(seconds=ttl)).isoformat()
-
-    def _lock_info_to_response(
-        lock_info: Any,
-    ) -> LockInfoMutex | LockInfoSemaphore:
-        """Convert a LockInfo dataclass to the appropriate response model."""
-        if lock_info.mode == "mutex" and lock_info.holders:
-            h = lock_info.holders[0]
-            return LockInfoMutex(
-                lock_id=h.lock_id,
-                holder_info=h.holder_info,
-                acquired_at=h.acquired_at,
-                expires_at=h.expires_at,
-                fence_token=lock_info.fence_token,
-            )
-        else:
-            return LockInfoSemaphore(
-                max_holders=lock_info.max_holders,
-                holders=[
-                    LockHolderResponse(
-                        lock_id=h.lock_id,
-                        holder_info=h.holder_info,
-                        acquired_at=h.acquired_at,
-                        expires_at=h.expires_at,
-                    )
-                    for h in lock_info.holders
-                ],
-                current_holders=len(lock_info.holders),
-                fence_token=lock_info.fence_token,
-            )
 
     @app.post("/api/locks", tags=["locks"], status_code=201, response_model=LockResponse)
     async def acquire_lock(
@@ -3117,12 +3064,13 @@ def _register_routes(app: FastAPI) -> None:
         Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
         Use blocking=false for non-blocking acquisition (returns immediately).
 
-        Returns a lock_id that must be used for release/extend operations,
-        and an advisory fence_token for stale-lock protection.
+        Performance:
+        - Typical latency: <5ms p99
+        - Uses Redis SET NX EX for atomic acquisition
+        - Exponential backoff with jitter to prevent thundering herd
         """
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
-        normalized_path = _normalize_lock_path(request.path)
 
         # Non-blocking mode: use timeout=0
         timeout = request.timeout if request.blocking else 0.0
@@ -3130,15 +3078,17 @@ def _register_routes(app: FastAPI) -> None:
         try:
             lock_id = await lock_manager.acquire(
                 zone_id=zone_id,
-                path=normalized_path,
+                path=request.path,
                 timeout=timeout,
                 ttl=request.ttl,
                 max_holders=request.max_holders,
             )
         except ValueError as e:
+            # SSOT violation (max_holders mismatch)
             raise HTTPException(status_code=409, detail=str(e)) from e
 
         if lock_id is None:
+            # Lock acquisition failed (timeout or non-blocking)
             if request.blocking:
                 raise HTTPException(
                     status_code=409,
@@ -3150,37 +3100,86 @@ def _register_routes(app: FastAPI) -> None:
                     detail="Lock not available (non-blocking mode)",
                 )
 
-        # Get lock info to include fence token
-        lock_info = await lock_manager.get_lock_info(zone_id, normalized_path)
-        fence_token = lock_info.fence_token if lock_info else 0
+        # Calculate expiration time
+        expires_at = datetime.now(UTC).timestamp() + request.ttl
+        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
         return LockResponse(
             lock_id=lock_id,
-            path=normalized_path,
+            path=request.path,
             mode="mutex" if request.max_holders == 1 else "semaphore",
             max_holders=request.max_holders,
             ttl=int(request.ttl),
-            expires_at=_compute_expires_at(request.ttl),
-            fence_token=fence_token,
+            expires_at=expires_at_iso,
         )
 
     @app.get("/api/locks", tags=["locks"], response_model=LockListResponse)
     async def list_locks(
         limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
-        pattern: str = Query("", description="Path pattern filter (prefix match)"),
+        pattern: str = Query("*", description="Path pattern filter (glob-style)"),
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> LockListResponse:
         """List active locks for the current zone.
 
-        Returns all active locks with their holder information.
-        Use the limit parameter for pagination.
+        Uses Redis SCAN for efficient iteration (non-blocking).
+
+        Performance:
+        - Uses SCAN instead of KEYS to avoid blocking Redis
+        - Pagination via limit parameter
         """
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
-        lock_infos = await lock_manager.list_locks(zone_id=zone_id, pattern=pattern, limit=limit)
+        # Use SCAN to find locks (non-blocking)
+        redis_client = lock_manager._redis.client
+        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{zone_id}:"
+        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{zone_id}:"
 
-        locks = [_lock_info_to_response(info) for info in lock_infos]
+        locks: list[dict[str, Any]] = []
+
+        # Scan mutex locks
+        cursor = 0
+        while len(locks) < limit:
+            cursor, keys = await redis_client.scan(
+                cursor, match=f"{lock_prefix}{pattern}", count=100
+            )
+            for key in keys:
+                if len(locks) >= limit:
+                    break
+                key_str = key.decode() if isinstance(key, bytes) else key
+                path = key_str[len(lock_prefix) :]
+                lock_info = await lock_manager.get_lock_info(zone_id, path)
+                if lock_info:
+                    lock_info["mode"] = "mutex"
+                    locks.append(lock_info)
+            if cursor == 0:
+                break
+
+        # Scan semaphore locks
+        cursor = 0
+        while len(locks) < limit:
+            cursor, keys = await redis_client.scan(
+                cursor, match=f"{sem_prefix}{pattern}", count=100
+            )
+            for key in keys:
+                if len(locks) >= limit:
+                    break
+                key_str = key.decode() if isinstance(key, bytes) else key
+                path = key_str[len(sem_prefix) :]
+                # Get semaphore info
+                members = await redis_client.zrange(key, 0, -1, withscores=True)
+                if members:
+                    locks.append(
+                        {
+                            "path": path,
+                            "mode": "semaphore",
+                            "holders": len(members),
+                            "zone_id": zone_id,
+                        }
+                    )
+            if cursor == 0:
+                break
+
         return LockListResponse(locks=locks, count=len(locks))
 
     @app.get("/api/locks/{path:path}", tags=["locks"], response_model=LockStatusResponse)
@@ -3190,18 +3189,45 @@ def _register_routes(app: FastAPI) -> None:
     ) -> LockStatusResponse:
         """Get lock status for a specific path.
 
-        Returns lock information including mode, holders, and fence token.
+        Performance:
+        - Single Redis GET operation (~1ms)
+        - Pipeline fetches existence + TTL in one round-trip
         """
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
-        path = _normalize_lock_path(path)
 
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
+
+        # Check mutex lock first (most common)
         lock_info = await lock_manager.get_lock_info(zone_id, path)
         if lock_info:
+            lock_info["mode"] = "mutex"
+            return LockStatusResponse(path=path, locked=True, lock_info=lock_info)
+
+        # Check semaphore
+        sem_key = lock_manager._semaphore_key(zone_id, path)
+        members = await lock_manager._redis.client.zcard(sem_key)
+        if members > 0:
+            # Get semaphore details
+            config_key = lock_manager._semaphore_config_key(zone_id, path)
+            max_holders = await lock_manager._redis.client.get(config_key)
+            max_holders_int = (
+                int(max_holders.decode() if isinstance(max_holders, bytes) else max_holders)
+                if max_holders
+                else 0
+            )
             return LockStatusResponse(
                 path=path,
                 locked=True,
-                lock_info=_lock_info_to_response(lock_info),
+                lock_info={
+                    "mode": "semaphore",
+                    "holders": members,
+                    "max_holders": max_holders_int,
+                    "path": path,
+                    "zone_id": zone_id,
+                },
             )
 
         return LockStatusResponse(path=path, locked=False, lock_info=None)
@@ -3217,22 +3243,32 @@ def _register_routes(app: FastAPI) -> None:
 
         The lock_id must match the ID returned during acquisition.
         Use force=true for admin recovery of stuck locks (requires admin role).
+
+        Performance:
+        - Single Lua script execution (~1ms)
+        - Atomic check-then-delete
         """
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
-        path = _normalize_lock_path(path)
+
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
 
         if force:
+            # Check admin permission
             if not auth_result.get("is_admin", False):
                 raise HTTPException(
                     status_code=403, detail="Force release requires admin privileges"
                 )
+            # Force release regardless of owner
             released = await lock_manager.force_release(zone_id, path)
             if not released:
                 raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
             logger.warning(f"Lock force-released by admin: zone={zone_id}, path={path}")
             return JSONResponse(content={"released": True, "forced": True})
 
+        # Normal release with ownership check
         released = await lock_manager.release(lock_id, zone_id, path)
         if not released:
             raise HTTPException(
@@ -3252,24 +3288,37 @@ def _register_routes(app: FastAPI) -> None:
         Call this periodically (e.g., every TTL/2) to keep long-running
         operations alive. The lock must be owned by the caller (lock_id match).
 
-        Returns updated lock information including the new expiration time.
+        Performance:
+        - Single Lua script execution (~1ms)
+        - Atomic check-then-expire
         """
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
-        path = _normalize_lock_path(path)
 
-        result = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
-        if not result.success:
+        # Normalize path to ensure leading slash (URL path captures without leading /)
+        if not path.startswith("/"):
+            path = "/" + path
+
+        extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
+        if not extended:
             raise HTTPException(
                 status_code=403,
                 detail="Lock extend failed: not owned by this lock_id or already expired",
             )
 
-        # Use lock info from extend result (avoids extra roundtrip)
-        lock_info = result.lock_info
-        mode: Literal["mutex", "semaphore"] = lock_info.mode if lock_info else "mutex"
-        max_holders = lock_info.max_holders if lock_info else 1
-        fence_token = lock_info.fence_token if lock_info else 0
+        # Calculate new expiration
+        expires_at = datetime.now(UTC).timestamp() + request.ttl
+        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
+
+        # Determine mode (check mutex first)
+        lock_info = await lock_manager.get_lock_info(zone_id, path)
+        mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
+        max_holders = 1
+        if mode == "semaphore":
+            config_key = lock_manager._semaphore_config_key(zone_id, path)
+            max_raw = await lock_manager._redis.client.get(config_key)
+            if max_raw:
+                max_holders = int(max_raw.decode() if isinstance(max_raw, bytes) else max_raw)
 
         return LockResponse(
             lock_id=request.lock_id,
@@ -3277,8 +3326,7 @@ def _register_routes(app: FastAPI) -> None:
             mode=mode,
             max_holders=max_holders,
             ttl=int(request.ttl),
-            expires_at=_compute_expires_at(request.ttl),
-            fence_token=fence_token,
+            expires_at=expires_at_iso,
         )
 
     # ========================================================================

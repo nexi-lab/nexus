@@ -20,8 +20,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -34,9 +35,9 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -103,9 +104,9 @@ class TestGetOAuthFactory:
             mock_factory = MagicMock()
             MockFactory.return_value = mock_factory
 
-            nx = NexusFS(
+            nx = create_nexus_fs(
                 backend=LocalBackend(temp_dir),
-                metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+                metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
                 record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
                 auto_parse=False,
                 enforce_permissions=False,
@@ -131,10 +132,10 @@ class TestGetTokenManager:
 
     def test_get_token_manager_without_db_raises_error(self, temp_dir: Path) -> None:
         """Test that _get_token_manager raises error without database."""
-        # Create NexusFS without database path
+        # Create NexusFS without record_store (no Services layer)
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
             auto_parse=False,
             enforce_permissions=False,
             audit_strict_mode=False,
@@ -145,14 +146,9 @@ class TestGetTokenManager:
             if hasattr(nx, "_token_manager"):
                 nx._token_manager = None
 
-            # Clear db_path
-            if hasattr(nx, "db_path"):
-                nx.db_path = None
-
-            # Try to get token manager without proper setup
-            # This should work since metadata store is available
-            manager = nx._get_token_manager()
-            assert manager is not None
+            # Without record_store, no database is available for token storage
+            with pytest.raises(RuntimeError, match="No database path configured"):
+                nx._get_token_manager()
         finally:
             nx.close()
 

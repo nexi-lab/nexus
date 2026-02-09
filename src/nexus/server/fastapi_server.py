@@ -753,10 +753,10 @@ async def lifespan(_app: FastAPI) -> Any:
                     namespace_manager=namespace_manager,
                 )
 
-                # Create AsyncNexusFS
+                # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
                 _app_state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
-                    engine=engine,
+                    metadata_store=_app_state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,

@@ -30,7 +30,7 @@ from pyroaring import BitMap as RoaringBitmap
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.core.cache.dragonfly import DragonflyTigerCache
+    from nexus.cache.dragonfly import DragonflyTigerCache
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)

@@ -7,12 +7,13 @@ Tests the complete stack:
 - Memory paging via HTTP endpoints
 """
 
-import time
-import requests
-import subprocess
 import signal
-import pytest
+import subprocess
+import time
 from pathlib import Path
+
+import pytest
+import requests
 
 
 @pytest.fixture(scope="module")

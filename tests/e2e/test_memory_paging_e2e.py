@@ -149,7 +149,7 @@ class TestMemoryPagingE2E:
     def test_memory_importance_affects_eviction(self, memory):
         """Higher importance memories should stay in main context longer."""
         # Add low importance memory
-        low_id = memory.store(
+        memory.store(
             content="Low importance fact",
             memory_type="fact",
             importance=0.1,
@@ -171,7 +171,6 @@ class TestMemoryPagingE2E:
 
         # High importance memories more likely to be in main
         high_in_main = sum(1 for hid in high_ids if hid in main_ids)
-        low_in_main = 1 if low_id in main_ids else 0
 
         # Most high importance should be in main
         assert high_in_main >= 5

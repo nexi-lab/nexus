@@ -6,11 +6,11 @@ Shows how memories automatically page between:
 - Archival (long-term knowledge)
 """
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 import sys
 import tempfile
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, "src")
 
@@ -63,6 +63,7 @@ def demo_memory_paging():
 
         # Load the memory from database
         from sqlalchemy import select
+
         from nexus.storage.models import MemoryModel
 
         stmt = select(MemoryModel).where(MemoryModel.memory_id == memory_id)
@@ -79,33 +80,32 @@ def demo_memory_paging():
 
     # Show final distribution
     stats = pager.get_stats()
-    print(f"\n2. Final distribution:")
+    print("\n2. Final distribution:")
     print(f"   Main Context: {stats['main']['count']}/{stats['main']['capacity']} "
           f"({stats['main']['utilization']:.0%} full)")
     print(f"   Recall Store: {stats['recall']['count']}")
     print(f"   Archival Store: {stats['archival']['count']}")
 
     # Get recent context (what LLM would see)
-    print(f"\n3. Recent context (for LLM):")
+    print("\n3. Recent context (for LLM):")
     recent = pager.get_recent_context(limit=5)
     for i, mem in enumerate(recent):
-        content_preview = mem.content_hash[:20] if mem.content_hash else "N/A"
         print(f"   {i+1}. {mem.memory_id[:8]}... (importance: {mem.importance})")
 
     # Simulate semantic search
-    print(f"\n4. Semantic search across all tiers:")
-    print(f"   (Note: Demo uses mock embeddings, real system would use actual vectors)")
+    print("\n4. Semantic search across all tiers:")
+    print("   (Note: Demo uses mock embeddings, real system would use actual vectors)")
 
     # In real usage, you'd have actual embeddings
     # query_embedding = get_embedding("What do I know about topic 1?")
     # results = pager.search_all_tiers(query_embedding)
     # For demo, just show the API
-    print(f"   API: pager.search_all_tiers(query_embedding)")
-    print(f"   Returns: {{'main': [...], 'recall': [...], 'archival': [(mem, score), ...]}}")
+    print("   API: pager.search_all_tiers(query_embedding)")
+    print("   Returns: {'main': [...], 'recall': [...], 'archival': [(mem, score), ...]}")
 
-    print(f"\n5. Automatic archival:")
-    print(f"   Memories older than 1 hour automatically move to archival")
-    print(f"   This happens automatically in _archive_old_recall()")
+    print("\n5. Automatic archival:")
+    print("   Memories older than 1 hour automatically move to archival")
+    print("   This happens automatically in _archive_old_recall()")
 
     print("\n" + "=" * 60)
     print("Demo complete! MemGPT 3-tier paging working.")

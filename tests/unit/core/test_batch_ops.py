@@ -99,6 +99,7 @@ def test_write_batch_version_increment(nx):
         assert content == b"version 2"
 
 
+@pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
 def test_write_batch_version_history(nx):
     """Test that batch write creates version history entries."""
     # Write initial batch

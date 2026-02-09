@@ -7,7 +7,6 @@ Compares performance:
 Goal: Permission enforcement should add <10ms overhead per operation.
 """
 
-import os
 import statistics
 import time
 from pathlib import Path
@@ -15,44 +14,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.async_permissions import AsyncPermissionEnforcer
 from nexus.core.permissions import OperationContext
-
-# Test database URL
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://scorpio:scorpio@localhost:5432/scorpio",
-)
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
-@pytest_asyncio.fixture
-async def engine():
-    """Create async engine."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-
-    from sqlalchemy import text
-
-    from nexus.storage.models import DirectoryEntryModel, FilePathModel, VersionHistoryModel
-
-    async with engine.begin() as conn:
-        for table in [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]:
-            await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
-        try:
-            await conn.execute(
-                text("TRUNCATE file_paths, directory_entries, version_history CASCADE")
-            )
-        except Exception:
-            pass
-
-    yield engine
-    await engine.dispose()
+@pytest.fixture
+def metadata_store(tmp_path):
+    """Create a local RaftMetadataStore for benchmarks."""
+    store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    yield store
+    store.close()
 
 
 @pytest_asyncio.fixture
@@ -65,11 +39,11 @@ async def mock_rebac_manager():
 
 
 @pytest.mark.asyncio
-async def test_write_performance_without_permissions(tmp_path: Path, engine: AsyncEngine):
+async def test_write_performance_without_permissions(tmp_path: Path, metadata_store):
     """Benchmark write operations WITHOUT permission enforcement."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=False,
     )
     await fs.initialize()
@@ -103,7 +77,7 @@ async def test_write_performance_without_permissions(tmp_path: Path, engine: Asy
 @pytest.mark.asyncio
 async def test_write_performance_with_permissions(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store,
     mock_rebac_manager: AsyncMock,
 ):
     """Benchmark write operations WITH permission enforcement."""
@@ -111,7 +85,7 @@ async def test_write_performance_with_permissions(
 
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=True,
         permission_enforcer=enforcer,
     )
@@ -145,11 +119,11 @@ async def test_write_performance_with_permissions(
 
 
 @pytest.mark.asyncio
-async def test_read_performance_without_permissions(tmp_path: Path, engine: AsyncEngine):
+async def test_read_performance_without_permissions(tmp_path: Path, metadata_store):
     """Benchmark read operations WITHOUT permission enforcement."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=False,
     )
     await fs.initialize()
@@ -186,7 +160,7 @@ async def test_read_performance_without_permissions(tmp_path: Path, engine: Asyn
 @pytest.mark.asyncio
 async def test_read_performance_with_permissions(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store,
     mock_rebac_manager: AsyncMock,
 ):
     """Benchmark read operations WITH permission enforcement."""
@@ -194,7 +168,7 @@ async def test_read_performance_with_permissions(
 
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=True,
         permission_enforcer=enforcer,
     )
@@ -234,7 +208,7 @@ async def test_read_performance_with_permissions(
 @pytest.mark.asyncio
 async def test_permission_overhead_acceptable(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store,
     mock_rebac_manager: AsyncMock,
 ):
     """
@@ -248,7 +222,7 @@ async def test_permission_overhead_acceptable(
     # --- Without permissions ---
     fs_no_perm = AsyncNexusFS(
         backend_root=tmp_path / "backend_no_perm",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=False,
     )
     await fs_no_perm.initialize()
@@ -272,7 +246,7 @@ async def test_permission_overhead_acceptable(
     enforcer = AsyncPermissionEnforcer(rebac_manager=mock_rebac_manager)
     fs_with_perm = AsyncNexusFS(
         backend_root=tmp_path / "backend_with_perm",
-        engine=engine,
+        metadata_store=metadata_store,
         enforce_permissions=True,
         permission_enforcer=enforcer,
     )

@@ -28,7 +28,12 @@ COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
 # Canonical names exported by each generated module.
 # The SSOT audit checks all downstream imports match these.
 GENERATED_NAMES: dict[str, set[str]] = {
-    "_metadata_generated": {"FileMetadata", "PaginatedResult", "FileMetadataProtocol"},
+    "_metadata_generated": {
+        "FileMetadata",
+        "PaginatedResult",
+        "FileMetadataProtocol",
+        "AsyncFileMetadataWrapper",
+    },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
 }
 
@@ -195,10 +200,12 @@ Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
   - FileMetadataProtocol: Abstract base class for metadata storage backends
+  - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
 """
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -386,6 +393,106 @@ class FileMetadataProtocol(ABC):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         pass
+'''
+
+
+def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
+    """Extract method signatures from the generated FileMetadataProtocol text.
+
+    Returns list of (method_name, params_after_self, return_type).
+    This derives async wrapper signatures from the protocol — true SSOT.
+    """
+    # Isolate the FileMetadataProtocol class body
+    proto_match = re.search(r"class FileMetadataProtocol.*?(?=\nclass |\Z)", source, re.DOTALL)
+    if not proto_match:
+        return []
+
+    proto_text = proto_match.group()
+    methods: list[tuple[str, str, str]] = []
+
+    # Match method defs (handles multi-line signatures via DOTALL)
+    for m in re.finditer(
+        r"def\s+(\w+)\s*\((.*?)\)\s*->\s*([\w\[\], |\"]+)\s*:",
+        proto_text,
+        re.DOTALL,
+    ):
+        name = m.group(1)
+        full_params = m.group(2)
+        return_type = m.group(3).strip()
+
+        # Normalize whitespace and strip 'self'
+        params = re.sub(r"\s+", " ", full_params).strip()
+        params = re.sub(r"^self\s*,?\s*", "", params).strip()
+        # Remove inline noqa comments (match only the code, not trailing params)
+        params = re.sub(r"\s*#\s*noqa:\s*[\w,]+", "", params).strip()
+        # Clean trailing comma
+        params = params.rstrip(", ")
+
+        methods.append((name, params, return_type))
+
+    return methods
+
+
+def _params_to_call_args(params: str) -> str:
+    """Extract argument names from a parameter string for a function call.
+
+    Example: ``"prefix: str = '', recursive: bool = True, **kwargs: Any"``
+    → ``"prefix, recursive, **kwargs"``
+    """
+    if not params:
+        return ""
+    args: list[str] = []
+    for param in params.split(","):
+        param = param.strip()
+        if not param:
+            continue
+        # Name is everything before ':' or '='
+        name = param.split(":")[0].split("=")[0].strip()
+        args.append(name)
+    return ", ".join(args)
+
+
+def generate_async_wrapper(metadata_source: str) -> str:
+    """Generate AsyncFileMetadataWrapper by parsing FileMetadataProtocol.
+
+    Derives method signatures from the protocol text so that adding
+    a method to the protocol automatically produces its async counterpart.
+    """
+    methods = _extract_protocol_methods(metadata_source)
+    if not methods:
+        return ""
+
+    lines: list[str] = []
+    for name, params, return_type in methods:
+        async_name = f"a{name}"
+        call_args = _params_to_call_args(params)
+
+        sig_params = f", {params}" if params else ""
+        call_str = f", {call_args}" if call_args else ""
+
+        lines.append(
+            f"    async def {async_name}(self{sig_params}) -> {return_type}:\n"
+            f"        return await asyncio.to_thread(self._store.{name}{call_str})"
+        )
+
+    methods_block = "\n\n".join(lines)
+
+    return f'''
+
+class AsyncFileMetadataWrapper:
+    """Async wrapper around any FileMetadataProtocol implementation.
+
+    Generated from: scripts/gen_metadata.py
+    Derived from: FileMetadataProtocol method signatures (SSOT).
+
+    Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
+    Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
+    """
+
+    def __init__(self, store: FileMetadataProtocol) -> None:
+        self._store = store
+
+{methods_block}
 '''
 
 
@@ -702,6 +809,14 @@ def main() -> None:
 
     # 2. Generate Python dataclass (FileMetadata + FileMetadataProtocol ABC)
     metadata_content = generate_metadata_py(fields)
+
+    # 2b. Derive AsyncFileMetadataWrapper from FileMetadataProtocol (SSOT)
+    async_wrapper = generate_async_wrapper(metadata_content)
+    if async_wrapper:
+        metadata_content += async_wrapper
+        methods = _extract_protocol_methods(metadata_content)
+        print(f"  AsyncFileMetadataWrapper: {len(methods)} methods derived from protocol")
+
     METADATA_OUT.write_text(metadata_content, encoding="utf-8")
     print(f"Generated: {METADATA_OUT}")
 

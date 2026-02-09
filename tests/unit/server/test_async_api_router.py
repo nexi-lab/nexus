@@ -11,51 +11,31 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Import will fail until we implement the router
 from nexus.server.api.v2.routers.async_files import create_async_files_router
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===
 
 
-@pytest_asyncio.fixture
-async def engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create async engine using SQLite in-memory for isolated tests."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-    )
-
-    # Create tables from models (fresh schema)
-    from nexus.storage.models import (
-        DirectoryEntryModel,
-        FilePathModel,
-        VersionHistoryModel,
-    )
-
-    async with engine.begin() as conn:
-        tables = [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]
-        for table in tables:
-            await conn.run_sync(lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True))
-
-    yield engine
-    await engine.dispose()
+@pytest.fixture
+def metadata_store(tmp_path: Path) -> RaftMetadataStore:
+    """Create a local RaftMetadataStore for isolated tests."""
+    store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    yield store
+    store.close()
 
 
 @pytest_asyncio.fixture
-async def app(tmp_path: Path, engine: AsyncEngine) -> AsyncGenerator[FastAPI, None]:
+async def app(tmp_path: Path, metadata_store: RaftMetadataStore) -> AsyncGenerator[FastAPI, None]:
     """Create FastAPI app with async files router."""
     from nexus.core.async_nexus_fs import AsyncNexusFS
 
     # Create AsyncNexusFS
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
     )
     await async_fs.initialize()

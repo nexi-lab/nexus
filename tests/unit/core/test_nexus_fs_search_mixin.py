@@ -355,7 +355,6 @@ class TestGrepPerformance:
         assert len(results) == 1
         assert results[0]["line"] == 501  # 1-indexed
 
-    @pytest.mark.xfail(reason="RaftMetadataStore lacks batch_get method (Task #45)")
     def test_grep_many_files(self, nx: NexusFS) -> None:
         """Test grep across many files."""
         for i in range(50):

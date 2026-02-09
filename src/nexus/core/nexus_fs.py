@@ -61,7 +61,6 @@ from nexus.services.mount_service import MountService
 from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
-from nexus.services.version_service import VersionService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -151,6 +150,12 @@ class NexusFS(  # type: ignore[misc]
         workspace_registry: WorkspaceRegistry | None = None,
         mount_manager: MountManager | None = None,
         workspace_manager: WorkspaceManager | None = None,
+        # Task #45: Optional RecordStore write-through observer (duck-typed).
+        # Created by factory.py (RecordStoreSyncer), injected here.
+        # Kernel calls on_write()/on_delete() — never imports the concrete class.
+        write_observer: Any | None = None,
+        # Task #45: VersionService (created by factory, not kernel)
+        version_service: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -353,6 +358,7 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_registry = workspace_registry
         self.mount_manager = mount_manager
         self._workspace_manager = workspace_manager
+        self._write_observer = write_observer  # Task #45: RecordStore sync
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -539,14 +545,10 @@ class NexusFS(  # type: ignore[misc]
         # Phase 2: Service Composition - Extract from mixins into services
         # These services are independent, testable, and follow single-responsibility principle
         # All services use async-first architecture with asyncio.to_thread() for blocking operations
+        # TODO(Task #40-44): Move remaining service creation to factory.py
 
-        # VersionService: File versioning operations (4 methods)
-        self.version_service = VersionService(
-            metadata_store=self.metadata,
-            cas_store=self.backend,  # For CAS operations
-            router=self.router,
-            enforce_permissions=self._enforce_permissions,
-        )
+        # VersionService: injected by factory (Task #45)
+        self.version_service = version_service
 
         # ReBACService: Permission and access control operations (12 core + 15 advanced methods)
         self.rebac_service = ReBACService(

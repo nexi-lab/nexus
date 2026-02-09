@@ -5,85 +5,40 @@ Follows TDD approach: write failing tests first, then implement.
 """
 
 import asyncio
-import os
-import socket
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.exceptions import ConflictError, NexusFileNotFoundError
-from nexus.storage.models import (
-    DirectoryEntryModel,
-    FilePathModel,
-    VersionHistoryModel,
-)
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-# PostgreSQL test database URL
-TEST_DATABASE_URL = os.getenv(
-    "TEST_DATABASE_URL",
-    "postgresql+asyncpg://scorpio:scorpio@localhost:5432/scorpio",
-)
-
-
-def _pg_available() -> bool:
-    """Check if PostgreSQL is reachable at localhost:5432."""
-    try:
-        with socket.create_connection(("localhost", 5432), timeout=1):
-            return True
-    except OSError:
-        return False
-
-
-PG_AVAILABLE = _pg_available()
-
-# Run these PostgreSQL tests in the same xdist worker to avoid connection conflicts
-# Skip all tests if PostgreSQL is not available (e.g., in CI)
 pytestmark = [
     pytest.mark.xdist_group("async_nexus_fs"),
-    pytest.mark.skipif(not PG_AVAILABLE, reason="PostgreSQL not available at localhost:5432"),
 ]
 
 
 # === Fixtures ===
 
 
-@pytest_asyncio.fixture
-async def engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create async engine for PostgreSQL."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-
-    async with engine.begin() as conn:
-        # Drop and recreate tables for clean state with current schema
-        for table in reversed(
-            [
-                FilePathModel.__table__,
-                DirectoryEntryModel.__table__,
-                VersionHistoryModel.__table__,
-            ]
-        ):
-            await conn.run_sync(lambda sync_conn, t=table: t.drop(sync_conn, checkfirst=True))
-
-        for table in [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]:
-            await conn.run_sync(lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True))
-
-    yield engine
-    await engine.dispose()
+@pytest.fixture
+def metadata_store(tmp_path: Path) -> RaftMetadataStore:
+    """Create a local RaftMetadataStore backed by sled."""
+    store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    yield store
+    store.close()
 
 
 @pytest_asyncio.fixture
-async def async_fs(tmp_path: Path, engine: AsyncEngine) -> AsyncGenerator[AsyncNexusFS, None]:
+async def async_fs(
+    tmp_path: Path, metadata_store: RaftMetadataStore
+) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance for testing."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
     )
     await fs.initialize()
@@ -95,11 +50,11 @@ async def async_fs(tmp_path: Path, engine: AsyncEngine) -> AsyncGenerator[AsyncN
 
 
 @pytest.mark.asyncio
-async def test_initialization(tmp_path: Path, engine: AsyncEngine) -> None:
+async def test_initialization(tmp_path: Path, metadata_store: RaftMetadataStore) -> None:
     """Test AsyncNexusFS initialization."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
     )
     await fs.initialize()

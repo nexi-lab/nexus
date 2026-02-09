@@ -155,7 +155,6 @@ class TestSemanticSearch:
         # Should have created at least one chunk
         assert num_chunks > 0
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     async def test_index_document_without_embeddings(self, nx, engine):
         """Test indexing without embedding provider (keyword-only)."""
         nx.write("/workspace/test.txt", b"This is a test document.")

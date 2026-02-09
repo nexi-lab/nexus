@@ -155,17 +155,13 @@ class TestTasksGet:
         task_id = create_resp.json()["result"]["id"]
 
         # Get
-        get_body = _make_rpc(
-            "a2a.tasks.get", {"taskId": task_id}, request_id="g1"
-        )
+        get_body = _make_rpc("a2a.tasks.get", {"taskId": task_id}, request_id="g1")
         get_resp = client.post("/a2a", json=get_body)
         data = get_resp.json()
         assert data["result"]["id"] == task_id
 
     def test_get_nonexistent_task(self, client: TestClient) -> None:
-        body = _make_rpc(
-            "a2a.tasks.get", {"taskId": "nonexistent"}, request_id="g2"
-        )
+        body = _make_rpc("a2a.tasks.get", {"taskId": "nonexistent"}, request_id="g2")
         resp = client.post("/a2a", json=body)
         data = resp.json()
         assert "error" in data
@@ -193,17 +189,13 @@ class TestTasksCancel:
         task_id = create_resp.json()["result"]["id"]
 
         # Cancel
-        cancel_body = _make_rpc(
-            "a2a.tasks.cancel", {"taskId": task_id}, request_id="cancel-1"
-        )
+        cancel_body = _make_rpc("a2a.tasks.cancel", {"taskId": task_id}, request_id="cancel-1")
         cancel_resp = client.post("/a2a", json=cancel_body)
         data = cancel_resp.json()
         assert data["result"]["status"]["state"] == "canceled"
 
     def test_cancel_nonexistent(self, client: TestClient) -> None:
-        body = _make_rpc(
-            "a2a.tasks.cancel", {"taskId": "nope"}, request_id="cancel-2"
-        )
+        body = _make_rpc("a2a.tasks.cancel", {"taskId": "nope"}, request_id="cancel-2")
         resp = client.post("/a2a", json=body)
         data = resp.json()
         assert data["error"]["code"] == -32001

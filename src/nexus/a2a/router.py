@@ -351,13 +351,9 @@ async def _handle_streaming(
     """Handle streaming methods — returns an SSE StreamingResponse."""
 
     if method == "a2a.tasks.sendStreamingMessage":
-        return await _handle_send_streaming(
-            params, request_id, zone_id, agent_id, task_manager
-        )
+        return await _handle_send_streaming(params, request_id, zone_id, agent_id, task_manager)
     elif method == "a2a.tasks.subscribeToTask":
-        return await _handle_subscribe(
-            params, request_id, zone_id, task_manager
-        )
+        return await _handle_subscribe(params, request_id, zone_id, task_manager)
     else:
         # Should not reach here
         error = A2AErrorData(code=-32601, message="Method not found")
@@ -404,9 +400,7 @@ async def _handle_send_streaming(
                     break
 
                 try:
-                    event = await asyncio.wait_for(
-                        queue.get(), timeout=SSE_KEEPALIVE_INTERVAL
-                    )
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
                 except TimeoutError:
                     # Send keepalive comment
                     yield ": keepalive\n\n"
@@ -477,9 +471,7 @@ async def _handle_subscribe(
                     break
 
                 try:
-                    event = await asyncio.wait_for(
-                        queue.get(), timeout=SSE_KEEPALIVE_INTERVAL
-                    )
+                    event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
                 except TimeoutError:
                     yield ": keepalive\n\n"
                     continue

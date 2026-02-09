@@ -58,17 +58,13 @@ class TestCreateTask:
         assert task.status.state == TaskState.SUBMITTED
 
     @pytest.mark.asyncio
-    async def test_assigns_unique_id(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_assigns_unique_id(self, manager: TaskManager, user_message: Message) -> None:
         t1 = await manager.create_task(user_message)
         t2 = await manager.create_task(user_message)
         assert t1.id != t2.id
 
     @pytest.mark.asyncio
-    async def test_assigns_context_id(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_assigns_context_id(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message, context_id="ctx-1")
         assert task.contextId == "ctx-1"
 
@@ -88,25 +84,19 @@ class TestCreateTask:
         assert task.history[0].role == "user"
 
     @pytest.mark.asyncio
-    async def test_stores_metadata(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_stores_metadata(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message, metadata={"key": "val"})
         assert task.metadata == {"key": "val"}
 
     @pytest.mark.asyncio
-    async def test_respects_zone_id(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_respects_zone_id(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message, zone_id="zone-a")
         # Can retrieve with matching zone
         retrieved = await manager.get_task(task.id, zone_id="zone-a")
         assert retrieved.id == task.id
 
     @pytest.mark.asyncio
-    async def test_zone_isolation(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_zone_isolation(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message, zone_id="zone-a")
         # Cannot retrieve with wrong zone
         with pytest.raises(TaskNotFoundError):
@@ -120,9 +110,7 @@ class TestCreateTask:
 
 class TestGetTask:
     @pytest.mark.asyncio
-    async def test_get_existing_task(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_get_existing_task(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message)
         retrieved = await manager.get_task(task.id)
         assert retrieved.id == task.id
@@ -140,9 +128,7 @@ class TestGetTask:
         task = await manager.create_task(user_message)
         # Add more messages via state transitions
         msg2 = Message(role="agent", parts=[TextPart(text="working")])
-        await manager.update_task_state(
-            task.id, TaskState.WORKING, message=msg2
-        )
+        await manager.update_task_state(task.id, TaskState.WORKING, message=msg2)
 
         # Full history
         full = await manager.get_task(task.id, history_length=None)
@@ -153,9 +139,7 @@ class TestGetTask:
         assert len(truncated.history) == 1
 
     @pytest.mark.asyncio
-    async def test_history_length_zero(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_history_length_zero(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message)
         result = await manager.get_task(task.id, history_length=0)
         assert result.history == []
@@ -173,27 +157,21 @@ class TestListTasks:
         assert tasks == []
 
     @pytest.mark.asyncio
-    async def test_list_returns_tasks(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_list_returns_tasks(self, manager: TaskManager, user_message: Message) -> None:
         await manager.create_task(user_message)
         await manager.create_task(user_message)
         tasks = await manager.list_tasks()
         assert len(tasks) == 2
 
     @pytest.mark.asyncio
-    async def test_list_filters_by_zone(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_list_filters_by_zone(self, manager: TaskManager, user_message: Message) -> None:
         await manager.create_task(user_message, zone_id="zone-a")
         await manager.create_task(user_message, zone_id="zone-b")
         tasks_a = await manager.list_tasks(zone_id="zone-a")
         assert len(tasks_a) == 1
 
     @pytest.mark.asyncio
-    async def test_list_filters_by_state(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_list_filters_by_state(self, manager: TaskManager, user_message: Message) -> None:
         t1 = await manager.create_task(user_message)
         await manager.create_task(user_message)
         await manager.update_task_state(t1.id, TaskState.WORKING)
@@ -203,9 +181,7 @@ class TestListTasks:
         assert working[0].id == t1.id
 
     @pytest.mark.asyncio
-    async def test_list_pagination(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_list_pagination(self, manager: TaskManager, user_message: Message) -> None:
         for _ in range(5):
             await manager.create_task(user_message)
         page1 = await manager.list_tasks(limit=2, offset=0)
@@ -222,17 +198,13 @@ class TestListTasks:
 
 class TestCancelTask:
     @pytest.mark.asyncio
-    async def test_cancel_submitted_task(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_cancel_submitted_task(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message)
         canceled = await manager.cancel_task(task.id)
         assert canceled.status.state == TaskState.CANCELED
 
     @pytest.mark.asyncio
-    async def test_cancel_working_task(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_cancel_working_task(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message)
         await manager.update_task_state(task.id, TaskState.WORKING)
         canceled = await manager.cancel_task(task.id)
@@ -295,9 +267,7 @@ class TestStateTransitionMatrix:
                 await manager.update_task_state(task.id, to_state)
 
     @staticmethod
-    async def _navigate_to_state(
-        manager: TaskManager, task_id: str, target: TaskState
-    ) -> object:
+    async def _navigate_to_state(manager: TaskManager, task_id: str, target: TaskState) -> object:
         """Navigate a task from SUBMITTED to the target state.
 
         Uses the shortest valid path.
@@ -326,13 +296,9 @@ class TestStateTransitionMatrix:
 
 class TestAddArtifact:
     @pytest.mark.asyncio
-    async def test_add_artifact(
-        self, manager: TaskManager, user_message: Message
-    ) -> None:
+    async def test_add_artifact(self, manager: TaskManager, user_message: Message) -> None:
         task = await manager.create_task(user_message)
-        artifact = Artifact(
-            artifactId="a1", parts=[TextPart(text="result")]
-        )
+        artifact = Artifact(artifactId="a1", parts=[TextPart(text="result")])
         updated = await manager.add_artifact(task.id, artifact)
         assert len(updated.artifacts) == 1
         assert updated.artifacts[0].artifactId == "a1"
@@ -349,9 +315,7 @@ class TestAddArtifact:
         assert len(updated.artifacts) == 2
 
     @pytest.mark.asyncio
-    async def test_add_artifact_nonexistent_task(
-        self, manager: TaskManager
-    ) -> None:
+    async def test_add_artifact_nonexistent_task(self, manager: TaskManager) -> None:
         artifact = Artifact(artifactId="a1", parts=[TextPart(text="r")])
         with pytest.raises(TaskNotFoundError):
             await manager.add_artifact("nonexistent", artifact)
@@ -444,9 +408,7 @@ class TestEdgeCases:
     ) -> None:
         task = await manager.create_task(user_message)
         msg = Message(role="agent", parts=[TextPart(text="working")])
-        updated = await manager.update_task_state(
-            task.id, TaskState.WORKING, message=msg
-        )
+        updated = await manager.update_task_state(task.id, TaskState.WORKING, message=msg)
         assert len(updated.history) == 2
         assert updated.history[-1].role == "agent"
 
@@ -460,19 +422,13 @@ class TestEdgeCases:
         await manager.update_task_state(task.id, TaskState.WORKING)
 
         input_msg = Message(role="agent", parts=[TextPart(text="Need more info")])
-        await manager.update_task_state(
-            task.id, TaskState.INPUT_REQUIRED, message=input_msg
-        )
+        await manager.update_task_state(task.id, TaskState.INPUT_REQUIRED, message=input_msg)
 
         user_reply = Message(role="user", parts=[TextPart(text="Here it is")])
-        await manager.update_task_state(
-            task.id, TaskState.WORKING, message=user_reply
-        )
+        await manager.update_task_state(task.id, TaskState.WORKING, message=user_reply)
 
         final_msg = Message(role="agent", parts=[TextPart(text="Done")])
-        result = await manager.update_task_state(
-            task.id, TaskState.COMPLETED, message=final_msg
-        )
+        result = await manager.update_task_state(task.id, TaskState.COMPLETED, message=final_msg)
 
         assert result.status.state == TaskState.COMPLETED
         # original (1) + input_required (1) + working (1) + completed (1) = 4

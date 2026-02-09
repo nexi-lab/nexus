@@ -26,9 +26,7 @@ class A2ATaskModel(Base):
     __tablename__ = "a2a_tasks"
 
     # Primary key
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=_generate_task_id
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_generate_task_id)
 
     # Context for multi-turn conversations
     context_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

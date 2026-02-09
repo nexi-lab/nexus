@@ -103,9 +103,7 @@ class TaskManager:
             if history_length == 0:
                 task = task.model_copy(update={"history": []})
             else:
-                task = task.model_copy(
-                    update={"history": task.history[-history_length:]}
-                )
+                task = task.model_copy(update={"history": task.history[-history_length:]})
         return task
 
     async def list_tasks(
@@ -164,9 +162,7 @@ class TaskManager:
                 }
             )
 
-        return await self.update_task_state(
-            task_id, TaskState.CANCELED, zone_id=zone_id
-        )
+        return await self.update_task_state(task_id, TaskState.CANCELED, zone_id=zone_id)
 
     async def update_task_state(
         self,
@@ -204,9 +200,7 @@ class TaskManager:
         task = task.model_copy(update={"status": new_status})
 
         if message is not None:
-            task = task.model_copy(
-                update={"history": [*task.history, message]}
-            )
+            task = task.model_copy(update={"history": [*task.history, message]})
 
         await self._update_task_in_store(task, zone_id=zone_id)
 
@@ -263,9 +257,7 @@ class TaskManager:
         self._active_streams.setdefault(task_id, []).append(queue)
         return queue
 
-    def unregister_stream(
-        self, task_id: str, queue: asyncio.Queue[dict[str, Any] | None]
-    ) -> None:
+    def unregister_stream(self, task_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
         """Remove an SSE stream registration."""
         streams = self._active_streams.get(task_id)
         if streams is not None:
@@ -308,9 +300,7 @@ class TaskManager:
             "created_at": datetime.now(UTC).isoformat(),
         }
 
-    async def _load_task(
-        self, task_id: str, *, zone_id: str
-    ) -> Task | None:
+    async def _load_task(self, task_id: str, *, zone_id: str) -> Task | None:
         """Load a task from the store with zone isolation."""
         if self._session_factory is not None:
             return await self._load_task_db(task_id, zone_id=zone_id)
@@ -320,9 +310,7 @@ class TaskManager:
             return None
         return self._record_to_task(record)
 
-    async def _update_task_in_store(
-        self, task: Task, *, zone_id: str
-    ) -> None:
+    async def _update_task_in_store(self, task: Task, *, zone_id: str) -> None:
         """Update an existing task in the store."""
         if self._session_factory is not None:
             await self._update_task_db(task, zone_id=zone_id)
@@ -356,12 +344,8 @@ class TaskManager:
             zone_id=zone_id,
             agent_id=agent_id,
             state=task.status.state.value,
-            messages_json=json.dumps(
-                [m.model_dump(mode="json") for m in task.history]
-            ),
-            artifacts_json=json.dumps(
-                [a.model_dump(mode="json") for a in task.artifacts]
-            ),
+            messages_json=json.dumps([m.model_dump(mode="json") for m in task.history]),
+            artifacts_json=json.dumps([a.model_dump(mode="json") for a in task.artifacts]),
             metadata_json=json.dumps(task.metadata) if task.metadata else None,
         )
 
@@ -375,9 +359,7 @@ class TaskManager:
         finally:
             session.close()
 
-    async def _load_task_db(
-        self, task_id: str, *, zone_id: str
-    ) -> Task | None:
+    async def _load_task_db(self, task_id: str, *, zone_id: str) -> Task | None:
         from nexus.a2a.db import A2ATaskModel
 
         session = self._session_factory()
@@ -389,9 +371,7 @@ class TaskManager:
         finally:
             session.close()
 
-    async def _update_task_db(
-        self, task: Task, *, zone_id: str
-    ) -> None:
+    async def _update_task_db(self, task: Task, *, zone_id: str) -> None:
         from nexus.a2a.db import A2ATaskModel
 
         session = self._session_factory()
@@ -400,12 +380,8 @@ class TaskManager:
             if row is None or row.zone_id != zone_id:
                 raise TaskNotFoundError(data={"taskId": task.id})
             row.state = task.status.state.value
-            row.messages_json = json.dumps(
-                [m.model_dump(mode="json") for m in task.history]
-            )
-            row.artifacts_json = json.dumps(
-                [a.model_dump(mode="json") for a in task.artifacts]
-            )
+            row.messages_json = json.dumps([m.model_dump(mode="json") for m in task.history])
+            row.artifacts_json = json.dumps([a.model_dump(mode="json") for a in task.artifacts])
             row.metadata_json = json.dumps(task.metadata) if task.metadata else None
             session.commit()
         except Exception:

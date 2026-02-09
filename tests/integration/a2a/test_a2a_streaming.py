@@ -69,9 +69,7 @@ def _parse_sse_events(content: str) -> list[dict[str, Any]]:
     return events
 
 
-async def _close_streams_after(
-    task_manager: TaskManager, delay: float = 0.05
-) -> None:
+async def _close_streams_after(task_manager: TaskManager, delay: float = 0.05) -> None:
     """Push sentinel to all active SSE queues after a short delay.
 
     This allows the SSE generator to yield its first event(s) before
@@ -102,9 +100,7 @@ def _streaming_message_body() -> dict[str, Any]:
 
 class TestSendStreamingMessage:
     @pytest.mark.asyncio
-    async def test_returns_sse_content_type(
-        self, app: FastAPI, task_manager: TaskManager
-    ) -> None:
+    async def test_returns_sse_content_type(self, app: FastAPI, task_manager: TaskManager) -> None:
         body = _streaming_message_body()
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -117,9 +113,7 @@ class TestSendStreamingMessage:
             assert "text/event-stream" in content_type
 
     @pytest.mark.asyncio
-    async def test_first_event_is_task(
-        self, app: FastAPI, task_manager: TaskManager
-    ) -> None:
+    async def test_first_event_is_task(self, app: FastAPI, task_manager: TaskManager) -> None:
         body = _streaming_message_body()
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -133,9 +127,7 @@ class TestSendStreamingMessage:
             assert "id" in events[0]["task"]
 
     @pytest.mark.asyncio
-    async def test_task_has_submitted_state(
-        self, app: FastAPI, task_manager: TaskManager
-    ) -> None:
+    async def test_task_has_submitted_state(self, app: FastAPI, task_manager: TaskManager) -> None:
         body = _streaming_message_body()
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -147,9 +139,7 @@ class TestSendStreamingMessage:
             assert events[0]["task"]["status"]["state"] == "submitted"
 
     @pytest.mark.asyncio
-    async def test_sse_headers(
-        self, app: FastAPI, task_manager: TaskManager
-    ) -> None:
+    async def test_sse_headers(self, app: FastAPI, task_manager: TaskManager) -> None:
         body = _streaming_message_body()
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -202,9 +192,7 @@ class TestSubscribeToTask:
             assert events[0]["task"]["id"] == task_id
 
     @pytest.mark.asyncio
-    async def test_subscribe_nonexistent_task_returns_error(
-        self, app: FastAPI
-    ) -> None:
+    async def test_subscribe_nonexistent_task_returns_error(self, app: FastAPI) -> None:
         """Subscribing to a nonexistent task should return a JSON-RPC error."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -226,9 +214,7 @@ class TestSubscribeToTask:
 
 class TestSSEFormat:
     @pytest.mark.asyncio
-    async def test_event_data_prefix(
-        self, app: FastAPI, task_manager: TaskManager
-    ) -> None:
+    async def test_event_data_prefix(self, app: FastAPI, task_manager: TaskManager) -> None:
         """Each SSE event line must start with 'data: '."""
         body = _streaming_message_body()
         transport = httpx.ASGITransport(app=app)

@@ -34,4 +34,4 @@ def create_a2a_router(
     """
     from nexus.a2a.router import build_router
 
-    return build_router(nexus_fs=nexus_fs, config=config, base_url=base_url)
+    return build_router(_nexus_fs=nexus_fs, config=config, base_url=base_url)

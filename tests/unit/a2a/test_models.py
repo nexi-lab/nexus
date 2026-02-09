@@ -133,7 +133,9 @@ class TestTextPart:
 
 class TestFilePart:
     def test_with_url(self) -> None:
-        part = FilePart(file=FileContent(url="https://example.com/f.pdf", mimeType="application/pdf"))
+        part = FilePart(
+            file=FileContent(url="https://example.com/f.pdf", mimeType="application/pdf")
+        )
         assert part.type == "file"
         assert part.file.url == "https://example.com/f.pdf"
 
@@ -370,9 +372,7 @@ class TestAgentCard:
         assert "documentationUrl" not in d
 
     def test_default_modes(self) -> None:
-        card = AgentCard(
-            name="T", description="T", url="http://x/a2a", version="1"
-        )
+        card = AgentCard(name="T", description="T", url="http://x/a2a", version="1")
         assert "text/plain" in card.defaultInputModes
         assert "text/plain" in card.defaultOutputModes
 
@@ -433,9 +433,7 @@ class TestA2AResponse:
         assert resp.result is None
 
     def test_error_with_data(self) -> None:
-        err = A2AErrorData(
-            code=-32001, message="Task not found", data={"taskId": "t1"}
-        )
+        err = A2AErrorData(code=-32001, message="Task not found", data={"taskId": "t1"})
         resp = A2AResponse.from_error("req-1", err)
         assert resp.error.data == {"taskId": "t1"}
 
@@ -447,9 +445,7 @@ class TestA2AResponse:
 
 class TestSendParams:
     def test_basic(self) -> None:
-        params = SendParams(
-            message=Message(role="user", parts=[TextPart(text="hello")])
-        )
+        params = SendParams(message=Message(role="user", parts=[TextPart(text="hello")]))
         assert params.message.role == "user"
         assert params.configuration is None
 

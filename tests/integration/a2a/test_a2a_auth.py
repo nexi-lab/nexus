@@ -34,9 +34,7 @@ def app_with_auth() -> FastAPI:
 
     # Store original values
     original_api_key = getattr(fastapi_server._app_state, "api_key", None)
-    original_auth_provider = getattr(
-        fastapi_server._app_state, "auth_provider", None
-    )
+    original_auth_provider = getattr(fastapi_server._app_state, "auth_provider", None)
 
     # Set mock auth provider to enable auth enforcement
     mock_auth_provider = AsyncMock()
@@ -60,9 +58,7 @@ def app_no_auth() -> FastAPI:
     from nexus.server import fastapi_server
 
     original_api_key = getattr(fastapi_server._app_state, "api_key", None)
-    original_auth_provider = getattr(
-        fastapi_server._app_state, "auth_provider", None
-    )
+    original_auth_provider = getattr(fastapi_server._app_state, "auth_provider", None)
 
     fastapi_server._app_state.api_key = None
     fastapi_server._app_state.auth_provider = None
@@ -120,9 +116,7 @@ class TestAuthEnforcement:
         assert "Authorization header" in data["message"]
         assert response.headers.get("WWW-Authenticate") == 'Bearer realm="A2A"'
 
-    def test_a2a_works_without_auth_in_open_mode(
-        self, app_no_auth: FastAPI
-    ) -> None:
+    def test_a2a_works_without_auth_in_open_mode(self, app_no_auth: FastAPI) -> None:
         """POST /a2a works without auth when server has no auth configured."""
         client = TestClient(app_no_auth)
 
@@ -148,9 +142,7 @@ class TestAuthEnforcement:
         assert "result" in data
         assert data["result"]["id"]  # Task was created
 
-    def test_streaming_requires_auth_when_enabled(
-        self, app_with_auth: FastAPI
-    ) -> None:
+    def test_streaming_requires_auth_when_enabled(self, app_with_auth: FastAPI) -> None:
         """Streaming methods require auth when server has auth enabled."""
         client = TestClient(app_with_auth)
 

@@ -39,9 +39,7 @@ TERMINAL_STATES: frozenset[TaskState] = frozenset(
 
 #: Valid state transitions as (from_state -> set of to_states).
 VALID_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
-    TaskState.SUBMITTED: frozenset(
-        {TaskState.WORKING, TaskState.CANCELED, TaskState.REJECTED}
-    ),
+    TaskState.SUBMITTED: frozenset({TaskState.WORKING, TaskState.CANCELED, TaskState.REJECTED}),
     TaskState.WORKING: frozenset(
         {
             TaskState.COMPLETED,
@@ -50,9 +48,7 @@ VALID_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
             TaskState.INPUT_REQUIRED,
         }
     ),
-    TaskState.INPUT_REQUIRED: frozenset(
-        {TaskState.WORKING, TaskState.CANCELED, TaskState.FAILED}
-    ),
+    TaskState.INPUT_REQUIRED: frozenset({TaskState.WORKING, TaskState.CANCELED, TaskState.FAILED}),
     # Terminal states: no outgoing transitions
     TaskState.COMPLETED: frozenset(),
     TaskState.FAILED: frozenset(),
@@ -300,9 +296,7 @@ class A2AResponse(BaseModel):
         return cls(id=request_id, result=result)
 
     @classmethod
-    def from_error(
-        cls, request_id: str | int | None, error: A2AErrorData
-    ) -> A2AResponse:
+    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> A2AResponse:
         """Create an error response."""
         return cls(id=request_id, error=error)
 

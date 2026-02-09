@@ -33,7 +33,7 @@ import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -52,7 +52,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -118,18 +118,52 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
-# Lock API Models (Issue #1186)
+# Lock API Models (Issue #1110, #1186)
 # ============================================================================
+
+# Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
+LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
 
 
 class LockAcquireRequest(BaseModel):
     """Request model for acquiring a lock."""
 
     path: str
-    timeout: float = 30.0  # Max time to wait for lock acquisition
-    ttl: float = 30.0  # Lock TTL (auto-expires after this)
-    max_holders: int = 1  # 1 = mutex, >1 = semaphore
+    timeout: float = Field(default=30.0, ge=0, le=3600, description="Max seconds to wait")
+    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="Lock TTL in seconds")
+    max_holders: int = Field(default=1, ge=1, le=10000, description="1=mutex, >1=semaphore")
     blocking: bool = True  # If false, return immediately without waiting
+
+
+class LockHolderResponse(BaseModel):
+    """Information about a single lock holder."""
+
+    lock_id: str
+    holder_info: str = ""
+    acquired_at: float  # Unix timestamp
+    expires_at: float  # Unix timestamp
+
+
+class LockInfoMutex(BaseModel):
+    """Lock info for a mutex (exclusive) lock."""
+
+    mode: Literal["mutex"] = "mutex"
+    max_holders: Literal[1] = 1
+    lock_id: str  # The single holder's lock ID
+    holder_info: str = ""
+    acquired_at: float
+    expires_at: float
+    fence_token: int
+
+
+class LockInfoSemaphore(BaseModel):
+    """Lock info for a semaphore (shared) lock."""
+
+    mode: Literal["semaphore"] = "semaphore"
+    max_holders: int
+    holders: list[LockHolderResponse]
+    current_holders: int
+    fence_token: int
 
 
 class LockResponse(BaseModel):
@@ -141,6 +175,7 @@ class LockResponse(BaseModel):
     max_holders: int
     ttl: int
     expires_at: str  # ISO 8601 timestamp
+    fence_token: int
 
 
 class LockStatusResponse(BaseModel):
@@ -148,27 +183,20 @@ class LockStatusResponse(BaseModel):
 
     path: str
     locked: bool
-    lock_info: dict[str, Any] | None = None
+    lock_info: LockInfoMutex | LockInfoSemaphore | None = None
 
 
 class LockExtendRequest(BaseModel):
     """Request model for extending a lock."""
 
     lock_id: str
-    ttl: float = 30.0
-
-
-class LockReleaseRequest(BaseModel):
-    """Request model for releasing a lock."""
-
-    lock_id: str
-    force: bool = False  # Admin-only: force release regardless of owner
+    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="New TTL in seconds")
 
 
 class LockListResponse(BaseModel):
     """Response model for listing locks."""
 
-    locks: list[dict[str, Any]]
+    locks: list[LockInfoMutex | LockInfoSemaphore]
     count: int
 
 

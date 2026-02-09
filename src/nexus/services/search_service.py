@@ -61,7 +61,7 @@ class GlobStrategy(StrEnum):
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import MetadataStore, PaginatedResult
+    from nexus.core._metadata_generated import FileMetadataProtocol, PaginatedResult
     from nexus.core.mount_router import MountRouter
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
@@ -113,7 +113,7 @@ class SearchService:
 
     def __init__(
         self,
-        metadata_store: MetadataStore,
+        metadata_store: FileMetadataProtocol,
         permission_enforcer: PermissionEnforcer | None = None,
         router: MountRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,

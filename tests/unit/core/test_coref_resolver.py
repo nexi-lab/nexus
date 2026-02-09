@@ -162,8 +162,9 @@ class TestLLMCorefResolver:
         assert "John (male)" in formatted
         assert "Alice (female)" in formatted
 
-    def test_fallback_to_heuristic(self, resolver):
+    def test_fallback_to_heuristic(self, resolver, monkeypatch):
         """Test fallback to heuristic when no LLM available."""
+        monkeypatch.setattr(resolver, "_get_default_provider", lambda: None)
         text = "He went to the store."
         result = resolver.resolve(
             text,

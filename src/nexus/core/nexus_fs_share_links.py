@@ -22,7 +22,7 @@ from nexus.core.response import HandlerResponse
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import MetadataStore
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext, Permission
 
 
@@ -37,7 +37,7 @@ class NexusFSShareLinksMixin:
 
     # Type hints for attributes provided by NexusFS parent class
     if TYPE_CHECKING:
-        metadata: MetadataStore
+        metadata: FileMetadataProtocol
         _enforce_permissions: bool
 
         def _validate_path(self, path: str) -> str: ...

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.workspace_manager import WorkspaceManager
     from nexus.core.workspace_registry import WorkspaceRegistry
-from nexus.core._metadata_generated import FileMetadata, MetadataStore
+from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -99,7 +99,7 @@ class NexusFS(  # type: ignore[misc]
     def __init__(
         self,
         backend: Backend,
-        metadata_store: MetadataStore,  # Task #14: Explicit injection (breaking change)
+        metadata_store: FileMetadataProtocol,  # Task #14: Explicit injection (breaking change)
         record_store: RecordStoreABC
         | None = None,  # Task #14: Optional — Services layer (ReBAC, Auth, Audit, etc.)
         is_admin: bool = False,
@@ -141,7 +141,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            metadata_store: MetadataStore instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
+            metadata_store: FileMetadataProtocol instance (RaftMetadataStore, SQLAlchemyMetadataStore, or custom)
                            User Space controls driver selection via Dependency Injection (Task #14)
             record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
                          Not required for pure file operations. User Space injects when Services are needed.
@@ -221,7 +221,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Initialize metadata store (Task #14: Dependency Injection)
         # Kernel core: ordered KV for inodes, dentries, config, topology
-        self.metadata: MetadataStore = metadata_store
+        self.metadata: FileMetadataProtocol = metadata_store
 
         # Initialize record store (Task #14: Four Pillars)
         # Services layer: relational DB for ReBAC, Auth, Audit, etc.

@@ -9,8 +9,8 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.mark.xdist_group("serial_sqlite")
@@ -52,7 +52,7 @@ class TestDeprovisionUser:
 
         nx_instance = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
             record_store=record_store,
             auto_parse=False,
             enforce_permissions=True,

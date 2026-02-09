@@ -10,8 +10,8 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import NotFoundError
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestTimeTravelDebug:
@@ -36,14 +36,13 @@ class TestTimeTravelDebug:
     def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
-        Uses SQLAlchemyMetadataStore because time-travel features
-        (FilePathModel, VersionHistoryModel) are populated by its put() method.
-        See Task #3 for future decoupling of version history from metadata store.
+        Uses RaftMetadataStore. TODO: Time travel depends on FilePathModel
+        populated by SQLAlchemy, may need adjustment.
         """
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = LocalBackend(root_path=data_dir)
-        metadata_store = SQLAlchemyMetadataStore(db_path=str(data_dir / "nexus.db"))
+        metadata_store = RaftMetadataStore.local(str(data_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,

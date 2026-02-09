@@ -15,7 +15,6 @@ except ImportError:
 
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -73,27 +72,6 @@ def metadata_store(tmp_path):
     store = RaftMetadataStore.local(str(tmp_path / "raft-metadata"))
     yield store
     # Cleanup handled by tmp_path
-
-
-@pytest.fixture
-def metadata_store_sql(isolated_db):
-    """Create SQLAlchemy metadata store for integration tests (secondary production path).
-
-    This fixture uses SQLAlchemyMetadataStore (for Eventual Consistency zones).
-    Use this for tests that specifically need to test SQL-based metadata storage.
-
-    Usage:
-        def test_ec_zone(backend, metadata_store_sql):
-            nx = NexusFS(backend=backend, metadata_store=metadata_store_sql)
-            # Test EC zone behavior
-            nx.close()
-
-    Returns:
-        SQLAlchemyMetadataStore: SQLAlchemy-backed metadata store (EC mode)
-    """
-    store = SQLAlchemyMetadataStore(db_path=isolated_db)
-    yield store
-    # Cleanup handled by isolated_db
 
 
 @pytest.fixture

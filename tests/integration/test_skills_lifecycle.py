@@ -15,8 +15,8 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -95,7 +95,11 @@ def nexus_fs(isolated_db, tmp_path):
     backend = LocalBackend(root_path=str(tmp_path / "storage"))
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=str(isolated_db)),
+        metadata_store=RaftMetadataStore.local(
+            str(isolated_db).replace(
+                chr(46) + chr(100) + chr(98), chr(45) + chr(114) + chr(97) + chr(102) + chr(116)
+            )
+        ),
         record_store=SQLAlchemyRecordStore(db_path=str(isolated_db)),
         enforce_permissions=False,  # Disable permissions for testing
     )

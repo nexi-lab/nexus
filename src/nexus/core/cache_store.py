@@ -79,10 +79,14 @@ class CacheStoreABC(ABC):
         ...
 
     @abstractmethod
-    async def delete_by_prefix(self, prefix: str) -> int:
-        """Delete all keys matching a prefix. Returns count of deleted keys.
+    async def delete_by_pattern(self, pattern: str) -> int:
+        """Delete all keys matching a glob pattern. Returns count of deleted keys.
 
-        Used for targeted cache invalidation (e.g., all permissions for a subject).
+        Supports ``*`` as wildcard. Examples:
+        - ``perm:zone1:*`` — all zone1 permission keys (prefix match)
+        - ``perm:*:user:alice:*`` — all permission keys for alice across zones
+
+        Used for targeted cache invalidation.
         """
         ...
 
@@ -150,7 +154,7 @@ class NullCacheStore(CacheStoreABC):
     async def exists(self, key: str) -> bool:
         return False
 
-    async def delete_by_prefix(self, prefix: str) -> int:
+    async def delete_by_pattern(self, pattern: str) -> int:
         return 0
 
     async def publish(self, channel: str, message: bytes) -> int:

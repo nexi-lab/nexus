@@ -10,7 +10,10 @@ import asyncio
 
 import pytest
 
+from nexus.core.cache.domain import PermissionCache, TigerCache
+from nexus.core.cache.factory import CacheFactory
 from nexus.core.cache.inmemory import InMemoryCacheStore
+from nexus.core.cache.settings import CacheSettings
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 # ---------------------------------------------------------------------------
@@ -53,7 +56,7 @@ class TestPermissionCachingWorkflow:
         assert cached == b"1"
 
         # 5. Permission change → invalidate all permissions for this subject
-        deleted = await cache_store.delete_by_prefix("perm:zone1:user:alice:")
+        deleted = await cache_store.delete_by_pattern("perm:zone1:user:alice:*")
         assert deleted == 1
 
         # 6. Cache miss again
@@ -72,7 +75,7 @@ class TestPermissionCachingWorkflow:
             await cache_store.set(k, b"1", ttl=300)
 
         # Invalidate zone1 only
-        deleted = await cache_store.delete_by_prefix("perm:zone1:")
+        deleted = await cache_store.delete_by_pattern("perm:zone1:*")
         assert deleted == 3
 
         # zone2 untouched
@@ -210,3 +213,136 @@ class TestTTLExpiration:
         await cache_store.set("permanent", b"data")
         await asyncio.sleep(0.05)
         assert await cache_store.get("permanent") == b"data"
+
+
+# ---------------------------------------------------------------------------
+# Scenario 5: Domain caches via CacheStoreABC (driver-agnostic)
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionCacheDomain:
+    """PermissionCache built on CacheStoreABC — the full stack."""
+
+    @pytest.fixture
+    def perm_cache(self, cache_store):
+        return PermissionCache(store=cache_store, ttl=300, denial_ttl=60)
+
+    async def test_grant_and_lookup(self, perm_cache):
+        """Store a grant, retrieve it."""
+        await perm_cache.set("user", "alice", "read", "file", "/docs/a.md", True, "zone1")
+        result = await perm_cache.get("user", "alice", "read", "file", "/docs/a.md", "zone1")
+        assert result is True
+
+    async def test_denial_and_lookup(self, perm_cache):
+        """Store a denial, retrieve it."""
+        await perm_cache.set("user", "bob", "write", "file", "/secret", False, "zone1")
+        result = await perm_cache.get("user", "bob", "write", "file", "/secret", "zone1")
+        assert result is False
+
+    async def test_cache_miss(self, perm_cache):
+        """Uncached permission returns None."""
+        result = await perm_cache.get("user", "unknown", "read", "file", "/x", "zone1")
+        assert result is None
+
+    async def test_invalidate_subject(self, perm_cache):
+        """Invalidate all perms for a subject."""
+        await perm_cache.set("user", "alice", "read", "file", "/a", True, "zone1")
+        await perm_cache.set("user", "alice", "write", "file", "/b", True, "zone1")
+        await perm_cache.set("user", "bob", "read", "file", "/a", True, "zone1")
+
+        deleted = await perm_cache.invalidate_subject("user", "alice", "zone1")
+        assert deleted == 2
+
+        # Bob untouched
+        assert await perm_cache.get("user", "bob", "read", "file", "/a", "zone1") is True
+
+    async def test_invalidate_object(self, perm_cache):
+        """Invalidate all perms for an object (wildcard in middle of key)."""
+        await perm_cache.set("user", "alice", "read", "file", "/shared", True, "zone1")
+        await perm_cache.set("user", "bob", "write", "file", "/shared", True, "zone1")
+        await perm_cache.set("user", "alice", "read", "file", "/private", True, "zone1")
+
+        deleted = await perm_cache.invalidate_object("file", "/shared", "zone1")
+        assert deleted == 2
+
+        # /private untouched
+        assert await perm_cache.get("user", "alice", "read", "file", "/private", "zone1") is True
+
+
+class TestTigerCacheDomain:
+    """TigerCache built on CacheStoreABC — bitmap store/retrieve."""
+
+    @pytest.fixture
+    def tiger_cache(self, cache_store):
+        return TigerCache(store=cache_store, ttl=3600)
+
+    async def test_store_and_retrieve_bitmap(self, tiger_cache):
+        """Round-trip: set_bitmap → get_bitmap preserves data + revision."""
+        bitmap = b"\x01\x02\x03\x04\x05"
+        revision = 42
+
+        await tiger_cache.set_bitmap("user", "alice", "read", "file", "zone1", bitmap, revision)
+        result = await tiger_cache.get_bitmap("user", "alice", "read", "file", "zone1")
+
+        assert result is not None
+        data, rev = result
+        assert data == bitmap
+        assert rev == 42
+
+    async def test_cache_miss(self, tiger_cache):
+        """Missing bitmap returns None."""
+        result = await tiger_cache.get_bitmap("user", "unknown", "read", "file", "zone1")
+        assert result is None
+
+    async def test_invalidate_by_subject(self, tiger_cache):
+        """Invalidate all bitmaps for a subject."""
+        await tiger_cache.set_bitmap("user", "alice", "read", "file", "zone1", b"bm1", 1)
+        await tiger_cache.set_bitmap("user", "alice", "write", "file", "zone1", b"bm2", 2)
+
+        deleted = await tiger_cache.invalidate(subject_type="user", subject_id="alice")
+        assert deleted == 2
+
+
+# ---------------------------------------------------------------------------
+# Scenario 6: CacheFactory with injected CacheStoreABC
+# ---------------------------------------------------------------------------
+
+
+class TestCacheFactoryIntegration:
+    """CacheFactory creates domain caches from injected CacheStoreABC."""
+
+    async def test_factory_with_injected_store(self):
+        """Inject InMemoryCacheStore → factory builds domain caches on it."""
+        store = InMemoryCacheStore()
+        settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
+        factory = CacheFactory(settings, cache_store=store)
+        await factory.initialize()
+
+        # Factory exposes the injected store
+        assert factory.cache_store is store
+
+        # Domain caches work through the store
+        perm = factory.get_permission_cache()
+        await perm.set("user", "alice", "read", "file", "/a", True, "zone1")
+        assert await perm.get("user", "alice", "read", "file", "/a", "zone1") is True
+
+        tiger = factory.get_tiger_cache()
+        await tiger.set_bitmap("user", "alice", "read", "file", "zone1", b"bitmap", 1)
+        result = await tiger.get_bitmap("user", "alice", "read", "file", "zone1")
+        assert result is not None
+
+        await factory.shutdown()
+
+    async def test_factory_defaults_to_null(self):
+        """No Dragonfly URL → NullCacheStore → all cache ops are no-ops."""
+        settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
+        factory = CacheFactory(settings)
+        await factory.initialize()
+
+        assert isinstance(factory.cache_store, NullCacheStore)
+
+        perm = factory.get_permission_cache()
+        await perm.set("user", "alice", "read", "file", "/a", True, "zone1")
+        assert await perm.get("user", "alice", "read", "file", "/a", "zone1") is None  # no-op
+
+        await factory.shutdown()

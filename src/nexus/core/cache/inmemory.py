@@ -26,6 +26,7 @@ import time
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from fnmatch import fnmatch
 
 from nexus.core.cache_store import CacheStoreABC
 
@@ -79,8 +80,8 @@ class InMemoryCacheStore(CacheStoreABC):
             return False
         return True
 
-    async def delete_by_prefix(self, prefix: str) -> int:
-        to_delete = [k for k in self._store if k.startswith(prefix)]
+    async def delete_by_pattern(self, pattern: str) -> int:
+        to_delete = [k for k in self._store if fnmatch(k, pattern)]
         for k in to_delete:
             del self._store[k]
         return len(to_delete)

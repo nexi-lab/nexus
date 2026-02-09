@@ -33,11 +33,15 @@ from nexus.core.cache.inmemory import InMemoryCacheStore
 from nexus.core.cache.settings import CacheSettings
 
 __all__ = [
-    "CacheSettings",
+    # Factory + config
     "CacheFactory",
-    "DragonflyCacheStore",
-    "DragonflyEmbeddingCache",
-    "InMemoryCacheStore",
+    "CacheSettings",
+    # Consumer-facing protocols (what you program against)
     "PermissionCacheProtocol",
     "TigerCacheProtocol",
+    # CacheStoreABC drivers (for DI into CacheFactory/NexusFS)
+    "DragonflyCacheStore",
+    "InMemoryCacheStore",
+    # Dragonfly-specific — to be abstracted (Task #27)
+    "DragonflyEmbeddingCache",
 ]

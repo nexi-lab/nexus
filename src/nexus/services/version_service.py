@@ -23,6 +23,8 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
@@ -93,7 +95,7 @@ class VersionService:
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
-        session_factory: Any | None = None,  # Task #45: For VersionManager queries
+        session_factory: Callable[..., Any] | None = None,  # Task #45: For VersionManager queries
     ):
         """Initialize version service.
 

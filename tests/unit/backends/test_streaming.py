@@ -9,6 +9,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -390,7 +391,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -417,7 +418,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -445,7 +446,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -468,7 +469,7 @@ class TestReadRangeRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -497,7 +498,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -528,7 +529,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -549,7 +550,7 @@ class TestStatRPC:
 
         data_dir = tmp_path / "data"
         db_path = tmp_path / "metadata.db"
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),

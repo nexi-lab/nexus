@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.search.chunking import ChunkStrategy
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -85,7 +85,7 @@ class TestSemanticSearch:
         """
         backend = LocalBackend(root_path=temp_dir)
         metadata_store = SQLAlchemyMetadataStore(db_path=str(temp_dir / "nexus.db"))
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,

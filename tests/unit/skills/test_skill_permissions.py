@@ -21,6 +21,7 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -58,7 +59,7 @@ def nx(temp_dir: Path, mock_rebac: MagicMock) -> Generator[NexusFS, None, None]:
     Permissions are disabled to allow unit tests to focus on skill logic.
     Permission enforcement is tested separately through mocked rebac methods.
     """
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

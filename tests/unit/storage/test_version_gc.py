@@ -12,6 +12,7 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
@@ -148,7 +149,7 @@ class TestVersionHistoryGC:
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = LocalBackend(root_path=data_dir)
         metadata_store = SQLAlchemyMetadataStore(db_path=str(data_dir / "nexus.db"))
-        nx = NexusFS(
+        nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=record_store,
@@ -329,7 +330,7 @@ class TestVersionHistoryGC:
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
         backend = LocalBackend(root_path=data_dir)
         metadata_store = RaftMetadataStore.local(str(data_dir / "metadata"))
-        nx_empty = NexusFS(
+        nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             record_store=rs_empty,

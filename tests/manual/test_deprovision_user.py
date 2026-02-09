@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -69,7 +70,7 @@ def main() -> None:
     print("Initializing NexusFS...")
     # db_path accepts both PostgreSQL URLs and SQLite file paths
     record_store = SQLAlchemyRecordStore(db_path=db_path)
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(args.backend_path),
         metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
         record_store=record_store,

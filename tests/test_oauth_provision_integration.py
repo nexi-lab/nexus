@@ -13,6 +13,7 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -32,7 +33,7 @@ def record_store(tmp_path):
 def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
     db_file = tmp_path / "metadata.db"
-    nx_instance = NexusFS(
+    nx_instance = create_nexus_fs(
         backend=LocalBackend(tmp_path),
         metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
         record_store=record_store,

@@ -8,6 +8,7 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -49,7 +50,7 @@ class TestDeprovisionUser:
 
         monkeypatch.setattr(nexus_fs.NexusFS, "_start_tiger_cache_worker", _no_op_start)
 
-        nx_instance = NexusFS(
+        nx_instance = create_nexus_fs(
             backend=LocalBackend(temp_dir),
             metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
             record_store=record_store,

@@ -11,6 +11,7 @@ from nexus import NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse
 from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -36,7 +37,7 @@ def mock_gcs_backend() -> Generator[Mock, None, None]:
 def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with mocked GCS backend."""
     db_path = temp_dir / "test-metadata.db"
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=mock_gcs_backend,
         metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -87,7 +88,7 @@ class TestNexusFSInitialization:
         mock_gcs_backend.project_id = "my-project"
         mock_gcs_backend.credentials_path = "/path/to/creds.json"
 
-        fs = NexusFS(
+        fs = create_nexus_fs(
             backend=mock_gcs_backend,
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
@@ -100,7 +101,7 @@ class TestNexusFSInitialization:
     def test_init_with_zone_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with zone and agent context."""
         db_path = temp_dir / "metadata.db"
-        fs = NexusFS(
+        fs = create_nexus_fs(
             backend=mock_gcs_backend,
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
             record_store=SQLAlchemyRecordStore(db_path=db_path),

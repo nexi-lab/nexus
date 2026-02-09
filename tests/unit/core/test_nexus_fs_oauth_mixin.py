@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -34,7 +35,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -103,7 +104,7 @@ class TestGetOAuthFactory:
             mock_factory = MagicMock()
             MockFactory.return_value = mock_factory
 
-            nx = NexusFS(
+            nx = create_nexus_fs(
                 backend=LocalBackend(temp_dir),
                 metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
                 record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

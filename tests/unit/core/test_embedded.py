@@ -10,6 +10,7 @@ from freezegun import freeze_time
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -24,7 +25,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded filesystem instance."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
@@ -41,7 +42,7 @@ def test_init_creates_directories(temp_dir: Path) -> None:
     data_dir = temp_dir / "nexus-data"
     assert not data_dir.exists()
 
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(data_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
@@ -353,7 +354,7 @@ def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
 
-    with NexusFS(
+    with create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

@@ -155,7 +155,15 @@ class NexusFS(  # type: ignore[misc]
         mount_manager: MountManager | None = None,
         workspace_manager: WorkspaceManager | None = None,
     ):
-        """Initialize filesystem.
+        # Store config for OAuth factory and other components that need it
+        self._config: Any | None = None
+
+        # Store memory paging config (Issue #1258)
+        self._enable_memory_paging = enable_memory_paging
+        self._memory_main_capacity = memory_main_capacity
+        self._memory_recall_max_age_hours = memory_recall_max_age_hours
+        """
+        Initialize filesystem.
 
         Args:
             backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
@@ -226,11 +234,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Store backend
         self.backend = backend
-
-        # Store memory paging config (Issue #1258)
-        self._enable_memory_paging = enable_memory_paging
-        self._memory_main_capacity = memory_main_capacity
-        self._memory_recall_max_age_hours = memory_recall_max_age_hours
 
         # Store admin flag and auto-parse setting
         self.is_admin = is_admin
@@ -386,7 +389,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Issue #372: Sandbox manager - lazy initialization
-        from nexus.core.sandbox_manager import SandboxManager
+        from nexus.sandbox.sandbox_manager import SandboxManager
 
         self._sandbox_manager: SandboxManager | None = None
 
@@ -422,7 +425,7 @@ class NexusFS(  # type: ignore[misc]
                 import logging
                 import os
 
-                from nexus.core.cache.dragonfly import DragonflyClient
+                from nexus.cache.dragonfly import DragonflyClient
 
                 logger = logging.getLogger(__name__)
 
@@ -5838,7 +5841,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
             import os
 
-            from nexus.core.sandbox_manager import SandboxManager
+            from nexus.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
             session = self.SessionLocal()

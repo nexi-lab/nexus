@@ -665,7 +665,7 @@ class SyncService:
             try:
                 ctx.progress_callback(result.files_scanned, virtual_path)
             except Exception as cb_error:
-                from nexus.core.sync_job_manager import SyncCancelled
+                from nexus.services.sync_job_manager import SyncCancelled
 
                 if isinstance(cb_error, SyncCancelled):
                     raise

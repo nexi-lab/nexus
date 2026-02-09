@@ -34,7 +34,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.core.cache.dragonfly import DragonflyClient
+    from nexus.cache.dragonfly import DragonflyClient
 
 logger = logging.getLogger(__name__)
 

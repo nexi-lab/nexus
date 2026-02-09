@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from nexus.core.cache.dragonfly import DragonflyEmbeddingCache
+    from nexus.cache.base import EmbeddingCacheProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +480,7 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     - Batch deduplication (dedupe before API call)
 
     Usage:
-        from nexus.core.cache import CacheFactory, CacheSettings
+        from nexus.cache import CacheFactory, CacheSettings
 
         # Initialize cache
         settings = CacheSettings.from_env()
@@ -500,16 +500,16 @@ class CachedEmbeddingProvider(EmbeddingProvider):
     def __init__(
         self,
         provider: EmbeddingProvider,
-        cache: DragonflyEmbeddingCache,
+        cache: EmbeddingCacheProtocol,
     ):
         """Initialize cached embedding provider.
 
         Args:
             provider: Base embedding provider to wrap
-            cache: DragonflyEmbeddingCache instance
+            cache: EmbeddingCacheProtocol instance (any driver)
         """
         self._provider = provider
-        self._cache: DragonflyEmbeddingCache = cache
+        self._cache: EmbeddingCacheProtocol = cache
         self._model_name = self._get_model_name()
 
     def _get_model_name(self) -> str:
@@ -697,16 +697,18 @@ async def create_cached_embedding_provider(
         logger.info("Embedding cache not configured, using uncached provider")
         return base_provider
 
-    # Try to create cached provider
+    # Try to create cached provider via CacheStoreABC
     try:
-        from nexus.core.cache.dragonfly import DragonflyClient, DragonflyEmbeddingCache
+        from nexus.cache.domain import EmbeddingCache
+        from nexus.cache.dragonfly import DragonflyCacheStore, DragonflyClient
 
         # Connect to cache
         client = DragonflyClient(url=cache_url)
         await client.connect()
 
-        # Create cache and wrapped provider
-        cache = DragonflyEmbeddingCache(client=client, ttl=cache_ttl)
+        # Create driver-agnostic cache via CacheStoreABC
+        store = DragonflyCacheStore(client)
+        cache = EmbeddingCache(store=store, ttl=cache_ttl)
         cached_provider = CachedEmbeddingProvider(base_provider, cache)
 
         logger.info(f"Embedding cache enabled with TTL={cache_ttl}s")

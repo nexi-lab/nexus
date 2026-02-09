@@ -61,6 +61,8 @@ class NexusFSCoreMixin:
         _parser_threads_lock: threading.Lock
         _permission_enforcer: PermissionEnforcer | None
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
+        _write_observer: Any  # Duck-typed: on_write()/on_delete()
+        _audit_strict_mode: bool
 
         @property
         def zone_id(self) -> str | None: ...
@@ -1812,7 +1814,7 @@ class NexusFSCoreMixin:
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
-        if self._write_observer:  # type: ignore[attr-defined]
+        if self._write_observer:
             try:
                 self._write_observer.on_write(
                     metadata=metadata,
@@ -1826,7 +1828,7 @@ class NexusFSCoreMixin:
             except Exception as e:
                 from nexus.core.exceptions import AuditLogError
 
-                if self._audit_strict_mode:  # type: ignore[attr-defined]
+                if self._audit_strict_mode:
                     logger.error(
                         f"AUDIT LOG FAILURE: Write to '{path}' ABORTED. "
                         f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
@@ -2482,7 +2484,7 @@ class NexusFSCoreMixin:
         self.metadata.put_batch(metadata_list)
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
-        if self._write_observer:  # type: ignore[attr-defined]
+        if self._write_observer:
             with contextlib.suppress(Exception):
                 items = [
                     (metadata, existing_metadata.get(metadata.path) is None)
@@ -2762,7 +2764,7 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        if self._write_observer:  # type: ignore[attr-defined]
+        if self._write_observer:
             with contextlib.suppress(Exception):
                 self._write_observer.on_delete(
                     path=path,
@@ -3068,7 +3070,7 @@ class NexusFSCoreMixin:
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
         # Task #45: Sync to RecordStore (audit trail)
-        if self._write_observer:  # type: ignore[attr-defined]
+        if self._write_observer:
             with contextlib.suppress(Exception):
                 self._write_observer.on_rename(
                     old_path=old_path,

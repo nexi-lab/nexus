@@ -72,7 +72,6 @@ async def get_memory_paging_stats(
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}") from e
 
 
-
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
     from nexus.server.fastapi_server import require_auth

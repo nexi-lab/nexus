@@ -181,8 +181,7 @@ class ContextManager:
                     break
 
         logger.info(
-            f"Evicted {len(evicted)} memories "
-            f"(scores: {[s.score for s in to_evict[:3]]}...)"
+            f"Evicted {len(evicted)} memories (scores: {[s.score for s in to_evict[:3]]}...)"
         )
 
         return evicted
@@ -211,8 +210,7 @@ class ContextManager:
 
             # Combined score
             score = (
-                self.recency_weight * recency_factor
-                + self.importance_weight * importance_factor
+                self.recency_weight * recency_factor + self.importance_weight * importance_factor
             )
 
             scores.append(

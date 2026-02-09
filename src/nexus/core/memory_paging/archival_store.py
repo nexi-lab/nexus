@@ -71,9 +71,7 @@ class ArchivalStore:
         # TODO: Trigger hierarchical consolidation (Issue #4 from review)
         # For MVP, we skip consolidation and just store atomically
         if trigger_consolidation:
-            logger.debug(
-                f"Consolidation not implemented yet for memory {memory.memory_id}"
-            )
+            logger.debug(f"Consolidation not implemented yet for memory {memory.memory_id}")
 
         logger.debug(f"Stored memory {memory.memory_id} in archival")
 

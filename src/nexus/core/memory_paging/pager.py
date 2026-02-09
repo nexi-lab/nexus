@@ -214,7 +214,9 @@ class MemoryPager:
             "main": {
                 "count": main_count,
                 "capacity": self.context.max_items,
-                "utilization": main_count / self.context.max_items if self.context.max_items > 0 else 0,
+                "utilization": main_count / self.context.max_items
+                if self.context.max_items > 0
+                else 0,
             },
             "recall": {"count": recall_count},
             "archival": {"count": archival_count},

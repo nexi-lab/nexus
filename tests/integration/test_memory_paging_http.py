@@ -42,7 +42,7 @@ def server_process():
         try:
             resp = requests.get("http://localhost:2028/health", timeout=1)
             if resp.status_code == 200:
-                print(f"✓ Server ready after {i+1} attempts")
+                print(f"✓ Server ready after {i + 1} attempts")
                 break
         except Exception:
             time.sleep(1)

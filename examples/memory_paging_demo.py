@@ -74,15 +74,19 @@ def demo_memory_paging():
 
         if i % 5 == 4:
             stats = pager.get_stats()
-            print(f"   After {i+1} memories: Main={stats['main']['count']}, "
-                  f"Recall={stats['recall']['count']}, "
-                  f"Archival={stats['archival']['count']}")
+            print(
+                f"   After {i + 1} memories: Main={stats['main']['count']}, "
+                f"Recall={stats['recall']['count']}, "
+                f"Archival={stats['archival']['count']}"
+            )
 
     # Show final distribution
     stats = pager.get_stats()
     print("\n2. Final distribution:")
-    print(f"   Main Context: {stats['main']['count']}/{stats['main']['capacity']} "
-          f"({stats['main']['utilization']:.0%} full)")
+    print(
+        f"   Main Context: {stats['main']['count']}/{stats['main']['capacity']} "
+        f"({stats['main']['utilization']:.0%} full)"
+    )
     print(f"   Recall Store: {stats['recall']['count']}")
     print(f"   Archival Store: {stats['archival']['count']}")
 
@@ -90,7 +94,7 @@ def demo_memory_paging():
     print("\n3. Recent context (for LLM):")
     recent = pager.get_recent_context(limit=5)
     for i, mem in enumerate(recent):
-        print(f"   {i+1}. {mem.memory_id[:8]}... (importance: {mem.importance})")
+        print(f"   {i + 1}. {mem.memory_id[:8]}... (importance: {mem.importance})")
 
     # Simulate semantic search
     print("\n4. Semantic search across all tiers:")

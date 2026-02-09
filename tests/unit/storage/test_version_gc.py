@@ -208,7 +208,6 @@ class TestVersionHistoryGC:
             final_count = session.scalar(select(func.count()).select_from(VersionHistoryModel))
             assert final_count == initial_count
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_gc_respects_max_versions(self, nx, record_store):
         """Test GC enforces max versions per resource."""
         path = "/workspace/many_versions.txt"
@@ -254,7 +253,6 @@ class TestVersionHistoryGC:
             )
             assert count == 3
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_gc_stats_reporting(self, nx, record_store):
         """Test that GC reports accurate statistics."""
         # Create a file
@@ -273,7 +271,6 @@ class TestVersionHistoryGC:
         assert table_stats["total_versions"] >= 1
         assert table_stats["unique_resources"] >= 1
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_gc_multiple_resources(self, nx, record_store):
         """Test GC handles multiple resources correctly."""
         # Create versions for multiple files
@@ -300,7 +297,6 @@ class TestVersionHistoryGC:
             content = nx.read(path)
             assert b"Version 4" in content  # Latest version
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_gc_override_params(self, nx, record_store):
         """Test parameter override functionality."""
         path = "/workspace/override_test.txt"

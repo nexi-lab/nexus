@@ -52,7 +52,6 @@ class TestTimeTravelDebug:
         yield nx
         nx.close()
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_time_travel_read_file_history(self, nx, record_store):
         """Test reading file at different historical points."""
         from nexus.storage.operation_logger import OperationLogger
@@ -178,7 +177,6 @@ class TestTimeTravelDebug:
             assert "/workspace/file2.txt" in paths
             assert "/workspace/file3.txt" in paths
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_time_travel_diff_operations(self, nx, record_store):
         """Test diffing file state between two operations."""
         from nexus.storage.operation_logger import OperationLogger
@@ -213,7 +211,6 @@ class TestTimeTravelDebug:
             assert diff["operation_2"]["content"] == b"Hello World - Updated!"
             assert diff["size_diff"] == len(b"Hello World - Updated!") - len(b"Hello World")
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_time_travel_diff_file_created(self, nx, record_store):
         """Test diff when file was created between operations."""
         from nexus.storage.operation_logger import OperationLogger
@@ -279,7 +276,6 @@ class TestTimeTravelDebug:
             assert diff["operation_1"]["content"] == b"Will be deleted"
             assert diff["size_diff"] == -len(b"Will be deleted")
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
         from nexus.core.permissions_enhanced import EnhancedOperationContext
@@ -320,7 +316,6 @@ class TestTimeTravelDebug:
             with pytest.raises(NotFoundError):
                 time_travel.get_operation_by_id("fake-operation-id")
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate VersionHistoryModel (Task #45)")
     def test_time_travel_metadata_preservation(self, nx, record_store):
         """Test that metadata is preserved in historical reads."""
         from nexus.storage.operation_logger import OperationLogger

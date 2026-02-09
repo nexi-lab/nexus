@@ -947,13 +947,13 @@ class NexusFSCoreMixin:
         zone_id, agent_id, is_admin = self._get_routing_params(context)
 
         # Group paths by backend for potential bulk optimization
-        # Use batch_get for metadata lookup (single SQL query instead of N queries)
+        # Use get_batch for metadata lookup (single query instead of N queries)
         path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
         backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
 
         # Batch metadata lookup
         meta_start = time.time()
-        batch_meta = self.metadata.batch_get(list(allowed_set))
+        batch_meta = self.metadata.get_batch(list(allowed_set))
         meta_elapsed = (time.time() - meta_start) * 1000
         logger.info(
             f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
@@ -1810,51 +1810,37 @@ class NexusFSCoreMixin:
         if self.auto_parse:
             self._auto_parse_file(path)
 
-        # Log operation for audit trail and undo capability        # P0 COMPLIANCE FIX: Properly handle audit log failures instead of silently ignoring them
-        try:
-            from nexus.storage.operation_logger import OperationLogger
-
-            with self.SessionLocal() as session:
-                op_logger = OperationLogger(session)
-                op_logger.log_operation(
-                    operation_type="write",
+        # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
+        # Observer is optional — injected by factory.py, not created by kernel.
+        if self._write_observer:  # type: ignore[attr-defined]
+            try:
+                self._write_observer.on_write(
+                    metadata=metadata,
+                    is_new=(meta is None),
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
-                    status="success",
                 )
-                session.commit()
-        except Exception as e:
-            # P0 COMPLIANCE FIX: Handle audit log failures based on audit_strict_mode
-            import logging
+            except Exception as e:
+                from nexus.core.exceptions import AuditLogError
 
-            from nexus.core.exceptions import AuditLogError
-
-            logger = logging.getLogger(__name__)
-
-            if self._audit_strict_mode:  # type: ignore[attr-defined]
-                # STRICT MODE (default): Fail the write operation to ensure audit trail completeness
-                # This is required for compliance with SOX, HIPAA, GDPR, PCI DSS
-                logger.error(
-                    f"AUDIT LOG FAILURE: Write to '{path}' ABORTED due to audit logging failure. "
-                    f"Error: {e}. Enable audit_strict_mode=False to allow writes without audit logs."
-                )
-                raise AuditLogError(
-                    f"Write operation aborted: audit logging failed: {e}",
-                    path=path,
-                    original_error=e,
-                ) from e
-            else:
-                # PERMISSIVE MODE: Allow write to succeed but log at CRITICAL level
-                # WARNING: This creates audit trail gaps and may violate compliance requirements
-                logger.critical(
-                    f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
-                    f"Error: {e}. This creates an audit trail gap! "
-                    f"Enable audit_strict_mode=True to prevent this."
-                )
-                # Continue execution - write succeeded but audit log failed
+                if self._audit_strict_mode:  # type: ignore[attr-defined]
+                    logger.error(
+                        f"AUDIT LOG FAILURE: Write to '{path}' ABORTED. "
+                        f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
+                    )
+                    raise AuditLogError(
+                        f"Write operation aborted: audit logging failed: {e}",
+                        path=path,
+                        original_error=e,
+                    ) from e
+                else:
+                    logger.critical(
+                        f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
+                        f"Error: {e}. This creates an audit trail gap!"
+                    )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
@@ -2495,6 +2481,19 @@ class NexusFSCoreMixin:
         # Store all metadata in a single transaction (with version history)
         self.metadata.put_batch(metadata_list)
 
+        # Task #45: Sync batch to RecordStore (audit trail + version history)
+        if self._write_observer:  # type: ignore[attr-defined]
+            with contextlib.suppress(Exception):
+                items = [
+                    (metadata, existing_metadata.get(metadata.path) is None)
+                    for metadata in metadata_list
+                ]
+                self._write_observer.on_write_batch(
+                    items,
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                )
+
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
         # PERF OPTIMIZATION: Use batch operations instead of individual calls (20x faster)
@@ -2762,25 +2761,16 @@ class NexusFSCoreMixin:
         # Check write permission for delete        # This comes AFTER zone isolation check so AccessDeniedError takes precedence
         self._check_permission(path, Permission.WRITE, context)
 
-        # Log operation BEFORE deleting CAS content        # This ensures the snapshot is recorded while content still exists
-        try:
-            from nexus.storage.operation_logger import OperationLogger
-
-            with self.SessionLocal() as session:
-                op_logger = OperationLogger(session)
-                op_logger.log_operation(
-                    operation_type="delete",
+        # Task #45: Sync to RecordStore BEFORE deleting CAS content
+        if self._write_observer:  # type: ignore[attr-defined]
+            with contextlib.suppress(Exception):
+                self._write_observer.on_delete(
                     path=path,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
-                    status="success",
                 )
-                session.commit()
-        except Exception:
-            # Don't fail the delete operation if logging fails
-            pass
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -3077,26 +3067,17 @@ class NexusFSCoreMixin:
                 # Log but don't fail the rename operation
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
-        # Log operation for audit trail and undo capability
-        try:
-            from nexus.storage.operation_logger import OperationLogger
-
-            with self.SessionLocal() as session:
-                op_logger = OperationLogger(session)
-                op_logger.log_operation(
-                    operation_type="rename",
-                    path=old_path,
+        # Task #45: Sync to RecordStore (audit trail)
+        if self._write_observer:  # type: ignore[attr-defined]
+            with contextlib.suppress(Exception):
+                self._write_observer.on_rename(
+                    old_path=old_path,
                     new_path=new_path,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     snapshot_hash=snapshot_hash,
                     metadata_snapshot=metadata_snapshot,
-                    status="success",
                 )
-                session.commit()
-        except Exception:
-            # Don't fail the rename operation if logging fails
-            pass
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
@@ -3539,7 +3520,7 @@ class NexusFSCoreMixin:
         # is typically called on paths returned by list(). If a path isn't found,
         # we check if it's an implicit directory as a fallback.
         try:
-            batch_meta = self.metadata.batch_get(list(allowed_set))
+            batch_meta = self.metadata.get_batch(list(allowed_set))
             for path, meta in batch_meta.items():
                 if meta is None:
                     # Path not found in metadata - check if it's an implicit directory

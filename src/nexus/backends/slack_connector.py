@@ -114,7 +114,7 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
                            If provided, enables persistent caching for fast grep/search.
             max_messages_per_channel: Maximum number of messages to fetch per channel (default: 100).
                                      Set to None for unlimited.
-            metadata_store: MetadataStore instance for writing to file_paths table (optional).
+            metadata_store: FileMetadataProtocol instance for writing to file_paths table (optional).
                           Required for metadata-based listing (fast database queries).
 
         Note:

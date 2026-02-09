@@ -728,9 +728,29 @@ async def lifespan(_app: FastAPI) -> Any:
                     "yes",
                 )
 
+                # Issue #1239: Create namespace manager for per-subject visibility
+                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                namespace_manager = None
+                if enforce_permissions and hasattr(_app_state, "nexus_fs"):
+                    sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                    if sync_rebac:
+                        from nexus.core.namespace_manager import NamespaceManager
+
+                        namespace_manager = NamespaceManager(
+                            rebac_manager=sync_rebac,
+                            cache_maxsize=10_000,
+                            cache_ttl=300,
+                            revision_window=10,
+                        )
+                        logger.info(
+                            "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
+                            "(using sync rebac_manager for mount table queries)"
+                        )
+
                 # Create permission enforcer with async ReBAC
                 permission_enforcer = AsyncPermissionEnforcer(
-                    rebac_manager=_app_state.async_rebac_manager
+                    rebac_manager=_app_state.async_rebac_manager,
+                    namespace_manager=namespace_manager,
                 )
 
                 # Create AsyncNexusFS
@@ -1299,11 +1319,8 @@ def _initialize_oauth_provider(
         session_factory = None
         if auth_provider and hasattr(auth_provider, "session_factory"):
             session_factory = auth_provider.session_factory
-        elif hasattr(nexus_fs, "metadata") and hasattr(nexus_fs.metadata, "SessionLocal"):
-            from sqlalchemy.orm import sessionmaker
-
-            # Create session factory from metadata
-            session_factory = sessionmaker(bind=nexus_fs.metadata.engine)
+        elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+            session_factory = nexus_fs.SessionLocal
         else:
             logger.warning("Cannot initialize OAuth provider: no session factory available")
             return
@@ -1404,9 +1421,15 @@ async def _graph_enhanced_search(
     # Get database URL
     db_url = _app_state.database_url
     if not db_url:
-        db_url = _app_state.nexus_fs.metadata.database_url
+        db_url = (
+            _app_state.nexus_fs._record_store.database_url
+            if _app_state.nexus_fs._record_store
+            else None
+        )
 
     # Convert to async URL
+    if not db_url:
+        raise RuntimeError("No database URL available for graph search endpoint")
     async_url = db_url
     if async_url.startswith("postgresql://"):
         async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
@@ -1708,6 +1731,19 @@ def _register_routes(app: FastAPI) -> None:
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
         )
 
+    # Nexus Pay API routes (Issue #1209)
+    try:
+        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
+        from nexus.server.api.v2.routers.pay import router as pay_router
+
+        app.include_router(pay_router)
+        _register_pay_exception_handlers(app)
+        logger.info("Nexus Pay API routes registered (8 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
     # Issue #940: Register async files router (lazy initialization via lifespan)
     try:
         from nexus.server.api.v2.routers.async_files import create_async_files_router
@@ -1719,6 +1755,21 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("Async files router registered (9 endpoints)")
     except ImportError as e:
         logger.warning(f"Failed to import async files router: {e}")
+
+    # A2A Protocol Endpoint (Issue #1256)
+    try:
+        from nexus.a2a import create_a2a_router
+
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_router = create_a2a_router(
+            nexus_fs=_app_state.nexus_fs,
+            config=None,  # Will use defaults; config can be passed when available
+            base_url=a2a_base_url,
+        )
+        app.include_router(a2a_router)
+        logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
+    except ImportError as e:
+        logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

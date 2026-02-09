@@ -20,6 +20,7 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.models import APIKeyModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
@@ -33,12 +34,20 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    """Create a SQLAlchemyRecordStore for testing."""
+    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,
     )
@@ -215,9 +224,11 @@ class TestCreateAgentConfigData:
 class TestDetermineAgentKeyExpiration:
     """Tests for _determine_agent_key_expiration helper method."""
 
-    def test_determine_expiration_with_owner_key_expires(self, nx: NexusFS) -> None:
+    def test_determine_expiration_with_owner_key_expires(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test expiration when owner has key with expiration."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create owner's API key with expiration
             owner_key = APIKeyModel(
@@ -239,9 +250,11 @@ class TestDetermineAgentKeyExpiration:
         finally:
             session.close()
 
-    def test_determine_expiration_with_owner_key_no_expiration(self, nx: NexusFS) -> None:
+    def test_determine_expiration_with_owner_key_no_expiration(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test expiration when owner has key without expiration (defaults to 365 days)."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create owner's API key without expiration
             owner_key = APIKeyModel(
@@ -266,9 +279,11 @@ class TestDetermineAgentKeyExpiration:
         finally:
             session.close()
 
-    def test_determine_expiration_no_owner_key(self, nx: NexusFS) -> None:
+    def test_determine_expiration_no_owner_key(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test expiration when owner has no key (defaults to 365 days)."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             expires_at = nx._determine_agent_key_expiration("alice", session)
 
@@ -279,9 +294,11 @@ class TestDetermineAgentKeyExpiration:
         finally:
             session.close()
 
-    def test_determine_expiration_owner_key_expired(self, nx: NexusFS) -> None:
+    def test_determine_expiration_owner_key_expired(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that expired owner key raises ValueError."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create expired owner's API key
             owner_key = APIKeyModel(
@@ -302,9 +319,11 @@ class TestDetermineAgentKeyExpiration:
         finally:
             session.close()
 
-    def test_determine_expiration_ignores_agent_keys(self, nx: NexusFS) -> None:
+    def test_determine_expiration_ignores_agent_keys(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that agent keys are ignored when finding owner's key."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create agent key (should be ignored)
             agent_key = APIKeyModel(
@@ -340,9 +359,11 @@ class TestDetermineAgentKeyExpiration:
         finally:
             session.close()
 
-    def test_determine_expiration_ignores_revoked_keys(self, nx: NexusFS) -> None:
+    def test_determine_expiration_ignores_revoked_keys(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that revoked keys are ignored."""
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Create revoked owner's API key
             revoked_key = APIKeyModel(
@@ -370,7 +391,9 @@ class TestDetermineAgentKeyExpiration:
 class TestDeleteAgentCleanup:
     """Tests for delete_agent cleanup logic."""
 
-    def test_delete_agent_revokes_api_keys(self, nx: NexusFS) -> None:
+    def test_delete_agent_revokes_api_keys(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that delete_agent revokes all API keys for the agent."""
         # Register agent first
         context = {"user_id": "alice", "zone_id": "default"}
@@ -382,7 +405,7 @@ class TestDeleteAgentCleanup:
         )
 
         # Create additional API key for the agent using NexusFS's session
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             agent_key = APIKeyModel(
                 user_id="alice",
@@ -415,7 +438,7 @@ class TestDeleteAgentCleanup:
         assert result is True
 
         # Verify all keys are revoked using new session
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             active_key_count = (
                 session.query(APIKeyModel)

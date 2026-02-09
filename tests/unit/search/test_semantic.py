@@ -8,9 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus import connect
+from nexus.backends.local import LocalBackend
+from nexus.factory import create_nexus_fs
 from nexus.search.chunking import ChunkStrategy
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestSemanticSearchResult:
@@ -58,17 +61,44 @@ class TestSemanticSearch:
     """Test SemanticSearch class."""
 
     @pytest.fixture
-    def nx(self):
-        """Create a temporary NexusFS instance."""
+    def temp_dir(self):
+        """Create shared temporary directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            nx = connect(
-                config={
-                    "data_dir": str(Path(tmpdir) / "data"),
-                    "enforce_permissions": False,  # Disable permissions for tests
-                }
-            )
-            yield nx
-            nx.close()
+            data_dir = Path(tmpdir) / "nexus-data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            yield data_dir
+
+    @pytest.fixture
+    def record_store(self, temp_dir):
+        """Create SQLAlchemyRecordStore for testing."""
+        rs = SQLAlchemyRecordStore(db_path=str(temp_dir / "nexus.db"))
+        yield rs
+        rs.close()
+
+    @pytest.fixture
+    def nx(self, temp_dir, record_store):
+        """Create NexusFS instance for testing.
+
+        Uses SQLAlchemyMetadataStore because SemanticSearch.index_document()
+        queries FilePathModel which is populated by SQLAlchemyMetadataStore.put().
+        See Task #3 for future decoupling.
+        """
+        backend = LocalBackend(root_path=temp_dir)
+        metadata_store = SQLAlchemyMetadataStore(db_path=str(temp_dir / "nexus.db"))
+        nx = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            enforce_permissions=False,
+            audit_strict_mode=False,
+        )
+        yield nx
+        nx.close()
+
+    @pytest.fixture
+    def engine(self, record_store):
+        """Get SQL engine from RecordStore for DI."""
+        return record_store.engine
 
     @pytest.fixture
     def mock_embedding_provider(self):
@@ -79,29 +109,30 @@ class TestSemanticSearch:
         provider.embed_texts = AsyncMock(return_value=[[0.1] * 128, [0.2] * 128])
         return provider
 
-    def test_init_without_embeddings(self, nx):
+    def test_init_without_embeddings(self, nx, engine):
         """Test initialization without embedding provider."""
-        search = SemanticSearch(nx)
+        search = SemanticSearch(nx, engine=engine)
 
         assert search.nx == nx
         assert search.embedding_provider is None
         assert search.chunk_size == 1024
         assert search.chunk_strategy == ChunkStrategy.SEMANTIC
 
-    def test_init_with_embeddings(self, nx, mock_embedding_provider):
+    def test_init_with_embeddings(self, nx, engine, mock_embedding_provider):
         """Test initialization with embedding provider."""
-        search = SemanticSearch(nx, embedding_provider=mock_embedding_provider)
+        search = SemanticSearch(nx, embedding_provider=mock_embedding_provider, engine=engine)
 
         assert search.embedding_provider == mock_embedding_provider
         assert search.chunk_size == 1024
 
-    def test_init_custom_settings(self, nx, mock_embedding_provider):
+    def test_init_custom_settings(self, nx, engine, mock_embedding_provider):
         """Test initialization with custom settings."""
         search = SemanticSearch(
             nx,
             embedding_provider=mock_embedding_provider,
             chunk_size=512,
             chunk_strategy=ChunkStrategy.FIXED,
+            engine=engine,
         )
 
         assert search.chunk_size == 512
@@ -124,11 +155,11 @@ class TestSemanticSearch:
         # Should have created at least one chunk
         assert num_chunks > 0
 
-    async def test_index_document_without_embeddings(self, nx):
+    async def test_index_document_without_embeddings(self, nx, engine):
         """Test indexing without embedding provider (keyword-only)."""
         nx.write("/workspace/test.txt", b"This is a test document.")
 
-        search = SemanticSearch(nx)
+        search = SemanticSearch(nx, engine=engine)
         search.vector_db.initialize = MagicMock()
 
         num_chunks = await search.index_document("/workspace/test.txt")
@@ -337,13 +368,13 @@ class TestSemanticSearch:
         # Should return empty results or handle gracefully
         assert isinstance(results, list)
 
-    def test_close(self, nx):
+    def test_close(self, nx, engine):
         """Test closing the search engine."""
-        search = SemanticSearch(nx)
+        search = SemanticSearch(nx, engine=engine)
         # Should not raise
         search.close()
 
-    def test_init_with_entropy_filtering(self, nx, mock_embedding_provider):
+    def test_init_with_entropy_filtering(self, nx, engine, mock_embedding_provider):
         """Test initialization with entropy filtering enabled (Issue #1024)."""
         search = SemanticSearch(
             nx,
@@ -351,6 +382,7 @@ class TestSemanticSearch:
             entropy_filtering=True,
             entropy_threshold=0.35,
             entropy_alpha=0.5,
+            engine=engine,
         )
 
         assert search.entropy_filtering is True
@@ -360,14 +392,14 @@ class TestSemanticSearch:
         assert search._entropy_chunker.redundancy_threshold == 0.35
         assert search._entropy_chunker.alpha == 0.5
 
-    def test_init_entropy_filtering_disabled_by_default(self, nx):
+    def test_init_entropy_filtering_disabled_by_default(self, nx, engine):
         """Test entropy filtering is disabled by default."""
-        search = SemanticSearch(nx)
+        search = SemanticSearch(nx, engine=engine)
 
         assert search.entropy_filtering is False
         assert search._entropy_chunker is None
 
-    def test_get_index_stats_includes_entropy_config(self, nx):
+    def test_get_index_stats_includes_entropy_config(self, nx, engine):
         """Test that get_index_stats includes entropy filtering config."""
         import asyncio
 
@@ -376,6 +408,7 @@ class TestSemanticSearch:
             entropy_filtering=True,
             entropy_threshold=0.4,
             entropy_alpha=0.6,
+            engine=engine,
         )
         search.vector_db.initialize = MagicMock()
 

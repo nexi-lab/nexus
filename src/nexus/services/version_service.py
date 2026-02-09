@@ -23,11 +23,11 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
-    from nexus.storage import SQLAlchemyMetadataStore
 
 
 class VersionService:
@@ -87,7 +87,7 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: SQLAlchemyMetadataStore,
+        metadata_store: FileMetadataProtocol,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,

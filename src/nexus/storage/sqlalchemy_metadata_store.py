@@ -28,7 +28,7 @@ try:
 except ImportError:
     psycopg2 = None
 
-from nexus.core._metadata_generated import FileMetadata, MetadataStore, PaginatedResult
+from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.core.exceptions import MetadataError
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.models import (
@@ -66,7 +66,7 @@ def _ensure_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
-class SQLAlchemyMetadataStore(MetadataStore):
+class SQLAlchemyMetadataStore(FileMetadataProtocol):
     """
     SQLAlchemy-based metadata store supporting multiple database backends.
 
@@ -133,9 +133,9 @@ class SQLAlchemyMetadataStore(MetadataStore):
 
         logger = logging.getLogger(__name__)
         logger.info(
-            f"MetadataStore database: {self.db_type} ({self.database_url[:50]}...)"
+            f"FileMetadataProtocol database: {self.db_type} ({self.database_url[:50]}...)"
             if len(self.database_url) > 50
-            else f"MetadataStore database: {self.db_type} ({self.database_url})"
+            else f"FileMetadataProtocol database: {self.db_type} ({self.database_url})"
         )
 
         # For SQLite, extract and ensure parent directory exists
@@ -1159,6 +1159,7 @@ class SQLAlchemyMetadataStore(MetadataStore):
         zone_id: str | None = None,
         accessible_paths: set[str] | None = None,
         accessible_int_ids: set[int] | None = None,
+        **_kwargs: Any,
     ) -> list[FileMetadata]:
         """
         List all files with given path prefix.

@@ -20,6 +20,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.backends.backend import Backend
 from nexus.core.permissions import OperationContext
 from nexus.storage.models import FilePathModel
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -32,12 +33,20 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    """Create a SQLAlchemyRecordStore for testing."""
+    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=False,
     )
@@ -109,7 +118,9 @@ class MockDynamicConnector(Backend):
 class TestListConnectorSizes:
     """Test that list() returns correct sizes for dynamic connector files."""
 
-    def test_list_details_returns_sizes_for_connector(self, nx: NexusFS) -> None:
+    def test_list_details_returns_sizes_for_connector(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that list(details=True) returns actual sizes from file_paths."""
         # Create a mock dynamic connector
         connector = MockDynamicConnector()
@@ -119,7 +130,7 @@ class TestListConnectorSizes:
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create file_paths entries with sizes using database session
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             session.add(
                 FilePathModel(
@@ -212,7 +223,7 @@ class TestListConnectorSizes:
             assert isinstance(file_path, str), "details=False should return strings"
             assert file_path.startswith(mount_path)
 
-    def test_list_large_file_sizes(self, nx: NexusFS) -> None:
+    def test_list_large_file_sizes(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
         """Test that large file sizes (>2GB) are handled correctly."""
         connector = MockDynamicConnector()
         mount_path = "/mnt/test_connector"
@@ -220,7 +231,7 @@ class TestListConnectorSizes:
 
         # Create entry with large size (3GB)
         large_size = 3 * 1024 * 1024 * 1024  # 3GB
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             session.add(
                 FilePathModel(
@@ -243,7 +254,9 @@ class TestListConnectorSizes:
         file1 = next(f for f in files if "file1.txt" in f["path"])
         assert file1["size"] == large_size, f"Should preserve large size {large_size}"
 
-    def test_readdir_cache_uses_list_sizes(self, nx: NexusFS) -> None:
+    def test_readdir_cache_uses_list_sizes(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test that FUSE readdir caches sizes from list() for getattr optimization."""
         # This is an integration test to verify the full flow:
         # list() returns sizes → readdir caches them → getattr uses cached values
@@ -255,7 +268,7 @@ class TestListConnectorSizes:
         # Create file with known size (using file1.txt which list_dir returns)
         file_path = f"{mount_path}/file1.txt"
         file_size = 42424
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             session.add(
                 FilePathModel(
@@ -296,14 +309,16 @@ class TestListConnectorSizesRegression:
         file1 = next(f for f in files if f["path"] == "/file1.txt")
         assert file1["size"] == 9  # len("Content 1")
 
-    def test_list_recursive_with_sizes(self, nx: NexusFS) -> None:
+    def test_list_recursive_with_sizes(
+        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
+    ) -> None:
         """Test recursive listing with details includes all files with sizes."""
         connector = MockDynamicConnector()
         mount_path = "/mnt/test"
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create nested structure
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             session.add(
                 FilePathModel(

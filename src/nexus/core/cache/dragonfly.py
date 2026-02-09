@@ -6,7 +6,10 @@ Dragonfly is a Redis-compatible in-memory datastore that provides:
 - Multi-threaded architecture
 - Smart eviction with cache_mode=true
 
-This module provides the client connection manager and cache implementations.
+This module provides:
+- DragonflyClient: Connection pool manager
+- DragonflyCacheStore: CacheStoreABC driver (Fourth Pillar production backend)
+- Domain caches: Permission, Tiger, ResourceMap, Embedding
 
 Connection Pool Optimizations (Issue #1075):
 - BlockingConnectionPool: Waits for available connections instead of erroring
@@ -14,9 +17,15 @@ Connection Pool Optimizations (Issue #1075):
 - Retry on timeout: Automatic retry for transient network issues
 """
 
+from __future__ import annotations
+
 import logging
 import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
+
+from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +276,86 @@ class DragonflyClient:
     async def __aexit__(self, *args: object) -> None:
         """Async context manager exit."""
         await self.disconnect()
+
+
+class DragonflyCacheStore(CacheStoreABC):
+    """Dragonfly (Redis-compatible) driver for CacheStoreABC — the production backend.
+
+    Wraps DragonflyClient to implement the low-level KV + PubSub primitives
+    that domain caches (PermissionCache, TigerCache, EventBus) are built upon.
+
+    OS Analogy: /dev/shm backed by a real tmpfs mount (vs NullCacheStore = CONFIG_FSCACHE=n).
+
+    Usage:
+        client = DragonflyClient("redis://localhost:6379")
+        await client.connect()
+        store = DragonflyCacheStore(client)
+
+        await store.set("key", b"value", ttl=300)
+        data = await store.get("key")
+
+        async with store.subscribe("events:zone1") as messages:
+            async for msg in messages:
+                process(msg)
+    """
+
+    def __init__(self, client: DragonflyClient) -> None:
+        self._client = client
+
+    # --- KV operations ---
+
+    async def get(self, key: str) -> bytes | None:
+        return await self._client.client.get(key)
+
+    async def set(self, key: str, value: bytes, ttl: int | None = None) -> None:
+        if ttl is not None:
+            await self._client.client.setex(key, ttl, value)
+        else:
+            await self._client.client.set(key, value)
+
+    async def delete(self, key: str) -> bool:
+        result = await self._client.client.delete(key)
+        return result > 0
+
+    async def exists(self, key: str) -> bool:
+        result = await self._client.client.exists(key)
+        return result > 0
+
+    async def delete_by_pattern(self, pattern: str) -> int:
+        deleted = 0
+        async for key in self._client.client.scan_iter(match=pattern, count=1000):
+            await self._client.client.delete(key)
+            deleted += 1
+        return deleted
+
+    # --- PubSub operations ---
+
+    async def publish(self, channel: str, message: bytes) -> int:
+        return await self._client.client.publish(channel, message)
+
+    @asynccontextmanager
+    async def subscribe(self, channel: str) -> AsyncIterator[AsyncIterator[bytes]]:
+        pubsub = self._client.client.pubsub()
+        await pubsub.subscribe(channel)
+        try:
+
+            async def _messages() -> AsyncIterator[bytes]:
+                async for msg in pubsub.listen():
+                    if msg["type"] == "message":
+                        yield msg["data"]
+
+            yield _messages()
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
+
+    # --- Lifecycle ---
+
+    async def health_check(self) -> bool:
+        return await self._client.health_check()
+
+    async def close(self) -> None:
+        await self._client.disconnect()
 
 
 class DragonflyPermissionCache:

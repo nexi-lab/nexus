@@ -17,6 +17,7 @@ import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.portability import (
     BundleReader,
     ZoneExportOptions,
@@ -42,7 +43,7 @@ def nexus_fs(temp_dir):
     data_dir = temp_dir / "data"
     data_dir.mkdir()
 
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=data_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),

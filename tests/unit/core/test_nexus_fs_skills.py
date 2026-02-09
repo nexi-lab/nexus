@@ -30,6 +30,7 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import OperationContext
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -69,7 +70,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
-    nx_instance = NexusFS(
+    nx_instance = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),

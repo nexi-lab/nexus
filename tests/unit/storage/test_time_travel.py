@@ -7,8 +7,12 @@ from pathlib import Path
 
 import pytest
 
-import nexus
+from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import NotFoundError
+from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
+from nexus.storage.record_store import SQLAlchemyRecordStore
+from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestTimeTravelDebug:
@@ -21,22 +25,36 @@ class TestTimeTravelDebug:
             yield tmpdir
 
     @pytest.fixture
-    def nx(self, temp_dir):
-        """Create NexusFS instance for testing."""
+    def record_store(self, temp_dir):
+        """Create SQLAlchemyRecordStore for testing."""
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
+        rs = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
+        yield rs
+        rs.close()
 
-        nx = nexus.connect(
-            config={
-                "data_dir": str(data_dir),
-                "enforce_permissions": False,  # Disable permissions for tests
-                "backend": "local",
-            }
+    @pytest.fixture
+    def nx(self, temp_dir, record_store):
+        """Create NexusFS instance for testing.
+
+        Uses SQLAlchemyMetadataStore because time-travel features
+        (FilePathModel, VersionHistoryModel) are populated by its put() method.
+        See Task #3 for future decoupling of version history from metadata store.
+        """
+        data_dir = Path(temp_dir) / "nexus-data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        backend = LocalBackend(root_path=data_dir)
+        metadata_store = SQLAlchemyMetadataStore(db_path=str(data_dir / "nexus.db"))
+        nx = create_nexus_fs(
+            backend=backend,
+            metadata_store=metadata_store,
+            record_store=record_store,
+            enforce_permissions=False,
         )
         yield nx
         nx.close()
 
-    def test_time_travel_read_file_history(self, nx):
+    def test_time_travel_read_file_history(self, nx, record_store):
         """Test reading file at different historical points."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -49,7 +67,7 @@ class TestTimeTravelDebug:
         nx.write(path, b"Version 3")
 
         # Get all operations (most recent first)
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops = logger.list_operations(path=path, limit=10)
             assert len(ops) == 3
@@ -77,7 +95,7 @@ class TestTimeTravelDebug:
             assert state_v3["content"] == b"Version 3"
             assert state_v3["operation_id"] == op_v3
 
-    def test_time_travel_file_deleted(self, nx):
+    def test_time_travel_file_deleted(self, nx, record_store):
         """Test reading file that was deleted."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -87,7 +105,7 @@ class TestTimeTravelDebug:
         # Write file
         nx.write(path, b"Content before delete")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
 
             # Get write operation
@@ -114,7 +132,7 @@ class TestTimeTravelDebug:
             with pytest.raises(NotFoundError):
                 time_travel.get_file_at_operation(path, op_delete)
 
-    def test_time_travel_list_directory(self, nx):
+    def test_time_travel_list_directory(self, nx, record_store):
         """Test listing directory at historical operation point."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -122,7 +140,7 @@ class TestTimeTravelDebug:
         # Create multiple files
         nx.write("/workspace/file1.txt", b"File 1")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
 
             # Get operation after first file
@@ -161,7 +179,7 @@ class TestTimeTravelDebug:
             assert "/workspace/file2.txt" in paths
             assert "/workspace/file3.txt" in paths
 
-    def test_time_travel_diff_operations(self, nx):
+    def test_time_travel_diff_operations(self, nx, record_store):
         """Test diffing file state between two operations."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -171,7 +189,7 @@ class TestTimeTravelDebug:
         # Write version 1
         nx.write(path, b"Hello World")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_v1 = logger.list_operations(path=path, limit=10)
             op_v1 = ops_v1[0].operation_id
@@ -195,7 +213,7 @@ class TestTimeTravelDebug:
             assert diff["operation_2"]["content"] == b"Hello World - Updated!"
             assert diff["size_diff"] == len(b"Hello World - Updated!") - len(b"Hello World")
 
-    def test_time_travel_diff_file_created(self, nx):
+    def test_time_travel_diff_file_created(self, nx, record_store):
         """Test diff when file was created between operations."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -203,7 +221,7 @@ class TestTimeTravelDebug:
         # Create a baseline operation (write different file)
         nx.write("/workspace/baseline.txt", b"Baseline")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_baseline = logger.list_operations(limit=10)
             op_baseline = ops_baseline[0].operation_id
@@ -227,7 +245,7 @@ class TestTimeTravelDebug:
             assert diff["operation_2"]["content"] == b"New content"
             assert diff["size_diff"] == len(b"New content")
 
-    def test_time_travel_diff_file_deleted(self, nx):
+    def test_time_travel_diff_file_deleted(self, nx, record_store):
         """Test diff when file was deleted between operations."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -237,7 +255,7 @@ class TestTimeTravelDebug:
         # Create file
         nx.write(path, b"Will be deleted")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
             ops_created = logger.list_operations(path=path, limit=10)
             op_created = ops_created[0].operation_id
@@ -260,7 +278,7 @@ class TestTimeTravelDebug:
             assert diff["operation_1"]["content"] == b"Will be deleted"
             assert diff["size_diff"] == -len(b"Will be deleted")
 
-    def test_time_travel_with_agent_id(self, nx):
+    def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
         from nexus.core.permissions_enhanced import EnhancedOperationContext
         from nexus.storage.operation_logger import OperationLogger
@@ -272,7 +290,7 @@ class TestTimeTravelDebug:
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
 
             # Verify operation has agent_id
@@ -289,18 +307,18 @@ class TestTimeTravelDebug:
             state = time_travel.get_file_at_operation(path, op_id, zone_id=op_zone_id)
             assert state["content"] == b"Agent 1 content"
 
-    def test_time_travel_nonexistent_operation(self, nx):
+    def test_time_travel_nonexistent_operation(self, nx, record_store):
         """Test error handling for nonexistent operation ID."""
         from nexus.storage.time_travel import TimeTravelReader
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             time_travel = TimeTravelReader(session, nx.backend)
 
             # Try to read with fake operation ID
             with pytest.raises(NotFoundError):
                 time_travel.get_operation_by_id("fake-operation-id")
 
-    def test_time_travel_metadata_preservation(self, nx):
+    def test_time_travel_metadata_preservation(self, nx, record_store):
         """Test that metadata is preserved in historical reads."""
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
@@ -318,7 +336,7 @@ class TestTimeTravelDebug:
         # Write again to create a new version
         nx.write(path, b"Updated content")
 
-        with nx.metadata.SessionLocal() as session:
+        with record_store.session_factory() as session:
             logger = OperationLogger(session)
 
             # Get the second write operation

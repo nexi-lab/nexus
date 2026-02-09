@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.storage.models import Base
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
@@ -33,7 +34,7 @@ def nexus_fs(tmp_path):
     # Create LocalBackend instance
     backend = LocalBackend(root_path=str(backend_path))
 
-    fs = NexusFS(
+    fs = create_nexus_fs(
         backend=backend,
         metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
         record_store=SQLAlchemyRecordStore(db_path=db_path),

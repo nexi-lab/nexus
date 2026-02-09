@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -100,7 +101,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     backend = LocalBackend(root_path=str(storage_path))
 
     # Create NexusFS with Tiger Cache enabled
-    nx = NexusFS(
+    nx = create_nexus_fs(
         backend=backend,
         metadata_store=SQLAlchemyMetadataStore(db_path=str(db_with_migrations)),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),

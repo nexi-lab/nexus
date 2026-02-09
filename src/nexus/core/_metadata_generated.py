@@ -11,7 +11,7 @@ To modify FileMetadata:
 Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
-  - MetadataStore: Abstract base class for metadata storage backends
+  - FileMetadataProtocol: Abstract base class for metadata storage backends
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ class FileMetadata:
         return compact.to_file_metadata()
 
 
-class MetadataStore(ABC):
+class FileMetadataProtocol(ABC):
     """Abstract interface for metadata storage.
 
     Generated from: proto/nexus/core/metadata.proto
@@ -165,7 +165,7 @@ class MetadataStore(ABC):
         pass
 
     @abstractmethod
-    def list(self, prefix: str = "", recursive: bool = True) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List all files with given path prefix."""
         pass
 

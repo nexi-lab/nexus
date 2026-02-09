@@ -32,6 +32,7 @@ import uuid
 
 import pytest
 
+from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
@@ -117,7 +118,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = NexusFS(
+        nexus = create_nexus_fs(
             backend=backend,
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent1),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
@@ -159,7 +160,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        nexus = NexusFS(
+        nexus = create_nexus_fs(
             backend=backend,
             metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent2),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),

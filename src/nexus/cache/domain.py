@@ -335,7 +335,8 @@ class EmbeddingCache:
             cached = await self._store.get(key)
             if cached is not None:
                 self._hits += 1
-                return json.loads(cached)
+                result: list[float] = json.loads(cached)
+                return result
             self._misses += 1
             return None
         except Exception as e:

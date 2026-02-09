@@ -20,13 +20,22 @@ from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
-def nx(tmp_path):
+def record_store(tmp_path):
+    """Create SQLAlchemyRecordStore for testing."""
+    db_file = tmp_path / "metadata.db"
+    rs = SQLAlchemyRecordStore(db_path=db_file)
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
     db_file = tmp_path / "metadata.db"
     nx_instance = NexusFS(
         backend=LocalBackend(tmp_path),
         metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
-        record_store=SQLAlchemyRecordStore(db_path=db_file),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,
         allow_admin_bypass=True,
@@ -55,7 +64,7 @@ def oauth_crypto():
 class TestOAuthProvisionIntegration:
     """Integration tests for OAuth user provisioning with simplified API key creation."""
 
-    def test_provision_user_creates_oauth_key_with_expiry(self, nx, admin_context):
+    def test_provision_user_creates_oauth_key_with_expiry(self, nx, admin_context, record_store):
         """Test that provision_user creates API key with custom expiry."""
         # Provision user with OAuth-specific parameters
         expiry_date = datetime.now(UTC) + timedelta(days=90)
@@ -80,7 +89,7 @@ class TestOAuthProvisionIntegration:
         assert result["api_key"].startswith("sk-")
 
         # Verify API key in database
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             api_key_model = session.query(APIKeyModel).filter_by(key_id=result["key_id"]).first()
             assert api_key_model is not None
@@ -99,7 +108,9 @@ class TestOAuthProvisionIntegration:
         finally:
             session.close()
 
-    def test_provision_user_returns_key_id_for_oauth_storage(self, nx, admin_context, oauth_crypto):
+    def test_provision_user_returns_key_id_for_oauth_storage(
+        self, nx, admin_context, oauth_crypto, record_store
+    ):
         """Test that provision_user returns key_id which can be used for OAuthAPIKeyModel."""
         # Provision user
         result = nx.provision_user(
@@ -123,7 +134,7 @@ class TestOAuthProvisionIntegration:
 
         # Encrypt and store in OAuthAPIKeyModel (simulating OAuth callback)
         encrypted_value = oauth_crypto.encrypt_token(api_key_value)
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             oauth_key = OAuthAPIKeyModel(
                 key_id=key_id,
@@ -144,7 +155,7 @@ class TestOAuthProvisionIntegration:
         finally:
             session.close()
 
-    def test_provision_user_default_parameters_no_expiry(self, nx, admin_context):
+    def test_provision_user_default_parameters_no_expiry(self, nx, admin_context, record_store):
         """Test that provision_user without expiry parameter creates key with no expiry."""
         result = nx.provision_user(
             user_id="regular_user",
@@ -158,7 +169,7 @@ class TestOAuthProvisionIntegration:
         )
 
         # Verify API key has no expiry
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             api_key_model = session.query(APIKeyModel).filter_by(key_id=result["key_id"]).first()
             assert api_key_model is not None
@@ -166,7 +177,7 @@ class TestOAuthProvisionIntegration:
         finally:
             session.close()
 
-    def test_provision_user_custom_key_name(self, nx, admin_context):
+    def test_provision_user_custom_key_name(self, nx, admin_context, record_store):
         """Test that provision_user respects custom API key name."""
         result = nx.provision_user(
             user_id="custom_user",
@@ -181,7 +192,7 @@ class TestOAuthProvisionIntegration:
         )
 
         # Verify custom name
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             api_key_model = session.query(APIKeyModel).filter_by(key_id=result["key_id"]).first()
             assert api_key_model is not None
@@ -189,7 +200,7 @@ class TestOAuthProvisionIntegration:
         finally:
             session.close()
 
-    def test_complete_oauth_flow_simulation(self, nx, admin_context, oauth_crypto):
+    def test_complete_oauth_flow_simulation(self, nx, admin_context, oauth_crypto, record_store):
         """Test complete OAuth flow: provision + encrypt + store."""
         # Step 1: Provision user (as OAuth callback would do)
         expiry_date = datetime.now(UTC) + timedelta(days=90)
@@ -211,7 +222,7 @@ class TestOAuthProvisionIntegration:
 
         # Step 2: Encrypt and store (as OAuth callback would do)
         encrypted_value = oauth_crypto.encrypt_token(api_key_value)
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             oauth_key = OAuthAPIKeyModel(
                 key_id=key_id,
@@ -228,7 +239,7 @@ class TestOAuthProvisionIntegration:
         assert len(provision_result["agent_paths"]) >= 0
 
         # Step 4: Verify API key retrieval (as subsequent OAuth login would do)
-        session = nx.metadata.SessionLocal()
+        session = record_store.session_factory()
         try:
             # Find OAuth key
             oauth_keys = (

@@ -662,6 +662,7 @@ class NexusFS(  # type: ignore[misc]
             metadata_store=self.metadata,
             permission_enforcer=self._permission_enforcer,
             enforce_permissions=self._enforce_permissions,
+            record_store=self._record_store,
         )
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache

@@ -248,8 +248,10 @@ class VersionService:
         if self._session_factory:
             from nexus.storage.version_manager import VersionManager
 
+            factory = self._session_factory  # bind for closure
+
             def _query_versions() -> builtins.list[dict[str, Any]]:
-                with self._session_factory() as session:
+                with factory() as session:
                     return VersionManager.list_versions(session, path)
 
             return await asyncio.to_thread(_query_versions)

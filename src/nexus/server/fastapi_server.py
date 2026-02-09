@@ -370,6 +370,8 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
+        # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+        self.reactive_subscription_manager: Any = None
 
 
 # Global state (set during app creation)
@@ -551,10 +553,14 @@ async def get_auth_result(
     if not authorization:
         return None
 
-    if not authorization.startswith("Bearer "):
+    # Extract token: support both "Bearer <token>" and raw "sk-<token>" formats
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif authorization.startswith("sk-"):
+        # API keys (sk-*) can be sent directly without Bearer prefix
+        token = authorization
+    else:
         return None
-
-    token = authorization[7:]
 
     # Try auth provider first
     if _app_state.auth_provider:
@@ -806,6 +812,16 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize cache factory: {e}")
 
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
     try:
@@ -816,7 +832,10 @@ async def lifespan(_app: FastAPI) -> Any:
         if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
             event_bus = _app_state.nexus_fs._event_bus
 
-        _app_state.websocket_manager = WebSocketManager(event_bus=event_bus)
+        _app_state.websocket_manager = WebSocketManager(
+            event_bus=event_bus,
+            reactive_manager=_app_state.reactive_subscription_manager,
+        )
         await _app_state.websocket_manager.start()
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
@@ -1597,6 +1616,26 @@ def _register_routes(app: FastAPI) -> None:
             }
         else:
             health["components"]["websocket"] = {"status": "disabled"}
+
+        # Check Reactive Subscription Manager (Issue #1167)
+        if _app_state.reactive_subscription_manager:
+            try:
+                reactive_stats = _app_state.reactive_subscription_manager.get_stats()
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "healthy",
+                    "total_subscriptions": reactive_stats["total_subscriptions"],
+                    "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
+                    "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
+                    "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
+                    "registry": reactive_stats["registry"],
+                }
+            except Exception as e:
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "error",
+                    "error": str(e),
+                }
+        else:
+            health["components"]["reactive_subscriptions"] = {"status": "disabled"}
 
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}

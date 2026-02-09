@@ -90,6 +90,27 @@ class CacheStoreABC(ABC):
         """
         ...
 
+    # --- Batch KV operations ---
+
+    async def get_many(self, keys: list[str]) -> dict[str, bytes | None]:
+        """Get multiple keys in one call. Returns {key: value_or_None}.
+
+        Default: sequential get() calls. Drivers SHOULD override with
+        pipeline/MGET for fewer round-trips when batch performance matters.
+        """
+        return {k: await self.get(k) for k in keys}
+
+    async def set_many(
+        self, mapping: dict[str, bytes], ttl: int | None = None
+    ) -> None:
+        """Set multiple keys in one call.
+
+        Default: sequential set() calls. Drivers SHOULD override with
+        pipeline/MSET for fewer round-trips when batch performance matters.
+        """
+        for k, v in mapping.items():
+            await self.set(k, v, ttl=ttl)
+
     # --- PubSub operations ---
 
     @abstractmethod

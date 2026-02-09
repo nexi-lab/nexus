@@ -39,6 +39,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/memories", tags=["memories"])
 
 
+# Issue #1258: Memory paging stats endpoint
+@router.get("/stats")
+async def get_memory_paging_stats(
+    _auth_result: dict[str, Any] = Depends(lambda: _get_require_auth()),
+) -> dict[str, Any]:
+    """Get memory paging statistics (Issue #1258).
+
+    Returns distribution of memories across tiers if paging is enabled.
+
+    Returns:
+        Statistics dict with tier counts and utilization
+
+    Raises:
+        503: NexusFS not initialized
+    """
+    app_state = _get_app_state()
+    if not app_state.nexus_fs:
+        raise HTTPException(status_code=503, detail="NexusFS not initialized")
+
+    try:
+        # Check if memory API has paging support
+        memory_api = app_state.nexus_fs.memory
+        if hasattr(memory_api, "get_paging_stats"):
+            stats: dict[str, Any] = memory_api.get_paging_stats()
+            return stats
+        else:
+            return {
+                "paging_enabled": False,
+                "message": "Memory paging not enabled on this server",
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}") from e
+
+
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
     from nexus.server.fastapi_server import require_auth

@@ -3100,13 +3100,16 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
+        # Normalize path to ensure leading slash
+        path = request.path if request.path.startswith("/") else "/" + request.path
+
         # Non-blocking mode: use timeout=0
         timeout = request.timeout if request.blocking else 0.0
 
         try:
             lock_id = await lock_manager.acquire(
                 zone_id=zone_id,
-                path=request.path,
+                path=path,
                 timeout=timeout,
                 ttl=request.ttl,
                 max_holders=request.max_holders,
@@ -3133,12 +3136,12 @@ def _register_routes(app: FastAPI) -> None:
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
         # Get lock info to retrieve fence token
-        lock_info = await lock_manager.get_lock_info(zone_id, request.path)
+        lock_info = await lock_manager.get_lock_info(zone_id, path)
         fence_token = lock_info.fence_token if lock_info else 0
 
         return LockResponse(
             lock_id=lock_id,
-            path=request.path,
+            path=path,
             mode="mutex" if request.max_holders == 1 else "semaphore",
             max_holders=request.max_holders,
             ttl=int(request.ttl),
@@ -3224,6 +3227,7 @@ def _register_routes(app: FastAPI) -> None:
             return LockStatusResponse(path=path, locked=False, lock_info=None)
 
         # Convert LockInfo dataclass to response model
+        lock_info_response: LockInfoMutex | LockInfoSemaphore
         if lock_info.mode == "mutex" and lock_info.holders:
             h = lock_info.holders[0]
             lock_info_response = LockInfoMutex(
@@ -3319,7 +3323,7 @@ def _register_routes(app: FastAPI) -> None:
             path = "/" + path
 
         extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
-        if not extended:
+        if not extended.success:
             raise HTTPException(
                 status_code=403,
                 detail="Lock extend failed: not owned by this lock_id or already expired",
@@ -3329,19 +3333,16 @@ def _register_routes(app: FastAPI) -> None:
         expires_at = datetime.now(UTC).timestamp() + request.ttl
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
-        # Determine mode (check mutex first)
-        lock_info = await lock_manager.get_lock_info(zone_id, path)
-        mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
+        # Use lock_info from ExtendResult
+        lock_info = extended.lock_info
+        mode: Literal["mutex", "semaphore"] = "mutex"
         max_holders = 1
         fence_token = 0
+
         if lock_info:
+            mode = lock_info.mode
             fence_token = lock_info.fence_token
             max_holders = lock_info.max_holders
-        elif mode == "semaphore":
-            config_key = lock_manager._semaphore_config_key(zone_id, path)
-            max_raw = await lock_manager._redis.client.get(config_key)
-            if max_raw:
-                max_holders = int(max_raw.decode() if isinstance(max_raw, bytes) else max_raw)
 
         return LockResponse(
             lock_id=request.lock_id,

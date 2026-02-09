@@ -20,12 +20,20 @@ def temp_dir() -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    """Create a SQLAlchemyRecordStore for testing."""
+    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = NexusFS(
         backend=LocalBackend(temp_dir),
         metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
-        record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
+        record_store=record_store,
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for tests
     )
@@ -33,7 +41,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx.close()
 
 
-def test_write_operation_logged(nx: NexusFS) -> None:
+def test_write_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that write operations are logged."""
     path = "/test.txt"
     content = b"Test content"
@@ -42,7 +50,7 @@ def test_write_operation_logged(nx: NexusFS) -> None:
     nx.write(path, content)
 
     # Check operation log
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(limit=10)
 
@@ -54,7 +62,7 @@ def test_write_operation_logged(nx: NexusFS) -> None:
         assert latest.snapshot_hash is None  # New file, no previous version
 
 
-def test_write_update_operation_logged(nx: NexusFS) -> None:
+def test_write_update_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that updating a file logs the previous version."""
     path = "/test.txt"
     content1 = b"Version 1"
@@ -68,7 +76,7 @@ def test_write_update_operation_logged(nx: NexusFS) -> None:
     nx.write(path, content2)
 
     # Check operation log
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(path=path, limit=10)
 
@@ -88,7 +96,7 @@ def test_write_update_operation_logged(nx: NexusFS) -> None:
         assert metadata["version"] == 1
 
 
-def test_delete_operation_logged(nx: NexusFS) -> None:
+def test_delete_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that delete operations are logged with snapshot."""
     path = "/test.txt"
     content = b"Test content"
@@ -99,7 +107,7 @@ def test_delete_operation_logged(nx: NexusFS) -> None:
     nx.delete(path)
 
     # Check operation log
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(operation_type="delete", limit=10)
 
@@ -116,7 +124,7 @@ def test_delete_operation_logged(nx: NexusFS) -> None:
         assert metadata["size"] == len(content)
 
 
-def test_rename_operation_logged(nx: NexusFS) -> None:
+def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test that rename operations are logged."""
     old_path = "/old.txt"
     new_path = "/new.txt"
@@ -127,7 +135,7 @@ def test_rename_operation_logged(nx: NexusFS) -> None:
     nx.rename(old_path, new_path)
 
     # Check operation log
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(operation_type="rename", limit=10)
 
@@ -139,7 +147,7 @@ def test_rename_operation_logged(nx: NexusFS) -> None:
         assert latest.status == "success"
 
 
-def test_operation_log_filtering_by_agent(nx: NexusFS) -> None:
+def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by agent ID using context parameter."""
     from nexus.core.permissions_enhanced import EnhancedOperationContext
 
@@ -151,7 +159,7 @@ def test_operation_log_filtering_by_agent(nx: NexusFS) -> None:
     nx.write("/file2.txt", b"Content 2", context=context2)
 
     # Check operation log filtering
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
 
         # Filter by agent-1
@@ -165,7 +173,7 @@ def test_operation_log_filtering_by_agent(nx: NexusFS) -> None:
         assert all(op.agent_id == "agent-2" for op in ops_agent2)
 
 
-def test_operation_log_filtering_by_type(nx: NexusFS) -> None:
+def test_operation_log_filtering_by_type(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by type."""
     path = "/test.txt"
 
@@ -176,7 +184,7 @@ def test_operation_log_filtering_by_type(nx: NexusFS) -> None:
     nx.delete("/renamed.txt")
 
     # Check operation log filtering
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
 
         # Filter by write
@@ -195,7 +203,7 @@ def test_operation_log_filtering_by_type(nx: NexusFS) -> None:
         assert all(op.operation_type == "rename" for op in rename_ops)
 
 
-def test_get_path_history(nx: NexusFS) -> None:
+def test_get_path_history(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting operation history for a specific path."""
     path = "/test.txt"
 
@@ -205,7 +213,7 @@ def test_get_path_history(nx: NexusFS) -> None:
     nx.write(path, b"Version 3")
 
     # Check path history
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         history = logger.get_path_history(path, limit=10)
 
@@ -214,14 +222,14 @@ def test_get_path_history(nx: NexusFS) -> None:
         assert all(op.operation_type == "write" for op in history)
 
 
-def test_get_last_operation(nx: NexusFS) -> None:
+def test_get_last_operation(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test getting the last operation."""
     # Perform operations
     nx.write("/file1.txt", b"Content 1")
     nx.write("/file2.txt", b"Content 2")
 
     # Get last operation
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         last_op = logger.get_last_operation(status="success")
 
@@ -244,7 +252,7 @@ def test_undo_write_new_file(nx: NexusFS) -> None:
     assert not nx.exists(path)
 
 
-def test_undo_write_update(nx: NexusFS) -> None:
+def test_undo_write_update(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a write operation that updated an existing file."""
     path = "/test.txt"
     content1 = b"Version 1"
@@ -258,7 +266,7 @@ def test_undo_write_update(nx: NexusFS) -> None:
     nx.write(path, content2)
 
     # Get the update operation
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         operations = logger.list_operations(path=path, limit=1)
 
@@ -275,7 +283,7 @@ def test_undo_write_update(nx: NexusFS) -> None:
         assert restored_content == content1
 
 
-def test_undo_delete(nx: NexusFS) -> None:
+def test_undo_delete(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a delete operation."""
     path = "/test.txt"
     content = b"Test content"
@@ -287,7 +295,7 @@ def test_undo_delete(nx: NexusFS) -> None:
     assert not nx.exists(path)
 
     # Get delete operation
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         last_op = logger.get_last_operation(operation_type="delete")
 
@@ -303,7 +311,7 @@ def test_undo_delete(nx: NexusFS) -> None:
         assert nx.read(path) == content
 
 
-def test_undo_rename(nx: NexusFS) -> None:
+def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test undoing a rename operation."""
     old_path = "/old.txt"
     new_path = "/new.txt"
@@ -316,7 +324,7 @@ def test_undo_rename(nx: NexusFS) -> None:
     assert nx.exists(new_path)
 
     # Get rename operation
-    with nx.metadata.SessionLocal() as session:
+    with record_store.session_factory() as session:
         logger = OperationLogger(session)
         last_op = logger.get_last_operation(operation_type="rename")
 

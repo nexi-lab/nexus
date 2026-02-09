@@ -2700,8 +2700,10 @@ class NexusFSSearchMixin:
         }
         chunk_strat = strategy_map.get(chunk_strategy, ChunkStrategy.SEMANTIC)
 
-        # Get database URL from metadata store
-        database_url = str(self.metadata.engine.url)
+        # Semantic search requires RecordStore (SQL engine for vector DB)
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+        database_url = str(self._record_store.engine.url)
 
         if async_mode:
             # Use async search for high-throughput (non-blocking DB operations)
@@ -2723,6 +2725,7 @@ class NexusFSSearchMixin:
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                engine=self._record_store.engine,
             )
             self._semantic_search.initialize()
         else:
@@ -2734,6 +2737,7 @@ class NexusFSSearchMixin:
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                engine=self._record_store.engine,
             )
             self._semantic_search.initialize()
             self._async_search = None

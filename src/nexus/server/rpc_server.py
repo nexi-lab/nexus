@@ -904,15 +904,17 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             return {"type": "unknown"}
 
         metadata_store = self.nexus_fs.metadata
+        db_type = getattr(metadata_store, "db_type", "sled")
 
         info: dict[str, Any] = {
-            "type": metadata_store.db_type,
+            "type": db_type,
         }
 
         # Add database-specific location information
-        if metadata_store.db_type == "sqlite":
-            info["location"] = str(metadata_store.db_path) if metadata_store.db_path else None
-        elif metadata_store.db_type == "postgresql":
+        if db_type == "sqlite":
+            db_path = getattr(metadata_store, "db_path", None)
+            info["location"] = str(db_path) if db_path else None
+        elif db_type == "postgresql":
             # Check if we're using Cloud SQL via proxy
             cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
 
@@ -926,9 +928,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     info["region"] = parts[1]
                     info["instance"] = parts[2]
 
-            # Extract database name from URL
-            db_url = metadata_store.database_url
-            if "@" in db_url and "/" in db_url:
+            # Extract database name from URL (only if RecordStore provides it)
+            db_url = getattr(metadata_store, "database_url", None)
+            if db_url and "@" in db_url and "/" in db_url:
                 # Format: postgresql://user:pass@host:port/database
                 try:
                     host_part = db_url.split("@")[1]

@@ -41,7 +41,8 @@ def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None
         metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
-        enforce_permissions=False,  # Disable auto-parsing for unit tests
+        enforce_permissions=False,
+        audit_strict_mode=False,
     )
     yield fs
     fs.close()
@@ -52,30 +53,29 @@ class TestNexusFSInitialization:
 
     def test_init_creates_metadata_db(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that initialization creates metadata database."""
-        db_path = temp_dir / "metadata.db"
-        assert not db_path.exists()
+        sled_path = temp_dir / "metadata"
+        assert not sled_path.exists()
 
-        metadata_store = SQLAlchemyMetadataStore(db_path=db_path)
+        metadata_store = RaftMetadataStore.local(str(sled_path))
         fs = NexusFS(
             backend=mock_gcs_backend,
             metadata_store=metadata_store,
             audit_strict_mode=False,
         )
 
-        assert db_path.exists()
+        assert sled_path.exists()
         fs.close()
 
-    def test_init_with_default_db_path(self, mock_gcs_backend: Mock, temp_dir: Path) -> None:
-        """Test initialization with default database path."""
-        db_path = temp_dir / "metadata.db"
+    def test_init_with_default_db_path(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
+        """Test initialization with metadata_store."""
+        metadata_store = RaftMetadataStore.local(str(temp_dir / "metadata"))
         fs = NexusFS(
             backend=mock_gcs_backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=metadata_store,
             audit_strict_mode=False,
         )
 
         assert fs.backend.bucket_name == "test-bucket"
-        # Should use default path
         assert fs.metadata is not None
         fs.close()
 
@@ -602,8 +602,13 @@ class TestList:
         remote_fs.backend.write_content.return_value = HandlerResponse.ok(content_hash)
         remote_fs.write(path, content)
 
-        # List with details
-        files = remote_fs.list("/", recursive=True, details=True)
+        # List with details (filter out directories and system entries)
+        all_entries = remote_fs.list("/", recursive=True, details=True)
+        files = [
+            f
+            for f in all_entries
+            if not f.get("is_directory", False) and not f.get("path", "").startswith("/__sys__")
+        ]
 
         assert len(files) == 1
         file_info = files[0]

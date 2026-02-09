@@ -87,6 +87,7 @@ class SemanticSearch:
         entropy_threshold: float = 0.35,
         entropy_alpha: float = 0.5,
         ranking_config: RankingConfig | None = None,
+        engine: Any | None = None,
     ):
         """Initialize semantic search.
 
@@ -102,13 +103,16 @@ class SemanticSearch:
             entropy_alpha: Balance between entity novelty (α) and semantic novelty (1-α)
                            Default 0.5 gives equal weight to both signals
             ranking_config: Configuration for attribute-based ranking (Issue #1092)
+            engine: SQLAlchemy engine for vector DB (DI from caller; required)
         """
         self.nx = nx
         self.chunk_size = chunk_size
         self.chunk_strategy = chunk_strategy
 
-        # Initialize vector database with existing engine
-        self.vector_db = VectorDatabase(self.nx.metadata.engine)
+        # Initialize vector database — engine injected by caller (service, not kernel)
+        if engine is None:
+            raise RuntimeError("SemanticSearch requires a SQL engine (RecordStore)")
+        self.vector_db = VectorDatabase(engine)
 
         # Initialize embedding provider (optional)
         # If None, only keyword search will be available

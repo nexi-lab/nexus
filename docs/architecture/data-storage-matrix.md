@@ -551,8 +551,10 @@ Nexus already has individual implementations scattered across the codebase:
 6. ✅ Rewrite federation-memo.md with this data architecture
 7. ✅ Storage medium orthogonality analysis complete — Redis deprecation identified (P2)
 8. ✅ **NEW**: "Nexus Quartet" — Four Pillars abstraction design decided (Metastore, RecordStore, ObjectStore, CacheStore)
-9. 🔧 **IN PROGRESS**: Task #14 — Implement MetastoreABC + RecordStoreABC in NexusFS constructor
+9. ✅ **COMPLETE**: Task #14 — MetastoreABC + RecordStoreABC in NexusFS constructor (Four Pillars DI)
 10. 📋 **PLANNED**: Rename proto-generated `MetadataStore` → `FileMetadataProtocol` (avoid confusion with MetastoreABC)
+11. ✅ **COMPLETE**: CI PyO3 build for nexus_raft (#1234) — `test.yml` builds `nexus_raft` with `--features python`
+12. ❓ **DECISION**: Version history (VersionHistoryGC, TimeTravelReader) — kernel or services? Currently lives inside `SQLAlchemyMetadataStore.put()`. With RaftMetadataStore as default, FilePathModel/VersionHistoryModel are not populated. Need to decide: (a) kernel: MetastoreABC natively supports versioning, or (b) services: version tracking as separate observer/hook on RecordStore. (Related: Task #3, #11)
 
 ---
 

@@ -197,53 +197,31 @@ class NexusFSCoreMixin:
         consistency tokens (zookies). Each write operation increments the counter
         and includes the new revision in the returned zookie.
 
+        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+
         Args:
             zone_id: The zone to increment revision for
 
         Returns:
             The new revision number after incrementing
-
-        Note:
-            Uses SELECT ... FOR UPDATE + UPDATE for atomic increment.
-            Falls back to in-memory counter if database unavailable.
         """
-        from datetime import UTC, datetime
+        from nexus.core._metadata_generated import FileMetadata
 
-        from sqlalchemy import text
-
+        rev_path = f"/__sys__/zone_rev/{zone_id}"
         try:
-            # Use raw SQL for atomic increment (same pattern as ReBAC version sequences)
-            with self.metadata.engine.begin() as conn:
-                # Try to update existing row
-                result = conn.execute(
-                    text("""
-                        UPDATE filesystem_version_sequences
-                        SET current_revision = current_revision + 1,
-                            updated_at = :now
-                        WHERE zone_id = :zone_id
-                        RETURNING current_revision
-                    """),
-                    {"zone_id": zone_id, "now": datetime.now(UTC)},
+            meta = self.metadata.get(rev_path)
+            new_rev = (meta.version + 1) if meta else 1
+            self.metadata.put(
+                FileMetadata(
+                    path=rev_path,
+                    backend_name="__sys__",
+                    physical_path="__sys__",
+                    size=0,
+                    version=new_rev,
+                    zone_id=zone_id,
                 )
-                row = result.fetchone()
-
-                if row:
-                    return int(row[0])
-
-                # Row doesn't exist - insert with revision 1
-                conn.execute(
-                    text("""
-                        INSERT INTO filesystem_version_sequences
-                            (zone_id, current_revision, updated_at)
-                        VALUES (:zone_id, 1, :now)
-                        ON CONFLICT (zone_id) DO UPDATE
-                        SET current_revision = filesystem_version_sequences.current_revision + 1,
-                            updated_at = :now
-                    """),
-                    {"zone_id": zone_id, "now": datetime.now(UTC)},
-                )
-                return 1
-
+            )
+            return new_rev
         except Exception as e:
             logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
             # Fallback: return timestamp-based pseudo-revision
@@ -252,25 +230,18 @@ class NexusFSCoreMixin:
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
 
+        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+
         Args:
             zone_id: The zone to get revision for
 
         Returns:
             The current revision number (0 if not found)
         """
-        from sqlalchemy import text
-
+        rev_path = f"/__sys__/zone_rev/{zone_id}"
         try:
-            with self.metadata.engine.connect() as conn:
-                result = conn.execute(
-                    text("""
-                        SELECT current_revision FROM filesystem_version_sequences
-                        WHERE zone_id = :zone_id
-                    """),
-                    {"zone_id": zone_id},
-                )
-                row = result.fetchone()
-                return int(row[0]) if row else 0
+            meta = self.metadata.get(rev_path)
+            return meta.version if meta else 0
         except Exception as e:
             logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
             return 0

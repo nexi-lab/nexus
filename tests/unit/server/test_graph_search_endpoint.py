@@ -34,8 +34,8 @@ class TestGraphSearchEndpoint:
             ]
         )
         mock_state.nexus_fs = MagicMock()
-        mock_state.nexus_fs.metadata = MagicMock()
-        mock_state.nexus_fs.metadata.database_url = "sqlite:///test.db"
+        mock_state.nexus_fs._record_store = MagicMock()
+        mock_state.nexus_fs._record_store.database_url = "sqlite:///test.db"
         mock_state.database_url = "sqlite:///test.db"
         return mock_state
 

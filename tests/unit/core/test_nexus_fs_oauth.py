@@ -1042,8 +1042,8 @@ class TestNexusFSOAuthMixin:
                 self._config = Mock()
                 self._config.db_path = "sqlite:///config.db"
                 self.db_path = "sqlite:///obj.db"
-                self.metadata = Mock()
-                self.metadata.database_url = "postgresql://localhost/metadata"
+                self._record_store = Mock()
+                self._record_store.database_url = "postgresql://localhost/metadata"
                 self._token_manager = None
 
         mixin = TestMixin()

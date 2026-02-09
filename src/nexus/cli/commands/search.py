@@ -433,7 +433,8 @@ def search_init(
 
         console.print("[green]✓ Search engine initialized successfully![/green]")
         if isinstance(nx, NexusFS):
-            console.print(f"  Database: [cyan]{nx.metadata.engine.dialect.name}[/cyan]")
+            db_name = nx._record_store.engine.dialect.name if nx._record_store else "N/A"
+            console.print(f"  Database: [cyan]{db_name}[/cyan]")
         else:
             console.print("  Mode: [cyan]Remote (server-side)[/cyan]")
         console.print(f"  Provider: [cyan]{provider or 'None (keyword-only)'}[/cyan]")

@@ -1428,6 +1428,8 @@ async def _graph_enhanced_search(
         )
 
     # Convert to async URL
+    if not db_url:
+        raise RuntimeError("No database URL available for graph search endpoint")
     async_url = db_url
     if async_url.startswith("postgresql://"):
         async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")

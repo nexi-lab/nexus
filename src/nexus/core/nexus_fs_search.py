@@ -898,6 +898,11 @@ class NexusFSSearchMixin:
                             # Path may have been deleted, skip it
                             pass
 
+        # Filter out internal system entries from user-visible results
+        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+
+        all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
+
         # Apply recursive filter if needed
         if prefix is not None:
             results = all_files
@@ -1315,6 +1320,13 @@ class NexusFSSearchMixin:
             logger.info(
                 f"[LIST-PAGINATED] DB batch: {len(batch.items)} items in {_db_elapsed:.1f}ms, sample: {sample_paths}"
             )
+
+            # Filter out internal system entries
+            from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+
+            batch.items = [
+                item for item in batch.items if not item.path.startswith(SYSTEM_PATH_PREFIX)
+            ]
 
             # Filter by permissions
             if self._enforce_permissions and context:

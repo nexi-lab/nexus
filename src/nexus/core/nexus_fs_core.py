@@ -29,6 +29,10 @@ from nexus.core.zookie import Zookie
 
 logger = logging.getLogger(__name__)
 
+# Kernel-reserved path prefix for internal system entries (zone revisions, etc.)
+# These entries are stored in MetastoreABC but filtered from user-visible operations.
+SYSTEM_PATH_PREFIX = "/__sys__/"
+
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.permission_policy import PolicyMatcher
@@ -207,7 +211,7 @@ class NexusFSCoreMixin:
         """
         from nexus.core._metadata_generated import FileMetadata
 
-        rev_path = f"/__sys__/zone_rev/{zone_id}"
+        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         try:
             meta = self.metadata.get(rev_path)
             new_rev = (meta.version + 1) if meta else 1
@@ -238,7 +242,7 @@ class NexusFSCoreMixin:
         Returns:
             The current revision number (0 if not found)
         """
-        rev_path = f"/__sys__/zone_rev/{zone_id}"
+        rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         try:
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0

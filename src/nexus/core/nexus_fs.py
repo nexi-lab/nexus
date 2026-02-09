@@ -2518,8 +2518,14 @@ class NexusFS(  # type: ignore[misc]
             # If both provided, prefix takes precedence for backward compat
             filter.path_prefix = prefix
 
-        # Get all files matching prefix
-        all_files = self.metadata.list(filter.path_prefix)
+        # Get all files matching prefix (exclude internal system entries)
+        from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX
+
+        all_files = [
+            m
+            for m in self.metadata.list(filter.path_prefix)
+            if not m.path.startswith(SYSTEM_PATH_PREFIX)
+        ]
 
         # Apply filters
         filtered_files = []

@@ -2711,7 +2711,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         """Set the metadata store reference for directory queries.
 
         Args:
-            metadata_store: MetadataStore instance
+            metadata_store: FileMetadataProtocol instance
         """
         self._metadata_store = metadata_store
 

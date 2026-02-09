@@ -46,10 +46,10 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core._metadata_generated import MetadataStore
+        from nexus.core._metadata_generated import FileMetadataProtocol
         from nexus.core.permissions import PermissionEnforcer
 
-        metadata: MetadataStore
+        metadata: FileMetadataProtocol
         backend: Backend
         router: PathRouter
         is_admin: bool

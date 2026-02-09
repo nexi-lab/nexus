@@ -176,12 +176,12 @@ class NexusFSSearchMixin:
 
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core._metadata_generated import MetadataStore
+        from nexus.core._metadata_generated import FileMetadataProtocol
         from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
-        metadata: MetadataStore
+        metadata: FileMetadataProtocol
         router: MountRouter
         _enforce_permissions: bool
         _default_context: OperationContext

@@ -8,7 +8,7 @@ server stack, including:
 - Real HTTP network I/O (not ASGI test transport)
 - User context via X-Nexus-Subject and X-Nexus-Zone-ID headers
 
-Issue #940: Full async migration for MetadataStore and NexusFS.
+Issue #940: Full async migration for FileMetadataProtocol and NexusFS.
 """
 
 from __future__ import annotations

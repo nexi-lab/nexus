@@ -7,7 +7,7 @@ This verifies:
 - All 9 endpoints working through the full HTTP stack
 - Real database operations (not mocked)
 
-Issue #940: Full async migration for MetadataStore and NexusFS.
+Issue #940: Full async migration for FileMetadataProtocol and NexusFS.
 """
 
 from __future__ import annotations

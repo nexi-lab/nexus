@@ -35,9 +35,6 @@ class TestDeprovisionUser:
         """Create a NexusFS instance with permissions enforced."""
         import time
 
-        # Use SQLite file in temp directory
-        db_file = temp_dir / "metadata.db"
-
         # Monkey-patch to disable Tiger Cache worker startup in tests
         from nexus.core import nexus_fs
 

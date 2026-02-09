@@ -11,7 +11,6 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
     ZoneModel,
 )
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 __all__ = [
     "FilePathModel",
@@ -21,7 +20,6 @@ __all__ = [
     "UserOAuthAccountModel",
     "ZoneModel",
     "ExternalUserServiceModel",
-    "SQLAlchemyMetadataStore",
     "FileContentCache",
     "get_file_cache",
     "views",

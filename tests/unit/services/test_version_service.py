@@ -480,9 +480,9 @@ class TestVersionServiceHelpers:
 #     @pytest.fixture
 #     def metadata_store(self, isolated_db):
 #         """Create real metadata store."""
-#         from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
+#         from nexus.storage.raft_metadata_store import RaftMetadataStore
 #
-#         store = SQLAlchemyMetadataStore(db_path=str(isolated_db))
+#         store = RaftMetadataStore.local(str(isolated_db).replace(".db", "-raft"))
 #         yield store
 #         store.close()
 #

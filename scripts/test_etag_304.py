@@ -42,8 +42,8 @@ from typing import TYPE_CHECKING, Self
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
 
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -935,7 +935,7 @@ class NexusTestServer:
         backend = LocalBackend(root_path=str(storage_path))
         self.nexus_fs = NexusFS(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=str(db_path)),
+            metadata_store=RaftMetadataStore.local(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=True,  # Admin for testing
             enforce_permissions=False,  # Simplified for testing

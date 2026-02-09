@@ -16,8 +16,8 @@ from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -32,10 +32,9 @@ def record_store(tmp_path):
 @pytest.fixture
 def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
-    db_file = tmp_path / "metadata.db"
     nx_instance = create_nexus_fs(
         backend=LocalBackend(tmp_path),
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_file),
+        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,

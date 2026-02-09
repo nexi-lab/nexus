@@ -10,8 +10,8 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestBackendWriteStreamDefault:
@@ -392,7 +392,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -418,7 +418,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -445,7 +445,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -467,7 +467,7 @@ class TestReadRangeRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -495,7 +495,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -525,7 +525,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,
@@ -545,7 +545,7 @@ class TestStatRPC:
         db_path = tmp_path / "metadata.db"
         nx = create_nexus_fs(
             backend=LocalBackend(data_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+            metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             auto_parse=False,
             enforce_permissions=False,

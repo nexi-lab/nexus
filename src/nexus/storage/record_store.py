@@ -71,8 +71,7 @@ class RecordStoreABC(ABC):
 class SQLAlchemyRecordStore(RecordStoreABC):
     """SQLAlchemy-based RecordStore for PostgreSQL and SQLite.
 
-    Extracts the engine/session creation logic that was previously embedded
-    in SQLAlchemyMetadataStore. This achieves separation of concerns:
+    Extracts the engine/session creation logic. This achieves separation of concerns:
     - MetastoreABC handles file metadata (ordered KV via sled)
     - RecordStoreABC handles relational data (SQL via PostgreSQL/SQLite)
     """

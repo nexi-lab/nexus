@@ -12,8 +12,8 @@ from nexus.backends.local import LocalBackend
 from nexus.factory import create_nexus_fs
 from nexus.search.chunking import ChunkStrategy
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 class TestSemanticSearchResult:
@@ -79,12 +79,12 @@ class TestSemanticSearch:
     def nx(self, temp_dir, record_store):
         """Create NexusFS instance for testing.
 
-        Uses SQLAlchemyMetadataStore because SemanticSearch.index_document()
-        queries FilePathModel which is populated by SQLAlchemyMetadataStore.put().
-        See Task #3 for future decoupling.
+        Uses RaftMetadataStore. TODO: SemanticSearch.index_document() queries
+        FilePathModel which is not populated by RaftMetadataStore.put(),
+        may need adjustment.
         """
         backend = LocalBackend(root_path=temp_dir)
-        metadata_store = SQLAlchemyMetadataStore(db_path=str(temp_dir / "nexus.db"))
+        metadata_store = RaftMetadataStore.local(str(temp_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,

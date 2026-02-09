@@ -33,8 +33,8 @@ import uuid
 import pytest
 
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Skip entire module if Redis is not available (needed for event bus)
 pytestmark = [
@@ -119,7 +119,12 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent1),
+            metadata_store=RaftMetadataStore.local(
+                str(db_path_agent1).replace(
+                    chr(34) + chr(46) + chr(100) + chr(98) + chr(34),
+                    chr(34) + chr(45) + chr(114) + chr(97) + chr(102) + chr(116) + chr(34),
+                )
+            ),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent1),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing
@@ -160,7 +165,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
         warnings.simplefilter("ignore", DeprecationWarning)
         nexus = create_nexus_fs(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=db_path_agent2),
+            metadata_store=RaftMetadataStore.local(str(db_path_agent2).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path_agent2),
             is_admin=True,  # Bypass router access checks
             enforce_permissions=False,  # Disable permissions for testing

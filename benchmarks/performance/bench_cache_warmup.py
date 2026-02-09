@@ -24,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from nexus import NexusFS
 from nexus.backends.local import LocalBackend
 from nexus.cache.warmer import CacheWarmer, WarmupConfig
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> list[str]:
@@ -166,7 +166,7 @@ def print_results(cold: dict, warm: dict, warmup: dict, num_files: int) -> None:
 
     print("\n--- exists() Latency ---")
     print(f"  {'Metric':<20} {'Cold':>12} {'Warm':>12} {'Improvement':>12}")
-    print(f"  {'-'*20} {'-'*12} {'-'*12} {'-'*12}")
+    print(f"  {'-' * 20} {'-' * 12} {'-' * 12} {'-' * 12}")
 
     for metric in ["exists_avg_ms", "exists_p50_ms", "exists_p95_ms"]:
         cold_val = cold[metric]
@@ -177,7 +177,7 @@ def print_results(cold: dict, warm: dict, warmup: dict, num_files: int) -> None:
 
     print("\n--- read() Latency ---")
     print(f"  {'Metric':<20} {'Cold':>12} {'Warm':>12} {'Improvement':>12}")
-    print(f"  {'-'*20} {'-'*12} {'-'*12} {'-'*12}")
+    print(f"  {'-' * 20} {'-' * 12} {'-' * 12} {'-' * 12}")
 
     for metric in ["read_avg_ms", "read_p50_ms", "read_p95_ms"]:
         cold_val = cold[metric]
@@ -193,12 +193,20 @@ def print_results(cold: dict, warm: dict, warmup: dict, num_files: int) -> None:
     print(f"  Cold cache total:   {cold_total:.2f} ms")
     print(f"  Warm cache total:   {warm_total:.2f} ms")
     print(f"  Improvement:        {improvement:.1f}%")
-    print(f"  Speedup:            {cold_total / warm_total:.1f}x" if warm_total > 0 else "  Speedup: N/A")
+    print(
+        f"  Speedup:            {cold_total / warm_total:.1f}x"
+        if warm_total > 0
+        else "  Speedup: N/A"
+    )
 
     print("\n--- Summary ---")
     print(f"  First-access improvement: {improvement:.0f}% faster with warmup")
     print(f"  Warmup cost:              {warmup['warmup_time_ms']:.0f}ms (one-time, background)")
-    print(f"  Break-even:               {warmup['warmup_time_ms'] / (cold_total - warm_total):.1f} full scans" if cold_total > warm_total else "  Break-even: N/A")
+    print(
+        f"  Break-even:               {warmup['warmup_time_ms'] / (cold_total - warm_total):.1f} full scans"
+        if cold_total > warm_total
+        else "  Break-even: N/A"
+    )
 
     print("=" * 70)
 
@@ -215,7 +223,7 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
         backend = LocalBackend(root_path=str(storage_path))
         nx = NexusFS(
             backend=backend,
-            metadata_store=SQLAlchemyMetadataStore(db_path=str(db_path)),
+            metadata_store=RaftMetadataStore.local(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             enforce_permissions=False,
             enable_metadata_cache=True,

@@ -23,8 +23,8 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # Add src to path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
@@ -102,7 +102,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     # Create NexusFS with Tiger Cache enabled
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=str(db_with_migrations)),
+        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=str(db_with_migrations)),
         enforce_permissions=True,
         enable_tiger_cache=True,

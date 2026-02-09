@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 IMPORT_PATTERNS = [
-    "from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore",
+    "from nexus.storage.raft_metadata_store import RaftMetadataStore",
     "from nexus.storage.record_store import SQLAlchemyRecordStore",
     "from nexus.storage.raft_metadata_store import RaftMetadataStore",
 ]

@@ -13,8 +13,8 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.factory import create_nexus_fs
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def nx_with_hierarchy(temp_dir: Path):
 
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable to allow test operations
@@ -182,7 +182,7 @@ class TestMountDatabaseVsConfig:
         """Test that database-saved mounts take precedence over config."""
         nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
             auto_parse=False,
             enforce_permissions=False,

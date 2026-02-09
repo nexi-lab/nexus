@@ -11,8 +11,8 @@ from sqlalchemy import create_engine
 from nexus.backends.local import LocalBackend
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import Base
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def nexus_fs(tmp_path):
 
     fs = create_nexus_fs(
         backend=backend,
-        metadata_store=SQLAlchemyMetadataStore(db_path=db_path),
+        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         enforce_permissions=True,
         allow_admin_bypass=True,  # Allow admin to create test setup

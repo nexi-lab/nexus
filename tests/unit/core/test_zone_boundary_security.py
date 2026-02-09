@@ -17,8 +17,8 @@ from nexus.core.permissions import OperationContext
 from nexus.core.permissions_enhanced import AdminCapability
 from nexus.factory import create_nexus_fs
 from nexus.server.auth.user_helpers import add_user_to_zone
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enforced."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=SQLAlchemyMetadataStore(db_path=temp_dir / "metadata.db"),
+        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,

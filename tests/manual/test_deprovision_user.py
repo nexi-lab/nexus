@@ -22,7 +22,7 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-from nexus import LocalBackend, NexusFS
+from nexus import LocalBackend
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore

@@ -215,7 +215,6 @@ def test_in_process_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test thread pool exhaustion with in-process NexusFS."""
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 
@@ -334,7 +333,6 @@ async def test_async_thread_exhaustion(
     timeout: float = 60.0,
 ) -> TestResults:
     """Test that simulates exact FastAPI server behavior with asyncio.to_thread."""
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 

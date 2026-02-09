@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus import LocalBackend, NexusFS
+from nexus import LocalBackend
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.server.auth.oauth_crypto import OAuthCrypto

@@ -204,7 +204,6 @@ def nexus_fs(isolated_db, tmp_path):
     """
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
 
     storage_path = tmp_path / "storage"

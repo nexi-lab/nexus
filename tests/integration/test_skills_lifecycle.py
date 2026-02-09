@@ -13,7 +13,6 @@ import zipfile
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.record_store import SQLAlchemyRecordStore

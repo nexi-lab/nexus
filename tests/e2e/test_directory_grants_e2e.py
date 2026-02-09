@@ -92,7 +92,6 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     """Create NexusFS instance with Tiger Cache and directory grants enabled."""
     os.environ["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
 
-    from nexus import NexusFS
     from nexus.backends.local import LocalBackend
     from nexus.core.permissions import OperationContext
 

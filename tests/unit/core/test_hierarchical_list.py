@@ -9,7 +9,6 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import Base
 from nexus.storage.record_store import SQLAlchemyRecordStore

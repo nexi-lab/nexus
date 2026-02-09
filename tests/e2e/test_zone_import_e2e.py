@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.portability import (
     ConflictMode,

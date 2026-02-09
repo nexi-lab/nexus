@@ -445,7 +445,7 @@ module = "nexus.llm.provider"
 warn_unused_ignores = false
 
 [[tool.mypy.overrides]]
-module = "nexus.core.cache.dragonfly"
+module = "nexus.cache.dragonfly"
 # redis library has complex async types that mypy struggles with
 warn_unused_ignores = false
 disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]

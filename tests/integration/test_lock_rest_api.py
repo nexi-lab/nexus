@@ -1,7 +1,7 @@
-"""Integration tests for Lock REST API endpoints (Issue #1186).
+"""Integration tests for Lock REST API endpoints (Issue #1110).
 
-These tests verify the Lock REST API models and the lock manager integration.
-The actual endpoint testing requires a running app with Redis/Dragonfly.
+These tests use a real RaftLockManager backed by SQLite (no external
+dependencies) to verify the full lock lifecycle through the REST API.
 """
 
 from __future__ import annotations
@@ -9,9 +9,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from nexus.core.distributed_lock import RaftLockManager
 from nexus.server.fastapi_server import (
+    LOCK_MAX_TTL,
     LockAcquireRequest,
     LockExtendRequest,
+    LockInfoMutex,
     LockListResponse,
     LockResponse,
     LockStatusResponse,
@@ -64,11 +67,13 @@ class TestLockModels:
             max_holders=1,
             ttl=30,
             expires_at="2025-01-01T00:00:30+00:00",
+            fence_token=1,
         )
         assert resp.lock_id == "abc-123"
         assert resp.mode == "mutex"
         assert resp.max_holders == 1
         assert resp.ttl == 30
+        assert resp.fence_token == 1
 
     def test_lock_response_semaphore_mode(self):
         """Test LockResponse for semaphore lock."""
@@ -79,6 +84,7 @@ class TestLockModels:
             max_holders=5,
             ttl=60,
             expires_at="2025-01-01T00:01:00+00:00",
+            fence_token=2,
         )
         assert resp.mode == "semaphore"
         assert resp.max_holders == 5
@@ -92,21 +98,28 @@ class TestLockModels:
             max_holders=1,
             ttl=30,
             expires_at="2025-01-01T00:00:30+00:00",
+            fence_token=42,
         )
         json_data = resp.model_dump()
         assert json_data["lock_id"] == "abc-123"
         assert json_data["mode"] == "mutex"
+        assert json_data["fence_token"] == 42
 
     def test_lock_status_response_locked(self):
         """Test LockStatusResponse when locked."""
         status = LockStatusResponse(
             path="/test/file.txt",
             locked=True,
-            lock_info={"lock_id": "abc-123", "ttl": 30, "mode": "mutex"},
+            lock_info=LockInfoMutex(
+                lock_id="abc-123",
+                acquired_at=1700000000.0,
+                expires_at=1700000030.0,
+                fence_token=1,
+            ),
         )
         assert status.locked is True
         assert status.lock_info is not None
-        assert status.lock_info["ttl"] == 30
+        assert status.lock_info.mode == "mutex"
 
     def test_lock_status_response_unlocked(self):
         """Test LockStatusResponse when not locked."""
@@ -131,13 +144,19 @@ class TestLockModels:
 
     def test_lock_list_response(self):
         """Test LockListResponse model."""
-        locks = [
-            {"path": "/file1.txt", "mode": "mutex", "ttl": 30},
-            {"path": "/file2.txt", "mode": "semaphore", "holders": 3, "max_holders": 5},
-        ]
-        resp = LockListResponse(locks=locks, count=2)
-        assert resp.count == 2
-        assert len(resp.locks) == 2
+        resp = LockListResponse(
+            locks=[
+                LockInfoMutex(
+                    lock_id="l1",
+                    acquired_at=1700000000.0,
+                    expires_at=1700000030.0,
+                    fence_token=1,
+                ),
+            ],
+            count=1,
+        )
+        assert resp.count == 1
+        assert len(resp.locks) == 1
 
     def test_lock_list_response_empty(self):
         """Test LockListResponse with no locks."""
@@ -169,6 +188,7 @@ class TestLockRequestValidation:
             max_holders=1,
             ttl=30,
             expires_at="2025-01-01T00:00:00Z",
+            fence_token=1,
         )
         LockResponse(
             lock_id="a",
@@ -177,6 +197,7 @@ class TestLockRequestValidation:
             max_holders=5,
             ttl=30,
             expires_at="2025-01-01T00:00:00Z",
+            fence_token=2,
         )
 
         # Invalid mode should raise
@@ -188,45 +209,144 @@ class TestLockRequestValidation:
                 max_holders=1,
                 ttl=30,
                 expires_at="2025-01-01T00:00:00Z",
+                fence_token=3,
             )
 
+    def test_ttl_must_be_positive(self):
+        """Test that TTL must be >= 1."""
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", ttl=0)
 
-class TestLockEndpointIntegration:
-    """Integration tests requiring full NexusFS + Redis setup.
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", ttl=-1)
 
-    These tests are marked as skip by default since they require
-    Redis/Dragonfly infrastructure. Run with:
+    def test_ttl_must_be_within_max(self):
+        """Test that TTL must be <= LOCK_MAX_TTL."""
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", ttl=LOCK_MAX_TTL + 1)
 
-        pytest tests/integration/test_lock_rest_api.py -k "Integration" --runintegration
+    def test_max_holders_must_be_positive(self):
+        """Test that max_holders must be >= 1."""
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", max_holders=0)
+
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", max_holders=-1)
+
+    def test_timeout_must_be_non_negative(self):
+        """Test that timeout must be >= 0."""
+        with pytest.raises(ValidationError):
+            LockAcquireRequest(path="/test", timeout=-1)
+
+
+class TestLockManagerIntegration:
+    """Integration tests for RaftLockManager.
+
+    These tests use a real RaftLockManager with in-memory storage,
+    no external dependencies required.
     """
 
-    @pytest.mark.skip(reason="Requires Redis/Dragonfly infrastructure")
-    @pytest.mark.asyncio
-    async def test_full_lock_lifecycle(self):
-        """Test complete lock lifecycle: acquire -> extend -> release."""
-        # This test would use TestClient with a real app
-        pass
+    @pytest.fixture
+    def lock_manager(self, tmp_path):
+        """Create a RaftLockManager with local sled storage."""
+        try:
+            from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-    @pytest.mark.skip(reason="Requires Redis/Dragonfly infrastructure")
+            store = RaftMetadataStore.local(str(tmp_path / "test-raft"))
+            return RaftLockManager(store)
+        except Exception:
+            pytest.skip("RaftMetadataStore not available (Rust bindings not compiled)")
+
     @pytest.mark.asyncio
-    async def test_lock_contention(self):
+    async def test_full_lock_lifecycle(self, lock_manager):
+        """Test complete lock lifecycle: acquire -> status -> extend -> release."""
+        lock_id = await lock_manager.acquire("default", "/test/file.txt", timeout=5, ttl=30)
+        assert lock_id is not None
+
+        # Check status
+        info = await lock_manager.get_lock_info("default", "/test/file.txt")
+        assert info is not None
+        assert info.mode == "mutex"
+        assert len(info.holders) == 1
+        assert info.holders[0].lock_id == lock_id
+
+        # Extend
+        result = await lock_manager.extend(lock_id, "default", "/test/file.txt", ttl=60)
+        assert result.success is True
+        assert result.lock_info is not None
+
+        # Release
+        released = await lock_manager.release(lock_id, "default", "/test/file.txt")
+        assert released is True
+
+        # Verify unlocked
+        info = await lock_manager.get_lock_info("default", "/test/file.txt")
+        assert info is None
+
+    @pytest.mark.asyncio
+    async def test_lock_contention(self, lock_manager):
         """Test lock behavior under contention."""
-        pass
+        lock_id = await lock_manager.acquire("default", "/contested.txt", timeout=1, ttl=30)
+        assert lock_id is not None
 
-    @pytest.mark.skip(reason="Requires Redis/Dragonfly infrastructure")
+        # Second acquire should fail (timeout)
+        lock_id2 = await lock_manager.acquire("default", "/contested.txt", timeout=0.1, ttl=30)
+        assert lock_id2 is None
+
+        # Release first lock
+        await lock_manager.release(lock_id, "default", "/contested.txt")
+
+        # Now should succeed
+        lock_id3 = await lock_manager.acquire("default", "/contested.txt", timeout=1, ttl=30)
+        assert lock_id3 is not None
+        await lock_manager.release(lock_id3, "default", "/contested.txt")
+
     @pytest.mark.asyncio
-    async def test_semaphore_multiple_holders(self):
+    async def test_semaphore_multiple_holders(self, lock_manager):
         """Test semaphore with multiple concurrent holders."""
-        pass
+        lock_ids = []
+        for _ in range(3):
+            lid = await lock_manager.acquire(
+                "default", "/shared.txt", timeout=1, ttl=30, max_holders=3
+            )
+            assert lid is not None
+            lock_ids.append(lid)
 
-    @pytest.mark.skip(reason="Requires Redis/Dragonfly infrastructure")
-    @pytest.mark.asyncio
-    async def test_lock_auto_expiry(self):
-        """Test that locks auto-expire after TTL."""
-        pass
+        # Fourth should fail
+        lid4 = await lock_manager.acquire(
+            "default", "/shared.txt", timeout=0.1, ttl=30, max_holders=3
+        )
+        assert lid4 is None
 
-    @pytest.mark.skip(reason="Requires Redis/Dragonfly infrastructure")
+        # Release all
+        for lid in lock_ids:
+            await lock_manager.release(lid, "default", "/shared.txt")
+
     @pytest.mark.asyncio
-    async def test_force_release_admin_only(self):
-        """Test that force release requires admin privileges."""
-        pass
+    async def test_force_release(self, lock_manager):
+        """Test admin force release."""
+        lock_id = await lock_manager.acquire("default", "/force-test.txt", timeout=1, ttl=30)
+        assert lock_id is not None
+
+        released = await lock_manager.force_release("default", "/force-test.txt")
+        assert released is True
+
+        # Should be unlocked now
+        info = await lock_manager.get_lock_info("default", "/force-test.txt")
+        assert info is None
+
+    @pytest.mark.asyncio
+    async def test_list_locks(self, lock_manager):
+        """Test listing active locks."""
+        ids = []
+        for i in range(3):
+            lid = await lock_manager.acquire("default", f"/list-test-{i}.txt", timeout=1, ttl=30)
+            assert lid is not None
+            ids.append((f"/list-test-{i}.txt", lid))
+
+        locks = await lock_manager.list_locks("default", limit=100)
+        assert len(locks) >= 3
+
+        # Cleanup
+        for path, lid in ids:
+            await lock_manager.release(lid, "default", path)

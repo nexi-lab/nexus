@@ -11,14 +11,11 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
 from nexus.storage.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -34,7 +34,7 @@ import types
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import sqlalchemy as sa
 from cachetools import TTLCache
@@ -249,7 +249,7 @@ class AgentRegistry:
         with self._cache_lock:
             cached = self._record_cache.get(agent_id, _CACHE_MISS)
         if cached is not _CACHE_MISS:
-            return cached  # type: ignore[no-any-return]
+            return cast("AgentRecord | None", cached)
 
         with self._get_session() as session:
             model = session.execute(
@@ -333,7 +333,8 @@ class AgentRegistry:
             if expected_generation is not None:
                 stmt = stmt.where(AgentRecordModel.generation == expected_generation)
 
-            rows_updated = session.execute(stmt).rowcount  # type: ignore[attr-defined]
+            cursor = session.execute(stmt)
+            rows_updated = cast(int, cursor.rowcount)
             session.flush()
 
             if rows_updated == 0:
@@ -467,9 +468,9 @@ class AgentRegistry:
 
             with self._get_session() as session:
                 conn = session.connection()
-                table = AgentRecordModel.__table__
+                table = cast("sa.Table", AgentRecordModel.__table__)
                 stmt = (
-                    update(table)  # type: ignore[arg-type]
+                    update(table)
                     .where(table.c.agent_id == sa.bindparam("aid"))
                     .values(
                         last_heartbeat=sa.bindparam("ts"),

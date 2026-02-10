@@ -14,22 +14,19 @@ Tests cover:
 from __future__ import annotations
 
 import threading
-import time
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.agent_record import AgentState, validate_transition
+from nexus.core.agent_record import AgentState
 from nexus.core.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
 )
 from nexus.storage.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

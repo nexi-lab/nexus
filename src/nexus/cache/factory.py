@@ -53,9 +53,8 @@ from nexus.cache.settings import CacheSettings
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
-
     from nexus.cache.dragonfly import DragonflyClient
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -74,21 +73,21 @@ class CacheFactory:
         self,
         settings: CacheSettings,
         cache_store: CacheStoreABC | None = None,
-        postgres_engine: Engine | None = None,
+        record_store: RecordStoreABC | None = None,
     ):
         """Initialize cache factory.
 
         Args:
             settings: Cache configuration
             cache_store: Pre-built CacheStoreABC driver. If None, created from settings.
-            postgres_engine: SQLAlchemy engine for PostgreSQL cache fallback.
-                If provided and Dragonfly is not available, the factory returns
-                PostgreSQL-backed cache implementations instead of NullCacheStore.
+            record_store: RecordStoreABC for PostgreSQL cache fallback.
+                If provided and Dragonfly is not available, the factory uses
+                record_store.engine for PostgreSQL-backed caches instead of NullCacheStore.
         """
         self._settings = settings
         self._cache_store: CacheStoreABC = cache_store or NullCacheStore()
         self._cache_client: DragonflyClient | None = None  # kept for embedding cache
-        self._postgres_engine: Engine | None = postgres_engine
+        self._record_store: RecordStoreABC | None = record_store
         self._initialized = False
         self._using_dragonfly = False
         self._using_postgres = False
@@ -143,7 +142,7 @@ class CacheFactory:
                     f"Failed to connect to Dragonfly ({e}), falling back to NullCacheStore"
                 )
                 self._using_dragonfly = False
-        elif self._postgres_engine is not None:
+        elif self._record_store is not None:
             self._using_postgres = True
             logger.info("Cache factory initialized with PostgreSQL cache backend (fallback)")
         else:
@@ -157,7 +156,7 @@ class CacheFactory:
         await self._cache_store.close()
         self._cache_client = None
         self._cache_store = NullCacheStore()
-        self._postgres_engine = None
+        self._record_store = None
         self._initialized = False
         self._using_dragonfly = False
         self._using_postgres = False
@@ -191,17 +190,17 @@ class CacheFactory:
     def get_permission_cache(self) -> PermissionCacheProtocol:
         """Get permission cache instance.
 
-        Returns PostgreSQL-backed cache when postgres_engine is available and
-        Dragonfly is not configured. Otherwise returns CacheStoreABC-backed cache.
+        Returns RecordStore-backed (SQL) cache when record_store is available and
+        no CacheStoreABC driver is configured. Otherwise returns CacheStoreABC-backed cache.
         """
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_postgres and self._postgres_engine is not None:
+        if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresPermissionCache
 
             return PostgresPermissionCache(
-                engine=self._postgres_engine,
+                engine=self._record_store.engine,
                 ttl=self._settings.permission_ttl,
                 denial_ttl=self._settings.permission_denial_ttl,
             )
@@ -215,16 +214,16 @@ class CacheFactory:
     def get_tiger_cache(self) -> TigerCacheProtocol:
         """Get Tiger cache instance.
 
-        Returns PostgreSQL-backed cache when postgres_engine is available and
-        Dragonfly is not configured. Otherwise returns CacheStoreABC-backed cache.
+        Returns RecordStore-backed (SQL) cache when record_store is available and
+        no CacheStoreABC driver is configured. Otherwise returns CacheStoreABC-backed cache.
         """
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_postgres and self._postgres_engine is not None:
+        if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresTigerCache
 
-            return PostgresTigerCache(engine=self._postgres_engine)
+            return PostgresTigerCache(engine=self._record_store.engine)
 
         return TigerCache(
             store=self._cache_store,
@@ -234,16 +233,16 @@ class CacheFactory:
     def get_resource_map_cache(self) -> ResourceMapCacheProtocol:
         """Get resource map cache instance.
 
-        Returns PostgreSQL-backed cache when postgres_engine is available and
-        Dragonfly is not configured. Otherwise returns CacheStoreABC-backed cache.
+        Returns RecordStore-backed (SQL) cache when record_store is available and
+        no CacheStoreABC driver is configured. Otherwise returns CacheStoreABC-backed cache.
         """
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        if self._using_postgres and self._postgres_engine is not None:
+        if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresResourceMapCache
 
-            return PostgresResourceMapCache(engine=self._postgres_engine)
+            return PostgresResourceMapCache(engine=self._record_store.engine)
 
         return ResourceMapCache(store=self._cache_store)
 
@@ -259,10 +258,10 @@ class CacheFactory:
 
     async def health_check(self) -> dict:
         """Check health of cache backend."""
-        if self._using_postgres and self._postgres_engine is not None:
+        if self._using_postgres and self._record_store is not None:
             from nexus.cache.postgres import PostgresPermissionCache
 
-            pg_cache = PostgresPermissionCache(engine=self._postgres_engine)
+            pg_cache = PostgresPermissionCache(engine=self._record_store.engine)
             healthy = await pg_cache.health_check()
             return {
                 "backend": self.backend_name,
@@ -298,19 +297,17 @@ _cache_factory: CacheFactory | None = None
 async def init_cache_factory(
     settings: CacheSettings,
     cache_store: CacheStoreABC | None = None,
-    postgres_engine: Engine | None = None,
+    record_store: RecordStoreABC | None = None,
 ) -> CacheFactory:
     """Initialize the global cache factory.
 
     Args:
         settings: Cache configuration
         cache_store: Pre-built CacheStoreABC driver
-        postgres_engine: SQLAlchemy engine for PostgreSQL cache fallback
+        record_store: RecordStoreABC for SQL-backed cache fallback
     """
     global _cache_factory
-    _cache_factory = CacheFactory(
-        settings, cache_store=cache_store, postgres_engine=postgres_engine
-    )
+    _cache_factory = CacheFactory(settings, cache_store=cache_store, record_store=record_store)
     await _cache_factory.initialize()
     return _cache_factory
 

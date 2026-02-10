@@ -376,9 +376,13 @@ class TestCacheFactoryPostgresFallback:
     async def test_factory_postgres_fallback(self, pg_engine: Engine) -> None:
         from nexus.cache.factory import CacheFactory
         from nexus.cache.settings import CacheSettings
+        from nexus.storage.record_store import SQLAlchemyRecordStore
+
+        # Wrap engine in RecordStoreABC — CacheFactory must go through the pillar
+        record_store = SQLAlchemyRecordStore(db_url=str(pg_engine.url))
 
         settings = CacheSettings(cache_backend="auto", dragonfly_url=None)
-        factory = CacheFactory(settings, postgres_engine=pg_engine)
+        factory = CacheFactory(settings, record_store=record_store)
         await factory.initialize()
 
         assert factory.is_using_postgres is True
@@ -405,8 +409,8 @@ class TestCacheFactoryPostgresFallback:
 
         await factory.shutdown()
 
-    async def test_factory_no_engine_uses_null(self) -> None:
-        """Without postgres_engine or Dragonfly, factory uses NullCacheStore."""
+    async def test_factory_no_record_store_uses_null(self) -> None:
+        """Without record_store or CacheStoreABC driver, factory uses NullCacheStore."""
         from nexus.cache.factory import CacheFactory
         from nexus.cache.settings import CacheSettings
         from nexus.core.cache_store import NullCacheStore

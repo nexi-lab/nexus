@@ -64,6 +64,7 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    StaleSessionError,
     ValidationError,
 )
 from nexus.server.protocol import (
@@ -289,7 +290,7 @@ def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, (InvalidPathError, ValidationError)):
         status_code = 400
         error_type = "Bad Request"
-    elif isinstance(exc, ConflictError):
+    elif isinstance(exc, (ConflictError, StaleSessionError)):
         status_code = 409
         error_type = "Conflict"
     elif isinstance(exc, ParserError):
@@ -698,6 +699,23 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
             AdminCapability.MANAGE_REBAC,
         }
 
+    # Issue #1240: Populate agent_generation from AgentRegistry
+    # TODO: In production, agent_generation should come from client JWT token,
+    # not a server-side DB lookup (which makes stale-session detection a no-op
+    # since both sides read the same DB). This is a temporary bridge until
+    # JWT token integration is implemented.
+    agent_generation = None
+    if subject_type == "agent" and _app_state.agent_registry:
+        try:
+            agent_record = _app_state.agent_registry.get(subject_id)
+            if agent_record:
+                agent_generation = agent_record.generation
+        except Exception:
+            logger.debug(
+                "[AGENT-GEN] Failed to look up generation for agent %s",
+                subject_id,
+            )
+
     return OperationContext(
         user=user_id,
         agent_id=agent_id,
@@ -707,6 +725,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         is_admin=is_admin,
         groups=[],
         admin_capabilities=admin_capabilities,
+        agent_generation=agent_generation,
     )
 
 
@@ -785,6 +804,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 permission_enforcer = AsyncPermissionEnforcer(
                     rebac_manager=_app_state.async_rebac_manager,
                     namespace_manager=namespace_manager,
+                    agent_registry=_app_state.agent_registry,
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
@@ -1066,6 +1086,48 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
+    # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.core.agent_registry import AgentRegistry
+
+            _app_state.agent_registry = AgentRegistry(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                entity_registry=getattr(_app_state.nexus_fs, "_entity_registry", None),
+                flush_interval=60,
+            )
+            # Inject into NexusFS for RPC methods
+            _app_state.nexus_fs._agent_registry = _app_state.agent_registry
+
+            # Wire into sync PermissionEnforcer
+            perm_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+            if perm_enforcer is not None:
+                perm_enforcer.agent_registry = _app_state.agent_registry
+
+            logger.info("[AGENT-REG] AgentRegistry initialized and wired")
+        except Exception as e:
+            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            _app_state.agent_registry = None
+    else:
+        _app_state.agent_registry = None
+
+    # Issue #1240: Start agent heartbeat and stale detection background tasks
+    _heartbeat_task = None
+    _stale_detection_task = None
+    if _app_state.agent_registry:
+        from nexus.server.background_tasks import (
+            heartbeat_flush_task,
+            stale_agent_detection_task,
+        )
+
+        _heartbeat_task = asyncio.create_task(
+            heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+        )
+        _stale_detection_task = asyncio.create_task(
+            stale_agent_detection_task(_app_state.agent_registry, interval_seconds=300)
+        )
+        logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
+
     yield
 
     # Cleanup
@@ -1094,6 +1156,19 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
+
+    # Issue #1240: Cancel agent background tasks and final flush
+    for task_ref in (_heartbeat_task, _stale_detection_task):
+        if task_ref and not task_ref.done():
+            task_ref.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_ref
+    if _app_state.agent_registry:
+        try:
+            _app_state.agent_registry.flush_heartbeats()
+            logger.info("[AGENT-REG] Final heartbeat flush completed")
+        except Exception:
+            logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Cancel Tiger Cache task
     if tiger_task:

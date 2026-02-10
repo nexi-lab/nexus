@@ -30,7 +30,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 @pytest.fixture
 def metadata_store(tmp_path: Path) -> RaftMetadataStore:
     """Create a local RaftMetadataStore for isolated tests."""
-    store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     yield store
     store.close()
 

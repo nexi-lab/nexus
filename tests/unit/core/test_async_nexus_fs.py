@@ -26,7 +26,7 @@ pytestmark = [
 @pytest.fixture
 def metadata_store(tmp_path: Path) -> RaftMetadataStore:
     """Create a local RaftMetadataStore backed by sled."""
-    store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     yield store
     store.close()
 

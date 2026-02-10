@@ -69,7 +69,7 @@ def server():
 
     Yields a dict with base_url and data_dir.
 
-    Requires LocalRaft (Rust extension) for in-memory ReBAC.
+    Requires Metastore (Rust sled extension) for in-memory ReBAC.
     """
     port = _find_free_port()
     data_dir = tempfile.mkdtemp(prefix="nexus_ns_e2e_")
@@ -95,9 +95,9 @@ def server():
         # CRITICAL: Permissions ENABLED for namespace testing
         "NEXUS_ENFORCE_PERMISSIONS": "true",
         "NEXUS_ENFORCE_ZONE_ISOLATION": "true",
-        # Use in-memory LocalRaft (no PostgreSQL dependency)
+        # Use in-memory Metastore (no PostgreSQL dependency)
         "NEXUS_AUTH_TYPE": "static",  # Static auth with in-memory ReBAC
-        "NEXUS_REBAC_BACKEND": "memory",  # LocalRaft in-memory
+        "NEXUS_REBAC_BACKEND": "memory",  # Metastore in-memory
         # Static users (alice, bob, admin)
         "NEXUS_STATIC_USERS": "alice:pass1,bob:pass2,admin:pass3",
         "NEXUS_STATIC_ADMINS": "admin",

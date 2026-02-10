@@ -47,7 +47,7 @@ def test_app():
     backend = LocalBackend(root_path=auth_tmpdir)
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.local(os.path.join(auth_tmpdir, "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(os.path.join(auth_tmpdir, "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=":memory:"),
         enforce_permissions=False,  # Disable permissions for simpler testing
     )

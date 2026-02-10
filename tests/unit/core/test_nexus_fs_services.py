@@ -17,7 +17,7 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     db_path = tmp_path / "metadata"
 
     backend = LocalBackend(str(backend_path))
-    metadata_store = RaftMetadataStore.local(str(db_path))
+    metadata_store = RaftMetadataStore.embedded(str(db_path))
     # VersionService is created by factory; for unit tests we inject it manually
     version_service = VersionService(
         metadata_store=metadata_store,

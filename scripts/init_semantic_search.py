@@ -47,7 +47,7 @@ async def init_semantic_search() -> bool:
             return False
 
         backend = LocalBackend(data_dir)
-        metadata_store = RaftMetadataStore.local(str(database_url).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
         nx = NexusFS(backend, metadata_store=metadata_store)
 
         # Check if explicitly requested to use vector embeddings

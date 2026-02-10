@@ -22,7 +22,7 @@ python3 tests/manual/test_deprovision_user.py --sqlite
 
 ### Custom Database URL
 ```bash
-python3 tests/manual/test_deprovision_user.py --db postgresql://user:pass@host:port/dbname
+python3 tests/manual/test_deprovision_user.py --db postgresql://user/pass@host:port/dbname
 ```
 
 ### Custom Backend Path
@@ -74,7 +74,7 @@ Step 2: Provisioning test user...
 ### Test Fails with "⚠️ workspace: still has N items"
 
 This indicates ghost entries remain in the database. Check:
-1. Physical directory is actually deleted: `ls -la ./nexus-data-local/dirs/zone/test_zone/user:test_deprovision_user/`
+1. Physical directory is actually deleted: `ls -la ./nexus-data-local/dirs/zone/test_zone/user/test_deprovision_user/`
 2. Metadata entries in database: Query `file_paths` table for the path
 3. ReBAC tuples: Query `rebac_tuples` table for the resource
 

@@ -310,7 +310,7 @@ client.write("/workspace/file.txt", b"Hello!")
 
 ```bash
 # Start server with database auth
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+export NEXUS_DATABASE_URL="postgresql://user/pass@localhost/nexus"
 nexus serve \
     --host 0.0.0.0 \
     --port 2026 \
@@ -323,7 +323,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from nexus.server.auth import DatabaseAPIKeyAuth
 
-engine = create_engine('postgresql://user:pass@localhost/nexus')
+engine = create_engine('postgresql://user/pass@localhost/nexus')
 SessionFactory = sessionmaker(bind=engine)
 
 with SessionFactory() as session:
@@ -791,7 +791,7 @@ server:
 
 # Database
 database:
-  url: postgresql://user:password@localhost:5432/nexus
+  url: postgresql://user/password@localhost:5432/nexus
   # or sqlite:///./nexus.db
 
 # Authentication
@@ -831,7 +831,7 @@ tenant:
 
 ```bash
 # Database
-export NEXUS_DATABASE_URL="postgresql://user:password@localhost:5432/nexus"
+export NEXUS_DATABASE_URL="postgresql://user/password@localhost:5432/nexus"
 
 # JWT Secret (for LocalAuth)
 export NEXUS_JWT_SECRET="your-super-secret-key-here"

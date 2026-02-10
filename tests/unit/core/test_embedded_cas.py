@@ -27,7 +27,7 @@ def embedded_cas(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """
     emb = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,  # Disable auto-parsing for unit tests
         enforce_permissions=False,  # Disable permissions for basic functionality tests

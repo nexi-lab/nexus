@@ -61,7 +61,7 @@ class TestSlackConnectorInitialization:
     def test_init_with_db_url(self, mock_token_manager, mock_oauth_factory) -> None:
         """Test initialization with database URL."""
         backend = SlackConnectorBackend(
-            token_manager_db="postgresql://user:pass@localhost/nexus",
+            token_manager_db="postgresql://user/pass@localhost/nexus",
             user_email="test@example.com",
         )
 

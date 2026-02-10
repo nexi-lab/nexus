@@ -217,7 +217,7 @@ def nexus_fs(isolated_db, tmp_path):
     storage_path.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=str(storage_path))
 
-    metadata_store = RaftMetadataStore.local(str(isolated_db).replace(".db", ""))
+    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
     nx = create_nexus_fs(
         backend=backend,

@@ -37,7 +37,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -106,7 +106,7 @@ class TestGetOAuthFactory:
 
             nx = create_nexus_fs(
                 backend=LocalBackend(temp_dir),
-                metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
+                metadata_store=RaftMetadataStore.embedded(str(temp_dir / "metadata")),
                 record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
                 auto_parse=False,
                 enforce_permissions=False,
@@ -135,7 +135,7 @@ class TestGetTokenManager:
         # Create NexusFS without record_store (no Services layer)
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.local(str(temp_dir / "metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "metadata")),
             auto_parse=False,
             enforce_permissions=False,
             audit_strict_mode=False,

@@ -27,7 +27,7 @@ def isolated_db(tmp_path, monkeypatch):
 
     Usage:
         def test_something(isolated_db):
-            metadata_store = RaftMetadataStore.local(str(isolated_db).replace(".db", ""))
+            metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
             nx = NexusFS(backend=..., metadata_store=metadata_store)
             # Test code here
             nx.close()
@@ -69,7 +69,7 @@ def metadata_store(tmp_path):
     Returns:
         RaftMetadataStore: Raft-backed metadata store (SC mode)
     """
-    store = RaftMetadataStore.local(str(tmp_path / "raft-metadata"))
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
     yield store
     # Cleanup handled by tmp_path
 

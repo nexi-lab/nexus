@@ -34,7 +34,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled and permissions enforced."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
@@ -451,7 +451,7 @@ class TestHelperMethodIntegration:
         """Test that enforce_permissions=False bypasses checks."""
         nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
             auto_parse=False,
             enforce_permissions=False,

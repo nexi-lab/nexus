@@ -252,7 +252,7 @@ class TestLockManagerIntegration:
         try:
             from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-            store = RaftMetadataStore.local(str(tmp_path / "test-raft"))
+            store = RaftMetadataStore.embedded(str(tmp_path / "test-raft"))
             return RaftLockManager(store)
         except Exception:
             pytest.skip("RaftMetadataStore not available (Rust bindings not compiled)")

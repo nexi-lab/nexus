@@ -788,7 +788,7 @@ metadata_store = MetadataStore(db_path="/path/to/db.sqlite")
 # ✅ REPLACEMENT:
 metadata_store = MetadataStore(db_url="sqlite:////path/to/db.sqlite")
 # or
-metadata_store = MetadataStore(db_url="postgresql://user:pass@host/db")
+metadata_store = MetadataStore(db_url="postgresql://user/pass@host/db")
 ```
 
 **Why Deprecated:**

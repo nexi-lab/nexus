@@ -120,7 +120,7 @@ def test_nexus_fs_satisfies_protocol() -> None:
     from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        metadata_store = RaftMetadataStore.local(str(Path(tmpdir) / "metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
@@ -163,7 +163,7 @@ def test_protocol_runtime_checkable() -> None:
     from pathlib import Path
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        metadata_store = RaftMetadataStore.local(str(Path(tmpdir) / "metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(Path(tmpdir) / "metadata"))
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,

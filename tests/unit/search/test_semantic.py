@@ -84,7 +84,7 @@ class TestSemanticSearch:
         may need adjustment.
         """
         backend = LocalBackend(root_path=temp_dir)
-        metadata_store = RaftMetadataStore.local(str(temp_dir / "raft-metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(temp_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,

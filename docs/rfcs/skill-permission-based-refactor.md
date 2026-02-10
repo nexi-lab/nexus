@@ -38,8 +38,8 @@ We use **tenant/user-first** paths (not resource-first):
 
 ```
 # ✅ Tenant/User-First (chosen)
-/tenant:<zone_id>/user:<user_id>/skill/<skill_name>/
-/tenant:<zone_id>/user:<user_id>/agents/<agent_id>/
+/tenant:<zone_id>/user/<user_id>/skill/<skill_name>/
+/tenant:<zone_id>/user/<user_id>/agents/<agent_id>/
 
 # ❌ Resource-First (rejected)
 /skill/<tenant>/<user>/<skill_name>/
@@ -48,9 +48,9 @@ We use **tenant/user-first** paths (not resource-first):
 
 **Why tenant/user-first:**
 - All user resources in one place (like Unix home dirs)
-- Natural permission inheritance: grant access to `/tenant:acme/user:alice/` → inherits to all resources
+- Natural permission inheritance: grant access to `/tenant:acme/user/alice/` → inherits to all resources
 - Easy tenant isolation: `/tenant:acme/` contains everything for tenant
-- User-centric operations: delete user = delete `/tenant:acme/user:alice/`
+- User-centric operations: delete user = delete `/tenant:acme/user/alice/`
 
 **Full namespace structure:**
 ```
@@ -76,8 +76,8 @@ We use **tenant/user-first** paths (not resource-first):
 **The full path is the unique identifier, not just the skill name.**
 
 ```
-/tenant:acme/user:alice/skill/code-review/  ← Alice's code-review skill
-/tenant:acme/user:bob/skill/code-review/    ← Bob's code-review skill (different skill!)
+/tenant:acme/user/alice/skill/code-review/  ← Alice's code-review skill
+/tenant:acme/user/bob/skill/code-review/    ← Bob's code-review skill (different skill!)
 ```
 
 This means:
@@ -86,7 +86,7 @@ This means:
 - Display shows owner info to distinguish same-named skills
 
 ```
-Skill location: /tenant:acme/user:alice/skill/my-skill/
+Skill location: /tenant:acme/user/alice/skill/my-skill/
                     (single source of truth)
 
 Visibility = Permissions:
@@ -118,7 +118,7 @@ User: "Create a skill for reviewing Python security"
     ↓
 Agent: [drafts complete SKILL.md, saves]
     ↓
-"Created 'python-security-review' at /tenant:acme/user:alice/skill/python-security-review/. Ready to use!"
+"Created 'python-security-review' at /tenant:acme/user/alice/skill/python-security-review/. Ready to use!"
 ```
 
 **Complex Case (multiple interactions):**
@@ -148,7 +148,7 @@ Skills are just files. The agent uses standard filesystem operations:
 
 ```python
 # Agent writes SKILL.md directly using filesystem
-write("/tenant:<zone_id>/user:<user_id>/skill/<name>/SKILL.md", content)
+write("/tenant:<zone_id>/user/<user_id>/skill/<name>/SKILL.md", content)
 
 # Skill is private by default (only creator has access)
 # No special API needed - permissions auto-granted to creator
@@ -179,7 +179,7 @@ skills_share(skill, share_with="tenant")
 
 **Sharing Examples:**
 ```python
-skill_path = "/tenant:acme/user:alice/skill/my-skill"
+skill_path = "/tenant:acme/user/alice/skill/my-skill"
 
 # Share publicly (all users globally)
 skills_share(skill_path, "public", context)
@@ -202,7 +202,7 @@ skills_share(skill_path, "agent:code-assistant", context)
 
 **Revoking Access:**
 ```python
-skills_unshare("/tenant:acme/user:alice/skill/my-skill", "user:bob@example.com", context)
+skills_unshare("/tenant:acme/user/alice/skill/my-skill", "user:bob@example.com", context)
     → rebac_delete(user:bob, viewer, skill_path)
 ```
 
@@ -226,14 +226,14 @@ Sharing makes a skill visible. Subscribing adds it to the user's library.
 ```python
 # Bob discovers available skills (ones he has permission to see)
 skills_discover(context, filter="public")
-    → Returns: [{"path": "/tenant:acme/user:alice/skill/code-review", ...}, ...]
+    → Returns: [{"path": "/tenant:acme/user/alice/skill/code-review", ...}, ...]
 
 # Bob subscribes to a skill (adds to his library)
-skills_subscribe("/tenant:acme/user:alice/skill/code-review", context)
+skills_subscribe("/tenant:acme/user/alice/skill/code-review", context)
     → Adds to Bob's subscribed_skills config
 
 # Bob unsubscribes from a skill
-skills_unsubscribe("/tenant:acme/user:alice/skill/code-review", context)
+skills_unsubscribe("/tenant:acme/user/alice/skill/code-review", context)
     → Removes from subscribed_skills
 ```
 
@@ -244,10 +244,10 @@ skills_unsubscribe("/tenant:acme/user:alice/skill/code-review", context)
 Agent-level skill assignment is handled by the agent's own config, not via skill APIs.
 
 ```yaml
-# Agent config: /tenant:<zone_id>/user:<user_id>/agents/<agent_id>/config.yaml
+# Agent config: /tenant:<zone_id>/user/<user_id>/agents/<agent_id>/config.yaml
 active_skills:
-  - "/tenant:acme/user:alice/skill/code-review"    # Must be in user's subscriptions
-  - "/tenant:acme/user:bob/skill/testing"
+  - "/tenant:acme/user/alice/skill/code-review"    # Must be in user's subscriptions
+  - "/tenant:acme/user/bob/skill/testing"
 ```
 
 **Why separate from skill APIs:**
@@ -298,16 +298,16 @@ Skills use standard filesystem operations for CRUD - no special skill APIs neede
 
 ```python
 # Create/Update skill
-write("/tenant:<tid>/user:<uid>/skill/<name>/SKILL.md", content)
+write("/tenant:<tid>/user/<uid>/skill/<name>/SKILL.md", content)
 
 # Read skill
-read("/tenant:<tid>/user:<uid>/skill/<name>/SKILL.md")
+read("/tenant:<tid>/user/<uid>/skill/<name>/SKILL.md")
 
 # Delete skill
-delete("/tenant:<tid>/user:<uid>/skill/<name>/")
+delete("/tenant:<tid>/user/<uid>/skill/<name>/")
 
 # List skills
-list("/tenant:<tid>/user:<uid>/skill/")
+list("/tenant:<tid>/user/<uid>/skill/")
 ```
 
 ### New Skill-Specific APIs
@@ -317,7 +317,7 @@ These APIs handle operations that go beyond basic filesystem CRUD:
 ```python
 @rpc_expose
 def skills_share(
-    skill_path: str,  # Full path like "/tenant:acme/user:alice/skill/code-review"
+    skill_path: str,  # Full path like "/tenant:acme/user/alice/skill/code-review"
     share_with: str,  # "tenant" | "public" | "group:X" | "user:X" | "agent:X"
     context: OperationContext,
 ) -> dict:
@@ -358,7 +358,7 @@ def skills_discover(
                 {
                     "name": "code-review",
                     "owner": "alice",
-                    "path": "/tenant:acme/user:alice/skill/code-review",
+                    "path": "/tenant:acme/user/alice/skill/code-review",
                     "description": "...",
                     "is_subscribed": True
                 }
@@ -404,7 +404,7 @@ def skills_get_prompt_context(
                     "name": "code-review",
                     "owner": "alice",           # Owner for disambiguation
                     "description": "...",
-                    "path": "/tenant:acme/user:alice/skill/code-review"
+                    "path": "/tenant:acme/user/alice/skill/code-review"
                 }
             ],
             "count": 12,
@@ -420,7 +420,7 @@ def skills_load(
     """Load full skill content on-demand.
 
     Args:
-        skill_path: Full path like "/tenant:acme/user:alice/skill/code-review"
+        skill_path: Full path like "/tenant:acme/user/alice/skill/code-review"
 
     Checks read permission before returning content.
 
@@ -428,7 +428,7 @@ def skills_load(
         {
             "name": "code-review",
             "owner": "alice",
-            "path": "/tenant:acme/user:alice/skill/code-review",
+            "path": "/tenant:acme/user/alice/skill/code-review",
             "metadata": {...},
             "content": "# Full SKILL.md markdown...",
             "scripts": ["/path/to/script.py"],

@@ -60,7 +60,7 @@ class SkillService:
 
         # Share a skill with the zone
         skill_service.share(
-            skill_path="/zone/acme/user:alice/skill/code-review/",
+            skill_path="/zone/acme/user/alice/skill/code-review/",
             share_with="zone",
             context=ctx,
         )
@@ -70,13 +70,13 @@ class SkillService:
 
         # Subscribe to a skill
         skill_service.subscribe(
-            skill_path="/zone/acme/user:bob/skill/testing/",
+            skill_path="/zone/acme/user/bob/skill/testing/",
             context=ctx,
         )
 
         # Load full skill content for agent use
         content = skill_service.load(
-            skill_path="/zone/acme/user:alice/skill/code-review/",
+            skill_path="/zone/acme/user/alice/skill/code-review/",
             context=ctx,
         )
         ```
@@ -111,7 +111,7 @@ class SkillService:
         The skill content stays at its original location - only permissions change.
 
         Args:
-            skill_path: Full path to skill (e.g., /zone/acme/user:alice/skill/code-review/)
+            skill_path: Full path to skill (e.g., /zone/acme/user/alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make visible to everyone
                 - "zone" - Share with all users in current zone
@@ -264,7 +264,7 @@ class SkillService:
 
         # For "owned" filter, directly scan user's skill directory
         if filter == "owned":
-            user_skill_dir = f"/zone/{context.zone_id}/user:{context.user_id}/skill/"
+            user_skill_dir = f"/zone/{context.zone_id}/user/{context.user_id}/skill/"
             owned_paths = self._find_skills_in_directory(user_skill_dir, context)
             logger.info(f"[discover] Returning owned skills directly: {owned_paths}")
             results = []
@@ -591,14 +591,14 @@ class SkillService:
     def _extract_owner_from_path(self, skill_path: str) -> str:
         """Extract owner user_id from skill path.
 
-        Path format: /zone/{zone_id}/user:{user_id}/skill/{skill_name}/
+        Path format: /zone/{zone_id}/user/{user_id}/skill/{skill_name}/
 
         Returns:
             User ID if found, otherwise "unknown"
         """
         import re
 
-        match = re.search(r"/user:([^/]+)/skill/", skill_path)
+        match = re.search(r"/user/([^/]+)/skill/", skill_path)
         if match:
             return match.group(1)
         return "unknown"
@@ -728,7 +728,7 @@ class SkillService:
 
     def _get_subscriptions_path(self, context: OperationContext) -> str:
         """Get path to user's subscriptions config file."""
-        return f"/zone/{context.zone_id}/user:{context.user_id}/skill/.subscribed.yaml"
+        return f"/zone/{context.zone_id}/user/{context.user_id}/skill/.subscribed.yaml"
 
     def _load_subscriptions(self, context: OperationContext) -> list[str]:
         """Load user's subscribed skills from config file."""
@@ -776,7 +776,7 @@ class SkillService:
         user_id, agent_name = agent_id.split(",", 1)
 
         # Build path to agent's config.yaml
-        config_path = f"/zone/{context.zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+        config_path = f"/zone/{context.zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
 
         try:
             content = self._gw.read(config_path, context=context)
@@ -873,7 +873,7 @@ class SkillService:
         find_skills_in_dir(f"/zone/{context.zone_id}/skill/")
 
         # User skills
-        find_skills_in_dir(f"/zone/{context.zone_id}/user:{context.user_id}/skill/")
+        find_skills_in_dir(f"/zone/{context.zone_id}/user/{context.user_id}/skill/")
 
         # Cross-zone public skills
         # Find all skills shared with role:public from any zone
@@ -929,7 +929,7 @@ class SkillService:
         """Find skill directories within a base directory.
 
         Args:
-            base_dir: Base directory to scan (e.g., /zone/x/user:y/skill/)
+            base_dir: Base directory to scan (e.g., /zone/x/user/y/skill/)
             context: Operation context
 
         Returns:

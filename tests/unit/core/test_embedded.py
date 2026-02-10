@@ -27,7 +27,7 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create an Embedded filesystem instance."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality tests
@@ -44,7 +44,7 @@ def test_init_creates_directories(temp_dir: Path) -> None:
 
     nx = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality tests
@@ -356,7 +356,7 @@ def test_context_manager(temp_dir: Path) -> None:
 
     with create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality test

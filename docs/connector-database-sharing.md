@@ -13,7 +13,7 @@ Set `TOKEN_MANAGER_DB` once, and all connectors use it:
 export TOKEN_MANAGER_DB="${HOME}/.nexus/nexus.db"
 
 # Or use PostgreSQL for production
-export TOKEN_MANAGER_DB="postgresql://user:pass@localhost/nexus"
+export TOKEN_MANAGER_DB="postgresql://user/pass@localhost/nexus"
 ```
 
 ### How It Works
@@ -88,8 +88,8 @@ gdrive = GoogleDriveConnectorBackend(
 |----------|------------------|----------|
 | SQLite | `sqlite:///path/to/nexus.db` | Local development |
 | SQLite (relative) | `~/.nexus/nexus.db` | Default local setup |
-| PostgreSQL | `postgresql://user:pass@host/db` | Production |
-| MySQL | `mysql://user:pass@host/db` | Production |
+| PostgreSQL | `postgresql://user/pass@host/db` | Production |
+| MySQL | `mysql://user/pass@host/db` | Production |
 
 ### Example Configurations
 

@@ -140,7 +140,7 @@ export NEXUS_GCS_PROJECT_ID=my-project
 export NEXUS_GCS_CREDENTIALS_PATH=/path/to/credentials.json
 
 # Database (PostgreSQL)
-export NEXUS_DATABASE_URL=postgresql://user:pass@localhost/nexus
+export NEXUS_DATABASE_URL=postgresql://user/pass@localhost/nexus
 
 # Caching
 export NEXUS_ENABLE_METADATA_CACHE=true

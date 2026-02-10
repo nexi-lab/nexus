@@ -38,7 +38,7 @@ def test_provision_user() -> bool:
 
     backend = LocalBackend(root_path="/tmp/nexus_test")
     # Use in-memory SQLite database for testing
-    metadata_store = RaftMetadataStore.local("sqlite:///:memory:".replace(".db", ""))
+    metadata_store = RaftMetadataStore.embedded("sqlite:///:memory:".replace(".db", ""))
     nx = nexus.NexusFS(backend=backend, metadata_store=metadata_store)
     print("   ✓ NexusFS initialized with LocalBackend and in-memory database")
     print("   - Root path: /tmp/nexus_test")

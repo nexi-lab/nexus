@@ -32,7 +32,7 @@ def nx_with_mount():
         db_file = Path(tmpdir) / "metadata.db"
 
         # Create NexusFS with metadata store
-        metadata_store = RaftMetadataStore.local(str(db_file).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
         nx = NexusFS(backend=root_backend, metadata_store=metadata_store, enforce_permissions=False)
 
         yield nx, tmpdir

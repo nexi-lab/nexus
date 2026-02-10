@@ -1,0 +1,26 @@
+[package]
+name = "nexus_tasks"
+version = "0.1.0"
+edition = "2021"
+description = "Durable task queue engine for Nexus Agent OS"
+authors = ["Nexus Team"]
+
+[lib]
+name = "_nexus_tasks"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.27.2", features = ["extension-module"] }
+fjall = "3"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+thiserror = "2.0"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

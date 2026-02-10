@@ -46,6 +46,7 @@ from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
+from nexus.core.nexus_fs_tasks import NexusFSTasksMixin
 
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
@@ -77,6 +78,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSMCPMixin,
     NexusFSLLMMixin,
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
+    NexusFSTasksMixin,  # Issue #574: Durable task queue
     NexusFilesystem,
 ):
     """

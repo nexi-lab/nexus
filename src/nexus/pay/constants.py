@@ -11,6 +11,7 @@ Related: Issue #1199 (Nexus Pay hybrid architecture)
 from __future__ import annotations
 
 import hashlib
+from decimal import Decimal
 
 # =============================================================================
 # Ledger Codes
@@ -48,28 +49,30 @@ ESCROW_ACCOUNT_TB_ID = 2
 MICRO_UNIT_SCALE = 1_000_000
 
 
-def credits_to_micro(credits: float) -> int:
+def credits_to_micro(credits: Decimal | float | int) -> int:
     """Convert credits to micro-credits (internal storage format).
 
+    Uses Decimal arithmetic internally to avoid float precision loss.
+
     Args:
-        credits: Amount in credits (e.g., 1.5 credits)
+        credits: Amount in credits (e.g., Decimal("1.5") or 1.5)
 
     Returns:
         Amount in micro-credits (e.g., 1_500_000)
     """
-    return int(credits * MICRO_UNIT_SCALE)
+    return int(Decimal(str(credits)) * MICRO_UNIT_SCALE)
 
 
-def micro_to_credits(micro: int) -> float:
+def micro_to_credits(micro: int) -> Decimal:
     """Convert micro-credits to credits (display format).
 
     Args:
         micro: Amount in micro-credits
 
     Returns:
-        Amount in credits
+        Amount in credits as Decimal.
     """
-    return micro / MICRO_UNIT_SCALE
+    return Decimal(str(micro)) / MICRO_UNIT_SCALE
 
 
 # =============================================================================

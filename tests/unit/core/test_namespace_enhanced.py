@@ -97,9 +97,7 @@ class TestGrantsHash:
 
         assert hash1 == hash2
 
-    def test_grants_hash_changes_on_new_grant(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_grants_hash_changes_on_new_grant(self, namespace_manager, enhanced_rebac_manager):
         """Adding a grant changes the hash."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
@@ -191,9 +189,7 @@ class TestGrantsHash:
 class TestMultiSubjectVisibility:
     """Tests for namespace isolation between subjects."""
 
-    def test_two_subjects_different_mounts(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_two_subjects_different_mounts(self, namespace_manager, enhanced_rebac_manager):
         """Different subjects have different mount tables."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
@@ -207,17 +203,11 @@ class TestMultiSubjectVisibility:
         )
 
         assert namespace_manager.is_visible(("user", "alice"), "/workspace/alice-proj/code.py")
-        assert not namespace_manager.is_visible(
-            ("user", "alice"), "/workspace/bob-proj/data.csv"
-        )
+        assert not namespace_manager.is_visible(("user", "alice"), "/workspace/bob-proj/data.csv")
         assert namespace_manager.is_visible(("user", "bob"), "/workspace/bob-proj/data.csv")
-        assert not namespace_manager.is_visible(
-            ("user", "bob"), "/workspace/alice-proj/code.py"
-        )
+        assert not namespace_manager.is_visible(("user", "bob"), "/workspace/alice-proj/code.py")
 
-    def test_agent_and_user_separate_namespaces(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_agent_and_user_separate_namespaces(self, namespace_manager, enhanced_rebac_manager):
         """Agent and user have separate namespace mount tables."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
@@ -231,9 +221,7 @@ class TestMultiSubjectVisibility:
         )
 
         # User can see user-data, not agent-data
-        assert namespace_manager.is_visible(
-            ("user", "alice"), "/workspace/user-data/report.md"
-        )
+        assert namespace_manager.is_visible(("user", "alice"), "/workspace/user-data/report.md")
         assert not namespace_manager.is_visible(
             ("user", "alice"), "/workspace/agent-data/output.json"
         )
@@ -274,19 +262,23 @@ class TestBuildMountEntriesEdgeCases:
 
     def test_mixed_depths(self):
         """Paths at different depths produce correct dedup."""
-        entries = build_mount_entries([
-            ("file", "/workspace/proj/a.txt"),
-            ("file", "/workspace/proj/sub/b.txt"),
-        ])
+        entries = build_mount_entries(
+            [
+                ("file", "/workspace/proj/a.txt"),
+                ("file", "/workspace/proj/sub/b.txt"),
+            ]
+        )
         # /workspace/proj subsumes /workspace/proj/sub
         assert entries == [MountEntry(virtual_path="/workspace/proj")]
 
     def test_sibling_directories(self):
         """Sibling directories produce separate mounts."""
-        entries = build_mount_entries([
-            ("file", "/workspace/alpha/a.txt"),
-            ("file", "/workspace/beta/b.txt"),
-        ])
+        entries = build_mount_entries(
+            [
+                ("file", "/workspace/alpha/a.txt"),
+                ("file", "/workspace/beta/b.txt"),
+            ]
+        )
         paths = [e.virtual_path for e in entries]
         assert "/workspace/alpha" in paths
         assert "/workspace/beta" in paths
@@ -294,10 +286,12 @@ class TestBuildMountEntriesEdgeCases:
 
     def test_non_file_types_ignored(self):
         """Non-file object types are filtered out."""
-        entries = build_mount_entries([
-            ("workspace", "/workspace/proj"),
-            ("user", "alice"),
-        ])
+        entries = build_mount_entries(
+            [
+                ("workspace", "/workspace/proj"),
+                ("user", "alice"),
+            ]
+        )
         assert entries == []
 
     def test_trailing_slash_normalized(self):
@@ -307,11 +301,13 @@ class TestBuildMountEntriesEdgeCases:
 
     def test_duplicate_paths_deduped(self):
         """Duplicate paths produce single mount."""
-        entries = build_mount_entries([
-            ("file", "/workspace/proj/a.txt"),
-            ("file", "/workspace/proj/b.txt"),
-            ("file", "/workspace/proj/c.txt"),
-        ])
+        entries = build_mount_entries(
+            [
+                ("file", "/workspace/proj/a.txt"),
+                ("file", "/workspace/proj/b.txt"),
+                ("file", "/workspace/proj/c.txt"),
+            ]
+        )
         assert entries == [MountEntry(virtual_path="/workspace/proj")]
 
     def test_empty_path_ignored(self):
@@ -327,8 +323,9 @@ class TestBuildMountEntriesEdgeCases:
 
     def test_large_number_of_paths(self):
         """Performance: 1000 paths should complete quickly."""
-        paths = [("file", f"/workspace/proj-{i}/file-{j}.txt")
-                 for i in range(100) for j in range(10)]
+        paths = [
+            ("file", f"/workspace/proj-{i}/file-{j}.txt") for i in range(100) for j in range(10)
+        ]
         entries = build_mount_entries(paths)
         assert len(entries) == 100  # 100 project directories
 
@@ -354,9 +351,7 @@ class TestCacheBehavior:
         namespace_manager.invalidate(("user", "alice"))
         assert namespace_manager.get_grants_hash(("user", "alice")) is None
 
-    def test_invalidate_all_clears_all_hashes(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_invalidate_all_clears_all_hashes(self, namespace_manager, enhanced_rebac_manager):
         """invalidate_all clears all grants_hashes."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
@@ -413,9 +408,7 @@ class TestCacheBehavior:
 class TestVisibilityEdgeCases:
     """Edge cases for bisect-based visibility checks."""
 
-    def test_exact_mount_path_is_visible(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_exact_mount_path_is_visible(self, namespace_manager, enhanced_rebac_manager):
         """Exact mount path is visible."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
@@ -432,32 +425,22 @@ class TestVisibilityEdgeCases:
             relation="direct_viewer",
             object=("file", "/workspace/proj/file.txt"),
         )
-        assert namespace_manager.is_visible(
-            ("user", "alice"), "/workspace/proj/sub/deep/file.txt"
-        )
+        assert namespace_manager.is_visible(("user", "alice"), "/workspace/proj/sub/deep/file.txt")
 
-    def test_sibling_of_mount_not_visible(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_sibling_of_mount_not_visible(self, namespace_manager, enhanced_rebac_manager):
         """Sibling path (not under mount) is not visible."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/proj/file.txt"),
         )
-        assert not namespace_manager.is_visible(
-            ("user", "alice"), "/workspace/proj-other/file.txt"
-        )
+        assert not namespace_manager.is_visible(("user", "alice"), "/workspace/proj-other/file.txt")
 
-    def test_prefix_match_requires_slash_boundary(
-        self, namespace_manager, enhanced_rebac_manager
-    ):
+    def test_prefix_match_requires_slash_boundary(self, namespace_manager, enhanced_rebac_manager):
         """Mount at /workspace/proj does NOT match /workspace/project (no slash boundary)."""
         enhanced_rebac_manager.rebac_write(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/workspace/proj/file.txt"),
         )
-        assert not namespace_manager.is_visible(
-            ("user", "alice"), "/workspace/project/file.txt"
-        )
+        assert not namespace_manager.is_visible(("user", "alice"), "/workspace/project/file.txt")

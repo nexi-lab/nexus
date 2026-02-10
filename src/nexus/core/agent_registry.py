@@ -63,8 +63,7 @@ class InvalidTransitionError(Exception):
         self.current = current
         self.target = target
         super().__init__(
-            f"Invalid transition for agent '{agent_id}': "
-            f"{current.value} -> {target.value}"
+            f"Invalid transition for agent '{agent_id}': {current.value} -> {target.value}"
         )
 
 
@@ -120,7 +119,8 @@ class AgentRegistry:
         # synchronized via _cache_lock (see cachetools docs & issue #294).
         self._cache_lock = threading.Lock()
         self._record_cache: TTLCache[str, AgentRecord | None] = TTLCache(
-            maxsize=cache_maxsize, ttl=cache_ttl,
+            maxsize=cache_maxsize,
+            ttl=cache_ttl,
         )
 
     @contextmanager
@@ -197,9 +197,7 @@ class AgentRegistry:
                 # Concurrent insert — re-read the winner's record
                 session.rollback()
                 existing = session.execute(
-                    select(AgentRecordModel).where(
-                        AgentRecordModel.agent_id == agent_id
-                    )
+                    select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
                 ).scalar_one()
                 record = self._model_to_record(existing)
                 return record
@@ -342,9 +340,7 @@ class AgentRegistry:
                     raise StaleAgentError(agent_id, expected_generation)
                 # State changed between SELECT and UPDATE — re-read and report
                 refreshed = session.execute(
-                    select(AgentRecordModel).where(
-                        AgentRecordModel.agent_id == agent_id
-                    )
+                    select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
                 ).scalar_one()
                 actual_state = AgentState(refreshed.state)
                 raise InvalidTransitionError(agent_id, actual_state, target_state)
@@ -356,7 +352,8 @@ class AgentRegistry:
                     metadata_dict = json.loads(model.agent_metadata)
                 except (json.JSONDecodeError, TypeError):
                     logger.warning(
-                        "[AGENT-REG] Corrupt metadata for agent %s", agent_id,
+                        "[AGENT-REG] Corrupt metadata for agent %s",
+                        agent_id,
                     )
 
             record = AgentRecord(
@@ -624,8 +621,7 @@ class AgentRegistry:
         # Check in-memory buffer for recent heartbeats not yet flushed
         with self._lock:
             recently_heartbeated = {
-                aid for aid, ts in self._heartbeat_buffer.items()
-                if ts >= cutoff
+                aid for aid, ts in self._heartbeat_buffer.items() if ts >= cutoff
             }
 
         with self._get_session() as session:
@@ -664,7 +660,8 @@ class AgentRegistry:
                 metadata = json.loads(model.agent_metadata)
             except (json.JSONDecodeError, TypeError):
                 logger.warning(
-                    "[AGENT-REG] Corrupt metadata for agent %s", model.agent_id,
+                    "[AGENT-REG] Corrupt metadata for agent %s",
+                    model.agent_id,
                 )
 
         return AgentRecord(

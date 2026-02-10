@@ -153,9 +153,7 @@ class EntityRegistry:
 
             # Refresh to ensure we have the committed state
             session.refresh(entity)
-            logger.debug(
-                f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}"
-            )
+            logger.debug(f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}")
             return entity
 
     def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
@@ -257,9 +255,7 @@ class EntityRegistry:
         if parent:
             logger.debug(f"[ENTITY-REG] Parent found: {parent.entity_type}:{parent.entity_id}")
         else:
-            logger.debug(
-                f"[ENTITY-REG] Parent NOT found: {entity.parent_type}:{entity.parent_id}"
-            )
+            logger.debug(f"[ENTITY-REG] Parent NOT found: {entity.parent_type}:{entity.parent_id}")
         return parent
 
     def get_children(self, parent_type: str, parent_id: str) -> list[EntityRegistryModel]:

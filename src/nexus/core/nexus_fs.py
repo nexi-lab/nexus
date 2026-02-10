@@ -4584,8 +4584,7 @@ class NexusFS(  # type: ignore[misc]
             target = AgentState(target_state)
         except ValueError as err:
             raise ValueError(
-                f"Invalid target state '{target_state}'. "
-                f"Valid states: CONNECTED, IDLE, SUSPENDED"
+                f"Invalid target state '{target_state}'. Valid states: CONNECTED, IDLE, SUSPENDED"
             ) from err
 
         record = self._agent_registry.transition(

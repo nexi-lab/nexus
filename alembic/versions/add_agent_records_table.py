@@ -42,9 +42,7 @@ def upgrade() -> None:
     )
 
     # Composite indexes (Decision #15A)
-    op.create_index(
-        "idx_agent_records_zone_state", "agent_records", ["zone_id", "state"]
-    )
+    op.create_index("idx_agent_records_zone_state", "agent_records", ["zone_id", "state"])
     op.create_index(
         "idx_agent_records_state_heartbeat",
         "agent_records",

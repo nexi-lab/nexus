@@ -25,7 +25,6 @@ import sys
 import threading
 import time
 from contextlib import closing, suppress
-
 from pathlib import Path
 
 import httpx
@@ -143,10 +142,7 @@ class TestPostgreSQLSchema:
         """All 3 composite indexes exist."""
         with pg_engine.connect() as conn:
             result = conn.execute(
-                text(
-                    "SELECT indexname FROM pg_indexes "
-                    "WHERE tablename = 'agent_records'"
-                )
+                text("SELECT indexname FROM pg_indexes WHERE tablename = 'agent_records'")
             )
             indexes = {row[0] for row in result}
 
@@ -254,9 +250,7 @@ class TestAgentRegistryPostgreSQL:
         pg_registry.register("e2e-state-a2", "bob", zone_id="e2e-filter-zone")
         pg_registry.transition("e2e-state-a1", AgentState.CONNECTED, expected_generation=0)
 
-        connected = pg_registry.list_by_zone(
-            "e2e-filter-zone", state=AgentState.CONNECTED
-        )
+        connected = pg_registry.list_by_zone("e2e-filter-zone", state=AgentState.CONNECTED)
         assert len(connected) == 1
         assert connected[0].agent_id == "e2e-state-a1"
 
@@ -364,9 +358,7 @@ class TestHeartbeatPostgreSQL:
     def test_concurrent_heartbeats_postgres(self, pg_registry):
         """10 threads x 50 heartbeats with PostgreSQL — no data corruption."""
         pg_registry.register("e2e-concurrent-hb-1", "alice")
-        pg_registry.transition(
-            "e2e-concurrent-hb-1", AgentState.CONNECTED, expected_generation=0
-        )
+        pg_registry.transition("e2e-concurrent-hb-1", AgentState.CONNECTED, expected_generation=0)
 
         errors: list[Exception] = []
 
@@ -395,9 +387,7 @@ class TestHeartbeatPostgreSQL:
     def test_detect_stale_agents_postgres(self, pg_registry):
         """Stale detection query uses PostgreSQL composite index."""
         pg_registry.register("e2e-stale-detect-1", "alice")
-        pg_registry.transition(
-            "e2e-stale-detect-1", AgentState.CONNECTED, expected_generation=0
-        )
+        pg_registry.transition("e2e-stale-detect-1", AgentState.CONNECTED, expected_generation=0)
         pg_registry.heartbeat("e2e-stale-detect-1")
         pg_registry.flush_heartbeats()
 
@@ -543,9 +533,7 @@ class TestServerE2E:
         )
         assert response.status_code == 200, f"register_agent failed: {response.text}"
         data = response.json()
-        assert "error" not in data or data.get("error") is None, (
-            f"RPC error: {data.get('error')}"
-        )
+        assert "error" not in data or data.get("error") is None, f"RPC error: {data.get('error')}"
         result = data.get("result", {})
         assert result.get("agent_id") == "e2e-admin,E2ETestAgent"
 
@@ -612,9 +600,7 @@ class TestServerE2E:
         # Should either get 401/403 or an RPC error indicating auth required
         if response.status_code == 200:
             data = response.json()
-            assert data.get("error") is not None, (
-                "Expected auth error from protected endpoint"
-            )
+            assert data.get("error") is not None, "Expected auth error from protected endpoint"
         else:
             assert response.status_code in (401, 403)
 
@@ -711,8 +697,12 @@ class TestAlembicMigration:
         # Generate SQL for the agent_records migration only
         result = subprocess.run(
             [
-                sys.executable, "-m", "alembic", "upgrade",
-                "add_memory_version_tracking:add_agent_records_table", "--sql",
+                sys.executable,
+                "-m",
+                "alembic",
+                "upgrade",
+                "add_memory_version_tracking:add_agent_records_table",
+                "--sql",
             ],
             cwd=str(alembic_dir),
             env=env,
@@ -742,8 +732,12 @@ class TestAlembicMigration:
 
         result = subprocess.run(
             [
-                sys.executable, "-m", "alembic", "downgrade",
-                "add_agent_records_table:add_memory_version_tracking", "--sql",
+                sys.executable,
+                "-m",
+                "alembic",
+                "downgrade",
+                "add_agent_records_table:add_memory_version_tracking",
+                "--sql",
             ],
             cwd=str(alembic_dir),
             env=env,
@@ -863,30 +857,45 @@ class TestRPCEndpoints:
         base_url = nexus_server_pg["base_url"]
 
         # Register agent
-        reg = self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,TransitionAgent",
-            "name": "Transition Test Agent",
-            "generate_api_key": True,
-        })
+        reg = self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,TransitionAgent",
+                "name": "Transition Test Agent",
+                "generate_api_key": True,
+            },
+        )
         assert reg.get("error") is None, f"register_agent error: {reg.get('error')}"
 
         # Transition UNKNOWN -> CONNECTED (gen 0 -> 1)
-        result = self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,TransitionAgent",
-            "target_state": "CONNECTED",
-            "expected_generation": 0,
-        })
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,TransitionAgent",
+                "target_state": "CONNECTED",
+                "expected_generation": 0,
+            },
+        )
         assert result.get("error") is None, f"transition error: {result.get('error')}"
         data = result["result"]
         assert data["state"] == "CONNECTED"
         assert data["generation"] == 1
 
         # Transition CONNECTED -> IDLE (gen stays 1)
-        result = self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,TransitionAgent",
-            "target_state": "IDLE",
-            "expected_generation": 1,
-        })
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,TransitionAgent",
+                "target_state": "IDLE",
+                "expected_generation": 1,
+            },
+        )
         assert result.get("error") is None
         assert result["result"]["state"] == "IDLE"
         assert result["result"]["generation"] == 1
@@ -900,20 +909,35 @@ class TestRPCEndpoints:
         base_url = nexus_server_pg["base_url"]
 
         # Register and connect
-        self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,HeartbeatAgent",
-            "name": "Heartbeat Test Agent",
-        })
-        self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,HeartbeatAgent",
-            "target_state": "CONNECTED",
-            "expected_generation": 0,
-        })
+        self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,HeartbeatAgent",
+                "name": "Heartbeat Test Agent",
+            },
+        )
+        self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,HeartbeatAgent",
+                "target_state": "CONNECTED",
+                "expected_generation": 0,
+            },
+        )
 
         # Heartbeat
-        result = self._rpc_call(base_url, api_key, "agent_heartbeat", {
-            "agent_id": "e2e-rpc-admin,HeartbeatAgent",
-        })
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_heartbeat",
+            {
+                "agent_id": "e2e-rpc-admin,HeartbeatAgent",
+            },
+        )
         assert result.get("error") is None, f"heartbeat error: {result.get('error')}"
         assert result["result"]["ok"] is True
 
@@ -926,19 +950,34 @@ class TestRPCEndpoints:
         base_url = nexus_server_pg["base_url"]
 
         # Register 2 agents (they go to "default" zone)
-        self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,ZoneAgent1",
-            "name": "Zone Agent 1",
-        })
-        self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,ZoneAgent2",
-            "name": "Zone Agent 2",
-        })
+        self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,ZoneAgent1",
+                "name": "Zone Agent 1",
+            },
+        )
+        self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,ZoneAgent2",
+                "name": "Zone Agent 2",
+            },
+        )
 
         # List by zone
-        result = self._rpc_call(base_url, api_key, "agent_list_by_zone", {
-            "zone_id": "default",
-        })
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_list_by_zone",
+            {
+                "zone_id": "default",
+            },
+        )
         assert result.get("error") is None, f"list error: {result.get('error')}"
         agents = result["result"]
         agent_ids = {a["agent_id"] for a in agents}
@@ -954,17 +993,27 @@ class TestRPCEndpoints:
         base_url = nexus_server_pg["base_url"]
 
         # Register agent (starts as UNKNOWN)
-        self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,InvalidAgent",
-            "name": "Invalid Transition Agent",
-        })
+        self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,InvalidAgent",
+                "name": "Invalid Transition Agent",
+            },
+        )
 
         # Try UNKNOWN -> IDLE (invalid)
-        result = self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,InvalidAgent",
-            "target_state": "IDLE",
-            "expected_generation": 0,
-        })
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,InvalidAgent",
+                "target_state": "IDLE",
+                "expected_generation": 0,
+            },
+        )
         # Should return an RPC error
         assert result.get("error") is not None, (
             f"Expected error for invalid transition, got: {result}"
@@ -979,24 +1028,37 @@ class TestRPCEndpoints:
         base_url = nexus_server_pg["base_url"]
 
         # Register and advance generation
-        self._rpc_call(base_url, api_key, "register_agent", {
-            "agent_id": "e2e-rpc-admin,StaleAgent",
-            "name": "Stale Gen Agent",
-        })
-        self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,StaleAgent",
-            "target_state": "CONNECTED",
-            "expected_generation": 0,
-        })
-        # Now at gen 1. Try with stale gen=0
-        result = self._rpc_call(base_url, api_key, "agent_transition", {
-            "agent_id": "e2e-rpc-admin,StaleAgent",
-            "target_state": "IDLE",
-            "expected_generation": 0,
-        })
-        assert result.get("error") is not None, (
-            f"Expected stale generation error, got: {result}"
+        self._rpc_call(
+            base_url,
+            api_key,
+            "register_agent",
+            {
+                "agent_id": "e2e-rpc-admin,StaleAgent",
+                "name": "Stale Gen Agent",
+            },
         )
+        self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,StaleAgent",
+                "target_state": "CONNECTED",
+                "expected_generation": 0,
+            },
+        )
+        # Now at gen 1. Try with stale gen=0
+        result = self._rpc_call(
+            base_url,
+            api_key,
+            "agent_transition",
+            {
+                "agent_id": "e2e-rpc-admin,StaleAgent",
+                "target_state": "IDLE",
+                "expected_generation": 0,
+            },
+        )
+        assert result.get("error") is not None, f"Expected stale generation error, got: {result}"
 
 
 # ---------------------------------------------------------------------------

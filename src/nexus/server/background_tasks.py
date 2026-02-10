@@ -367,9 +367,7 @@ async def stale_agent_detection_task(
             stale = agent_registry.detect_stale(threshold_seconds=threshold_seconds)
             if stale:
                 stale_ids = [a.agent_id for a in stale]
-                logger.warning(
-                    f"[HEARTBEAT] {len(stale)} stale agents detected: {stale_ids[:10]}"
-                )
+                logger.warning(f"[HEARTBEAT] {len(stale)} stale agents detected: {stale_ids[:10]}")
         except Exception:
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
 

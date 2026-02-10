@@ -23,7 +23,6 @@ from nexus.core.agent_record import (
     validate_transition,
 )
 
-
 # ---------------------------------------------------------------------------
 # AgentState enum tests
 # ---------------------------------------------------------------------------
@@ -84,7 +83,9 @@ class TestValidTransitions:
         for state, targets in VALID_TRANSITIONS.items():
             assert isinstance(targets, frozenset), f"{state} targets not frozenset"
             for target in targets:
-                assert isinstance(target, AgentState), f"{state} has non-AgentState target: {target}"
+                assert isinstance(target, AgentState), (
+                    f"{state} has non-AgentState target: {target}"
+                )
 
     def test_no_self_transitions(self):
         """No state should be able to transition to itself."""
@@ -299,7 +300,9 @@ class TestAgentRecord:
             state=AgentState.UNKNOWN,
             generation=0,
             last_heartbeat=None,
-            metadata=types.MappingProxyType({"platform": "langgraph", "endpoint_url": "http://localhost:2024"}),
+            metadata=types.MappingProxyType(
+                {"platform": "langgraph", "endpoint_url": "http://localhost:2024"}
+            ),
             created_at=now,
             updated_at=now,
         )

@@ -660,9 +660,8 @@ class PermissionEnforcer:
             if not agent_id:
                 logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
             elif (
-                (current_record := self.agent_registry.get(agent_id))
-                and current_record.generation != context.agent_generation
-            ):
+                current_record := self.agent_registry.get(agent_id)
+            ) and current_record.generation != context.agent_generation:
                 from nexus.core.exceptions import StaleSessionError
 
                 raise StaleSessionError(

@@ -159,9 +159,9 @@ class NamespaceManager:
 
         # Cache: (subject_type, subject_id) → (mount_entries, zone_revision, zone_id, grants_hash)
         # TTLCache provides both LRU eviction (maxsize) and TTL expiration (safety net)
-        self._cache: TTLCache[
-            tuple[str, str], tuple[list[MountEntry], int, str | None, str]
-        ] = TTLCache(maxsize=cache_maxsize, ttl=cache_ttl)
+        self._cache: TTLCache[tuple[str, str], tuple[list[MountEntry], int, str | None, str]] = (
+            TTLCache(maxsize=cache_maxsize, ttl=cache_ttl)
+        )
 
         # Metrics
         self._hits = 0

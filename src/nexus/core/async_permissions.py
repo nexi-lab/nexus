@@ -119,7 +119,6 @@ class AsyncPermissionEnforcer:
                         f"(current: {current_record.generation})",
                     )
 
-
         # No ReBAC manager = permissive mode
         if not self.rebac_manager:
             return True

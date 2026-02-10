@@ -169,11 +169,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// * `config` - Node configuration
     /// * `storage` - Persistent storage for Raft log
     /// * `state_machine` - Application state machine
-    pub fn new(
-        config: RaftConfig,
-        storage: RaftStorage,
-        state_machine: S,
-    ) -> Result<Arc<Self>> {
+    pub fn new(config: RaftConfig, storage: RaftStorage, state_machine: S) -> Result<Arc<Self>> {
         // Bootstrap: set initial ConfState if this is a fresh cluster
         let initial_state = storage
             .initial_state()
@@ -470,9 +466,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
 
                     let (id_bytes, cmd_bytes) = entry.data.split_at(8);
                     let proposal_id = u64::from_be_bytes(
-                        id_bytes
-                            .try_into()
-                            .expect("split_at(8) guarantees 8 bytes"),
+                        id_bytes.try_into().expect("split_at(8) guarantees 8 bytes"),
                     );
 
                     // Deserialize and apply command

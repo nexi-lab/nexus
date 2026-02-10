@@ -293,10 +293,6 @@ pub struct RaftApiClient {
     inner: RaftClientServiceClient<Channel>,
 }
 
-#[expect(
-    dead_code,
-    reason = "wire-up pending: transport→PyO3 integration in upcoming diffs"
-)]
 impl RaftApiClient {
     /// Connect to a Raft cluster node.
     pub async fn connect(endpoint: &str, config: ClientConfig) -> Result<Self> {
@@ -524,10 +520,6 @@ impl RaftApiClient {
 
 /// Result of a Propose operation.
 #[derive(Debug, Clone)]
-#[expect(
-    dead_code,
-    reason = "wire-up pending: transport→PyO3 integration in upcoming diffs"
-)]
 pub struct ProposeResult {
     /// Whether the proposal succeeded.
     pub success: bool,
@@ -541,10 +533,6 @@ pub struct ProposeResult {
 
 /// Result of a Query operation.
 #[derive(Debug, Clone)]
-#[expect(
-    dead_code,
-    reason = "wire-up pending: transport→PyO3 integration in upcoming diffs"
-)]
 pub struct QueryResult {
     /// Whether the query succeeded.
     pub success: bool,
@@ -558,10 +546,6 @@ pub struct QueryResult {
 
 /// Result of a GetClusterInfo operation.
 #[derive(Debug, Clone)]
-#[expect(
-    dead_code,
-    reason = "wire-up pending: transport→PyO3 integration in upcoming diffs"
-)]
 pub struct ClusterInfoResult {
     /// This node's ID.
     pub node_id: u64,

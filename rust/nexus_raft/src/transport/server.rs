@@ -18,9 +18,9 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
     GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo,
-    ProposeRequest, ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse,
-    RaftResponse, SnapshotChunk, StepMessageRequest, StepMessageResponse, TransferLeaderRequest,
+    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
+    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    SnapshotChunk, StepMessageRequest, StepMessageResponse, TransferLeaderRequest,
     TransferLeaderResponse, VoteRequest, VoteResponse,
 };
 use super::{NodeAddress, Result, TransportError};
@@ -79,8 +79,9 @@ impl RaftServerState {
         let store = SledStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
-        let raft_storage = RaftStorage::open(&raft_path)
-            .map_err(|e| TransportError::Connection(format!("Failed to open raft storage: {}", e)))?;
+        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
+            TransportError::Connection(format!("Failed to open raft storage: {}", e))
+        })?;
 
         let state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
@@ -93,9 +94,8 @@ impl RaftServerState {
             ..Default::default()
         };
 
-        let node = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
-            TransportError::Connection(format!("Failed to create RaftNode: {}", e))
-        })?;
+        let node = RaftNode::new(config, raft_storage, state_machine)
+            .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 
@@ -710,16 +710,15 @@ impl RaftClientService for RaftClientServiceImpl {
         let leader_id = self.state.node.leader_id().await.unwrap_or(0);
         let term = self.state.node.term().await;
 
-        let leader_addr = self
-            .state
-            .peers
-            .get(&leader_id)
-            .map(|a| a.endpoint.clone());
+        let leader_addr = self.state.peers.get(&leader_id).map(|a| a.endpoint.clone());
 
         // Build cluster config from known peers
         let mut voters = vec![ProtoNodeInfo {
             id: self.state.node_id,
-            address: self.state.peers.get(&self.state.node_id)
+            address: self
+                .state
+                .peers
+                .get(&self.state.node_id)
                 .map(|a| a.endpoint.clone())
                 .unwrap_or_default(),
             role: 0, // ROLE_VOTER
@@ -805,8 +804,9 @@ impl WitnessServerState {
         let store = SledStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
-        let raft_storage = RaftStorage::open(&raft_path)
-            .map_err(|e| TransportError::Connection(format!("Failed to open raft storage: {}", e)))?;
+        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
+            TransportError::Connection(format!("Failed to open raft storage: {}", e))
+        })?;
 
         let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness state machine: {}", e))
@@ -1093,8 +1093,7 @@ mod tests {
             max_message_size: 32 * 1024 * 1024,
         };
 
-        let server =
-            RaftServer::with_config(1, db_path.to_str().unwrap(), config, vec![]).unwrap();
+        let server = RaftServer::with_config(1, db_path.to_str().unwrap(), config, vec![]).unwrap();
         assert_eq!(
             server.bind_address(),
             "127.0.0.1:3000".parse::<SocketAddr>().unwrap()

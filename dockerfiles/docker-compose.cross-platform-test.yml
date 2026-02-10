@@ -46,6 +46,7 @@ services:
       - NEXUS_NODE_ID=1
       - NEXUS_BIND_ADDR=0.0.0.0:2026
       - NEXUS_DATA_DIR=/home/nexus/data
+      - NEXUS_PEERS=2@http://raft-2:2026,3@http://raft-3:2026
       - RUST_LOG=info,nexus_raft=debug
     ports:
       - "2026:2026"  # gRPC for Raft
@@ -57,7 +58,7 @@ services:
       dragonfly:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -76,6 +77,7 @@ services:
       - NEXUS_NODE_ID=2
       - NEXUS_BIND_ADDR=0.0.0.0:2026
       - NEXUS_DATA_DIR=/home/nexus/data
+      - NEXUS_PEERS=1@http://raft-1:2026,3@http://raft-3:2026
       - RUST_LOG=info,nexus_raft=debug
     ports:
       - "2027:2026"
@@ -87,7 +89,7 @@ services:
       dragonfly:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -104,11 +106,12 @@ services:
     hostname: raft-3
     environment:
       - NEXUS_NODE_ID=3
-      - NEXUS_BIND_ADDR=0.0.0.0:2028
+      - NEXUS_BIND_ADDR=0.0.0.0:2026
       - NEXUS_DATA_DIR=/home/nexus/data
+      - NEXUS_PEERS=1@http://raft-1:2026,2@http://raft-2:2026
       - RUST_LOG=info,nexus_raft=debug
     ports:
-      - "2028:2028"
+      - "2028:2026"
     volumes:
       - raft3_data:/home/nexus/data
     networks:
@@ -117,7 +120,7 @@ services:
       dragonfly:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2028/", "||", "exit", "0"]
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -67,6 +67,10 @@ from nexus.core.exceptions import (
     StaleSessionError,
     ValidationError,
 )
+from nexus.server.path_utils import (
+    unscope_internal_dict,
+    unscope_internal_path,
+)
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -4845,6 +4849,9 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
             return_metadata,
             False,
         )
+        # Issue #1202: Strip internal prefixes from metadata path
+        if isinstance(read_result, dict):
+            read_result = unscope_internal_dict(read_result, ["path", "virtual_path"])
         return read_result
 
     # For parsed reads, we need to handle async parsing
@@ -4906,7 +4913,9 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     # Return raw bytes - encode_rpc_message will convert to {__type__: 'bytes', data: ...}
     if isinstance(result, bytes):
         return result
-    # If result is already a dict (e.g., with metadata), return as-is
+    # Issue #1202: Strip internal prefixes from metadata path
+    if isinstance(result, dict):
+        result = unscope_internal_dict(result, ["path", "virtual_path"])
     return result
 
 
@@ -4980,8 +4989,15 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     if hasattr(result, "to_dict"):
         _build_start = _time.time()
         paginated = result.to_dict()
+        # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+        items = [
+            unscope_internal_dict(f, ["path", "virtual_path"])
+            if isinstance(f, dict)
+            else unscope_internal_path(f)
+            for f in paginated["items"]
+        ]
         response = {
-            "files": paginated["items"],
+            "files": items,
             "next_cursor": paginated["next_cursor"],
             "has_more": paginated["has_more"],
             "total_count": paginated.get("total_count"),
@@ -4991,13 +5007,20 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
         logger.info(
             f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
             f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, "
-            f"files={len(paginated['items'])}, has_more={paginated['has_more']}"
+            f"files={len(items)}, has_more={paginated['has_more']}"
         )
         return response
 
     # Fallback for non-paginated result (shouldn't happen)
     _build_start = _time.time()
-    entries = result if isinstance(result, list) else []
+    raw_entries = result if isinstance(result, list) else []
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    entries = [
+        unscope_internal_dict(f, ["path", "virtual_path"])
+        if isinstance(f, dict)
+        else unscope_internal_path(f)
+        for f in raw_entries
+    ]
     response = {"files": entries, "has_more": False, "next_cursor": None}
     _build_elapsed = (_time.time() - _build_start) * 1000
     _total_elapsed = (_time.time() - _handle_start) * 1000
@@ -5093,6 +5116,9 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
     metadata = nexus_fs.get_metadata(params.path, context=context)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from metadata path
+    if isinstance(metadata, dict):
+        metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
 
 
@@ -5106,6 +5132,8 @@ def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
         kwargs["path"] = params.path
 
     matches = nexus_fs.glob(params.pattern, **kwargs)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
 
@@ -5127,6 +5155,13 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
         kwargs["search_mode"] = params.search_mode
 
     results = nexus_fs.grep(params.pattern, **kwargs)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    results = [
+        unscope_internal_dict(r, ["path", "file"])
+        if isinstance(r, dict)
+        else unscope_internal_path(r) if isinstance(r, str) else r
+        for r in results
+    ]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

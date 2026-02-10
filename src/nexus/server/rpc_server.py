@@ -41,6 +41,7 @@ from nexus.core.virtual_views import (
     get_parsed_content,
     parse_virtual_path,
 )
+from nexus.server.path_utils import unscope_internal_dict, unscope_internal_path
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -1100,6 +1101,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 result = self.nexus_fs.read(
                     params.path, context=context, return_metadata=params.return_metadata
                 )
+                # Issue #1202: Strip internal prefixes from metadata path
+                if isinstance(result, dict):
+                    result = unscope_internal_dict(result, ["path", "virtual_path"])
                 return result
 
         elif method == "write":
@@ -1112,7 +1116,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 if_none_match=params.if_none_match,
                 force=params.force,
             )
-            # Return metadata dict from write()
+            # Issue #1202: Strip internal prefixes from response path
+            if isinstance(result, dict):
+                result = unscope_internal_dict(result, ["path", "virtual_path"])
             return result
 
         elif method == "append":
@@ -1124,7 +1130,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 if_match=params.if_match,
                 force=params.force,
             )
-            # Return metadata dict from append()
+            # Issue #1202: Strip internal prefixes from response path
+            if isinstance(result, dict):
+                result = unscope_internal_dict(result, ["path", "virtual_path"])
             return result
 
         elif method == "delete":
@@ -1194,10 +1202,22 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     show_parsed=params.show_parsed,
                 )
 
+            # Issue #1202: Strip internal zone/tenant prefixes from paths
+            # Metadata stores paths with internal prefixes (/tenant:X/, /zone/X/user:Y/)
+            # but API clients should see user-friendly paths (/workspace/file.txt)
+            serializable_files = [
+                unscope_internal_dict(f, ["path", "virtual_path"])
+                if isinstance(f, dict)
+                else unscope_internal_path(f)
+                for f in serializable_files
+            ]
+
             return {"files": serializable_files}
 
         elif method == "glob":
             matches = self.nexus_fs.glob(params.pattern, params.path, context=context)
+            # Issue #1202: Strip internal prefixes from glob matches
+            matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
             return {"matches": matches}
 
         elif method == "grep":
@@ -1225,6 +1245,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     )
                 else:
                     serializable_results.append(str(result))
+            # Issue #1202: Strip internal prefixes from grep result paths
+            serializable_results = [
+                unscope_internal_dict(r, ["path", "file"])
+                if isinstance(r, dict)
+                else unscope_internal_path(r) if isinstance(r, str) else r
+                for r in serializable_results
+            ]
             return {"results": serializable_results}
 
         # Directory operations
@@ -1270,21 +1297,21 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             # Serialize metadata object to dict
             # Note: UNIX-style permissions (owner/group/mode) have been removed
             # All permissions are now managed through ReBAC relationships
-            return {
-                "metadata": {
-                    "path": metadata.path,
-                    "backend_name": metadata.backend_name,
-                    "physical_path": metadata.physical_path,
-                    "size": metadata.size,
-                    "etag": metadata.etag,
-                    "mime_type": metadata.mime_type,
-                    "created_at": metadata.created_at,
-                    "modified_at": metadata.modified_at,
-                    "version": metadata.version,
-                    "zone_id": metadata.zone_id,
-                    "is_directory": is_dir,
-                }
+            # Issue #1202: Strip internal prefixes from metadata path
+            meta_dict = {
+                "path": metadata.path,
+                "backend_name": metadata.backend_name,
+                "physical_path": metadata.physical_path,
+                "size": metadata.size,
+                "etag": metadata.etag,
+                "mime_type": metadata.mime_type,
+                "created_at": metadata.created_at,
+                "modified_at": metadata.modified_at,
+                "version": metadata.version,
+                "zone_id": metadata.zone_id,
+                "is_directory": is_dir,
             }
+            return {"metadata": unscope_internal_dict(meta_dict, ["path"])}
 
         # ========== Memory API (v0.5.0) ==========
         # Trajectory operations

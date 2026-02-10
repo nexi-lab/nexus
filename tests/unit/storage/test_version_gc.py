@@ -146,7 +146,7 @@ class TestVersionHistoryGC:
         data_dir = Path(temp_dir) / "nexus-data"
         data_dir.mkdir(parents=True, exist_ok=True)
         backend = LocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.local(str(data_dir / "raft-metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(data_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -327,7 +327,7 @@ class TestVersionHistoryGC:
         # Create fresh record store and NexusFS without any files
         rs_empty = SQLAlchemyRecordStore(db_path=str(data_dir / "nexus.db"))
         backend = LocalBackend(root_path=data_dir)
-        metadata_store = RaftMetadataStore.local(str(data_dir / "metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(data_dir / "metadata"))
         nx_empty = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,

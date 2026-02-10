@@ -271,7 +271,7 @@ async def client(
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
     # Real AsyncNexusFS with real ReBAC permissions
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
@@ -510,7 +510,7 @@ async def test_file_write_denied_when_no_permission(
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
     # No permission tuples for "denied_user" — real ReBAC will deny
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft_denied"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft_denied"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend_denied",
@@ -666,7 +666,7 @@ async def auth_enforced_client(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
@@ -785,7 +785,7 @@ async def test_file_permission_denied_does_not_affect_pay(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft_payvsdeny"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft_payvsdeny"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend_payvsdeny",
@@ -905,7 +905,7 @@ async def db_auth_client(
     db_auth = DatabaseAPIKeyAuth(SessionFactory)
 
     # AsyncNexusFS with real ReBAC permissions
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",

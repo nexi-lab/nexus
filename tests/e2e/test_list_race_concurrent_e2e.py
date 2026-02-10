@@ -231,9 +231,9 @@ class TestConcurrentRaceCondition:
         test_user = f"raceuser_{unique_id}"
 
         agent_dirs = [
-            f"/zone/system/user:{test_user}/agent/ImpersonatedUser",
-            f"/zone/system/user:{test_user}/agent/UntrustedAgent",
-            f"/zone/system/user:{test_user}/agent/SkillBuilder",
+            f"/zone/system/user/{test_user}/agent/ImpersonatedUser",
+            f"/zone/system/user/{test_user}/agent/UntrustedAgent",
+            f"/zone/system/user/{test_user}/agent/SkillBuilder",
         ]
 
         race_detected = []

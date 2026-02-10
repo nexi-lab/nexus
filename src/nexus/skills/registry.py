@@ -72,7 +72,7 @@ class SkillRegistry:
         Structure (new namespace convention):
             /skill/                                            - System-wide skills (priority 1)
             /zone/{zone_id}/skill/                           - Zone shared skills (priority 2)
-            /zone/{zone_id}/user:{user_id}/skill/            - User personal skills (priority 3)
+            /zone/{zone_id}/user/{user_id}/skill/            - User personal skills (priority 3)
 
         Legacy paths (for backward compatibility):
             /skills/zones/{zone_id}/                          - Old zone path
@@ -95,8 +95,8 @@ class SkillRegistry:
             # Check user_id first (v0.5.0+), then fall back to user (legacy field)
             user_id = context.user_id or getattr(context, "user", None)
             if user_id:
-                # Personal skills: /zone/{tid}/user:{uid}/skill/
-                paths["personal"] = f"/zone/{zone_id}/user:{user_id}/skill/"
+                # Personal skills: /zone/{tid}/user/{uid}/skill/
+                paths["personal"] = f"/zone/{zone_id}/user/{user_id}/skill/"
 
         return paths
 

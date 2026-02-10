@@ -45,7 +45,7 @@ async def client(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
 
     # Create RaftMetadataStore for file metadata
-    metadata_store = RaftMetadataStore.local(str(tmp_path / "raft"))
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
 
     # Initialize real AsyncNexusFS with RaftMetadataStore
     backend_root = tmp_path / "backend"

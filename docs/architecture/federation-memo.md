@@ -15,7 +15,7 @@
   - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
   - `WitnessStateMachineInMemory` for testing
   - All tests pass, clippy clean with `--all-features`
-- **PyO3 FFI bindings**: `LocalRaft` class for same-box Python→Rust access (~5μs/op) ✅ **CI complete (#1234)**
+- **PyO3 FFI bindings**: `Metastore` class for same-box Python→Rust sled access (~5μs/op) ✅ **CI complete (#1234)**
   - Metadata ops: set/get/delete/list
   - Lock ops: acquire/release/extend (mutex + semaphore)
   - Snapshot/restore
@@ -817,7 +817,7 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 | Raft node | `rust/nexus_raft/src/raft/node.rs` | RawNode wrapper, propose API |
 | Raft storage | `rust/nexus_raft/src/raft/storage.rs` | sled-backed Storage trait impl |
 | State machine | `rust/nexus_raft/src/raft/state_machine.rs` | Full + Witness + InMemory |
-| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | LocalRaft Python class |
+| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | Metastore + RaftConsensus Python classes |
 | Raft proto | `rust/nexus_raft/proto/raft.proto` | gRPC transport definitions |
 | Proto build | `rust/nexus_raft/build.rs` | tonic-build, expects `../../proto/` |
 | RaftMetadataStore | `src/nexus/storage/raft_metadata_store.py` | Python Raft client (local+remote) |

@@ -46,7 +46,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
     - Permissions disabled (for raw operation benchmarks)
     - Auto-parse disabled (for raw write benchmarks)
     """
-    metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", ""))
+    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = create_nexus_fs(
         backend=benchmark_backend,
@@ -65,7 +65,7 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
 @pytest.fixture
 def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
-    metadata_store = RaftMetadataStore.local(str(benchmark_db).replace(".db", "") + "_perms")
+    metadata_store = RaftMetadataStore.embedded(str(benchmark_db).replace(".db", "") + "_perms")
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for benchmarks
     nx = create_nexus_fs(
         backend=benchmark_backend,

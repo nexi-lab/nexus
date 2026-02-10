@@ -95,7 +95,7 @@ def nexus_fs(isolated_db, tmp_path):
     backend = LocalBackend(root_path=str(tmp_path / "storage"))
     nx = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.local(
+        metadata_store=RaftMetadataStore.embedded(
             str(isolated_db).replace(
                 chr(46) + chr(100) + chr(98), chr(45) + chr(114) + chr(97) + chr(102) + chr(116)
             )

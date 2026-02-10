@@ -50,6 +50,7 @@ from nexus.storage.models import (
     FilePathModel,
     VersionHistoryModel,
 )
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
 def _pg_available() -> bool:
@@ -269,11 +270,12 @@ async def client(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
-    # Real AsyncNexusFS with real ReBAC permissions (PostgreSQL engine)
+    # Real AsyncNexusFS with real ReBAC permissions
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -347,6 +349,7 @@ async def client(
         yield http_client
 
     await async_fs.close()
+    metadata_store.close()
     _app_state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
@@ -507,10 +510,11 @@ async def test_file_write_denied_when_no_permission(
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
     # No permission tuples for "denied_user" — real ReBAC will deny
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft_denied"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend_denied",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -555,6 +559,7 @@ async def test_file_write_denied_when_no_permission(
         assert resp.status_code == 403
 
     await async_fs.close()
+    metadata_store.close()
     _app_state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
@@ -661,10 +666,11 @@ async def auth_enforced_client(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -695,6 +701,7 @@ async def auth_enforced_client(
         yield http_client
 
     await async_fs.close()
+    metadata_store.close()
     _app_state.async_nexus_fs = None
 
 
@@ -778,10 +785,11 @@ async def test_file_permission_denied_does_not_affect_pay(
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "true")
 
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft_payvsdeny"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend_payvsdeny",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -839,6 +847,7 @@ async def test_file_permission_denied_does_not_affect_pay(
         assert resp.status_code == 201
 
     await async_fs.close()
+    metadata_store.close()
     _app_state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
@@ -896,10 +905,11 @@ async def db_auth_client(
     db_auth = DatabaseAPIKeyAuth(SessionFactory)
 
     # AsyncNexusFS with real ReBAC permissions
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     permission_enforcer = AsyncPermissionEnforcer(rebac_manager=rebac_manager)
     async_fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -930,6 +940,7 @@ async def db_auth_client(
         yield (http_client, raw_key)
 
     await async_fs.close()
+    metadata_store.close()
     _app_state.async_nexus_fs = None
 
     # Cleanup: remove test key from PostgreSQL

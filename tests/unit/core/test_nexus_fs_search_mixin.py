@@ -37,7 +37,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -51,7 +51,7 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-perms")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
@@ -355,7 +355,6 @@ class TestGrepPerformance:
         assert len(results) == 1
         assert results[0]["line"] == 501  # 1-indexed
 
-    @pytest.mark.xfail(reason="RaftMetadataStore lacks batch_get method (Task #45)")
     def test_grep_many_files(self, nx: NexusFS) -> None:
         """Test grep across many files."""
         for i in range(50):

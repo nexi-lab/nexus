@@ -64,6 +64,7 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    StaleSessionError,
     ValidationError,
 )
 from nexus.server.protocol import (
@@ -289,7 +290,7 @@ def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, (InvalidPathError, ValidationError)):
         status_code = 400
         error_type = "Bad Request"
-    elif isinstance(exc, ConflictError):
+    elif isinstance(exc, (ConflictError, StaleSessionError)):
         status_code = 409
         error_type = "Conflict"
     elif isinstance(exc, ParserError):
@@ -398,6 +399,8 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
+        # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+        self.reactive_subscription_manager: Any = None
 
 
 # Global state (set during app creation)
@@ -579,10 +582,14 @@ async def get_auth_result(
     if not authorization:
         return None
 
-    if not authorization.startswith("Bearer "):
+    # Extract token: support both "Bearer <token>" and raw "sk-<token>" formats
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif authorization.startswith("sk-"):
+        # API keys (sk-*) can be sent directly without Bearer prefix
+        token = authorization
+    else:
         return None
-
-    token = authorization[7:]
 
     # Try auth provider first
     if _app_state.auth_provider:
@@ -692,6 +699,23 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
             AdminCapability.MANAGE_REBAC,
         }
 
+    # Issue #1240: Populate agent_generation from AgentRegistry
+    # TODO: In production, agent_generation should come from client JWT token,
+    # not a server-side DB lookup (which makes stale-session detection a no-op
+    # since both sides read the same DB). This is a temporary bridge until
+    # JWT token integration is implemented.
+    agent_generation = None
+    if subject_type == "agent" and _app_state.agent_registry:
+        try:
+            agent_record = _app_state.agent_registry.get(subject_id)
+            if agent_record:
+                agent_generation = agent_record.generation
+        except Exception:
+            logger.debug(
+                "[AGENT-GEN] Failed to look up generation for agent %s",
+                subject_id,
+            )
+
     return OperationContext(
         user=user_id,
         agent_id=agent_id,
@@ -701,6 +725,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         is_admin=is_admin,
         groups=[],
         admin_capabilities=admin_capabilities,
+        agent_generation=agent_generation,
     )
 
 
@@ -779,12 +804,13 @@ async def lifespan(_app: FastAPI) -> Any:
                 permission_enforcer = AsyncPermissionEnforcer(
                     rebac_manager=_app_state.async_rebac_manager,
                     namespace_manager=namespace_manager,
+                    agent_registry=_app_state.agent_registry,
                 )
 
-                # Create AsyncNexusFS
+                # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
                 _app_state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
-                    engine=engine,
+                    metadata_store=_app_state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
@@ -800,39 +826,51 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
-    # Initialize cache factory for Dragonfly/Redis (Issue #1075)
+    # Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)
     # Provides optimized connection pooling for permission/tiger caches
-    dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
-    if dragonfly_url:
-        try:
-            from nexus.cache.factory import init_cache_factory
-            from nexus.cache.settings import CacheSettings
+    try:
+        from nexus.cache.factory import init_cache_factory
+        from nexus.cache.settings import CacheSettings
 
-            cache_settings = CacheSettings.from_env()
-            _app_state.cache_factory = await init_cache_factory(cache_settings)
-            logger.info(
-                f"Cache factory initialized with Dragonfly "
-                f"(pool_size={cache_settings.dragonfly_pool_size}, "
-                f"keepalive={cache_settings.dragonfly_keepalive})"
+        cache_settings = CacheSettings.from_env()
+
+        # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
+        record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+
+        _app_state.cache_factory = await init_cache_factory(
+            cache_settings, record_store=record_store
+        )
+        logger.info(
+            f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
+        )
+
+        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
+        # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
+        if _app_state.cache_factory.has_cache_store:
+            tiger_cache = getattr(
+                getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                "_tiger_cache",
+                None,
             )
-
-            # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
-            # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
-            if _app_state.cache_factory.is_using_dragonfly:
-                tiger_cache = getattr(
-                    getattr(_app_state.nexus_fs, "_rebac_manager", None),
-                    "_tiger_cache",
-                    None,
+            if tiger_cache:
+                dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+                logger.info(
+                    "[TIGER] Dragonfly L2 cache wired up - "
+                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
                 )
-                if tiger_cache:
-                    dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
-                    tiger_cache.set_dragonfly_cache(dragonfly_tiger)
-                    logger.info(
-                        "[TIGER] Dragonfly L2 cache wired up - "
-                        "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to initialize cache factory: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize cache factory: {e}")
+
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -844,7 +882,10 @@ async def lifespan(_app: FastAPI) -> Any:
         if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
             event_bus = _app_state.nexus_fs._event_bus
 
-        _app_state.websocket_manager = WebSocketManager(event_bus=event_bus)
+        _app_state.websocket_manager = WebSocketManager(
+            event_bus=event_bus,
+            reactive_manager=_app_state.reactive_subscription_manager,
+        )
         await _app_state.websocket_manager.start()
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
@@ -1045,10 +1086,116 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
+    # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.core.agent_registry import AgentRegistry
+
+            _app_state.agent_registry = AgentRegistry(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                entity_registry=getattr(_app_state.nexus_fs, "_entity_registry", None),
+                flush_interval=60,
+            )
+            # Inject into NexusFS for RPC methods
+            _app_state.nexus_fs._agent_registry = _app_state.agent_registry
+
+            # Wire into sync PermissionEnforcer
+            perm_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+            if perm_enforcer is not None:
+                perm_enforcer.agent_registry = _app_state.agent_registry
+
+            logger.info("[AGENT-REG] AgentRegistry initialized and wired")
+        except Exception as e:
+            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            _app_state.agent_registry = None
+    else:
+        _app_state.agent_registry = None
+
+    # Issue #1240: Start agent heartbeat and stale detection background tasks
+    _heartbeat_task = None
+    _stale_detection_task = None
+    if _app_state.agent_registry:
+        from nexus.server.background_tasks import (
+            heartbeat_flush_task,
+            stale_agent_detection_task,
+        )
+
+        _heartbeat_task = asyncio.create_task(
+            heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+        )
+        _stale_detection_task = asyncio.create_task(
+            stale_agent_detection_task(_app_state.agent_registry, interval_seconds=300)
+        )
+        logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
+
+    # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
+    _scheduler_pool = None
+    if _app_state.database_url and "postgresql" in _app_state.database_url:
+        try:
+            import asyncpg
+
+            from nexus.pay.credits import CreditsService
+            from nexus.scheduler.queue import TaskQueue
+            from nexus.scheduler.service import SchedulerService
+
+            # Convert SQLAlchemy URL to asyncpg DSN
+            pg_dsn = _app_state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+
+            # Create scheduled_tasks table if it doesn't exist
+            async with _scheduler_pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        agent_id TEXT NOT NULL,
+                        executor_id TEXT NOT NULL,
+                        task_type TEXT NOT NULL,
+                        payload JSONB NOT NULL DEFAULT '{}',
+                        priority_tier SMALLINT NOT NULL DEFAULT 2,
+                        deadline TIMESTAMPTZ,
+                        boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
+                        boost_tiers SMALLINT NOT NULL DEFAULT 0,
+                        effective_tier SMALLINT NOT NULL DEFAULT 2,
+                        enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        started_at TIMESTAMPTZ,
+                        completed_at TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        boost_reservation_id TEXT,
+                        idempotency_key TEXT UNIQUE,
+                        zone_id TEXT NOT NULL DEFAULT 'default',
+                        error_message TEXT
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
+                    ON scheduled_tasks (effective_tier, enqueued_at)
+                    WHERE status = 'queued'
+                """)
+
+            scheduler_service = SchedulerService(
+                queue=TaskQueue(),
+                db_pool=_scheduler_pool,
+                credits_service=CreditsService(enabled=False),
+            )
+            _app.state.scheduler_service = scheduler_service
+            logger.info("Scheduler service initialized (PostgreSQL)")
+        except ImportError as e:
+            logger.debug(f"Scheduler service not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Scheduler service: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1212: Shutdown scheduler pool
+    if _scheduler_pool:
+        try:
+            await _scheduler_pool.close()
+            logger.info("Scheduler pool closed")
+        except Exception as e:
+            logger.warning(f"Error closing scheduler pool: {e}")
 
     # Issue #940: Shutdown AsyncNexusFS
     if _app_state.async_nexus_fs:
@@ -1073,6 +1220,19 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
+
+    # Issue #1240: Cancel agent background tasks and final flush
+    for task_ref in (_heartbeat_task, _stale_detection_task):
+        if task_ref and not task_ref.done():
+            task_ref.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_ref
+    if _app_state.agent_registry:
+        try:
+            _app_state.agent_registry.flush_heartbeats()
+            logger.info("[AGENT-REG] Final heartbeat flush completed")
+        except Exception:
+            logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1626,6 +1786,26 @@ def _register_routes(app: FastAPI) -> None:
         else:
             health["components"]["websocket"] = {"status": "disabled"}
 
+        # Check Reactive Subscription Manager (Issue #1167)
+        if _app_state.reactive_subscription_manager:
+            try:
+                reactive_stats = _app_state.reactive_subscription_manager.get_stats()
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "healthy",
+                    "total_subscriptions": reactive_stats["total_subscriptions"],
+                    "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
+                    "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
+                    "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
+                    "registry": reactive_stats["registry"],
+                }
+            except Exception as e:
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "error",
+                    "error": str(e),
+                }
+        else:
+            health["components"]["reactive_subscriptions"] = {"status": "disabled"}
+
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}
         if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "path_router"):
@@ -1699,7 +1879,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
-            if cache_factory.is_using_dragonfly and cache_factory._cache_client:
+            if cache_factory.has_cache_store and cache_factory._cache_client:
                 dragonfly_stats = cache_factory._cache_client.get_pool_stats()
                 dragonfly_info = await cache_factory._cache_client.get_info()
                 metrics["dragonfly"] = {
@@ -1770,6 +1950,17 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(
             f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
+    # Scheduler REST API routes (Issue #1212)
+    try:
+        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
+
+        app.include_router(scheduler_router)
+        logger.info("Scheduler API routes registered (3 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
         )
 
     # Issue #940: Register async files router (lazy initialization via lifespan)

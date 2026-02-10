@@ -34,7 +34,7 @@ def nx(tmp_path, record_store):
     """Create NexusFS instance for testing."""
     nx_instance = create_nexus_fs(
         backend=LocalBackend(tmp_path),
-        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,

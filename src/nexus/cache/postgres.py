@@ -1,16 +1,22 @@
-"""PostgreSQL cache backend implementation.
+"""PostgreSQL cache backend implementations.
 
-This module provides PostgreSQL-based cache implementations that use
-the existing rebac_check_cache and tiger_cache tables.
+This module provides PostgreSQL-backed cache implementations that use
+the existing rebac_check_cache, tiger_cache, and tiger_resource_map tables.
 
-These implementations serve as fallback when Dragonfly is not configured.
+These serve as the cache backend when Dragonfly is not configured.
+PostgreSQL-only (no SQLite branching) — SQLite users fall back to NullCacheStore.
 
-TODO (Phase 1): Extract existing cache logic from rebac_manager.py
-TODO (Phase 2): Extract existing Tiger cache logic from tiger_cache.py
+Extracted from:
+    - rebac_manager.py (PermissionCache)
+    - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
+from __future__ import annotations
+
 import logging
-from typing import TYPE_CHECKING
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
@@ -19,29 +25,147 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# SQL Queries — Permission Cache (rebac_check_cache table)
+# ---------------------------------------------------------------------------
+
+_PERM_GET = text("""
+    SELECT result, expires_at
+    FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+      AND subject_type = :subject_type AND subject_id = :subject_id
+      AND permission = :permission
+      AND object_type = :object_type AND object_id = :object_id
+      AND expires_at > :now
+""")
+
+_PERM_DELETE_EXACT = text("""
+    DELETE FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+      AND subject_type = :subject_type AND subject_id = :subject_id
+      AND permission = :permission
+      AND object_type = :object_type AND object_id = :object_id
+""")
+
+_PERM_INSERT = text("""
+    INSERT INTO rebac_check_cache (
+        cache_id, zone_id, subject_type, subject_id, permission,
+        object_type, object_id, result, computed_at, expires_at
+    )
+    VALUES (
+        :cache_id, :zone_id, :subject_type, :subject_id, :permission,
+        :object_type, :object_id, :result, :computed_at, :expires_at
+    )
+""")
+
+_PERM_DELETE_SUBJECT = text("""
+    DELETE FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+      AND subject_type = :subject_type AND subject_id = :subject_id
+""")
+
+_PERM_DELETE_OBJECT = text("""
+    DELETE FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+      AND object_type = :object_type AND object_id = :object_id
+""")
+
+_PERM_DELETE_SUBJECT_OBJECT = text("""
+    DELETE FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+      AND subject_type = :subject_type AND subject_id = :subject_id
+      AND object_type = :object_type AND object_id = :object_id
+""")
+
+_PERM_DELETE_ZONE = text("""
+    DELETE FROM rebac_check_cache
+    WHERE zone_id = :zone_id
+""")
+
+_PERM_DELETE_ALL = text("""
+    DELETE FROM rebac_check_cache
+""")
+
+_PERM_COUNT_VALID = text("""
+    SELECT COUNT(*) as count
+    FROM rebac_check_cache
+    WHERE expires_at > :now
+""")
+
+
+# ---------------------------------------------------------------------------
+# SQL Queries — Tiger Cache (tiger_cache table)
+# ---------------------------------------------------------------------------
+
+_TIGER_GET = text("""
+    SELECT bitmap_data, revision FROM tiger_cache
+    WHERE subject_type = :subject_type
+      AND subject_id = :subject_id
+      AND permission = :permission
+      AND resource_type = :resource_type
+      AND zone_id = :zone_id
+""")
+
+_TIGER_UPSERT = text("""
+    INSERT INTO tiger_cache
+        (subject_type, subject_id, permission, resource_type, zone_id,
+         bitmap_data, revision, created_at, updated_at)
+    VALUES
+        (:subject_type, :subject_id, :permission, :resource_type, :zone_id,
+         :bitmap_data, :revision, NOW(), NOW())
+    ON CONFLICT (subject_type, subject_id, permission, resource_type, zone_id)
+    DO UPDATE SET
+        bitmap_data = EXCLUDED.bitmap_data,
+        revision = EXCLUDED.revision,
+        updated_at = NOW()
+""")
+
+# ---------------------------------------------------------------------------
+# SQL Queries — Resource Map (tiger_resource_map table)
+# ---------------------------------------------------------------------------
+
+_RESMAP_GET = text("""
+    SELECT resource_int_id FROM tiger_resource_map
+    WHERE resource_type = :resource_type
+      AND resource_id = :resource_id
+""")
+
+_RESMAP_INSERT = text("""
+    INSERT INTO tiger_resource_map (resource_type, resource_id, created_at)
+    VALUES (:resource_type, :resource_id, NOW())
+    ON CONFLICT (resource_type, resource_id) DO NOTHING
+    RETURNING resource_int_id
+""")
+
+_RESMAP_BULK_GET = text("""
+    SELECT resource_type, resource_id, resource_int_id
+    FROM tiger_resource_map
+    WHERE (resource_type, resource_id) IN (
+        SELECT UNNEST(CAST(:types AS text[])), UNNEST(CAST(:ids AS text[]))
+    )
+""")
+
+
+# ===========================================================================
+# PostgresPermissionCache
+# ===========================================================================
+
 
 class PostgresPermissionCache:
-    """PostgreSQL-backed permission cache.
+    """PostgreSQL-backed permission cache using rebac_check_cache table.
 
-    Uses the existing rebac_check_cache table for storing permission results.
+    Implements PermissionCacheProtocol via structural subtyping.
 
-    TODO: This is a stub. Phase 1 will extract the existing implementation
-    from rebac_manager.py and adapt it to the PermissionCacheProtocol interface.
+    Extracted from rebac_manager.py:3841-4575 and rebac_manager_zone_aware.py:909-992.
+    All queries include zone_id for multi-tenant isolation (P0 security).
     """
 
     def __init__(
         self,
-        engine: "Engine",
+        engine: Engine,
         ttl: int = 300,
         denial_ttl: int = 60,
     ):
-        """Initialize PostgreSQL permission cache.
-
-        Args:
-            engine: SQLAlchemy engine
-            ttl: TTL for grants in seconds
-            denial_ttl: TTL for denials in seconds
-        """
         self._engine = engine
         self._ttl = ttl
         self._denial_ttl = denial_ttl
@@ -55,16 +179,25 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> bool | None:
-        """Get cached permission result.
-
-        TODO: Implement by extracting from rebac_manager.py
-        See: rebac_manager.py:3607-3650 (_check_cache_for_result)
-        """
-        # Stub - will be implemented in Phase 1
-        raise NotImplementedError(
-            "PostgresPermissionCache.get() not yet implemented. "
-            "This will be extracted from rebac_manager.py in Phase 1."
-        )
+        """Get cached permission result. Returns True/False/None."""
+        now = datetime.now(UTC)
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                _PERM_GET,
+                {
+                    "zone_id": zone_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "permission": permission,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                    "now": now,
+                },
+            )
+            row = result.fetchone()
+            if row:
+                return bool(row.result)
+            return None
 
     async def set(
         self,
@@ -76,15 +209,35 @@ class PostgresPermissionCache:
         result: bool,
         zone_id: str,
     ) -> None:
-        """Cache permission result.
+        """Cache permission result with appropriate TTL."""
+        now = datetime.now(UTC)
+        ttl = self._ttl if result else self._denial_ttl
+        expires_at = now + timedelta(seconds=ttl)
+        cache_id = str(uuid.uuid4())
 
-        TODO: Implement by extracting from rebac_manager.py
-        See: rebac_manager.py:3810-3850 (INSERT INTO rebac_check_cache)
-        """
-        raise NotImplementedError(
-            "PostgresPermissionCache.set() not yet implemented. "
-            "This will be extracted from rebac_manager.py in Phase 1."
-        )
+        params: dict[str, Any] = {
+            "zone_id": zone_id,
+            "subject_type": subject_type,
+            "subject_id": subject_id,
+            "permission": permission,
+            "object_type": object_type,
+            "object_id": object_id,
+        }
+
+        with self._engine.begin() as conn:
+            # Delete existing entry (idempotent upsert via DELETE + INSERT)
+            conn.execute(_PERM_DELETE_EXACT, params)
+            # Insert new entry
+            conn.execute(
+                _PERM_INSERT,
+                {
+                    **params,
+                    "cache_id": cache_id,
+                    "result": int(result),
+                    "computed_at": now,
+                    "expires_at": expires_at,
+                },
+            )
 
     async def invalidate_subject(
         self,
@@ -92,14 +245,17 @@ class PostgresPermissionCache:
         subject_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate all permissions for a subject.
-
-        TODO: Implement by extracting from rebac_manager.py
-        See: rebac_manager.py:4000-4040 (DELETE FROM rebac_check_cache)
-        """
-        raise NotImplementedError(
-            "PostgresPermissionCache.invalidate_subject() not yet implemented."
-        )
+        """Invalidate all cached permissions for a subject."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                _PERM_DELETE_SUBJECT,
+                {
+                    "zone_id": zone_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                },
+            )
+            return result.rowcount
 
     async def invalidate_object(
         self,
@@ -107,10 +263,17 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate all permissions for an object."""
-        raise NotImplementedError(
-            "PostgresPermissionCache.invalidate_object() not yet implemented."
-        )
+        """Invalidate all cached permissions for an object."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                _PERM_DELETE_OBJECT,
+                {
+                    "zone_id": zone_id,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                },
+            )
+            return result.rowcount
 
     async def invalidate_subject_object(
         self,
@@ -120,14 +283,28 @@ class PostgresPermissionCache:
         object_id: str,
         zone_id: str,
     ) -> int:
-        """Invalidate permissions for a specific subject-object pair."""
-        raise NotImplementedError(
-            "PostgresPermissionCache.invalidate_subject_object() not yet implemented."
-        )
+        """Invalidate cached permissions for a specific subject-object pair."""
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                _PERM_DELETE_SUBJECT_OBJECT,
+                {
+                    "zone_id": zone_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "object_type": object_type,
+                    "object_id": object_id,
+                },
+            )
+            return result.rowcount
 
     async def clear(self, zone_id: str | None = None) -> int:
-        """Clear all cached permissions."""
-        raise NotImplementedError("PostgresPermissionCache.clear() not yet implemented.")
+        """Clear cached permissions. If zone_id given, only that zone."""
+        with self._engine.begin() as conn:
+            if zone_id is not None:
+                result = conn.execute(_PERM_DELETE_ZONE, {"zone_id": zone_id})
+            else:
+                result = conn.execute(_PERM_DELETE_ALL)
+            return result.rowcount
 
     async def health_check(self) -> bool:
         """Check if cache backend is healthy."""
@@ -139,29 +316,40 @@ class PostgresPermissionCache:
             return False
 
     async def get_stats(self) -> dict:
-        """Get cache statistics."""
+        """Get cache statistics including count of valid entries."""
+        now = datetime.now(UTC)
+        count = 0
+        try:
+            with self._engine.connect() as conn:
+                result = conn.execute(_PERM_COUNT_VALID, {"now": now})
+                row = result.fetchone()
+                count = int(row[0]) if row else 0
+        except Exception as e:
+            logger.warning(f"Failed to get permission cache stats: {e}")
+
         return {
             "backend": "postgres",
             "ttl_grants": self._ttl,
             "ttl_denials": self._denial_ttl,
+            "valid_entries": count,
         }
 
 
+# ===========================================================================
+# PostgresTigerCache
+# ===========================================================================
+
+
 class PostgresTigerCache:
-    """PostgreSQL-backed Tiger cache.
+    """PostgreSQL-backed Tiger cache using tiger_cache table.
 
-    Uses the existing tiger_cache table for storing pre-materialized bitmaps.
+    Implements TigerCacheProtocol via structural subtyping.
 
-    TODO: This is a stub. Phase 2 will extract the existing implementation
-    from tiger_cache.py and adapt it to the TigerCacheProtocol interface.
+    Extracted from tiger_cache.py:724-1370.
+    Stores pre-materialized Roaring Bitmaps for O(1) permission filtering.
     """
 
-    def __init__(self, engine: "Engine"):
-        """Initialize PostgreSQL Tiger cache.
-
-        Args:
-            engine: SQLAlchemy engine
-        """
+    def __init__(self, engine: Engine):
         self._engine = engine
 
     async def get_bitmap(
@@ -172,15 +360,22 @@ class PostgresTigerCache:
         resource_type: str,
         zone_id: str,
     ) -> tuple[bytes, int] | None:
-        """Get Tiger bitmap for a subject.
-
-        TODO: Implement by extracting from tiger_cache.py
-        See: tiger_cache.py:550-598 (_load_from_db)
-        """
-        raise NotImplementedError(
-            "PostgresTigerCache.get_bitmap() not yet implemented. "
-            "This will be extracted from tiger_cache.py in Phase 2."
-        )
+        """Get Tiger bitmap for a subject. Returns (bitmap_data, revision) or None."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                _TIGER_GET,
+                {
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "permission": permission,
+                    "resource_type": resource_type,
+                    "zone_id": zone_id,
+                },
+            )
+            row = result.fetchone()
+            if row:
+                return (bytes(row.bitmap_data), int(row.revision))
+            return None
 
     async def set_bitmap(
         self,
@@ -192,15 +387,20 @@ class PostgresTigerCache:
         bitmap_data: bytes,
         revision: int,
     ) -> None:
-        """Store Tiger bitmap for a subject.
-
-        TODO: Implement by extracting from tiger_cache.py
-        See: tiger_cache.py:759-856 (update_cache)
-        """
-        raise NotImplementedError(
-            "PostgresTigerCache.set_bitmap() not yet implemented. "
-            "This will be extracted from tiger_cache.py in Phase 2."
-        )
+        """Store Tiger bitmap using PostgreSQL UPSERT."""
+        with self._engine.begin() as conn:
+            conn.execute(
+                _TIGER_UPSERT,
+                {
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "permission": permission,
+                    "resource_type": resource_type,
+                    "zone_id": zone_id,
+                    "bitmap_data": bitmap_data,
+                    "revision": revision,
+                },
+            )
 
     async def invalidate(
         self,
@@ -212,13 +412,34 @@ class PostgresTigerCache:
     ) -> int:
         """Invalidate Tiger cache entries matching criteria.
 
-        TODO: Implement by extracting from tiger_cache.py
-        See: tiger_cache.py:858-944 (invalidate)
+        Builds a dynamic WHERE clause from non-None parameters.
+        If all are None, deletes everything.
         """
-        raise NotImplementedError(
-            "PostgresTigerCache.invalidate() not yet implemented. "
-            "This will be extracted from tiger_cache.py in Phase 2."
-        )
+        conditions: list[str] = []
+        params: dict[str, Any] = {}
+
+        if subject_type is not None:
+            conditions.append("subject_type = :subject_type")
+            params["subject_type"] = subject_type
+        if subject_id is not None:
+            conditions.append("subject_id = :subject_id")
+            params["subject_id"] = subject_id
+        if permission is not None:
+            conditions.append("permission = :permission")
+            params["permission"] = permission
+        if resource_type is not None:
+            conditions.append("resource_type = :resource_type")
+            params["resource_type"] = resource_type
+        if zone_id is not None:
+            conditions.append("zone_id = :zone_id")
+            params["zone_id"] = zone_id
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        query = text(f"DELETE FROM tiger_cache WHERE {where_clause}")  # noqa: S608
+
+        with self._engine.begin() as conn:
+            result = conn.execute(query, params)
+            return result.rowcount
 
     async def health_check(self) -> bool:
         """Check if cache backend is healthy."""
@@ -230,71 +451,105 @@ class PostgresTigerCache:
             return False
 
 
+# ===========================================================================
+# PostgresResourceMapCache
+# ===========================================================================
+
+
 class PostgresResourceMapCache:
-    """PostgreSQL-backed resource map cache.
+    """PostgreSQL-backed resource map cache using tiger_resource_map table.
 
-    Uses the existing tiger_resource_map table.
+    Implements ResourceMapCacheProtocol via structural subtyping.
 
-    TODO: This is a stub. Phase 2 will extract the existing implementation
-    from tiger_cache.py (TigerResourceMap class).
+    Extracted from tiger_cache.py:91-167.
+    Maps resource UUIDs to integer IDs for Roaring Bitmap compatibility.
+
+    Note: tiger_resource_map intentionally has no zone_id column —
+    resource paths are globally unique. The zone_id parameter in the
+    Protocol interface is accepted but not used in queries.
     """
 
-    def __init__(self, engine: "Engine"):
-        """Initialize PostgreSQL resource map cache.
-
-        Args:
-            engine: SQLAlchemy engine
-        """
+    def __init__(self, engine: Engine):
         self._engine = engine
 
     async def get_int_id(
         self,
         resource_type: str,
         resource_id: str,
-        zone_id: str,
+        _zone_id: str,
     ) -> int | None:
-        """Get integer ID for a resource.
-
-        TODO: Implement by extracting from tiger_cache.py
-        See: tiger_cache.py:75-193 (get_or_create_int_id)
-        """
-        raise NotImplementedError(
-            "PostgresResourceMapCache.get_int_id() not yet implemented. "
-            "This will be extracted from tiger_cache.py in Phase 2."
-        )
+        """Get integer ID for a resource."""
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                _RESMAP_GET,
+                {
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                },
+            )
+            row = result.fetchone()
+            if row:
+                return int(row.resource_int_id)
+            return None
 
     async def get_int_ids_bulk(
         self,
         resources: list[tuple[str, str, str]],
     ) -> dict[tuple[str, str, str], int | None]:
-        """Bulk get integer IDs for multiple resources.
+        """Bulk get integer IDs using PostgreSQL UNNEST for efficiency."""
+        if not resources:
+            return {}
 
-        TODO: Implement by extracting from tiger_cache.py
-        See: tiger_cache.py:242-317 (bulk_get_int_ids)
-        """
-        raise NotImplementedError(
-            "PostgresResourceMapCache.get_int_ids_bulk() not yet implemented."
-        )
+        types = [r[0] for r in resources]
+        ids = [r[1] for r in resources]
+
+        with self._engine.connect() as conn:
+            result = conn.execute(
+                _RESMAP_BULK_GET,
+                {"types": types, "ids": ids},
+            )
+            # Build lookup from DB results
+            db_map: dict[tuple[str, str], int] = {}
+            for row in result:
+                db_map[(row.resource_type, row.resource_id)] = int(row.resource_int_id)
+
+        # Map back to input tuples (including zone_id)
+        return {(rt, rid, zid): db_map.get((rt, rid)) for rt, rid, zid in resources}
 
     async def set_int_id(
         self,
         resource_type: str,
         resource_id: str,
-        zone_id: str,
-        int_id: int,
+        _zone_id: str,
+        _int_id: int,
     ) -> None:
-        """Store integer ID for a resource.
+        """Insert a resource mapping (auto-increment assigns the int_id).
 
-        Note: In PostgreSQL, this is typically done via get_or_create_int_id
-        which handles the INSERT with auto-increment.
+        Uses INSERT ... ON CONFLICT DO NOTHING so existing mappings are preserved.
         """
-        raise NotImplementedError("PostgresResourceMapCache.set_int_id() not yet implemented.")
+        with self._engine.begin() as conn:
+            conn.execute(
+                _RESMAP_INSERT,
+                {
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                },
+            )
 
     async def set_int_ids_bulk(
         self,
         mappings: dict[tuple[str, str, str], int],
     ) -> None:
-        """Bulk store integer IDs for multiple resources."""
-        raise NotImplementedError(
-            "PostgresResourceMapCache.set_int_ids_bulk() not yet implemented."
-        )
+        """Bulk insert resource mappings."""
+        if not mappings:
+            return
+
+        with self._engine.begin() as conn:
+            for key in mappings:
+                conn.execute(
+                    _RESMAP_INSERT,
+                    {
+                        "resource_type": key[0],
+                        "resource_id": key[1],
+                    },
+                )

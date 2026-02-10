@@ -62,16 +62,20 @@
 mod client;
 #[cfg(all(feature = "grpc", has_protos))]
 mod server;
+#[cfg(all(feature = "grpc", has_protos))]
+mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    AppendEntriesResponseLocal, ClientConfig, LogEntry, RaftClient, RaftClientPool,
-    VoteResponseLocal,
+    AppendEntriesResponseLocal, ClientConfig, ClusterInfoResult, LogEntry, ProposeResult,
+    QueryResult, RaftApiClient, RaftClient, RaftClientPool, VoteResponseLocal,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{
     RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState,
 };
+#[cfg(all(feature = "grpc", has_protos))]
+pub use transport_loop::TransportLoop;
 
 // Re-export generated types when grpc feature is enabled and protos were compiled
 #[cfg(all(feature = "grpc", has_protos))]

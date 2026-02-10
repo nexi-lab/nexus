@@ -88,7 +88,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

@@ -4367,6 +4367,62 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         result = self._call_rpc("delete_agent", {"agent_id": agent_id})
         return result  # type: ignore[no-any-return]
 
+    def agent_transition(
+        self,
+        agent_id: str,
+        target_state: str,
+        expected_generation: int | None = None,
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Transition an agent's lifecycle state (Issue #1240).
+
+        Args:
+            agent_id: Agent identifier
+            target_state: Target state ("CONNECTED", "IDLE", "SUSPENDED")
+            expected_generation: Expected generation for optimistic locking
+            context: Optional operation context
+
+        Returns:
+            Dict with agent_id, state, generation
+        """
+        params: dict = {"agent_id": agent_id, "target_state": target_state}
+        if expected_generation is not None:
+            params["expected_generation"] = expected_generation
+        return self._call_rpc("agent_transition", params)  # type: ignore[no-any-return]
+
+    def agent_heartbeat(self, agent_id: str, context: dict | None = None) -> dict:  # noqa: ARG002
+        """Record an agent heartbeat (Issue #1240).
+
+        Args:
+            agent_id: Agent identifier
+            context: Optional operation context
+
+        Returns:
+            Dict with ok=True
+        """
+        return self._call_rpc("agent_heartbeat", {"agent_id": agent_id})  # type: ignore[no-any-return]
+
+    def agent_list_by_zone(
+        self,
+        zone_id: str,
+        state: str | None = None,
+        context: dict | None = None,  # noqa: ARG002
+    ) -> builtins.list[dict]:
+        """List agents in a zone (Issue #1240).
+
+        Args:
+            zone_id: Zone identifier
+            state: Optional state filter
+            context: Optional operation context
+
+        Returns:
+            List of agent record dicts
+        """
+        params: dict = {"zone_id": zone_id}
+        if state is not None:
+            params["state"] = state
+        return self._call_rpc("agent_list_by_zone", params)  # type: ignore[no-any-return]
+
     def provision_user(
         self,
         user_id: str,
@@ -4383,7 +4439,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         Creates:
         - User record (UserModel) in database
         - Zone record (ZoneModel) if it doesn't exist
-        - All user directories under /zone/{zone_id}/user:{user_id}/
+        - All user directories under /zone/{zone_id}/user/{user_id}/
         - Default workspace
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
@@ -4421,7 +4477,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /zone/alice/user:alice/workspace/ws_personal_abc123
+            /zone/alice/user/alice/workspace/ws_personal_abc123
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -4491,7 +4547,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/zone/example/user:alice/workspace', ...]
+            ['/zone/example/user/alice/workspace', ...]
         """
         params: dict[str, Any] = {
             "user_id": user_id,
@@ -5527,7 +5583,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         """Share a skill with users, groups, or make public.
 
         Args:
-            skill_path: Path to the skill (e.g., /zone/acme/user:alice/skill/code-review/)
+            skill_path: Path to the skill (e.g., /zone/acme/user/alice/skill/code-review/)
             share_with: Target to share with:
                 - "public" - Make skill visible to everyone
                 - "zone" - Share with all users in current zone

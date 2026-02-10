@@ -11,7 +11,7 @@ Usage:
     python3 tests/manual/test_deprovision_user.py
 
     # Custom database URL:
-    python3 tests/manual/test_deprovision_user.py --db postgresql://user:pass@host:port/dbname
+    python3 tests/manual/test_deprovision_user.py --db postgresql://user/pass@host:port/dbname
 """
 
 import argparse
@@ -72,7 +72,7 @@ def main() -> None:
     record_store = SQLAlchemyRecordStore(db_path=db_path)
     nx = create_nexus_fs(
         backend=LocalBackend(args.backend_path),
-        metadata_store=RaftMetadataStore.local(str(Path(args.backend_path) / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(Path(args.backend_path) / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=True,
@@ -139,7 +139,7 @@ def main() -> None:
 
         # Step 3: Verify user resources
         print("Step 3: Verifying user resources...")
-        user_base = f"/zone/{test_zone_id}/user:{test_user_id}"
+        user_base = f"/zone/{test_zone_id}/user/{test_user_id}"
         resource_types = ["workspace", "memory", "skill", "agent", "connector", "resource"]
 
         existing_resources = []

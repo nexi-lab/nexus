@@ -18,9 +18,9 @@ import pytest
 
 from nexus import LocalBackend, NexusFS
 from nexus.backends.backend import Backend
+from nexus.core._metadata_generated import FileMetadata
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.storage.models import FilePathModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -45,7 +45,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=False,
@@ -118,7 +118,6 @@ class MockDynamicConnector(Backend):
 class TestListConnectorSizes:
     """Test that list() returns correct sizes for dynamic connector files."""
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_list_details_returns_sizes_for_connector(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
@@ -130,42 +129,34 @@ class TestListConnectorSizes:
         mount_path = "/mnt/test_connector"
         nx.router.add_mount(mount_path, connector, priority=10)
 
-        # Create file_paths entries with sizes using database session
-        session = record_store.session_factory()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file1.txt",
-                    virtual_path=f"{mount_path}/file1.txt",
-                    backend_id="mock_connector",
-                    physical_path="/file1.txt",
-                    size_bytes=1234,
-                    zone_id="default",
-                )
+        # Create metadata entries with sizes via sled
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file1.txt",
+                backend_name="mock_connector",
+                physical_path="/file1.txt",
+                size=1234,
+                zone_id="default",
             )
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file2.yaml",
-                    virtual_path=f"{mount_path}/file2.yaml",
-                    backend_id="mock_connector",
-                    physical_path="/file2.yaml",
-                    size_bytes=5678,
-                    zone_id="default",
-                )
+        )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file2.yaml",
+                backend_name="mock_connector",
+                physical_path="/file2.yaml",
+                size=5678,
+                zone_id="default",
             )
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file3.md",
-                    virtual_path=f"{mount_path}/file3.md",
-                    backend_id="mock_connector",
-                    physical_path="/file3.md",
-                    size_bytes=9012,
-                    zone_id="default",
-                )
+        )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file3.md",
+                backend_name="mock_connector",
+                physical_path="/file3.md",
+                size=9012,
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List with details
         files = nx.list(mount_path, recursive=False, details=True)
@@ -224,7 +215,6 @@ class TestListConnectorSizes:
             assert isinstance(file_path, str), "details=False should return strings"
             assert file_path.startswith(mount_path)
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_list_large_file_sizes(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
         """Test that large file sizes (>2GB) are handled correctly."""
         connector = MockDynamicConnector()
@@ -233,21 +223,15 @@ class TestListConnectorSizes:
 
         # Create entry with large size (3GB)
         large_size = 3 * 1024 * 1024 * 1024  # 3GB
-        session = record_store.session_factory()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file1.txt",
-                    virtual_path=f"{mount_path}/file1.txt",
-                    backend_id="mock_connector",
-                    physical_path="/file1.txt",
-                    size_bytes=large_size,
-                    zone_id="default",
-                )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file1.txt",
+                backend_name="mock_connector",
+                physical_path="/file1.txt",
+                size=large_size,
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List with details
         files = nx.list(mount_path, recursive=False, details=True)
@@ -256,7 +240,6 @@ class TestListConnectorSizes:
         file1 = next(f for f in files if "file1.txt" in f["path"])
         assert file1["size"] == large_size, f"Should preserve large size {large_size}"
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     def test_readdir_cache_uses_list_sizes(
         self, nx: NexusFS, record_store: SQLAlchemyRecordStore
     ) -> None:
@@ -271,21 +254,15 @@ class TestListConnectorSizes:
         # Create file with known size (using file1.txt which list_dir returns)
         file_path = f"{mount_path}/file1.txt"
         file_size = 42424
-        session = record_store.session_factory()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=file_path,
-                    virtual_path=file_path,
-                    backend_id="mock_connector",
-                    physical_path="/file1.txt",
-                    size_bytes=file_size,
-                    zone_id="default",
-                )
+        nx.metadata.put(
+            FileMetadata(
+                path=file_path,
+                backend_name="mock_connector",
+                physical_path="/file1.txt",
+                size=file_size,
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # Call list with details (simulates readdir)
         files = nx.list(mount_path, recursive=False, details=True)
@@ -321,21 +298,15 @@ class TestListConnectorSizesRegression:
         nx.router.add_mount(mount_path, connector, priority=10)
 
         # Create nested structure
-        session = record_store.session_factory()
-        try:
-            session.add(
-                FilePathModel(
-                    path_id=f"{mount_path}/file1.txt",
-                    virtual_path=f"{mount_path}/file1.txt",
-                    backend_id="mock_connector",
-                    physical_path="/file1.txt",
-                    size_bytes=100,
-                    zone_id="default",
-                )
+        nx.metadata.put(
+            FileMetadata(
+                path=f"{mount_path}/file1.txt",
+                backend_name="mock_connector",
+                physical_path="/file1.txt",
+                size=100,
+                zone_id="default",
             )
-            session.commit()
-        finally:
-            session.close()
+        )
 
         # List recursively with details
         files = nx.list(mount_path, recursive=True, details=True)

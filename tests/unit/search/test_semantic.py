@@ -84,7 +84,7 @@ class TestSemanticSearch:
         may need adjustment.
         """
         backend = LocalBackend(root_path=temp_dir)
-        metadata_store = RaftMetadataStore.local(str(temp_dir / "raft-metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(temp_dir / "raft-metadata"))
         nx = create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
@@ -155,7 +155,6 @@ class TestSemanticSearch:
         # Should have created at least one chunk
         assert num_chunks > 0
 
-    @pytest.mark.xfail(reason="RaftMetadataStore doesn't populate FilePathModel (Task #45)")
     async def test_index_document_without_embeddings(self, nx, engine):
         """Test indexing without embedding provider (keyword-only)."""
         nx.write("/workspace/test.txt", b"This is a test document.")

@@ -19,14 +19,9 @@ from unittest.mock import MagicMock
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.storage.models import (
-    DirectoryEntryModel,
-    FilePathModel,
-    VersionHistoryModel,
-)
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===
 
@@ -49,23 +44,14 @@ async def client(
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
 
-    # Create SQLite database with required tables
-    db_file = tmp_path / "integration_test.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}", echo=False)
+    # Create RaftMetadataStore for file metadata
+    metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
 
-    async with engine.begin() as conn:
-        for table in [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]:
-            await conn.run_sync(lambda c, t=table: t.create(c, checkfirst=True))
-
-    # Initialize real AsyncNexusFS with SQLite
+    # Initialize real AsyncNexusFS with RaftMetadataStore
     backend_root = tmp_path / "backend"
     async_fs = AsyncNexusFS(
         backend_root=backend_root,
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="integration-test",
         enforce_permissions=False,
     )
@@ -79,10 +65,9 @@ async def client(
     # Import and create the real app via create_app
     from nexus.server.fastapi_server import _app_state, create_app
 
-    database_url = f"sqlite:///{db_file}"
     app = create_app(
         nexus_fs=mock_nexus_fs,
-        database_url=database_url,
+        database_url="sqlite:///:memory:",
     )
 
     # Inject real AsyncNexusFS into _app_state
@@ -98,7 +83,7 @@ async def client(
     # Cleanup
     await async_fs.close()
     _app_state.async_nexus_fs = None
-    await engine.dispose()
+    metadata_store.close()
 
 
 # === E2E Tests: Full FastAPI Server Stack ===

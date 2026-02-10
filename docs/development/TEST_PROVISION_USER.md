@@ -35,14 +35,14 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
     "user_id": "alice",
     "zone_id": "alice",
     "api_key": "sk-...",
-    "workspace_path": "/tenant:alice/user:alice/workspace/ws_personal_...",
+    "workspace_path": "/tenant:alice/user/alice/workspace/ws_personal_...",
     "agent_paths": [
-      "/tenant:alice/user:alice/agent/ImpersonatedUser/config.yaml",
-      "/tenant:alice/user:alice/agent/UntrustedAgent/config.yaml"
+      "/tenant:alice/user/alice/agent/ImpersonatedUser/config.yaml",
+      "/tenant:alice/user/alice/agent/UntrustedAgent/config.yaml"
     ],
     "skill_paths": [
-      "/tenant:alice/user:alice/skill/skill-creator/",
-      "/tenant:alice/user:alice/skill/pdf/",
+      "/tenant:alice/user/alice/skill/skill-creator/",
+      "/tenant:alice/user/alice/skill/pdf/",
       ...
     ],
     "created_resources": {
@@ -138,7 +138,7 @@ curl -X POST http://localhost:2026/api/nfs/provision_user \
 
 **Expected:**
 - `zone_id` should be "mycompany" (not "dave")
-- User created under `/tenant:mycompany/user:dave/`
+- User created under `/tenant:mycompany/user/dave/`
 
 ## Verification Steps
 
@@ -164,7 +164,7 @@ FROM api_keys WHERE user_id = 'alice';
 
 ```bash
 # List user directories (adjust path based on your backend)
-ls -la /path/to/nexus/data/dirs/tenant:alice/user:alice/
+ls -la /path/to/nexus/data/dirs/tenant:alice/user/alice/
 
 # Should see:
 # - workspace/
@@ -188,7 +188,7 @@ curl -X POST http://localhost:2026/api/nfs/ls \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "path": "/tenant:alice/user:alice/"
+    "path": "/tenant:alice/user/alice/"
   }' | jq .
 ```
 

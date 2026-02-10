@@ -18,10 +18,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.ext.asyncio import AsyncEngine
-
 from nexus.backends.async_local import AsyncLocalBackend
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core._metadata_generated import (
+    AsyncFileMetadataWrapper,
+    FileMetadata,
+)
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -29,10 +30,10 @@ from nexus.core.exceptions import (
     NexusPermissionError,
 )
 from nexus.core.permissions import OperationContext, Permission
-from nexus.storage.async_metadata_store import AsyncSQLAlchemyMetadataStore
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.async_permissions import AsyncPermissionEnforcer
 
 logger = logging.getLogger(__name__)
@@ -51,23 +52,16 @@ class AsyncNexusFS:
 
     Example:
         ```python
-        from nexus.core.async_permissions import AsyncPermissionEnforcer
-        from nexus.core.async_rebac_manager import AsyncReBACManager
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-        # Create with permission enforcement
-        enforcer = AsyncPermissionEnforcer(rebac_manager)
+        metadata_store = RaftMetadataStore.embedded("./raft")
         fs = AsyncNexusFS(
             backend_root=Path("./data"),
-            engine=engine,
-            enforce_permissions=True,
-            permission_enforcer=enforcer,
+            metadata_store=metadata_store,
         )
         await fs.initialize()
 
-        # Operations now check permissions
-        context = OperationContext(user="alice", groups=["team"], tenant_id="org1")
-        content = await fs.read("/path/to/file.txt", context=context)
-
+        content = await fs.read("/path/to/file.txt")
         await fs.close()
         ```
     """
@@ -75,7 +69,7 @@ class AsyncNexusFS:
     def __init__(
         self,
         backend_root: str | Path,
-        engine: AsyncEngine,
+        metadata_store: FileMetadataProtocol,
         tenant_id: str | None = None,
         enable_content_cache: bool = True,
         content_cache_size_mb: int = 256,
@@ -87,7 +81,7 @@ class AsyncNexusFS:
 
         Args:
             backend_root: Root directory for content storage
-            engine: SQLAlchemy async engine for metadata database
+            metadata_store: FileMetadataProtocol instance (e.g. RaftMetadataStore)
             tenant_id: Default tenant ID for operations
             enable_content_cache: Enable in-memory content caching (default: True)
             content_cache_size_mb: Content cache size in MB (default: 256)
@@ -95,7 +89,7 @@ class AsyncNexusFS:
             permission_enforcer: AsyncPermissionEnforcer instance for permission checks
         """
         self._backend_root = Path(backend_root)
-        self._engine = engine
+        self._metadata_store = metadata_store
         self._tenant_id = tenant_id
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = permission_enforcer
@@ -107,7 +101,7 @@ class AsyncNexusFS:
 
         # Components (initialized in initialize())
         self._backend: AsyncLocalBackend | None = None
-        self._metadata: AsyncSQLAlchemyMetadataStore | None = None
+        self._metadata: AsyncFileMetadataWrapper | None = None
         self._initialized = False
 
         # Default context for operations when none is provided
@@ -131,8 +125,8 @@ class AsyncNexusFS:
         return self._backend
 
     @property
-    def metadata(self) -> AsyncSQLAlchemyMetadataStore:
-        """Metadata store."""
+    def metadata(self) -> AsyncFileMetadataWrapper:
+        """Async metadata store."""
         if self._metadata is None:
             raise RuntimeError("AsyncNexusFS not initialized. Call initialize() first.")
         return self._metadata
@@ -149,8 +143,8 @@ class AsyncNexusFS:
         )
         await self._backend.initialize()
 
-        # Initialize metadata store
-        self._metadata = AsyncSQLAlchemyMetadataStore(engine=self._engine)
+        # Wrap sync metadata store with async facade (SSOT-generated)
+        self._metadata = AsyncFileMetadataWrapper(self._metadata_store)
 
         self._initialized = True
 

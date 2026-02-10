@@ -1,0 +1,56 @@
+# Nexus Raft Server — Minimal Rust-Only Image
+#
+# Builds the nexus-raft-server binary for multi-node Raft consensus.
+# No Python, no SQLAlchemy — pure Rust gRPC server.
+#
+# Usage:
+#   docker build -f dockerfiles/Dockerfile.raft-server -t nexus-raft-server .
+#
+# Run:
+#   docker run -e NEXUS_NODE_ID=1 -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
+#     -e NEXUS_PEERS=2@http://node2:2126,3@http://node3:2126 \
+#     -p 2126:2126 nexus-raft-server
+
+FROM rust:1-slim-bookworm AS builder
+
+# Install protobuf compiler (required by tonic-build)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy proto files (build.rs expects ../../proto relative to rust/nexus_raft/)
+COPY proto/ ./proto/
+
+# Copy Rust source
+COPY rust/nexus_raft/ ./rust/nexus_raft/
+
+# Build the raft server binary
+WORKDIR /build/rust/nexus_raft
+RUN cargo build --release --features grpc --bin nexus-raft-server
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/rust/nexus_raft/target/release/nexus-raft-server /usr/local/bin/
+
+# Create non-root user
+RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
+    mkdir -p /home/nexus/data && \
+    chown -R nexus:nexus /home/nexus
+
+USER nexus
+
+ENV NEXUS_NODE_ID=1 \
+    NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/home/nexus/data \
+    RUST_LOG=info,nexus_raft=debug
+
+EXPOSE 2126
+
+ENTRYPOINT ["nexus-raft-server"]

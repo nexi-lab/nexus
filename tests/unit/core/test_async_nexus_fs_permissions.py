@@ -17,43 +17,22 @@ from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.async_permissions import AsyncPermissionEnforcer
 from nexus.core.exceptions import NexusPermissionError
 from nexus.core.permissions import OperationContext
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===
 
 
-@pytest_asyncio.fixture
-async def engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create async engine using SQLite in-memory for isolated tests."""
-    # Use SQLite in-memory for tests - creates fresh schema from models
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        echo=False,
-    )
-
-    # Create tables from models (fresh schema)
-    from nexus.storage.models import (
-        DirectoryEntryModel,
-        FilePathModel,
-        VersionHistoryModel,
-    )
-
-    async with engine.begin() as conn:
-        tables = [
-            FilePathModel.__table__,
-            DirectoryEntryModel.__table__,
-            VersionHistoryModel.__table__,
-        ]
-        for table in tables:
-            await conn.run_sync(lambda sync_conn, t=table: t.create(sync_conn, checkfirst=True))
-
-    yield engine
-    await engine.dispose()
+@pytest.fixture
+def metadata_store(tmp_path: Path) -> RaftMetadataStore:
+    """Create a local RaftMetadataStore for isolated tests."""
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
+    yield store
+    store.close()
 
 
 @pytest_asyncio.fixture
@@ -75,13 +54,13 @@ async def permission_enforcer(mock_rebac_manager: AsyncMock) -> AsyncPermissionE
 @pytest_asyncio.fixture
 async def async_fs_with_permissions(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store: RaftMetadataStore,
     permission_enforcer: AsyncPermissionEnforcer,
 ) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance with permission enforcement enabled."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,
         permission_enforcer=permission_enforcer,
@@ -94,12 +73,12 @@ async def async_fs_with_permissions(
 @pytest_asyncio.fixture
 async def async_fs_no_permissions(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store: RaftMetadataStore,
 ) -> AsyncGenerator[AsyncNexusFS, None]:
     """Create AsyncNexusFS instance with permission enforcement disabled."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=False,
     )
@@ -810,12 +789,12 @@ async def test_selective_permission_enforcement(
 @pytest.mark.asyncio
 async def test_permission_enforcer_none_is_permissive(
     tmp_path: Path,
-    engine: AsyncEngine,
+    metadata_store: RaftMetadataStore,
 ) -> None:
     """Test that when permission_enforcer is None but enforce_permissions=True, it's permissive."""
     fs = AsyncNexusFS(
         backend_root=tmp_path / "backend",
-        engine=engine,
+        metadata_store=metadata_store,
         tenant_id="test-tenant",
         enforce_permissions=True,  # Enabled, but no enforcer
         permission_enforcer=None,  # No enforcer provided

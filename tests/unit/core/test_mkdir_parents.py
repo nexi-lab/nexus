@@ -15,7 +15,7 @@ def test_mkdir_parents_true_succeeds_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
@@ -43,7 +43,7 @@ def test_mkdir_parents_false_fails_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
@@ -67,7 +67,7 @@ def test_mkdir_exist_ok_succeeds_if_exists():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
@@ -91,7 +91,7 @@ def test_mkdir_parents_creates_intermediate_dirs():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
@@ -119,7 +119,7 @@ def test_mkdir_no_duplicate_entries_in_list():
     with tempfile.TemporaryDirectory() as tmpdir:
         backend = LocalBackend(root_path=tmpdir)
         db_path = Path(tmpdir) / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,

@@ -156,6 +156,8 @@ class NexusFS(  # type: ignore[misc]
         write_observer: Any | None = None,
         # Task #45: VersionService (created by factory, not kernel)
         version_service: Any | None = None,
+        # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
+        overlay_resolver: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -359,6 +361,7 @@ class NexusFS(  # type: ignore[misc]
         self.mount_manager = mount_manager
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
+        self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks

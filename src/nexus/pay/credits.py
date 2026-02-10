@@ -321,7 +321,7 @@ class CreditsService:
         client = await self._get_client()
 
         transfer_id = self._generate_transfer_id(idempotency_key)
-        micro_amount = credits_to_micro(float(amount))
+        micro_amount = credits_to_micro(amount)
 
         transfer = tb.Transfer(
             id=transfer_id,
@@ -376,7 +376,7 @@ class CreditsService:
         client = await self._get_client()
 
         transfer_id = self._generate_transfer_id(external_tx_id)
-        micro_amount = credits_to_micro(float(amount))
+        micro_amount = credits_to_micro(amount)
 
         transfer = tb.Transfer(
             id=transfer_id,
@@ -431,7 +431,7 @@ class CreditsService:
         client = await self._get_client()
 
         reservation_id = self._generate_transfer_id()
-        micro_amount = credits_to_micro(float(amount))
+        micro_amount = credits_to_micro(amount)
 
         transfer = tb.Transfer(
             id=reservation_id,
@@ -481,7 +481,7 @@ class CreditsService:
         pending_id = int(reservation_id)
 
         # If actual_amount specified, use it; otherwise use amount_max for full
-        amount = credits_to_micro(float(actual_amount)) if actual_amount else tb.amount_max
+        amount = credits_to_micro(actual_amount) if actual_amount else tb.amount_max
 
         post_transfer = tb.Transfer(
             id=post_id,
@@ -556,7 +556,7 @@ class CreditsService:
         client = await self._get_client()
 
         transfer_id = self._generate_transfer_id()
-        micro_amount = credits_to_micro(float(amount))
+        micro_amount = credits_to_micro(amount)
 
         transfer = tb.Transfer(
             id=transfer_id,
@@ -614,7 +614,7 @@ class CreditsService:
                     id=self._generate_transfer_id(),
                     debit_account_id=self._to_tb_id(t.from_id, zone_id),
                     credit_account_id=self._to_tb_id(t.to_id, zone_id),
-                    amount=credits_to_micro(float(t.amount)),
+                    amount=credits_to_micro(t.amount),
                     ledger=LEDGER_CREDITS,
                     code=TRANSFER_CODE_PAYMENT,
                     flags=flags,

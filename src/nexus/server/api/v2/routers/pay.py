@@ -233,17 +233,12 @@ def _get_x402_client(request: Request) -> Any:
 def _extract_agent_id(auth_result: dict[str, Any]) -> str:
     """Extract agent_id from auth result.
 
-    Priority: x_agent_id header > subject_id (for agents) > subject_id (for users).
+    Priority: x_agent_id header > subject_id.
     """
-    subject_type = str(auth_result.get("subject_type", "user"))
-    subject_id = str(auth_result.get("subject_id", "anonymous"))
     x_agent_id = auth_result.get("x_agent_id")
-
     if x_agent_id:
         return str(x_agent_id)
-    if subject_type == "agent":
-        return subject_id
-    return subject_id
+    return str(auth_result.get("subject_id", "anonymous"))
 
 
 async def get_nexuspay(

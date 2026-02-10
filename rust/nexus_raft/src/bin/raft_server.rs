@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("nexus_raft=debug".parse()?)
+                .add_directive("_nexus_raft=debug".parse()?)
                 .add_directive("tonic=info".parse()?),
         )
         .init();
@@ -107,11 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Start transport loop in background (drives raft ticks + message routing)
         let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(
-            server.node(),
-            peer_map,
-            RaftClientPool::new(),
-        );
+        let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
         tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Raft server starting on {}", bind_addr);

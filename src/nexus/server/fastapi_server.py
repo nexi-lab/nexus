@@ -755,22 +755,27 @@ async def lifespan(_app: FastAPI) -> Any:
                     if sync_rebac:
                         from nexus.core.namespace_manager import NamespaceManager
 
+                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
+                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
                         namespace_manager = NamespaceManager(
                             rebac_manager=sync_rebac,
                             cache_maxsize=10_000,
-                            cache_ttl=300,
-                            revision_window=10,
+                            cache_ttl=ns_cache_ttl,
+                            revision_window=ns_revision_window,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            "(using sync rebac_manager for mount table queries)"
+                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
+                            "using sync rebac_manager for mount table queries)"
                         )
 
                 # Create permission enforcer with async ReBAC
+                # Note: agent_registry may not be initialized yet (it's set later
+                # in the lifespan), so use getattr with None default.
                 permission_enforcer = AsyncPermissionEnforcer(
                     rebac_manager=_app_state.async_rebac_manager,
                     namespace_manager=namespace_manager,
-                    agent_registry=_app_state.agent_registry,
+                    agent_registry=getattr(_app_state, "agent_registry", None),
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS

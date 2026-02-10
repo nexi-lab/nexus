@@ -170,7 +170,7 @@ class TestListRaceConditionE2E:
         agent_names = ["ImpersonatedUser", "UntrustedAgent", "SkillBuilder"]
 
         for agent_name in agent_names:
-            agent_dir = f"/zone/system/user:{test_user_id}/agent/{agent_name}"
+            agent_dir = f"/zone/system/user/{test_user_id}/agent/{agent_name}"
 
             list_result = make_rpc_request(
                 test_app,

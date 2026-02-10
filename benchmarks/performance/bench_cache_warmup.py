@@ -223,7 +223,7 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
         backend = LocalBackend(root_path=str(storage_path))
         nx = NexusFS(
             backend=backend,
-            metadata_store=RaftMetadataStore.local(str(db_path).replace(".db", "-raft")),
+            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             enforce_permissions=False,
             enable_metadata_cache=True,

@@ -35,7 +35,7 @@ def nexus_fs(tmp_path):
 
     fs = create_nexus_fs(
         backend=backend,
-        metadata_store=RaftMetadataStore.local(str(tmp_path / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(tmp_path / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         enforce_permissions=True,
         allow_admin_bypass=True,  # Allow admin to create test setup

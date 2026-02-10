@@ -20,7 +20,7 @@ The `nexus serve` CLI command supports both simple API key and database authenti
 nexus serve --api-key sk-mysecret
 
 # Database authentication (multi-user, expiry, revocation)
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+export NEXUS_DATABASE_URL="postgresql://user/pass@localhost/nexus"
 nexus serve --auth-type database
 ```
 
@@ -143,7 +143,7 @@ Database-backed authentication with key expiry, revocation, and audit trails.
 CLI usage:
 ```bash
 # Set database URL
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+export NEXUS_DATABASE_URL="postgresql://user/pass@localhost/nexus"
 
 # Start server with database authentication
 nexus serve --host 0.0.0.0 --port 2026 --auth-type database
@@ -172,7 +172,7 @@ from nexus.storage.models import Base
 from sqlalchemy import create_engine
 
 # Connect to your database
-engine = create_engine("postgresql://user:pass@localhost/nexus")
+engine = create_engine("postgresql://user/pass@localhost/nexus")
 Base.metadata.create_all(engine)  # Create tables if needed
 SessionFactory = sessionmaker(bind=engine)
 
@@ -493,7 +493,7 @@ nx.write("/workspace/file.txt", b"Hello!")
 
 ```bash
 # Step 1: Create API keys in database
-export NEXUS_DATABASE_URL="postgresql://user:pass@localhost/nexus"
+export NEXUS_DATABASE_URL="postgresql://user/pass@localhost/nexus"
 
 python3 << 'EOF'
 from datetime import UTC, datetime, timedelta

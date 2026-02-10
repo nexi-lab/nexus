@@ -61,7 +61,7 @@ python3 tests/manual/test_deprovision_user.py
 python3 tests/manual/test_deprovision_user.py --sqlite
 
 # Custom database
-python3 tests/manual/test_deprovision_user.py --db postgresql://user:pass@host:port/dbname
+python3 tests/manual/test_deprovision_user.py --db postgresql://user/pass@host:port/dbname
 ```
 
 ### Docker Environment

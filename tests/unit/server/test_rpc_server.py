@@ -561,7 +561,7 @@ class TestBackendMetadataInfo:
         handler = Mock(spec=RPCRequestHandler)
         mock_metadata = Mock()
         mock_metadata.db_type = "postgresql"
-        mock_metadata.database_url = "postgresql://user:pass@localhost:5432/nexus"
+        mock_metadata.database_url = "postgresql://user/pass@localhost:5432/nexus"
 
         handler.nexus_fs = Mock()
         handler.nexus_fs.metadata = mock_metadata
@@ -591,7 +591,7 @@ class TestBackendMetadataInfo:
         handler = Mock(spec=RPCRequestHandler)
         mock_metadata = Mock()
         mock_metadata.db_type = "postgresql"
-        mock_metadata.database_url = "postgresql://user:pass@127.0.0.1:5432/nexus"
+        mock_metadata.database_url = "postgresql://user/pass@127.0.0.1:5432/nexus"
 
         handler.nexus_fs = Mock()
         handler.nexus_fs.metadata = mock_metadata

@@ -29,7 +29,7 @@ def nx(temp_dir):
     """Create Nexus filesystem instance."""
     fs = create_nexus_fs(
         backend=LocalBackend(temp_dir / "data"),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "data" / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "data" / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "data" / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,

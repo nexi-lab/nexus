@@ -405,6 +405,8 @@ class AppState:
         self.websocket_manager: Any = None
         # Reactive Subscription Manager for O(1) event matching (Issue #1167)
         self.reactive_subscription_manager: Any = None
+        # Task Queue Runner (Issue #574)
+        self.task_runner: Any = None
 
 
 # Global state (set during app creation)
@@ -1203,10 +1205,44 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
+    # Issue #574: Task Queue Engine - Start background worker
+    task_runner_task: asyncio.Task[Any] | None = None
+    if _app_state.nexus_fs:
+        try:
+            from nexus.tasks import is_available
+
+            if is_available():
+                service = _app_state.nexus_fs._task_queue_service
+                engine = service.get_engine()
+
+                from nexus.tasks.runner import AsyncTaskRunner
+
+                runner = AsyncTaskRunner(engine=engine, max_workers=4)
+                service._runner = runner
+                _app_state.task_runner = runner
+                task_runner_task = asyncio.create_task(runner.run())
+                logger.info("Task Queue runner started (4 workers)")
+            else:
+                logger.debug("Task Queue: nexus_tasks Rust extension not available")
+        except Exception as e:
+            logger.warning(f"Task Queue runner not started: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #574: Stop Task Queue runner
+    if task_runner_task:
+        try:
+            if _app_state.task_runner:
+                await _app_state.task_runner.shutdown()
+            task_runner_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_runner_task
+            logger.info("Task Queue runner stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down Task Queue runner: {e}")
 
     # Issue #1212: Shutdown scheduler pool
     if _scheduler_pool:

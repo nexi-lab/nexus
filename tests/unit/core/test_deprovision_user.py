@@ -49,7 +49,7 @@ class TestDeprovisionUser:
 
         nx_instance = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
             record_store=record_store,
             auto_parse=False,
             enforce_permissions=True,
@@ -89,7 +89,7 @@ class TestDeprovisionUser:
         )
 
         # Verify user exists
-        user_path = "/zone/example/user:alice/workspace"
+        user_path = "/zone/example/user/alice/workspace"
         assert nx.exists(user_path, context=admin_context)
 
         # Deprovision the user
@@ -125,7 +125,7 @@ class TestDeprovisionUser:
         # Verify directories exist
         existing_dirs = []
         for resource_type in ["workspace", "memory", "skill", "agent", "connector", "resource"]:
-            dir_path = f"/zone/example/user:bob/{resource_type}"
+            dir_path = f"/zone/example/user/bob/{resource_type}"
             if nx.exists(dir_path, context=admin_context):
                 existing_dirs.append(dir_path)
 
@@ -458,7 +458,7 @@ class TestDeprovisionUser:
 
         # Verify resources created (agents may not be created in test environment)
         assert provision_result["api_key"] is not None
-        assert nx.exists(f"/zone/example/user:{user_id}/workspace", context=admin_context)
+        assert nx.exists(f"/zone/example/user/{user_id}/workspace", context=admin_context)
 
         # 2. Deprovision user
         deprovision_result = nx.deprovision_user(
@@ -474,7 +474,7 @@ class TestDeprovisionUser:
         assert deprovision_result["user_record_deleted"] is True
 
         # 3. Verify user directories are empty (all data gone)
-        workspace_path = f"/zone/example/user:{user_id}/workspace"
+        workspace_path = f"/zone/example/user/{user_id}/workspace"
         try:
             files = nx.list(workspace_path, recursive=True, context=admin_context)
             if isinstance(files, list):

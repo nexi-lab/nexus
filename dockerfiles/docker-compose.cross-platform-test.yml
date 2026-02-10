@@ -1,201 +1,667 @@
-# Distributed Raft Consensus Test Environment
-# Usage: docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+# NexusFS Production Distro — Full Distributed Environment
+# =========================================================================
+# This is the complete NexusFS "distribution" — analogous to a Linux distro
+# that bundles kernel + userland + services into a production-ready stack.
 #
-# This setup enables testing Raft consensus and distributed operations:
-# - 3-node Raft cluster (2 full members + 1 witness for cost-effective HA)
-# - Network partition simulation via `docker network disconnect`
-# - Leader election and failover testing
-# - Cross-zone coordination via Dragonfly
+# Kernel layer (always running):
+#   - 3-node Raft cluster: 2 full NexusFS nodes + 1 lightweight witness
+#   - PostgreSQL 18 (tuned: WAL archiving, pgvector HNSW, async I/O)
+#   - Dragonfly CacheStore (embedding cache, Tiger Cache, EventBus)
 #
-# Test Scenarios:
-# - Raft leader election: stop raft-1, verify raft-2 becomes leader
-# - Network partition: disconnect raft-3 (witness), verify cluster still works
-# - Witness quorum: witness participates in voting but doesn't serve reads
-# - Cross-platform locks: Win/Linux/Mac nodes coordinate via Dragonfly
+# Application layer (always running):
+#   - MCP server (Model Context Protocol for LLM tool use)
+#   - LangGraph agent server (AI agent orchestration)
+#   - Frontend (React web UI)
+#
+# Optional profiles:
+#   - zoekt: Trigram-based code search (sub-50ms on large codebases)
+#   - test: Linux test runner (pytest in container)
+#
+# Usage:
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile zoekt up -d
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v
 #
 # Architecture:
-#   ┌─────────────────────────────────────────────────────────────┐
-#   │  Raft Cluster (2 full + 1 witness)                          │
-#   │                                                             │
-#   │  ┌──────────┐   ┌──────────┐   ┌──────────┐               │
-#   │  │ raft-1   │   │ raft-2   │   │ raft-3   │               │
-#   │  │ (Leader) │◄─►│(Follower)│◄─►│(Witness) │               │
-#   │  │ sled+gRPC│   │ sled+gRPC│   │ log only │               │
-#   │  │ :2026    │   │ :2027    │   │ :2028    │               │
-#   │  └──────────┘   └──────────┘   └──────────┘               │
-#   └─────────────────────────────────────────────────────────────┘
-#                              │
-#                              ▼
-#   ┌─────────────────────────────────────────────────────────────┐
-#   │  Cross-Zone Coordination (Dragonfly)                        │
-#   │  - Cross-zone distributed locks                             │
-#   │  - Event pub/sub for file notifications                     │
-#   └─────────────────────────────────────────────────────────────┘
+#   ┌───────────────────────────────────────────────────────────────────────────┐
+#   │  Application Layer                                                       │
+#   │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐        │
+#   │  │  Frontend   │  │  MCP Server│  │  LangGraph │  │  Zoekt     │        │
+#   │  │  :5173      │  │  :8081     │  │  :2024     │  │  :6070     │        │
+#   │  └──────┬──────┘  └──────┬─────┘  └──────┬─────┘  └────────────┘        │
+#   │         │                │               │                               │
+#   │         └────────────────┼───────────────┘                               │
+#   │                          ▼                                               │
+#   │  ┌─────────────────────────────────────────────────────────────────────┐ │
+#   │  │  Kernel: Full-Node NexusFS Cluster (2 full + 1 witness)            │ │
+#   │  │                                                                     │ │
+#   │  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐           │ │
+#   │  │  │  nexus-1     │   │  nexus-2     │   │  witness     │           │ │
+#   │  │  │  (Leader)    │◄─►│  (Follower)  │◄─►│  (Vote-only) │           │ │
+#   │  │  │  HTTP :2026  │   │  HTTP :2027  │   │  gRPC :2128  │           │ │
+#   │  │  │  Raft :2126  │   │  Raft :2127  │   │  (no HTTP)   │           │ │
+#   │  │  │  sled+gRPC   │   │  sled+gRPC   │   │  log only    │           │ │
+#   │  │  └──────┬───────┘   └──────┬───────┘   └──────────────┘           │ │
+#   │  │         │                  │                                       │ │
+#   │  │         ▼                  ▼                                       │ │
+#   │  │  ┌────────────────────────────┐  ┌────────────────────────┐       │ │
+#   │  │  │  PostgreSQL (RecordStore)  │  │  Dragonfly (CacheStore)│       │ │
+#   │  │  │  Users, ReBAC, API keys   │  │  Locks, Events, Cache  │       │ │
+#   │  │  │  :5432                     │  │  :6379                 │       │ │
+#   │  │  └────────────────────────────┘  └────────────────────────┘       │ │
+#   │  └─────────────────────────────────────────────────────────────────────┘ │
+#   └───────────────────────────────────────────────────────────────────────────┘
+#
+# Test Scenarios:
+#   - Raft leader election: stop nexus-1, verify nexus-2 becomes leader
+#   - Network partition: disconnect witness, verify cluster still works (2/3 quorum)
+#   - Data consistency: write on nexus-1, read on nexus-2 (SC mode)
+#   - Failover: kill leader, verify new leader serves requests
+#   - MCP tool use: connect Claude/LLM to mcp-server, exercise file operations
+#   - LangGraph agents: run multi-step agent workflows through LangGraph
+#   - Frontend: browse files, manage permissions, provision users via web UI
 
 services:
   # ==========================================================================
-  # Raft Node 1 - Initial Leader
+  # PostgreSQL 18 — Shared RecordStore for all NexusFS nodes
+  #
+  # Tuning: WAL archiving, pgvector HNSW, pg_stat_statements, async I/O
+  # See: docs/performance/vector-search-tuning.md
   # ==========================================================================
-  nexus-raft-1:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-server
-    container_name: nexus-raft-1
-    hostname: raft-1
+  postgres:
+    image: postgres:18-alpine
+    container_name: nexus-cluster-postgres
+    hostname: postgres
+    restart: unless-stopped
     environment:
-      - NEXUS_NODE_ID=1
-      - NEXUS_BIND_ADDR=0.0.0.0:2026
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - RUST_LOG=info,nexus_raft=debug
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
+    # PostgreSQL 18 optimizations:
+    # - io_method=worker: Async I/O for 2-3x I/O performance
+    # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
+    # - enable_self_join_elimination=on: Query optimizer improvement
+    # - wal_compression=lz4: 30-50% WAL size reduction with fast compression
+    # pgvector HNSW tuning (Issue #1004):
+    # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
+    # - max_parallel_maintenance_workers=7: Parallel index build (up to 30x faster)
+    # - shared_buffers=1GB: Cache HNSW index in memory
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c io_method=worker
+      -c effective_io_concurrency=16
+      -c maintenance_io_concurrency=16
+      -c enable_self_join_elimination=on
+      -c enable_distinct_reordering=on
+      -c wal_compression=lz4
+      -c archive_mode=on
+      -c archive_command='test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'
+      -c archive_timeout=300
+      -c maintenance_work_mem=2GB
+      -c max_parallel_maintenance_workers=7
+      -c shared_buffers=1GB
+      -c effective_cache_size=3GB
     ports:
-      - "2026:2026"  # gRPC for Raft
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
-      - raft1_data:/home/nexus/data
+      - postgres_data:/var/lib/postgresql/data
+      - postgres_wal_archive:/var/lib/postgresql/wal_archive
     networks:
-      - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
+      - nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ==========================================================================
-  # Raft Node 2 - Follower (can become Leader)
-  # ==========================================================================
-  nexus-raft-2:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-server
-    container_name: nexus-raft-2
-    hostname: raft-2
-    environment:
-      - NEXUS_NODE_ID=2
-      - NEXUS_BIND_ADDR=0.0.0.0:2026
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - RUST_LOG=info,nexus_raft=debug
-    ports:
-      - "2027:2026"
-    volumes:
-      - raft2_data:/home/nexus/data
-    networks:
-      - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2026/", "||", "exit", "0"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  # ==========================================================================
-  # Raft Node 3 - Witness (votes but doesn't store state machine)
-  # ==========================================================================
-  nexus-raft-3:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-witness
-    container_name: nexus-raft-3
-    hostname: raft-3
-    environment:
-      - NEXUS_NODE_ID=3
-      - NEXUS_BIND_ADDR=0.0.0.0:2028
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - RUST_LOG=info,nexus_raft=debug
-    ports:
-      - "2028:2028"
-    volumes:
-      - raft3_data:/home/nexus/data
-    networks:
-      - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:2028/", "||", "exit", "0"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  # ==========================================================================
-  # Dragonfly - Cross-Zone Coordination
+  # Dragonfly — CacheStore for embedding cache, Tiger Cache, EventBus
+  # Redis-compatible, ~25x faster than Redis for cache workloads
   # ==========================================================================
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: nexus-dragonfly
+    container_name: nexus-cluster-dragonfly
     hostname: dragonfly
+    restart: unless-stopped
     command: >
       dragonfly
       --maxmemory=512mb
       --proactor_threads=2
       --logtostderr
-      --cache_mode=false
+      --cache_mode=true
     ports:
-      - "6379:6379"
+      - "${DRAGONFLY_PORT:-6379}:6379"
     volumes:
       - dragonfly_data:/data
     networks:
-      - raft-network
+      - nexus-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
       retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NexusFS Node 1 — Full node (initial leader)
+  # HTTP API on :2026, Raft gRPC on :2126
+  # ==========================================================================
+  nexus-1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nexus-fullnode:latest
+    container_name: nexus-node-1
+    hostname: nexus-1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+    environment:
+      # --- NexusFS server ---
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+
+      # --- Raft consensus (auto-detected by _create_metadata_store) ---
+      NEXUS_NODE_ID: 1
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "2@http://nexus-2:2126,3@http://witness:2126"
+
+      # --- RecordStore (shared PostgreSQL) ---
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
+      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
+      NEXUS_DB_POOL_TIMEOUT: ${NEXUS_DB_POOL_TIMEOUT:-30}
+
+      # --- CacheStore (Dragonfly) ---
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+
+      # --- Auth & permissions ---
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
+      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
+
+      # --- Backend storage ---
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
+      NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
+      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-/app/aws-credentials}
+      AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+
+      # --- OAuth ---
+      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+
+      # --- Sandbox ---
+      NEXUS_SERVER_URL: http://nexus-1:2026
+      NEXUS_DOCKER_NETWORK: nexus_nexus-network
+
+      # --- Zoekt code search ---
+      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
+      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
+      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
+
+      # --- Runtime ---
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
+      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
+      NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "${NEXUS_PORT:-2026}:2026"   # HTTP API
+      - "2126:2126"                   # Raft gRPC
+    volumes:
+      - nexus1_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # NexusFS Node 2 — Full node (follower, can become leader)
+  # HTTP API on :2027, Raft gRPC on :2127
+  # ==========================================================================
+  nexus-2:
+    image: nexus-fullnode:latest
+    container_name: nexus-node-2
+    hostname: nexus-2
+    restart: unless-stopped
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+
+      NEXUS_NODE_ID: 2
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@http://nexus-1:2126,3@http://witness:2126"
+
+      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
+      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
+      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
+      NEXUS_DB_POOL_TIMEOUT: ${NEXUS_DB_POOL_TIMEOUT:-30}
+
+      NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
+      NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
+      NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+
+      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
+      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
+      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
+
+      NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
+      NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
+      NEXUS_GCS_PROJECT: ${NEXUS_GCS_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcs-credentials.json}
+      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-/app/aws-credentials}
+      AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+
+      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
+      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
+
+      NEXUS_SERVER_URL: http://nexus-2:2026
+      NEXUS_DOCKER_NETWORK: nexus_nexus-network
+
+      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
+      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
+      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
+
+      NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
+      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
+      NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2027:2026"   # HTTP API (host:2027 → container:2026)
+      - "2127:2126"   # Raft gRPC
+    volumes:
+      - nexus2_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    user: root
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Raft Witness — Lightweight voting-only node (no NexusFS, no HTTP)
+  # Participates in Raft election but doesn't apply state machine.
+  # Enables 2 full + 1 witness = 3-vote quorum at lower cost.
+  # ==========================================================================
+  witness:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-witness
+    container_name: nexus-witness
+    hostname: witness
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_NODE_ID: 3
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@http://nexus-1:2126,2@http://nexus-2:2126"
+      NEXUS_DATA_DIR: /home/nexus/data
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2128:2126"   # Raft gRPC (host:2128 → container:2126)
+    volumes:
+      - witness_data:/home/nexus/data
+    networks:
+      - nexus-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Nexus MCP Server — Model Context Protocol for LLM tool use
+  # Reuses the nexus-fullnode image, runs MCP serve command
+  # ==========================================================================
+  mcp-server:
+    image: nexus-fullnode:latest
+    container_name: nexus-mcp-server
+    restart: unless-stopped
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    entrypoint: []
+    environment:
+      NEXUS_URL: http://nexus-1:2026
+      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8081
+    ports:
+      - "${MCP_PORT:-8081}:8081"
+    command: >
+      sh -c '
+        echo "Waiting for Nexus cluster to be ready..."
+        sleep 5
+        echo "Starting Nexus MCP server on port 8081..."
+        exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
+      '
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # LangGraph Agent Server — AI agent orchestration
+  # Build from sibling repo nexus-langgraph/
+  # ==========================================================================
+  langgraph:
+    build:
+      context: ../..  # nexi-lab/ (parent of nexus/ and nexus-langgraph/)
+      dockerfile: nexus/dockerfiles/langgraph.Dockerfile
+    image: nexus-langgraph:latest
+    container_name: nexus-langgraph
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      LANGGRAPH_PORT: 2024
+      LANGGRAPH_HOST: 0.0.0.0
+      NEXUS_SERVER_URL: http://nexus-1:2026
+      # LLM API keys loaded from ../.env via env_file above
+      # Required: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY
+      # Optional: TAVILY_API_KEY, E2B_API_KEY, FIRECRAWL_API_KEY
+      # Tracing: LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGSMITH_API_KEY
+    volumes:
+      - langgraph_data:/app/.langgraph_api
+    ports:
+      - "${LANGGRAPH_PORT:-2024}:2024"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Frontend — React + Vite web UI
+  # Build from sibling repo nexus-frontend/
+  # ==========================================================================
+  frontend:
+    build:
+      context: ../../nexus-frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser URLs — use localhost so the browser can reach services
+        VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
+        VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+        VITE_NEXUS_SERVER_URL: ${VITE_NEXUS_SERVER_URL:-http://nexus-1:2026}
+    image: nexus-frontend:latest
+    container_name: nexus-frontend
+    restart: unless-stopped
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
+      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================================================
+  # Zoekt Code Search — Fast trigram-based search (Optional)
+  #
+  # Usage:
+  #   docker compose --profile zoekt -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+  # ==========================================================================
+  zoekt:
+    image: sourcegraph/zoekt-webserver:latest
+    container_name: nexus-zoekt
+    restart: unless-stopped
+    profiles:
+      - zoekt
+    environment:
+      ZOEKT_INDEX_DIR: /index
+      ZOEKT_DATA_DIR: /data
+    volumes:
+      - nexus1_data:/data:ro
+      - zoekt_index:/index
+    ports:
+      - "${ZOEKT_PORT:-6070}:6070"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  zoekt-indexer:
+    image: sourcegraph/zoekt-webserver:latest
+    container_name: nexus-zoekt-indexer
+    profiles:
+      - zoekt-index
+    volumes:
+      - nexus1_data:/data:ro
+      - zoekt_index:/index
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Building Zoekt index from node-1 data..."
+        zoekt-index -index /index /data
+        echo "Index build complete!"
+        ls -la /index/
+    networks:
+      - nexus-network
+
+  # ==========================================================================
+  # Test Runner — pytest in Linux container (Optional)
+  #
+  # Usage:
+  #   docker compose --profile test -f dockerfiles/docker-compose.cross-platform-test.yml run --rm test
+  # ==========================================================================
+  test:
+    image: python:3.13
+    container_name: nexus-test
+    working_dir: /app
+    profiles:
+      - test
+    volumes:
+      - ..:/app
+      - test_cache:/root/.cache
+    environment:
+      PYTHONUNBUFFERED: "1"
+    command: >
+      bash -c '
+        echo "Installing Rust toolchain..."
+        curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+        . $$HOME/.cargo/env
+        echo "Installing dependencies..."
+        pip install -q uv
+        uv pip install --system -e ".[dev,test]" -q
+        echo "Platform: $$(python -c "import sys; print(sys.platform)")"
+        echo "Running tests..."
+        if [ -z "$$@" ]; then
+          pytest tests/unit/ -v --no-header -o "addopts=" -x --timeout=60
+        else
+          pytest "$$@"
+        fi
+      '
+    networks:
+      - nexus-network
 
 # ==========================================================================
 # Networks
 # ==========================================================================
 networks:
-  raft-network:
+  nexus-network:
+    name: nexus_nexus-network
     driver: bridge
     ipam:
       config:
         - subnet: 172.28.0.0/16
-    # Enable manual IP assignment for partition simulation
-    # docker network disconnect raft-network nexus-raft-3
+    # Enable manual IP assignment for partition simulation:
+    #   docker network disconnect nexus_nexus-network nexus-witness
 
 # ==========================================================================
-# Volumes (persistent sled data for each node)
+# Volumes
 # ==========================================================================
 volumes:
-  raft1_data:
-    name: nexus-raft1-data
-  raft2_data:
-    name: nexus-raft2-data
-  raft3_data:
-    name: nexus-raft3-data
+  postgres_data:
+    name: nexus-cluster-postgres-data
+  postgres_wal_archive:
+    name: nexus-cluster-postgres-wal
+  nexus1_data:
+    name: nexus-cluster-node1-data
+  nexus2_data:
+    name: nexus-cluster-node2-data
+  witness_data:
+    name: nexus-cluster-witness-data
   dragonfly_data:
-    name: nexus-dragonfly-data
+    name: nexus-cluster-dragonfly-data
+  zoekt_index:
+    name: nexus-cluster-zoekt-index
+  langgraph_data:
+    name: nexus-cluster-langgraph-data
+  test_cache:
+    name: nexus-cluster-test-cache
 
 # ==========================================================================
-# Test Commands
+# Quick Reference
 # ==========================================================================
 #
-# Start cluster:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+# Start full distro:
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#
+# Start with code search:
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile zoekt up -d
 #
 # View logs:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f nexus-1
 #
-# Simulate leader failure (test failover):
-#   docker stop nexus-raft-1
-#   # raft-2 should become leader within election timeout
+# Check cluster health:
+#   curl http://localhost:2026/health   # Node 1 (leader)
+#   curl http://localhost:2027/health   # Node 2 (follower)
+#
+# Service endpoints:
+#   Frontend:   http://localhost:5173
+#   Nexus API:  http://localhost:2026 (node-1), http://localhost:2027 (node-2)
+#   MCP:        http://localhost:8081
+#   LangGraph:  http://localhost:2024
+#   PostgreSQL: localhost:5432
+#   Dragonfly:  localhost:6379
+#
+# Simulate leader failure:
+#   docker stop nexus-node-1
+#   curl http://localhost:2027/health   # Node 2 becomes leader
 #
 # Simulate network partition:
-#   docker network disconnect raft-network nexus-raft-3
-#   # Cluster should still work (2/3 quorum)
-#   docker network connect raft-network nexus-raft-3
-#   # Node rejoins and syncs
+#   docker network disconnect nexus_nexus-network nexus-witness
+#   # Cluster still works (2/3 quorum with nodes 1+2)
+#   docker network connect nexus_nexus-network nexus-witness
 #
-# Run integration tests from host:
-#   export NEXUS_RAFT_ENDPOINTS=localhost:2026,localhost:2027,localhost:2028
-#   pytest tests/integration/test_raft_distributed.py -v
+# Test data consistency (write on node-1, read on node-2):
+#   API_KEY=$(docker logs nexus-node-1 2>&1 | grep "API Key:" | head -1 | sed 's/.*API Key: *//')
+#   curl -X POST http://localhost:2026/api/nfs/write \
+#     -H "Authorization: Bearer $API_KEY" \
+#     -H "Content-Type: application/json" \
+#     -d '{"jsonrpc":"2.0","method":"write","params":{"path":"/test.txt","content":"hello"},"id":1}'
+#   curl -X POST http://localhost:2027/api/nfs/read \
+#     -H "Authorization: Bearer $API_KEY" \
+#     -H "Content-Type: application/json" \
+#     -d '{"jsonrpc":"2.0","method":"read","params":{"path":"/test.txt"},"id":1}'
+#
+# Run Linux tests:
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile test run --rm test
 #
 # Cleanup:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v

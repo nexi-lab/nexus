@@ -133,7 +133,7 @@ class NexusFS(  # type: ignore[misc]
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
         # Issue #1258: MemGPT 3-tier memory paging
-        enable_memory_paging: bool = False,  # Enable MemGPT-style 3-tier memory paging (default: False)
+        enable_memory_paging: bool = True,  # Enable MemGPT-style 3-tier memory paging (default: True)
         memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
         memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
         # Task #23: Dependency injection for services and router.
@@ -156,6 +156,8 @@ class NexusFS(  # type: ignore[misc]
         write_observer: Any | None = None,
         # Task #45: VersionService (created by factory, not kernel)
         version_service: Any | None = None,
+        # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
+        overlay_resolver: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -359,6 +361,7 @@ class NexusFS(  # type: ignore[misc]
         self.mount_manager = mount_manager
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
+        self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -446,11 +449,18 @@ class NexusFS(  # type: ignore[misc]
                         RaftLockManager,
                         set_distributed_lock_manager,
                     )
+                    from nexus.storage.raft_metadata_store import RaftMetadataStore
 
                     # Locks use Raft consensus via metadata store (no Redis needed)
-                    self._lock_manager = RaftLockManager(self.metadata)
-                    set_distributed_lock_manager(self._lock_manager)
-                    logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
+                    if isinstance(self.metadata, RaftMetadataStore):
+                        self._lock_manager = RaftLockManager(self.metadata)
+                        set_distributed_lock_manager(self._lock_manager)
+                        logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
+                    else:
+                        logger.warning(
+                            f"Distributed locks require RaftMetadataStore, got {type(self.metadata).__name__}. "
+                            "Lock manager will not be initialized."
+                        )
 
                 # Initialize event bus if enabled (can use evictable dragonfly)
                 if enable_distributed_events and event_url_resolved:
@@ -483,25 +493,31 @@ class NexusFS(  # type: ignore[misc]
 
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine
-            try:
-                from nexus.workflows.engine import init_engine
-                from nexus.workflows.storage import WorkflowStore
-
-                workflow_store = WorkflowStore(
-                    session_factory=self.SessionLocal,
-                    zone_id=zone_id or "default",
-                )
-
-                # Use init_engine to set the global engine so WorkflowAPI uses the same instance
-                self.workflow_engine = init_engine(
-                    metadata_store=self.metadata,
-                    plugin_registry=None,  # TODO: Hook up plugin registry if available
-                    workflow_store=workflow_store,
-                )
-            except ImportError:
-                # Workflow system not available, disable workflows
+            # Skip if no record store (SessionLocal is None)
+            if self.SessionLocal is None:
+                logger.warning("Workflows require record_store, disabling workflows")
                 self.enable_workflows = False
                 self.workflow_engine = None
+            else:
+                try:
+                    from nexus.workflows.engine import init_engine
+                    from nexus.workflows.storage import WorkflowStore
+
+                    workflow_store = WorkflowStore(
+                        session_factory=self.SessionLocal,
+                        zone_id=zone_id or "default",
+                    )
+
+                    # Use init_engine to set the global engine so WorkflowAPI uses the same instance
+                    self.workflow_engine = init_engine(
+                        metadata_store=self.metadata,
+                        plugin_registry=None,  # TODO: Hook up plugin registry if available
+                        workflow_store=workflow_store,
+                    )
+                except Exception:
+                    # Workflow system not available or misconfigured, disable workflows
+                    self.enable_workflows = False
+                    self.workflow_engine = None
 
         # Load all saved mounts from database and activate them
         # This ensures persisted mounts are restored on server startup
@@ -893,6 +909,11 @@ class NexusFS(  # type: ignore[misc]
             if self._enable_memory_paging:
                 from nexus.core.memory_with_paging import MemoryWithPaging
 
+                # Try to get engine for VectorDatabase integration
+                engine = None
+                if self.SessionLocal is not None:
+                    engine = self.SessionLocal.kw.get("bind")
+
                 self._memory_api = MemoryWithPaging(
                     session=session,
                     backend=self.backend,
@@ -903,6 +924,8 @@ class NexusFS(  # type: ignore[misc]
                     enable_paging=True,
                     main_capacity=self._memory_main_capacity,
                     recall_max_age_hours=self._memory_recall_max_age_hours,
+                    engine=engine,
+                    session_factory=self.SessionLocal,
                 )
             else:
                 from nexus.core.memory_api import Memory
@@ -3498,8 +3521,8 @@ class NexusFS(  # type: ignore[misc]
 
             if user_id and zone_id:
                 # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /zone/{zone_id}/user:{user_id}/workspace/...
-                user_prefix = f"/zone/{zone_id}/user:{user_id}/workspace/"
+                # Workspace paths follow pattern: /zone/{zone_id}/user/{user_id}/workspace/...
+                user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
                 configs = [c for c in configs if c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
@@ -3892,7 +3915,7 @@ class NexusFS(  # type: ignore[misc]
         # Check if agent config already exists BEFORE modifying entity registry
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         try:
@@ -4055,7 +4078,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Extract agent name from agent_id (format: user_id,agent_name)
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
-        agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
+        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
         config_path = f"{agent_dir}/config.yaml"
 
         # Check if agent config exists
@@ -4205,7 +4228,7 @@ class NexusFS(  # type: ignore[misc]
                     if "," in e.entity_id:
                         user_id, agent_name = e.entity_id.split(",", 1)
                         # Try to read from config.yaml (use default zone for now)
-                        config_path = f"/zone/default/user:{user_id}/agent/{agent_name}/config.yaml"
+                        config_path = f"/zone/default/user/{user_id}/agent/{agent_name}/config.yaml"
                         try:
                             config_content = self.read(
                                 config_path, context=self._parse_context(_context)
@@ -4305,7 +4328,7 @@ class NexusFS(  # type: ignore[misc]
                         ctx = self._parse_context(_context)
                         zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4366,7 +4389,7 @@ class NexusFS(  # type: ignore[misc]
                         ctx = self._parse_context(_context)
                         zone_id = self._extract_zone_id(_context) or "default"
                         config_path = (
-                            f"/zone/{zone_id}/user:{user_id}/agent/{agent_name}/config.yaml"
+                            f"/zone/{zone_id}/user/{user_id}/agent/{agent_name}/config.yaml"
                         )
                         try:
                             config_content = self.read(config_path, context=ctx)
@@ -4451,8 +4474,8 @@ class NexusFS(  # type: ignore[misc]
                 user_id, agent_name_part = agent_id.split(",", 1)
                 # Get zone_id from context or use default
                 zone_id = self._extract_zone_id(_context) or "default"
-                # Use new namespace convention: /zone/{zone_id}/user:{user_id}/agent/{agent_id}
-                agent_dir = f"/zone/{zone_id}/user:{user_id}/agent/{agent_name_part}"
+                # Use new namespace convention: /zone/{zone_id}/user/{user_id}/agent/{agent_id}
+                agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
 
                 # Delete agent directory and config
                 try:
@@ -4686,7 +4709,7 @@ class NexusFS(  # type: ignore[misc]
         Creates:
         - User record (UserModel) in database
         - Zone record (ZoneModel) if it doesn't exist
-        - All user directories under /zone/{zone_id}/user:{user_id}/
+        - All user directories under /zone/{zone_id}/user/{user_id}/
         - Default workspace
         - Default agents (ImpersonatedUser, UntrustedAgent)
         - Default skills (all from data/skills/)
@@ -4725,7 +4748,7 @@ class NexusFS(  # type: ignore[misc]
             ...     display_name="Alice Smith"
             ... )
             >>> print(result["workspace_path"])
-            /zone/alice/user:alice/workspace/ws_personal_abc123
+            /zone/alice/user/alice/workspace/ws_personal_abc123
         """
         import logging
         from datetime import UTC, datetime
@@ -4905,7 +4928,7 @@ class NexusFS(  # type: ignore[misc]
             # Generate workspace ID: ws_personal_{12-char-uuid}
             uuid_suffix = str(uuid.uuid4()).replace("-", "")[:12]
             workspace_id = f"ws_personal_{uuid_suffix}"
-            workspace_path = f"/zone/{zone_id}/user:{user_id}/workspace/{workspace_id}"
+            workspace_path = f"/zone/{zone_id}/user/{user_id}/workspace/{workspace_id}"
 
             if not self.exists(workspace_path, context=admin_context):
                 self.mkdir(workspace_path, parents=True, exist_ok=True, context=admin_context)
@@ -5062,7 +5085,7 @@ class NexusFS(  # type: ignore[misc]
             ...     delete_user_record=True
             ... )
             >>> print(result["deleted_directories"])
-            ['/zone/example/user:alice/workspace', ...]
+            ['/zone/example/user/alice/workspace', ...]
         """
         import logging
         from datetime import UTC, datetime
@@ -5135,7 +5158,7 @@ class NexusFS(  # type: ignore[misc]
 
             # 1. Delete user directories
             if zone_id:
-                user_base_path = f"/zone/{zone_id}/user:{user_id}"
+                user_base_path = f"/zone/{zone_id}/user/{user_id}"
                 logger.info(f"Deleting user directories under {user_base_path}")
 
                 ALL_RESOURCE_TYPES = [
@@ -5515,7 +5538,7 @@ class NexusFS(  # type: ignore[misc]
         created_paths = []
 
         for resource_type in ALL_RESOURCE_TYPES:
-            folder_path = f"/zone/{zone_id}/user:{user_id}/{resource_type}"
+            folder_path = f"/zone/{zone_id}/user/{user_id}/{resource_type}"
 
             try:
                 # Create directory (idempotent)

@@ -15,7 +15,7 @@
   - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
   - `WitnessStateMachineInMemory` for testing
   - All tests pass, clippy clean with `--all-features`
-- **PyO3 FFI bindings**: `LocalRaft` class for same-box Python→Rust access (~5μs/op) ✅ **CI complete (#1234)**
+- **PyO3 FFI bindings**: `Metastore` class for same-box Python→Rust sled access (~5μs/op) ✅ **CI complete (#1234)**
   - Metadata ops: set/get/delete/list
   - Lock ops: acquire/release/extend (mutex + semaphore)
   - Snapshot/restore
@@ -465,14 +465,90 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 
 ## 6. Zone Model
 
-- **Path format**: `/zone:{zone_id}/path/to/file`
-- **Physical**: Zones are flat and independent — each Zone is a Raft Group with its own root `/`
-- **Logical**: Hierarchical namespace is composed through **Mount Points** (see 7a)
-- **Intra-zone**: Raft consensus guarantees linearizable reads/writes
-- **Cross-zone reads**: Client-side VFS traversal across mount points (no cross-zone metadata sync)
-- **Cross-zone writes**: Two approaches planned:
-  - **Plan A** (Issue #1181): Nexus-to-nexus mount — client traverses zone boundaries on read
-  - **Plan B** (future): Spanner-like 2PC for cross-zone atomic transactions
+### 6.1 Core Decision: Zone = Consensus Domain (DECIDED 2026-02-10)
+
+A Zone is both a **logical namespace** and a **consensus boundary**:
+- Each Zone has its own **independent Raft group** with its own sled database
+- Zones do NOT share metadata — different zones have **separate, non-replicated** sled stores
+- Cross-zone access requires **gRPC** calls (DT_MOUNT resolution)
+- Visibility is enforced at the zone boundary, not by application-layer filtering
+
+**Why not replicate all metadata to all nodes?**
+1. **Security**: CN nodes should not have EU user metadata (GDPR, data sovereignty)
+2. **Space**: Millions of users × thousands of files = sled cannot hold global metadata
+3. **Latency**: Cross-continent Raft consensus adds 200ms+ per write
+
+**Comparison with Google Spanner**:
+
+| Spanner | NexusFS |
+|---------|---------|
+| Universe | **Federation** (全网唯一) |
+| Zone (datacenter) | **Zone** (consensus domain, own Raft group) |
+| Paxos Group (data shard) | Raft group (1:1 with zone for MVP; sharding later if needed) |
+| Placement Driver | Manual zone placement (future: automatic) |
+| Directory (placement unit) | Zone's entire metadata set |
+
+**Key difference from Spanner**: Spanner's Paxos Group and Zone are orthogonal (a Paxos Group
+spans multiple zones for HA, a zone hosts multiple Paxos Groups for sharding). In NexusFS,
+Zone and Raft group are 1:1 for simplicity. If a single zone's metadata grows too large,
+we can introduce Multi-Raft sharding within a zone (like TiKV), but this is not needed for MVP.
+
+**Zone nesting via DT_MOUNT** (not Paxos Group nesting): Zones compose hierarchically through
+mount points. A parent zone's DT_MOUNT entry points to a child zone's UUID + address.
+This is a namespace-level concept, not a storage-level shard.
+
+### 6.2 Zone Properties
+
+- **Path format**: `/zone/{zone_id}/path/to/file`
+- **Physical**: Each Zone is an independent Raft Group with its own sled, own nodes, own root `/`
+- **Logical**: Hierarchical namespace composed through **Mount Points** (see §7a)
+- **Intra-zone**: Raft consensus guarantees linearizable reads/writes within the zone
+- **Cross-zone reads**: gRPC call to target zone, client-side VFS traversal across DT_MOUNT boundaries
+- **Cross-zone writes**: gRPC call to target zone's Raft leader
+- **Cross-zone transactions**: Spanner-like 2PC (future, Task #40)
+- **Mount semantics**: NFS-style (reject if path exists, no shadow). See Issue #1326 for shadow discussion.
+
+### 6.3 Cross-Zone Shared Folder (Example)
+
+```
+Scenario: Alice (Zone_US) and Bob (Zone_EU) want to share files.
+
+1. Create a shared zone:
+   nexus zone create shared-proj --region us-west
+   → Zone_Shared created with its own Raft group in US-West
+
+2. Alice (Zone_US) mounts it:
+   nexus mount /my-project zone-shared-uuid --address us-west-1:2126
+   → Zone_US sled: DT_MOUNT{zone_id: zone-shared-uuid, address: "us-west-1:2126"}
+
+3. Bob (Zone_EU) mounts it:
+   nexus mount /work/project zone-shared-uuid --address us-west-1:2126
+   → Zone_EU sled: DT_MOUNT{zone_id: zone-shared-uuid, address: "us-west-1:2126"}
+
+4. Bob does `ls /work/project/`:
+   → NexusFS sees DT_MOUNT → gRPC to us-west-1:2126 → returns file list
+   → Latency: EU→US network RTT + zone-shared Raft read (~50-200ms)
+```
+
+### 6.4 DT_MOUNT Entry Structure
+
+```python
+class DT_MOUNT:
+    name: str               # Mount point name in parent directory
+    entry_type: "DT_MOUNT"
+    target_zone_id: str     # Target zone UUID
+    target_address: str     # Target zone's Raft leader/endpoint address
+    # Future: target_address could be a list for HA, or resolved via Zone Registry
+```
+
+### 6.5 Implications for Current Code
+
+| Component | Single-Zone (now) | Multi-Zone (federation) |
+|-----------|-------------------|------------------------|
+| `_create_metadata_store()` | 1 RaftMetadataStore per node | 1 per node (only manages its own zone) |
+| DT_MOUNT resolution | N/A | gRPC call to `target_address` |
+| Node discovery | `NEXUS_PEERS` (static, intra-zone) | Zone Registry (inter-zone, future) |
+| 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
 
 ---
 
@@ -817,7 +893,7 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 | Raft node | `rust/nexus_raft/src/raft/node.rs` | RawNode wrapper, propose API |
 | Raft storage | `rust/nexus_raft/src/raft/storage.rs` | sled-backed Storage trait impl |
 | State machine | `rust/nexus_raft/src/raft/state_machine.rs` | Full + Witness + InMemory |
-| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | LocalRaft Python class |
+| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | Metastore + RaftConsensus Python classes |
 | Raft proto | `rust/nexus_raft/proto/raft.proto` | gRPC transport definitions |
 | Proto build | `rust/nexus_raft/build.rs` | tonic-build, expects `../../proto/` |
 | RaftMetadataStore | `src/nexus/storage/raft_metadata_store.py` | Python Raft client (local+remote) |

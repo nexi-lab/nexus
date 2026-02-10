@@ -212,7 +212,7 @@ export NEXUS_SUBJECT=user:alice
 
 ### Database
 ```bash
-export NEXUS_DATABASE_URL=postgresql://user:pass@localhost/nexus
+export NEXUS_DATABASE_URL=postgresql://user/pass@localhost/nexus
 ```
 
 ### GCS Configuration
@@ -251,7 +251,7 @@ subject: user:alice
 enforce_permissions: true
 
 # Database (optional)
-database_url: postgresql://user:pass@localhost/nexus
+database_url: postgresql://user/pass@localhost/nexus
 ```
 
 Use it:

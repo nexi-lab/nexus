@@ -5,11 +5,13 @@
 //! # Usage
 //!
 //! ```bash
-//! # Start a Raft server node
-//! nexus-raft-server --id 1 --bind 0.0.0.0:2026 --data /var/lib/nexus/data
+//! # Start a single-node Raft server (for development)
+//! nexus-raft-server --id 1 --bind 0.0.0.0:2026 --data ./nexus_data
 //!
-//! # With specific peers for testing
-//! nexus-raft-server --id 1 --bind 0.0.0.0:2026 --data ./data
+//! # Start a 3-node cluster
+//! NEXUS_NODE_ID=1 NEXUS_BIND_ADDR=0.0.0.0:2026 \
+//!   NEXUS_PEERS=2@http://10.0.0.2:2026,3@http://10.0.0.3:2026 \
+//!   nexus-raft-server
 //! ```
 //!
 //! # Environment Variables
@@ -17,6 +19,7 @@
 //! - `NEXUS_NODE_ID`: Node ID (defaults to 1)
 //! - `NEXUS_BIND_ADDR`: Bind address (defaults to 0.0.0.0:2026)
 //! - `NEXUS_DATA_DIR`: Data directory (defaults to ./nexus_data)
+//! - `NEXUS_PEERS`: Comma-separated peer list in `id@host:port` format
 
 use std::env;
 use std::net::SocketAddr;
@@ -29,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("nexus_raft=debug".parse()?)
+                .add_directive("_nexus_raft=debug".parse()?)
                 .add_directive("tonic=info".parse()?),
         )
         .init();
@@ -62,24 +65,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Import and start the server (requires grpc feature AND proto files)
     #[cfg(all(feature = "grpc", has_protos))]
     {
-        use _nexus_raft::transport::{RaftServer, ServerConfig};
+        use _nexus_raft::transport::{
+            NodeAddress, RaftClientPool, RaftServer, ServerConfig, TransportLoop,
+        };
+
+        // Parse peers from NEXUS_PEERS env var (format: "2@host:port,3@host:port")
+        let peers: Vec<NodeAddress> = env::var("NEXUS_PEERS")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                NodeAddress::parse(s.trim())
+                    .unwrap_or_else(|e| panic!("Invalid peer address '{}': {}", s, e))
+            })
+            .collect();
+
+        if peers.is_empty() {
+            tracing::warn!("No peers configured (NEXUS_PEERS is empty). Running as single node.");
+        } else {
+            tracing::info!(
+                "Peers: {}",
+                peers
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
 
         let config = ServerConfig {
             bind_address: bind_addr,
             ..Default::default()
         };
 
-        let server = RaftServer::with_config(node_id, data_path.to_str().unwrap(), config)
-            .map_err(|e| format!("Failed to create server: {}", e))?;
+        let server =
+            RaftServer::with_config(node_id, data_path.to_str().unwrap(), config, peers.clone())
+                .map_err(|e| format!("Failed to create server: {}", e))?;
+
+        // Set up shutdown signal
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        // Start transport loop in background (drives raft ticks + message routing)
+        let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
+        let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
+        tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Raft server starting on {}", bind_addr);
 
         // Handle shutdown signal
-        let shutdown = async {
+        let shutdown = async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("Failed to install Ctrl+C handler");
             tracing::info!("Shutdown signal received");
+            let _ = shutdown_tx.send(true);
         };
 
         server

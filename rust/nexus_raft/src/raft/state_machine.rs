@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{SledStore, SledTree};
+use crate::storage::{SledStore, SledTree, StorageError};
 
 use super::Result;
 
@@ -313,23 +313,19 @@ impl WitnessStateMachine {
     }
 
     /// Store a log entry (for vote validation).
-    pub fn store_log_entry(&mut self, index: u64, data: &[u8]) {
-        // Store the log entry
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    pub fn store_log_entry(&mut self, index: u64, data: &[u8]) -> Result<()> {
         let key = format!("log:{:020}", index);
-        if let Err(e) = self.log_tree.set(key.as_bytes(), data) {
-            tracing::warn!("Failed to store witness log entry {}: {}", index, e);
-        }
+        self.log_tree.set(key.as_bytes(), data)?;
 
-        // Update last index
         if index > self.last_index {
             self.last_index = index;
-            if let Err(e) = self
-                .log_tree
-                .set(KEY_WITNESS_LAST_INDEX, &index.to_le_bytes())
-            {
-                tracing::warn!("Failed to update witness last index: {}", e);
-            }
+            self.log_tree
+                .set(KEY_WITNESS_LAST_INDEX, &index.to_le_bytes())?;
         }
+        Ok(())
     }
 
     /// Get a log entry by index.
@@ -598,6 +594,34 @@ impl FullStateMachine {
             Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    /// List all locks matching a prefix.
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
+        let mut result = Vec::new();
+        // Helper closure to process iterator items
+        let mut collect = |items: &mut dyn Iterator<
+            Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>,
+        >|
+         -> Result<()> {
+            for item in items {
+                if result.len() >= limit {
+                    break;
+                }
+                let (_, value) = item?;
+                let lock_info: LockInfo = bincode::deserialize(&value)?;
+                if !lock_info.holders.is_empty() {
+                    result.push(lock_info);
+                }
+            }
+            Ok(())
+        };
+        if prefix.is_empty() {
+            collect(&mut self.locks.iter())?;
+        } else {
+            collect(&mut self.locks.scan_prefix(prefix.as_bytes()))?;
+        }
+        Ok(result)
     }
 }
 
@@ -1019,5 +1043,161 @@ mod tests {
         } else {
             panic!("Expected LockResult");
         }
+    }
+
+    /// Test that expired holders are cleaned up during acquire.
+    #[test]
+    fn test_lock_ttl_expiry_during_acquire() {
+        let store = SledStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Acquire a lock with 1-second TTL
+        let cmd = Command::AcquireLock {
+            path: "/test/expire".into(),
+            lock_id: "holder-1".into(),
+            max_holders: 1,
+            ttl_secs: 1,
+            holder_info: "agent:test1".into(),
+        };
+        let result = sm.apply(1, &cmd).unwrap();
+        if let CommandResult::LockResult(state) = result {
+            assert!(state.acquired);
+        } else {
+            panic!("Expected LockResult");
+        }
+
+        // Wait for TTL to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Another holder should be able to acquire because the first expired
+        let cmd2 = Command::AcquireLock {
+            path: "/test/expire".into(),
+            lock_id: "holder-2".into(),
+            max_holders: 1,
+            ttl_secs: 30,
+            holder_info: "agent:test2".into(),
+        };
+        let result = sm.apply(2, &cmd2).unwrap();
+        if let CommandResult::LockResult(state) = result {
+            assert!(state.acquired, "Should acquire after expiry");
+            assert_eq!(state.current_holders, 1);
+            // Verify it's holder-2, not holder-1
+            assert_eq!(state.holders[0].lock_id, "holder-2");
+        } else {
+            panic!("Expected LockResult");
+        }
+    }
+
+    /// Test that mixing mutex and semaphore max_holders is rejected.
+    #[test]
+    fn test_lock_type_mismatch() {
+        let store = SledStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Acquire a semaphore lock (max_holders = 3)
+        let cmd = Command::AcquireLock {
+            path: "/test/mismatch".into(),
+            lock_id: "holder-1".into(),
+            max_holders: 3,
+            ttl_secs: 30,
+            holder_info: "agent:test1".into(),
+        };
+        let result = sm.apply(1, &cmd).unwrap();
+        if let CommandResult::LockResult(state) = result {
+            assert!(state.acquired);
+        } else {
+            panic!("Expected LockResult");
+        }
+
+        // Try to acquire as mutex (max_holders = 1) — should be rejected
+        let cmd2 = Command::AcquireLock {
+            path: "/test/mismatch".into(),
+            lock_id: "holder-2".into(),
+            max_holders: 1, // Mismatch: 1 != 3
+            ttl_secs: 30,
+            holder_info: "agent:test2".into(),
+        };
+        let result = sm.apply(2, &cmd2).unwrap();
+        if let CommandResult::LockResult(state) = result {
+            assert!(!state.acquired, "Should reject mismatched max_holders");
+        } else {
+            panic!("Expected LockResult");
+        }
+    }
+
+    /// Test that snapshots include expired holders (they're cleaned on acquire, not snapshot).
+    #[test]
+    fn test_expired_holders_in_snapshot() {
+        let store = SledStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Acquire a lock with 1-second TTL
+        let cmd = Command::AcquireLock {
+            path: "/test/snap-expire".into(),
+            lock_id: "holder-1".into(),
+            max_holders: 1,
+            ttl_secs: 1,
+            holder_info: "agent:test1".into(),
+        };
+        sm.apply(1, &cmd).unwrap();
+
+        // Wait for TTL to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Take snapshot — should still include the expired holder
+        // (cleanup happens during acquire, not snapshot)
+        let snapshot_data = sm.snapshot().unwrap();
+
+        // Restore to a new state machine
+        let store2 = SledStore::open_temporary().unwrap();
+        let mut sm2 = FullStateMachine::new(&store2).unwrap();
+        sm2.restore_snapshot(&snapshot_data).unwrap();
+
+        // The expired lock should be present in the restored state
+        let lock = sm2.get_lock("/test/snap-expire").unwrap();
+        assert!(lock.is_some(), "Expired lock should persist in snapshot");
+        let lock_info = lock.unwrap();
+        assert_eq!(lock_info.holders.len(), 1);
+        assert_eq!(lock_info.holders[0].lock_id, "holder-1");
+    }
+
+    /// Test edge cases with max_holders boundary values.
+    #[test]
+    fn test_lock_max_holders_boundary() {
+        let store = SledStore::open_temporary().unwrap();
+        let mut sm = FullStateMachine::new(&store).unwrap();
+
+        // Acquire with max_holders = u32::MAX (should work)
+        let cmd = Command::AcquireLock {
+            path: "/test/boundary".into(),
+            lock_id: "holder-1".into(),
+            max_holders: u32::MAX,
+            ttl_secs: 30,
+            holder_info: "agent:test1".into(),
+        };
+        let result = sm.apply(1, &cmd).unwrap();
+        if let CommandResult::LockResult(state) = result {
+            assert!(state.acquired);
+            assert_eq!(state.max_holders, u32::MAX);
+        } else {
+            panic!("Expected LockResult");
+        }
+
+        // Noop should be handled cleanly
+        let result = sm.apply(2, &Command::Noop).unwrap();
+        assert!(matches!(result, CommandResult::Success));
+
+        // Re-applying an already applied index should be idempotent
+        let cmd2 = Command::SetMetadata {
+            key: "/test/dup".into(),
+            value: b"data".to_vec(),
+        };
+        let result = sm.apply(1, &cmd2).unwrap(); // index 1 already applied
+        assert!(
+            matches!(result, CommandResult::Success),
+            "Re-applying old index should succeed (no-op)"
+        );
+        // The metadata should NOT be set (skipped due to idempotency)
+        assert!(sm.get_metadata("/test/dup").unwrap().is_none());
     }
 }

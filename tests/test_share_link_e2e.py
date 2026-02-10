@@ -15,7 +15,7 @@ Usage:
     PYTHONPATH=src python tests/test_share_link_e2e.py
 
     # Or with custom PostgreSQL URL
-    PYTHONPATH=src DATABASE_URL=postgresql://user:pass@localhost:5432/nexus python tests/test_share_link_e2e.py
+    PYTHONPATH=src DATABASE_URL=postgresql://user/pass@localhost:5432/nexus python tests/test_share_link_e2e.py
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ print(f"Starting E2E server on {host}:{port}")
 print(f"Database: {database_url.split('@')[1] if '@' in database_url else database_url}")
 
 backend = LocalBackend(root_path=files_dir)
-metadata_store = RaftMetadataStore.local(str(database_url).replace(".db", ""))
+metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
 nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
 
 session_factory = sessionmaker(bind=nx.metadata.engine)

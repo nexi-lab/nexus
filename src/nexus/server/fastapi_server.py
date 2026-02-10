@@ -52,7 +52,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -66,6 +66,10 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     StaleSessionError,
     ValidationError,
+)
+from nexus.server.path_utils import (
+    unscope_internal_dict,
+    unscope_internal_path,
 )
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -119,18 +123,52 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
-# Lock API Models (Issue #1186)
+# Lock API Models (Issue #1110, #1186)
 # ============================================================================
+
+# Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
+LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
 
 
 class LockAcquireRequest(BaseModel):
     """Request model for acquiring a lock."""
 
     path: str
-    timeout: float = 30.0  # Max time to wait for lock acquisition
-    ttl: float = 30.0  # Lock TTL (auto-expires after this)
-    max_holders: int = 1  # 1 = mutex, >1 = semaphore
+    timeout: float = Field(default=30.0, ge=0, le=3600, description="Max seconds to wait")
+    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="Lock TTL in seconds")
+    max_holders: int = Field(default=1, ge=1, le=10000, description="1=mutex, >1=semaphore")
     blocking: bool = True  # If false, return immediately without waiting
+
+
+class LockHolderResponse(BaseModel):
+    """Information about a single lock holder."""
+
+    lock_id: str
+    holder_info: str = ""
+    acquired_at: float  # Unix timestamp
+    expires_at: float  # Unix timestamp
+
+
+class LockInfoMutex(BaseModel):
+    """Lock info for a mutex (exclusive) lock."""
+
+    mode: Literal["mutex"] = "mutex"
+    max_holders: Literal[1] = 1
+    lock_id: str  # The single holder's lock ID
+    holder_info: str = ""
+    acquired_at: float
+    expires_at: float
+    fence_token: int
+
+
+class LockInfoSemaphore(BaseModel):
+    """Lock info for a semaphore (shared) lock."""
+
+    mode: Literal["semaphore"] = "semaphore"
+    max_holders: int
+    holders: list[LockHolderResponse]
+    current_holders: int
+    fence_token: int
 
 
 class LockResponse(BaseModel):
@@ -142,6 +180,7 @@ class LockResponse(BaseModel):
     max_holders: int
     ttl: int
     expires_at: str  # ISO 8601 timestamp
+    fence_token: int
 
 
 class LockStatusResponse(BaseModel):
@@ -149,27 +188,20 @@ class LockStatusResponse(BaseModel):
 
     path: str
     locked: bool
-    lock_info: dict[str, Any] | None = None
+    lock_info: LockInfoMutex | LockInfoSemaphore | None = None
 
 
 class LockExtendRequest(BaseModel):
     """Request model for extending a lock."""
 
     lock_id: str
-    ttl: float = 30.0
-
-
-class LockReleaseRequest(BaseModel):
-    """Request model for releasing a lock."""
-
-    lock_id: str
-    force: bool = False  # Admin-only: force release regardless of owner
+    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="New TTL in seconds")
 
 
 class LockListResponse(BaseModel):
     """Response model for listing locks."""
 
-    locks: list[dict[str, Any]]
+    locks: list[LockInfoMutex | LockInfoSemaphore]
     count: int
 
 
@@ -371,6 +403,8 @@ class AppState:
         self.cache_factory: Any = None
         # WebSocket Manager for real-time events (Issue #1116)
         self.websocket_manager: Any = None
+        # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+        self.reactive_subscription_manager: Any = None
 
 
 # Global state (set during app creation)
@@ -552,10 +586,14 @@ async def get_auth_result(
     if not authorization:
         return None
 
-    if not authorization.startswith("Bearer "):
+    # Extract token: support both "Bearer <token>" and raw "sk-<token>" formats
+    if authorization.startswith("Bearer "):
+        token = authorization[7:]
+    elif authorization.startswith("sk-"):
+        # API keys (sk-*) can be sent directly without Bearer prefix
+        token = authorization
+    else:
         return None
-
-    token = authorization[7:]
 
     # Try auth provider first
     if _app_state.auth_provider:
@@ -797,39 +835,61 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize async ReBAC manager: {e}")
 
-    # Initialize cache factory for Dragonfly/Redis (Issue #1075)
+    # Initialize cache factory for Dragonfly/Redis or PostgreSQL fallback (Issue #1075, #1251)
     # Provides optimized connection pooling for permission/tiger caches
-    dragonfly_url = os.getenv("NEXUS_DRAGONFLY_URL")
-    if dragonfly_url:
-        try:
-            from nexus.cache.factory import init_cache_factory
-            from nexus.cache.settings import CacheSettings
+    try:
+        from nexus.cache.factory import init_cache_factory
+        from nexus.cache.settings import CacheSettings
 
-            cache_settings = CacheSettings.from_env()
-            _app_state.cache_factory = await init_cache_factory(cache_settings)
-            logger.info(
-                f"Cache factory initialized with Dragonfly "
-                f"(pool_size={cache_settings.dragonfly_pool_size}, "
-                f"keepalive={cache_settings.dragonfly_keepalive})"
+        cache_settings = CacheSettings.from_env()
+
+        # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
+        record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+
+        _app_state.cache_factory = await init_cache_factory(
+            cache_settings, record_store=record_store
+        )
+        logger.info(
+            f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
+        )
+
+        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
+        # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
+        if _app_state.cache_factory.has_cache_store:
+            tiger_cache = getattr(
+                getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                "_tiger_cache",
+                None,
             )
-
-            # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
-            # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
-            if _app_state.cache_factory.is_using_dragonfly:
-                tiger_cache = getattr(
-                    getattr(_app_state.nexus_fs, "_rebac_manager", None),
-                    "_tiger_cache",
-                    None,
+            if tiger_cache:
+                dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                tiger_cache.set_dragonfly_cache(dragonfly_tiger)
+                logger.info(
+                    "[TIGER] Dragonfly L2 cache wired up - "
+                    "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
                 )
-                if tiger_cache:
-                    dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
-                    tiger_cache.set_dragonfly_cache(dragonfly_tiger)
-                    logger.info(
-                        "[TIGER] Dragonfly L2 cache wired up - "
-                        "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to initialize cache factory: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize cache factory: {e}")
+
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -841,7 +901,10 @@ async def lifespan(_app: FastAPI) -> Any:
         if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
             event_bus = _app_state.nexus_fs._event_bus
 
-        _app_state.websocket_manager = WebSocketManager(event_bus=event_bus)
+        _app_state.websocket_manager = WebSocketManager(
+            event_bus=event_bus,
+            reactive_manager=_app_state.reactive_subscription_manager,
+        )
         await _app_state.websocket_manager.start()
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
@@ -1084,10 +1147,74 @@ async def lifespan(_app: FastAPI) -> Any:
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
+    # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
+    _scheduler_pool = None
+    if _app_state.database_url and "postgresql" in _app_state.database_url:
+        try:
+            import asyncpg
+
+            from nexus.pay.credits import CreditsService
+            from nexus.scheduler.queue import TaskQueue
+            from nexus.scheduler.service import SchedulerService
+
+            # Convert SQLAlchemy URL to asyncpg DSN
+            pg_dsn = _app_state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+
+            # Create scheduled_tasks table if it doesn't exist
+            async with _scheduler_pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        agent_id TEXT NOT NULL,
+                        executor_id TEXT NOT NULL,
+                        task_type TEXT NOT NULL,
+                        payload JSONB NOT NULL DEFAULT '{}',
+                        priority_tier SMALLINT NOT NULL DEFAULT 2,
+                        deadline TIMESTAMPTZ,
+                        boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
+                        boost_tiers SMALLINT NOT NULL DEFAULT 0,
+                        effective_tier SMALLINT NOT NULL DEFAULT 2,
+                        enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                        started_at TIMESTAMPTZ,
+                        completed_at TIMESTAMPTZ,
+                        status TEXT NOT NULL DEFAULT 'queued',
+                        boost_reservation_id TEXT,
+                        idempotency_key TEXT UNIQUE,
+                        zone_id TEXT NOT NULL DEFAULT 'default',
+                        error_message TEXT
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
+                    ON scheduled_tasks (effective_tier, enqueued_at)
+                    WHERE status = 'queued'
+                """)
+
+            scheduler_service = SchedulerService(
+                queue=TaskQueue(),
+                db_pool=_scheduler_pool,
+                credits_service=CreditsService(enabled=False),
+            )
+            _app.state.scheduler_service = scheduler_service
+            logger.info("Scheduler service initialized (PostgreSQL)")
+        except ImportError as e:
+            logger.debug(f"Scheduler service not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Scheduler service: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1212: Shutdown scheduler pool
+    if _scheduler_pool:
+        try:
+            await _scheduler_pool.close()
+            logger.info("Scheduler pool closed")
+        except Exception as e:
+            logger.warning(f"Error closing scheduler pool: {e}")
 
     # Issue #940: Shutdown AsyncNexusFS
     if _app_state.async_nexus_fs:
@@ -1678,6 +1805,26 @@ def _register_routes(app: FastAPI) -> None:
         else:
             health["components"]["websocket"] = {"status": "disabled"}
 
+        # Check Reactive Subscription Manager (Issue #1167)
+        if _app_state.reactive_subscription_manager:
+            try:
+                reactive_stats = _app_state.reactive_subscription_manager.get_stats()
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "healthy",
+                    "total_subscriptions": reactive_stats["total_subscriptions"],
+                    "read_set_subscriptions": reactive_stats["read_set_subscriptions"],
+                    "pattern_subscriptions": reactive_stats["pattern_subscriptions"],
+                    "avg_lookup_ms": reactive_stats["avg_lookup_ms"],
+                    "registry": reactive_stats["registry"],
+                }
+            except Exception as e:
+                health["components"]["reactive_subscriptions"] = {
+                    "status": "error",
+                    "error": str(e),
+                }
+        else:
+            health["components"]["reactive_subscriptions"] = {"status": "disabled"}
+
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}
         if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "path_router"):
@@ -1751,7 +1898,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
-            if cache_factory.is_using_dragonfly and cache_factory._cache_client:
+            if cache_factory.has_cache_store and cache_factory._cache_client:
                 dragonfly_stats = cache_factory._cache_client.get_pool_stats()
                 dragonfly_info = await cache_factory._cache_client.get_info()
                 metrics["dragonfly"] = {
@@ -1822,6 +1969,17 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(
             f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
+        )
+
+    # Scheduler REST API routes (Issue #1212)
+    try:
+        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
+
+        app.include_router(scheduler_router)
+        logger.info("Scheduler API routes registered (3 endpoints)")
+    except ImportError as e:
+        logger.warning(
+            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
         )
 
     # Issue #940: Register async files router (lazy initialization via lifespan)
@@ -3152,13 +3310,16 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
+        # Normalize path to ensure leading slash
+        path = request.path if request.path.startswith("/") else "/" + request.path
+
         # Non-blocking mode: use timeout=0
         timeout = request.timeout if request.blocking else 0.0
 
         try:
             lock_id = await lock_manager.acquire(
                 zone_id=zone_id,
-                path=request.path,
+                path=path,
                 timeout=timeout,
                 ttl=request.ttl,
                 max_holders=request.max_holders,
@@ -3184,13 +3345,18 @@ def _register_routes(app: FastAPI) -> None:
         expires_at = datetime.now(UTC).timestamp() + request.ttl
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
+        # Get lock info to retrieve fence token
+        lock_info = await lock_manager.get_lock_info(zone_id, path)
+        fence_token = lock_info.fence_token if lock_info else 0
+
         return LockResponse(
             lock_id=lock_id,
-            path=request.path,
+            path=path,
             mode="mutex" if request.max_holders == 1 else "semaphore",
             max_holders=request.max_holders,
             ttl=int(request.ttl),
             expires_at=expires_at_iso,
+            fence_token=fence_token,
         )
 
     @app.get("/api/locks", tags=["locks"], response_model=LockListResponse)
@@ -3210,55 +3376,40 @@ def _register_routes(app: FastAPI) -> None:
         lock_manager = _get_lock_manager()
         zone_id = auth_result.get("zone_id") or "default"
 
-        # Use SCAN to find locks (non-blocking)
-        redis_client = lock_manager._redis.client
-        lock_prefix = f"{lock_manager.LOCK_PREFIX}:{zone_id}:"
-        sem_prefix = f"{lock_manager.SEMAPHORE_PREFIX}:{zone_id}:"
+        # Use lock manager's list_locks method
+        lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
 
-        locks: list[dict[str, Any]] = []
-
-        # Scan mutex locks
-        cursor = 0
-        while len(locks) < limit:
-            cursor, keys = await redis_client.scan(
-                cursor, match=f"{lock_prefix}{pattern}", count=100
-            )
-            for key in keys:
-                if len(locks) >= limit:
-                    break
-                key_str = key.decode() if isinstance(key, bytes) else key
-                path = key_str[len(lock_prefix) :]
-                lock_info = await lock_manager.get_lock_info(zone_id, path)
-                if lock_info:
-                    lock_info["mode"] = "mutex"
-                    locks.append(lock_info)
-            if cursor == 0:
-                break
-
-        # Scan semaphore locks
-        cursor = 0
-        while len(locks) < limit:
-            cursor, keys = await redis_client.scan(
-                cursor, match=f"{sem_prefix}{pattern}", count=100
-            )
-            for key in keys:
-                if len(locks) >= limit:
-                    break
-                key_str = key.decode() if isinstance(key, bytes) else key
-                path = key_str[len(sem_prefix) :]
-                # Get semaphore info
-                members = await redis_client.zrange(key, 0, -1, withscores=True)
-                if members:
-                    locks.append(
-                        {
-                            "path": path,
-                            "mode": "semaphore",
-                            "holders": len(members),
-                            "zone_id": zone_id,
-                        }
+        # Convert LockInfo dataclasses to response models
+        locks: list[LockInfoMutex | LockInfoSemaphore] = []
+        for lock_info in lock_infos:
+            if lock_info.mode == "mutex" and lock_info.holders:
+                h = lock_info.holders[0]
+                locks.append(
+                    LockInfoMutex(
+                        lock_id=h.lock_id,
+                        holder_info=h.holder_info,
+                        acquired_at=h.acquired_at,
+                        expires_at=h.expires_at,
+                        fence_token=lock_info.fence_token,
                     )
-            if cursor == 0:
-                break
+                )
+            else:
+                locks.append(
+                    LockInfoSemaphore(
+                        max_holders=lock_info.max_holders,
+                        holders=[
+                            LockHolderResponse(
+                                lock_id=h.lock_id,
+                                holder_info=h.holder_info,
+                                acquired_at=h.acquired_at,
+                                expires_at=h.expires_at,
+                            )
+                            for h in lock_info.holders
+                        ],
+                        current_holders=len(lock_info.holders),
+                        fence_token=lock_info.fence_token,
+                    )
+                )
 
         return LockListResponse(locks=locks, count=len(locks))
 
@@ -3280,37 +3431,39 @@ def _register_routes(app: FastAPI) -> None:
         if not path.startswith("/"):
             path = "/" + path
 
-        # Check mutex lock first (most common)
+        # Check lock status
         lock_info = await lock_manager.get_lock_info(zone_id, path)
-        if lock_info:
-            lock_info["mode"] = "mutex"
-            return LockStatusResponse(path=path, locked=True, lock_info=lock_info)
+        if not lock_info:
+            return LockStatusResponse(path=path, locked=False, lock_info=None)
 
-        # Check semaphore
-        sem_key = lock_manager._semaphore_key(zone_id, path)
-        members = await lock_manager._redis.client.zcard(sem_key)
-        if members > 0:
-            # Get semaphore details
-            config_key = lock_manager._semaphore_config_key(zone_id, path)
-            max_holders = await lock_manager._redis.client.get(config_key)
-            max_holders_int = (
-                int(max_holders.decode() if isinstance(max_holders, bytes) else max_holders)
-                if max_holders
-                else 0
+        # Convert LockInfo dataclass to response model
+        lock_info_response: LockInfoMutex | LockInfoSemaphore
+        if lock_info.mode == "mutex" and lock_info.holders:
+            h = lock_info.holders[0]
+            lock_info_response = LockInfoMutex(
+                lock_id=h.lock_id,
+                holder_info=h.holder_info,
+                acquired_at=h.acquired_at,
+                expires_at=h.expires_at,
+                fence_token=lock_info.fence_token,
             )
-            return LockStatusResponse(
-                path=path,
-                locked=True,
-                lock_info={
-                    "mode": "semaphore",
-                    "holders": members,
-                    "max_holders": max_holders_int,
-                    "path": path,
-                    "zone_id": zone_id,
-                },
+        else:
+            lock_info_response = LockInfoSemaphore(
+                max_holders=lock_info.max_holders,
+                holders=[
+                    LockHolderResponse(
+                        lock_id=h.lock_id,
+                        holder_info=h.holder_info,
+                        acquired_at=h.acquired_at,
+                        expires_at=h.expires_at,
+                    )
+                    for h in lock_info.holders
+                ],
+                current_holders=len(lock_info.holders),
+                fence_token=lock_info.fence_token,
             )
 
-        return LockStatusResponse(path=path, locked=False, lock_info=None)
+        return LockStatusResponse(path=path, locked=True, lock_info=lock_info_response)
 
     @app.delete("/api/locks/{path:path}", tags=["locks"])
     async def release_lock(
@@ -3380,7 +3533,7 @@ def _register_routes(app: FastAPI) -> None:
             path = "/" + path
 
         extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
-        if not extended:
+        if not extended.success:
             raise HTTPException(
                 status_code=403,
                 detail="Lock extend failed: not owned by this lock_id or already expired",
@@ -3390,15 +3543,16 @@ def _register_routes(app: FastAPI) -> None:
         expires_at = datetime.now(UTC).timestamp() + request.ttl
         expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
 
-        # Determine mode (check mutex first)
-        lock_info = await lock_manager.get_lock_info(zone_id, path)
-        mode: Literal["mutex", "semaphore"] = "mutex" if lock_info else "semaphore"
+        # Use lock_info from ExtendResult
+        lock_info = extended.lock_info
+        mode: Literal["mutex", "semaphore"] = "mutex"
         max_holders = 1
-        if mode == "semaphore":
-            config_key = lock_manager._semaphore_config_key(zone_id, path)
-            max_raw = await lock_manager._redis.client.get(config_key)
-            if max_raw:
-                max_holders = int(max_raw.decode() if isinstance(max_raw, bytes) else max_raw)
+        fence_token = 0
+
+        if lock_info:
+            mode = lock_info.mode
+            fence_token = lock_info.fence_token
+            max_holders = lock_info.max_holders
 
         return LockResponse(
             lock_id=request.lock_id,
@@ -3407,6 +3561,7 @@ def _register_routes(app: FastAPI) -> None:
             max_holders=max_holders,
             ttl=int(request.ttl),
             expires_at=expires_at_iso,
+            fence_token=fence_token,
         )
 
     # ========================================================================
@@ -4709,6 +4864,9 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
             return_metadata,
             False,
         )
+        # Issue #1202: Strip internal prefixes from metadata path
+        if isinstance(read_result, dict):
+            read_result = unscope_internal_dict(read_result, ["path", "virtual_path"])
         return read_result
 
     # For parsed reads, we need to handle async parsing
@@ -4770,7 +4928,9 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     # Return raw bytes - encode_rpc_message will convert to {__type__: 'bytes', data: ...}
     if isinstance(result, bytes):
         return result
-    # If result is already a dict (e.g., with metadata), return as-is
+    # Issue #1202: Strip internal prefixes from metadata path
+    if isinstance(result, dict):
+        result = unscope_internal_dict(result, ["path", "virtual_path"])
     return result
 
 
@@ -4844,8 +5004,15 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     if hasattr(result, "to_dict"):
         _build_start = _time.time()
         paginated = result.to_dict()
+        # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+        items = [
+            unscope_internal_dict(f, ["path", "virtual_path"])
+            if isinstance(f, dict)
+            else unscope_internal_path(f)
+            for f in paginated["items"]
+        ]
         response = {
-            "files": paginated["items"],
+            "files": items,
             "next_cursor": paginated["next_cursor"],
             "has_more": paginated["has_more"],
             "total_count": paginated.get("total_count"),
@@ -4855,13 +5022,20 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
         logger.info(
             f"[HANDLE-LIST] path={params.path}, list={_list_elapsed:.1f}ms, "
             f"build={_build_elapsed:.1f}ms, total={_total_elapsed:.1f}ms, "
-            f"files={len(paginated['items'])}, has_more={paginated['has_more']}"
+            f"files={len(items)}, has_more={paginated['has_more']}"
         )
         return response
 
     # Fallback for non-paginated result (shouldn't happen)
     _build_start = _time.time()
-    entries = result if isinstance(result, list) else []
+    raw_entries = result if isinstance(result, list) else []
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    entries = [
+        unscope_internal_dict(f, ["path", "virtual_path"])
+        if isinstance(f, dict)
+        else unscope_internal_path(f)
+        for f in raw_entries
+    ]
     response = {"files": entries, "has_more": False, "next_cursor": None}
     _build_elapsed = (_time.time() - _build_start) * 1000
     _total_elapsed = (_time.time() - _handle_start) * 1000
@@ -4957,6 +5131,9 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs = _app_state.nexus_fs
     assert nexus_fs is not None
     metadata = nexus_fs.get_metadata(params.path, context=context)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from metadata path
+    if isinstance(metadata, dict):
+        metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
 
 
@@ -4970,6 +5147,8 @@ def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
         kwargs["path"] = params.path
 
     matches = nexus_fs.glob(params.pattern, **kwargs)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
 
 
@@ -4991,6 +5170,15 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
         kwargs["search_mode"] = params.search_mode
 
     results = nexus_fs.grep(params.pattern, **kwargs)
+    # Issue #1202: Strip internal zone/tenant/user prefixes from paths
+    results = [
+        unscope_internal_dict(r, ["path", "file"])
+        if isinstance(r, dict)
+        else unscope_internal_path(r)
+        if isinstance(r, str)
+        else r
+        for r in results
+    ]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

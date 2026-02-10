@@ -299,8 +299,8 @@ class SkillExporter:
 
                 # Calculate relative path from skill directory using Path objects
                 # This ensures proper path handling across platforms
-                # e.g., /zone/default/user:admin/skill/my-skill/scripts/helper.py
-                # skill_dir_path: /zone/default/user:admin/skill/my-skill
+                # e.g., /zone/default/user/admin/skill/my-skill/scripts/helper.py
+                # skill_dir_path: /zone/default/user/admin/skill/my-skill
                 # becomes: scripts/helper.py
                 try:
                     # Normalize file path (remove trailing slash if present)

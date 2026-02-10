@@ -215,7 +215,7 @@ class TestSetupAdminAPIKey:
             # Mock hash function
             mock_auth._hash_key.return_value = "hashed_key"
 
-            postgres_url = "postgresql://user:pass@localhost/nexus"
+            postgres_url = "postgresql://user/pass@localhost/nexus"
 
             result = setup_admin_api_key(postgres_url, admin_key)
 

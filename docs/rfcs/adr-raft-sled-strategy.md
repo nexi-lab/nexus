@@ -30,21 +30,36 @@ No Raft consensus. No leader election. No log replication. The "Raft" in the nam
 
 ## Decisions
 
-### Decision 1: Replace sled with redb
+### Decision 1: Feature-flagged storage backend (sled default, redb opt-in)
 
-**Choice**: Migrate from sled 0.34 to redb 2.x
+**Choice**: Both sled 0.34 and redb 2.x are available; sled is the default, redb is opt-in via `--features storage-redb`
 
 **Rationale**:
 - redb is 1.0 stable (since June 2023), actively maintained
 - Pure Rust (same as sled) — no impact on PyO3 build pipeline
-- Similar KV API — migration is mechanical
+- Similar KV API — both export identical types (`SledStore`, `SledTree`, `SledBatch`, etc.)
 - ACID with copy-on-write B-trees (LMDB-inspired) — predictable disk usage
-- sled risk: beta forever, known data corruption reports, excessive disk usage
+- sled remains default until redb is proven in production
+- Feature flag allows zero-risk rollback: just remove `--features storage-redb`
+
+**How to switch**:
+```bash
+# Default build uses sled
+cargo build
+
+# Opt-in to redb
+cargo build --features storage-redb
+
+# Verify both backends pass tests
+cargo test --lib                        # sled (default)
+cargo test --lib --features storage-redb  # redb
+```
 
 **Alternatives considered**:
+- **Hard swap to redb**: Simpler but no rollback path if redb has issues
 - **RocksDB**: Battle-tested but adds C++ dependency, different API (column families)
 - **SQLite**: Universal but different paradigm (SQL vs KV)
-- **Keep sled**: Zero effort but carries ongoing risk of data corruption
+- **Keep sled only**: Zero effort but carries ongoing risk of data corruption
 
 ### Decision 2: Feature Flag Raft (Default Off)
 
@@ -95,7 +110,7 @@ No Raft consensus. No leader election. No log replication. The "Raft" in the nam
 
 ### Phase 1 — Foundation (2-3 days)
 1. This ADR (document decisions)
-2. Replace sled with redb (core migration)
+2. Implement redb backend behind `storage-redb` feature flag (sled remains default)
 3. Add batch + range methods to PyO3 bindings
 4. Formalize feature flags, document transport as experimental
 

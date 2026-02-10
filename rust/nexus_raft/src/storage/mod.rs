@@ -1,7 +1,11 @@
 //! Storage module for Nexus Raft.
 //!
-//! Embedded key-value storage using **redb 2.x** (replaced sled 0.34).
-//! See `docs/rfcs/adr-raft-sled-strategy.md` for migration rationale.
+//! Embedded key-value storage with pluggable backends:
+//! - **sled 0.34** (default): Battle-tested in this codebase
+//! - **redb 2.x** (opt-in via `storage-redb` feature): 1.0 stable since June 2023
+//!
+//! Both backends export identical types (`SledStore`, `SledTree`, etc.)
+//! for seamless switching. See `docs/rfcs/adr-raft-sled-strategy.md`.
 //!
 //! # Usage
 //!
@@ -11,8 +15,8 @@
 //!
 //! # Storage Backend
 //!
-//! - [`SledStore`]: Pure Rust embedded KV database (redb under the hood).
-//!   Type name kept for backward compatibility.
+//! - [`SledStore`]: Pure Rust embedded KV database.
+//!   Default uses sled; enable `storage-redb` feature for redb.
 //!
 //! # Example
 //!
@@ -24,6 +28,12 @@
 //! cache.set(b"key", b"value").unwrap();
 //! ```
 
+#[cfg(feature = "storage-redb")]
 mod redb_store;
-
+#[cfg(feature = "storage-redb")]
 pub use redb_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};
+
+#[cfg(not(feature = "storage-redb"))]
+mod sled_store;
+#[cfg(not(feature = "storage-redb"))]
+pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};

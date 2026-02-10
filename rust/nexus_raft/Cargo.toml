@@ -25,11 +25,13 @@ path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
-# Embedded KV storage (general-purpose, reusable)
-# Replaced sled 0.34 (perpetual beta) with redb 2.x (1.0 stable since June 2023)
+# Embedded KV storage — sled is default, redb is opt-in via `storage-redb` feature.
+# sled 0.34: perpetual beta but battle-tested in this codebase.
+# redb 2.x: 1.0 stable since June 2023, use --features storage-redb to enable.
 # See: docs/rfcs/adr-raft-sled-strategy.md
-redb = "2"
-tempfile = "3"  # Used for temporary databases in tests and open_temporary()
+sled = "0.34"
+redb = { version = "2", optional = true }
+tempfile = { version = "3", optional = true }  # Used by redb's open_temporary()
 
 # Raft consensus (tikv/raft-rs)
 raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }
@@ -70,8 +72,10 @@ tokio-test = "0.4"
 [features]
 default = []
 
-# Core storage only (redb). Always available, no feature flag needed.
-# Use SledStore/SledTree for embedded KV operations.
+# Use redb 2.x instead of sled 0.34 for embedded storage.
+# Both backends export identical types (SledStore, SledTree, etc.).
+# Default = sled. Enable this flag to switch to redb.
+storage-redb = ["dep:redb", "dep:tempfile"]
 
 # Enable async support (Tokio runtime)
 async = ["tokio"]
@@ -91,7 +95,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
 
 # Enable everything (including experimental features)
-full = ["grpc", "consensus", "python"]
+full = ["grpc", "consensus", "python", "storage-redb"]
 
 [profile.release]
 lto = true

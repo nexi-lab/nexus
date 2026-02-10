@@ -1,36 +1,29 @@
 //! Storage module for Nexus Raft.
 //!
-//! This module provides embedded storage capabilities that can be reused
-//! across Nexus for various purposes:
+//! Embedded key-value storage using **redb 2.x** (replaced sled 0.34).
+//! See `docs/rfcs/adr-raft-sled-strategy.md` for migration rationale.
 //!
-//! - **Raft Log**: Persistent storage for Raft consensus log entries
-//! - **Local Cache**: Fast local cache that survives restarts
-//! - **Task Queues**: Persistent task/event queues
-//! - **Session Storage**: Persistent session state
+//! # Usage
 //!
-//! # Storage Backends
+//! - **Metadata cache**: Fast local reads (~5μs) for file metadata
+//! - **Lock store**: Distributed lock state with TTL support
+//! - **Raft log**: Persistent storage for consensus log entries
 //!
-//! Currently, we provide:
+//! # Storage Backend
 //!
-//! - [`SledStore`]: Pure Rust embedded key-value database (like SQLite for KV)
+//! - [`SledStore`]: Pure Rust embedded KV database (redb under the hood).
+//!   Type name kept for backward compatibility.
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use nexus_raft::storage::{SledStore, SledTree, SledBatch};
 //!
-//! // Open a database
 //! let store = SledStore::open("/var/lib/nexus/data").unwrap();
-//!
-//! // Use named trees for different data
-//! let raft_log = store.tree("raft_log").unwrap();
 //! let cache = store.tree("cache").unwrap();
-//!
-//! // Basic operations
-//! raft_log.set(b"entry:1", b"data").unwrap();
-//! cache.set(b"item:1", b"cached_value").unwrap();
+//! cache.set(b"key", b"value").unwrap();
 //! ```
 
-mod sled_store;
+mod redb_store;
 
-pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};
+pub use redb_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};

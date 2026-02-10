@@ -949,9 +949,17 @@ impl RaftService for WitnessServiceImpl {
 
             if is_valid {
                 // Store the log entry (witness keeps log for voting validation)
-                state
+                if let Err(e) = state
                     .state_machine
-                    .store_log_entry(entry.index, &entry.data);
+                    .store_log_entry(entry.index, &entry.data)
+                {
+                    tracing::error!(
+                        "[Witness] Failed to store log entry {}: {}",
+                        entry.index,
+                        e
+                    );
+                    return Ok(tonic::Response::new(response));
+                }
                 match_index = entry.index;
                 state.last_log_index = entry.index;
                 state.last_log_term = entry.term;

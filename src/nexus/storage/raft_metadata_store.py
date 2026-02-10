@@ -124,8 +124,13 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
                 is_directory=proto.is_directory,
                 owner_id=proto.owner_id or None,
             )
-        except Exception:
-            pass
+        except Exception as proto_err:
+            # Log protobuf parse failure; will try JSON fallback next.
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "Protobuf parse failed, trying JSON fallback: %s", proto_err
+            )
 
     # Fallback to JSON format
     try:

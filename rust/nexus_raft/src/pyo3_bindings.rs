@@ -222,6 +222,58 @@ impl PyLocalRaft {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
     }
 
+    /// Set multiple metadata entries in a single batch operation.
+    ///
+    /// Args:
+    ///     items: List of (path, value_bytes) tuples to set.
+    ///
+    /// Returns:
+    ///     Number of entries set.
+    pub fn batch_set_metadata(&mut self, items: Vec<(String, Vec<u8>)>) -> PyResult<usize> {
+        let count = items.len();
+        for (path, value) in &items {
+            let cmd = Command::SetMetadata {
+                key: path.clone(),
+                value: value.clone(),
+            };
+            self.apply_command(cmd)?;
+        }
+        Ok(count)
+    }
+
+    /// Delete multiple metadata entries in a single batch operation.
+    ///
+    /// Args:
+    ///     keys: List of paths to delete.
+    ///
+    /// Returns:
+    ///     Number of entries deleted.
+    pub fn batch_delete_metadata(&mut self, keys: Vec<String>) -> PyResult<usize> {
+        let count = keys.len();
+        for key in &keys {
+            let cmd = Command::DeleteMetadata {
+                key: key.clone(),
+            };
+            self.apply_command(cmd)?;
+        }
+        Ok(count)
+    }
+
+    /// Count metadata entries matching a prefix.
+    ///
+    /// Args:
+    ///     prefix: Path prefix to count by.
+    ///
+    /// Returns:
+    ///     Number of matching entries.
+    pub fn count_metadata(&self, prefix: &str) -> PyResult<usize> {
+        let entries = self
+            .sm
+            .list_metadata(prefix)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to count metadata: {}", e)))?;
+        Ok(entries.len())
+    }
+
     // =========================================================================
     // Lock Operations
     // =========================================================================
@@ -351,13 +403,23 @@ impl PyLocalRaft {
 
         match lock_info {
             Some(info) if !info.holders.is_empty() => {
-                // Release each holder
+                // Release each holder, logging any individual failures
                 for holder in &info.holders {
                     let cmd = Command::ReleaseLock {
                         path: path.to_string(),
                         lock_id: holder.lock_id.clone(),
                     };
-                    let _ = self.apply_command_raw(cmd)?;
+                    match self.apply_command_raw(cmd)? {
+                        CommandResult::Error(e) => {
+                            tracing::warn!(
+                                "Failed to release holder {} on {}: {}",
+                                holder.lock_id,
+                                path,
+                                e,
+                            );
+                        }
+                        _ => {}
+                    }
                 }
                 Ok(true)
             }

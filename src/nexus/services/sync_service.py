@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from collections import deque
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -69,13 +70,41 @@ class ChangeLogStore:
             gateway: NexusFSGateway for database session access
         """
         self._gw = gateway
+        self._is_postgres: bool | None = None  # Lazy dialect detection
+        self._dialect_lock = threading.Lock()
 
     def _get_session(self) -> Any:
         """Get a database session from the gateway."""
-        # Use gateway's session_factory property
-        if hasattr(self._gw, "session_factory") and self._gw.session_factory:
+        # Use gateway's session_factory property — check explicitly for None
+        if hasattr(self._gw, "session_factory") and self._gw.session_factory is not None:
             return self._gw.session_factory()
         return None
+
+    def _detect_dialect(self) -> bool:
+        """Detect if the database is PostgreSQL. Result is cached after first call.
+
+        Thread-safe: uses double-checked locking to avoid races.
+
+        Returns:
+            True if PostgreSQL, False for SQLite or unknown
+        """
+        if self._is_postgres is not None:
+            return self._is_postgres
+        with self._dialect_lock:
+            # Double-check after acquiring lock
+            if self._is_postgres is not None:
+                return self._is_postgres
+            session = self._get_session()
+            if session is not None:
+                try:
+                    self._is_postgres = session.bind.dialect.name == "postgresql"
+                except Exception:
+                    self._is_postgres = False
+                finally:
+                    session.close()
+            else:
+                self._is_postgres = False
+            return self._is_postgres
 
     def get_change_log(
         self, path: str, backend_name: str, zone_id: str = "default"
@@ -93,7 +122,7 @@ class ChangeLogStore:
         from nexus.storage.models import BackendChangeLogModel
 
         session = self._get_session()
-        if not session:
+        if session is None:
             return None
 
         try:
@@ -154,61 +183,45 @@ class ChangeLogStore:
         from nexus.storage.models import BackendChangeLogModel
 
         session = self._get_session()
-        if not session:
+        if session is None:
             return False
 
         try:
             now = datetime.now(UTC)
+            values = {
+                "path": path,
+                "backend_name": backend_name,
+                "zone_id": zone_id,
+                "size_bytes": size_bytes,
+                "mtime": mtime,
+                "backend_version": backend_version,
+                "content_hash": content_hash,
+                "synced_at": now,
+            }
+            update_set = {
+                "size_bytes": size_bytes,
+                "mtime": mtime,
+                "backend_version": backend_version,
+                "content_hash": content_hash,
+                "synced_at": now,
+            }
 
-            # Try PostgreSQL upsert first, fall back to SQLite
-            try:
-                # PostgreSQL ON CONFLICT DO UPDATE
-                stmt = pg_insert(BackendChangeLogModel).values(
-                    path=path,
-                    backend_name=backend_name,
-                    zone_id=zone_id,
-                    size_bytes=size_bytes,
-                    mtime=mtime,
-                    backend_version=backend_version,
-                    content_hash=content_hash,
-                    synced_at=now,
-                )
+            if self._detect_dialect():
+                # PostgreSQL ON CONFLICT DO UPDATE (named constraint)
+                stmt = pg_insert(BackendChangeLogModel).values(**values)
                 stmt = stmt.on_conflict_do_update(
                     constraint="uq_backend_change_log",
-                    set_={
-                        "size_bytes": size_bytes,
-                        "mtime": mtime,
-                        "backend_version": backend_version,
-                        "content_hash": content_hash,
-                        "synced_at": now,
-                    },
+                    set_=update_set,
                 )
-                session.execute(stmt)
-            except Exception:
-                # Fall back to SQLite INSERT OR REPLACE pattern
-                session.rollback()
-                stmt = sqlite_insert(BackendChangeLogModel).values(  # type: ignore[assignment]
-                    path=path,
-                    backend_name=backend_name,
-                    zone_id=zone_id,
-                    size_bytes=size_bytes,
-                    mtime=mtime,
-                    backend_version=backend_version,
-                    content_hash=content_hash,
-                    synced_at=now,
-                )
+            else:
+                # SQLite ON CONFLICT DO UPDATE (index elements)
+                stmt = sqlite_insert(BackendChangeLogModel).values(**values)  # type: ignore[assignment]
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["path", "backend_name", "zone_id"],
-                    set_={
-                        "size_bytes": size_bytes,
-                        "mtime": mtime,
-                        "backend_version": backend_version,
-                        "content_hash": content_hash,
-                        "synced_at": now,
-                    },
+                    set_=update_set,
                 )
-                session.execute(stmt)
 
+            session.execute(stmt)
             session.commit()
             return True
         except Exception as e:
@@ -233,7 +246,7 @@ class ChangeLogStore:
         from nexus.storage.models import BackendChangeLogModel
 
         session = self._get_session()
-        if not session:
+        if session is None:
             return None
 
         try:
@@ -249,6 +262,185 @@ class ChangeLogStore:
         except Exception as e:
             logger.warning(f"Failed to get last sync time for {backend_name}: {e}")
             return None
+        finally:
+            session.close()
+
+    def get_change_logs_batch(
+        self, backend_name: str, zone_id: str, path_prefix: str
+    ) -> dict[str, ChangeLogEntry]:
+        """Fetch all change logs for a mount prefix in one query.
+
+        Used before BFS traversal to pre-load all cached entries, eliminating
+        per-file database round-trips (~100x speedup for large mounts).
+
+        Args:
+            backend_name: Backend identifier
+            zone_id: Zone ID
+            path_prefix: Mount point prefix (e.g. "/mnt/gcs")
+
+        Returns:
+            Dict mapping path to ChangeLogEntry
+        """
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if session is None:
+            return {}
+
+        try:
+            # Escape SQL LIKE wildcards in prefix to prevent unintended matching
+            escaped = path_prefix.replace("%", r"\%").replace("_", r"\_")
+            entries = (
+                session.query(BackendChangeLogModel)
+                .filter(
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.zone_id == zone_id,
+                    BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
+                )
+                .all()
+            )
+
+            return {
+                entry.path: ChangeLogEntry(
+                    path=entry.path,
+                    backend_name=entry.backend_name,
+                    size_bytes=entry.size_bytes,
+                    mtime=entry.mtime,
+                    backend_version=entry.backend_version,
+                    content_hash=entry.content_hash,
+                    synced_at=entry.synced_at,
+                )
+                for entry in entries
+            }
+        except Exception as e:
+            logger.warning(f"Failed to batch-fetch change logs for {path_prefix}: {e}")
+            return {}
+        finally:
+            session.close()
+
+    def upsert_change_logs_batch(self, entries: list[dict]) -> bool:
+        """Bulk upsert change log entries in a single transaction.
+
+        Used after BFS traversal to flush all change log updates at once,
+        eliminating per-file commit overhead.
+
+        Args:
+            entries: List of dicts with keys matching upsert_change_log params:
+                path, backend_name, zone_id, size_bytes, mtime,
+                backend_version, content_hash
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not entries:
+            return True
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if session is None:
+            return False
+
+        try:
+            now = datetime.now(UTC)
+            is_pg = self._detect_dialect()
+
+            # Build all value dicts upfront
+            all_values = [
+                {
+                    "path": entry["path"],
+                    "backend_name": entry["backend_name"],
+                    "zone_id": entry["zone_id"],
+                    "size_bytes": entry.get("size_bytes"),
+                    "mtime": entry.get("mtime"),
+                    "backend_version": entry.get("backend_version"),
+                    "content_hash": entry.get("content_hash"),
+                    "synced_at": now,
+                }
+                for entry in entries
+            ]
+
+            # Use multi-row insert for true batch performance
+            # SQLite has a variable limit (~999), so chunk to be safe
+            chunk_size = 500
+            for i in range(0, len(all_values), chunk_size):
+                chunk = all_values[i : i + chunk_size]
+
+                if is_pg:
+                    stmt = pg_insert(BackendChangeLogModel).values(chunk)
+                    stmt = stmt.on_conflict_do_update(
+                        constraint="uq_backend_change_log",
+                        set_={
+                            "size_bytes": stmt.excluded.size_bytes,
+                            "mtime": stmt.excluded.mtime,
+                            "backend_version": stmt.excluded.backend_version,
+                            "content_hash": stmt.excluded.content_hash,
+                            "synced_at": stmt.excluded.synced_at,
+                        },
+                    )
+                    session.execute(stmt)
+                else:
+                    # SQLite doesn't support multi-row on_conflict_do_update
+                    # with excluded references, so use per-row upserts
+                    for row in chunk:
+                        row_stmt = sqlite_insert(BackendChangeLogModel).values(**row)
+                        row_stmt = row_stmt.on_conflict_do_update(
+                            index_elements=["path", "backend_name", "zone_id"],
+                            set_={
+                                "size_bytes": row["size_bytes"],
+                                "mtime": row["mtime"],
+                                "backend_version": row["backend_version"],
+                                "content_hash": row["content_hash"],
+                                "synced_at": now,
+                            },
+                        )
+                        session.execute(row_stmt)
+
+            session.commit()
+            logger.debug(f"[DELTA_SYNC] Batch upserted {len(entries)} change log entries")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to batch-upsert {len(entries)} change logs: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    def delete_change_log(self, path: str, backend_name: str, zone_id: str = "default") -> bool:
+        """Delete change log entry for a path.
+
+        Used during file deletion to prevent stale entries that could
+        cause false skips when files are re-created with the same path.
+
+        Args:
+            path: Virtual file path
+            backend_name: Backend identifier
+            zone_id: Zone ID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if session is None:
+            return False
+
+        try:
+            session.query(BackendChangeLogModel).filter(
+                BackendChangeLogModel.path == path,
+                BackendChangeLogModel.backend_name == backend_name,
+                BackendChangeLogModel.zone_id == zone_id,
+            ).delete()
+            session.commit()
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete change log for {path}: {e}")
+            session.rollback()
+            return False
         finally:
             session.close()
 
@@ -325,6 +517,44 @@ class SyncService:
         self._gw = gateway
         # Issue #1127: Initialize change log store for delta sync
         self._change_log = ChangeLogStore(gateway)
+        # Issue #1127: Per-mount sync locks to prevent concurrent races
+        self._mount_locks: dict[str, threading.Lock] = {}
+        self._lock_guard = threading.Lock()
+
+    def _get_mount_lock(self, mount_point: str) -> threading.Lock:
+        """Get or create a lock for a specific mount point.
+
+        Thread-safe: uses a guard lock to protect the mount_locks dict.
+
+        Args:
+            mount_point: Mount point path
+
+        Returns:
+            Lock for the given mount point
+        """
+        with self._lock_guard:
+            if mount_point not in self._mount_locks:
+                self._mount_locks[mount_point] = threading.Lock()
+            return self._mount_locks[mount_point]
+
+    def _resolve_zone_id(self, ctx: SyncContext) -> str | None:
+        """Resolve zone ID from context or mount point path.
+
+        Tries context first, then falls back to extracting zone from mount point
+        path pattern ``/zone/{zone_id}/...``.
+
+        Args:
+            ctx: SyncContext with context and mount_point
+
+        Returns:
+            Zone ID string or None if not determinable
+        """
+        zone_id = get_zone_id(ctx.context) if ctx.context else None
+        if not zone_id and ctx.mount_point:
+            match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
+            if match:
+                zone_id = match.group(1)
+        return zone_id
 
     def sync_mount(self, ctx: SyncContext) -> SyncResult:
         """Sync metadata and content from connector backend(s).
@@ -346,33 +576,45 @@ class SyncService:
         if ctx.mount_point is None:
             return self._sync_all_mounts(ctx)
 
-        # Step 2: Check permission before syncing
-        if not self._check_permission(ctx.mount_point, "read", ctx.context):
-            raise PermissionError(f"Cannot sync mount {ctx.mount_point}: no read permission")
+        # Step 1.5: Acquire per-mount lock (non-blocking to avoid queueing)
+        lock = self._get_mount_lock(ctx.mount_point)
+        if not lock.acquire(blocking=False):
+            logger.warning(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
+            result = SyncResult()
+            result.errors.append(f"Sync already in progress for {ctx.mount_point}")
+            return result
 
-        result = SyncResult()
+        try:
+            # Step 2: Check permission before syncing
+            if not self._check_permission(ctx.mount_point, "read", ctx.context):
+                raise PermissionError(f"Cannot sync mount {ctx.mount_point}: no read permission")
 
-        # Step 3: Validate mount and get backend
-        backend = self._validate_mount(ctx)
+            result = SyncResult()
 
-        # Step 4: Sync metadata (BFS traversal)
-        files_found = self._sync_metadata(ctx, backend, result)
+            # Step 3: Validate mount and get backend
+            backend = self._validate_mount(ctx)
 
-        # Step 5: Handle deletions
-        self._sync_deletions(ctx, files_found, result)
+            # Step 4: Sync metadata (BFS traversal)
+            files_found = self._sync_metadata(ctx, backend, result)
 
-        # Step 6: Sync content cache
-        self._sync_content(ctx, backend, result)
+            # Step 5: Handle deletions
+            self._sync_deletions(ctx, backend, files_found, result)
 
-        # Issue #1127: Log delta sync summary
-        if result.files_skipped > 0:
-            logger.info(
-                f"[DELTA_SYNC] Summary for {ctx.mount_point}: "
-                f"scanned={result.files_scanned}, created={result.files_created}, "
-                f"skipped={result.files_skipped} (delta sync saved {result.files_skipped} file operations)"
-            )
+            # Step 6: Sync content cache
+            self._sync_content(ctx, backend, result)
 
-        return result
+            # Issue #1127: Log delta sync summary
+            if result.files_skipped > 0:
+                logger.info(
+                    f"[DELTA_SYNC] Summary for {ctx.mount_point}: "
+                    f"scanned={result.files_scanned}, created={result.files_created}, "
+                    f"skipped={result.files_skipped} "
+                    f"(delta sync saved {result.files_skipped} file operations)"
+                )
+
+            return result
+        finally:
+            lock.release()
 
     def _validate_mount(self, ctx: SyncContext) -> Any:
         """Validate mount exists and supports sync.
@@ -508,7 +750,7 @@ class SyncService:
 
             if paths_needing_tuples and self._gw.hierarchy_enabled:
                 try:
-                    zone_id = get_zone_id(ctx.context) if ctx.context else None
+                    zone_id = self._resolve_zone_id(ctx)
                     logger.info(
                         f"[SYNC_MOUNT] Flushing batch: creating parent tuples for "
                         f"{len(paths_needing_tuples)} files (zone_id={zone_id})"
@@ -532,11 +774,36 @@ class SyncService:
         # Determine starting path for scan
         start_virtual_path, start_backend_path = self._get_start_paths(ctx)
 
+        # Issue #1127: Pre-fetch all cached change log entries for this mount
+        # Eliminates per-file DB round-trips (~100x speedup for large mounts)
+        zone_id = self._resolve_zone_id(ctx)
+        cached_entries: dict[str, ChangeLogEntry] = {}
+        if not ctx.full_sync and hasattr(backend, "get_file_info"):
+            cached_entries = self._change_log.get_change_logs_batch(
+                backend_name=backend.name,
+                zone_id=zone_id or "default",
+                path_prefix=ctx.mount_point or "",
+            )
+            if cached_entries:
+                logger.info(
+                    f"[DELTA_SYNC] Pre-fetched {len(cached_entries)} cached entries "
+                    f"for {ctx.mount_point}"
+                )
+
+        # Collect change log upserts for batch flush
+        pending_upserts: list[dict] = []
+
+        def flush_pending_upserts() -> None:
+            """Flush accumulated change log upserts in a single transaction."""
+            if pending_upserts:
+                self._change_log.upsert_change_logs_batch(list(pending_upserts))
+                pending_upserts.clear()
+
         # Check if this is a single file sync
         if ctx.path:
             is_single_file = self._check_single_file(backend, start_backend_path, ctx.context)
             if is_single_file:
-                return self._sync_single_file(
+                found = self._sync_single_file(
                     ctx,
                     backend,
                     start_virtual_path,
@@ -546,7 +813,11 @@ class SyncService:
                     files_found,
                     paths_needing_tuples,
                     flush_parent_tuples_batch,
+                    cached_entries,
+                    pending_upserts,
                 )
+                flush_pending_upserts()
+                return found
 
         # BFS traversal using deque
         queue: deque[tuple[str, str]] = deque([(start_virtual_path, start_backend_path)])
@@ -603,11 +874,15 @@ class SyncService:
                             result,
                             files_found,
                             paths_needing_tuples,
+                            cached_entries,
+                            pending_upserts,
                         )
 
-                        # Flush batch if needed
+                        # Flush batches if needed
                         if len(paths_needing_tuples) >= self.PATHS_CHUNK_SIZE:
                             flush_parent_tuples_batch()
+                        if len(pending_upserts) >= self.PATHS_CHUNK_SIZE:
+                            flush_pending_upserts()
 
             except Exception as e:
                 error_msg = f"Failed to scan {virtual_path}: {e}"
@@ -617,6 +892,7 @@ class SyncService:
         # Final flush
         if paths_needing_tuples:
             flush_parent_tuples_batch()
+        flush_pending_upserts()
 
         if total_tuples_created > 0:
             logger.info(
@@ -636,6 +912,8 @@ class SyncService:
         result: SyncResult,
         files_found: set[str],
         paths_needing_tuples: list[str],
+        cached_entries: dict[str, ChangeLogEntry] | None = None,
+        pending_upserts: list[dict] | None = None,
     ) -> None:
         """Sync a single file entry.
 
@@ -651,6 +929,8 @@ class SyncService:
             result: SyncResult to update
             files_found: Set to track found files
             paths_needing_tuples: List to collect paths for batch tuple creation
+            cached_entries: Pre-fetched change log entries (batch optimization)
+            pending_upserts: Accumulator for batch upsert (batch optimization)
         """
         from nexus.core._metadata_generated import FileMetadata
 
@@ -677,41 +957,40 @@ class SyncService:
             return
 
         # Extract zone_id early (needed for delta sync and metadata creation)
-        zone_id = get_zone_id(ctx.context) if ctx.context else None
-        if not zone_id and ctx.mount_point:
-            match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
-            if match:
-                zone_id = match.group(1)
+        zone_id = self._resolve_zone_id(ctx)
 
         # Issue #1127: Delta sync - check if file has changed
-        # Optimization: Only fetch file info if we have a cached entry to compare
+        # Always fetch file_info to populate change log on first sync (bootstrap).
+        # Only compare against cached entry when one exists.
         file_info = None
         if not ctx.full_sync and hasattr(backend, "get_file_info"):
             try:
-                # First check if we have a cached entry (cheap DB lookup)
-                cached = self._change_log.get_change_log(
-                    virtual_path, backend.name, zone_id or "default"
-                )
+                file_info_response = backend.get_file_info(backend_path, context=ctx.context)
+                if file_info_response.success and file_info_response.data:
+                    file_info = file_info_response.data
 
-                if cached:
-                    # Only fetch file info from backend if we have something to compare
-                    file_info_response = backend.get_file_info(backend_path, context=ctx.context)
-                    if file_info_response.success and file_info_response.data:
-                        file_info = file_info_response.data
+                    # Compare against cached entry if available (skip unchanged files)
+                    # Use pre-fetched batch cache when available, else fall back to single query
+                    if cached_entries is not None:
+                        cached = cached_entries.get(virtual_path)
+                    else:
+                        cached = self._change_log.get_change_log(
+                            virtual_path, backend.name, zone_id or "default"
+                        )
+                    if cached and self._file_unchanged(file_info, cached):
+                        result.files_skipped += 1
+                        logger.debug(
+                            f"[DELTA_SYNC] Skipping unchanged: {virtual_path} "
+                            f"(size={file_info.size}, version={file_info.backend_version})"
+                        )
+                        return
 
-                        if self._file_unchanged(file_info, cached):
-                            # File hasn't changed - skip sync
-                            result.files_skipped += 1
-                            logger.debug(
-                                f"[DELTA_SYNC] Skipping unchanged: {virtual_path} "
-                                f"(size={file_info.size}, version={file_info.backend_version})"
-                            )
-                            return
-                        else:
-                            logger.debug(
-                                f"[DELTA_SYNC] File changed: {virtual_path} "
-                                f"(old_version={cached.backend_version}, new_version={file_info.backend_version})"
-                            )
+                    if cached:
+                        logger.debug(
+                            f"[DELTA_SYNC] File changed: {virtual_path} "
+                            f"(old_version={cached.backend_version}, "
+                            f"new_version={file_info.backend_version})"
+                        )
             except Exception as e:
                 # Delta check failed - proceed with full sync for this file
                 logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
@@ -759,14 +1038,12 @@ class SyncService:
 
                 # Issue #1127: Update change log after successful sync
                 if file_info:
-                    self._change_log.upsert_change_log(
-                        path=virtual_path,
-                        backend_name=backend.name,
-                        zone_id=zone_id or "default",
-                        size_bytes=file_info.size,
-                        mtime=file_info.mtime,
-                        backend_version=file_info.backend_version,
-                        content_hash=file_info.content_hash,
+                    self._enqueue_change_log_upsert(
+                        pending_upserts,
+                        virtual_path,
+                        backend.name,
+                        zone_id or "default",
+                        file_info,
                     )
 
             except Exception as e:
@@ -775,15 +1052,55 @@ class SyncService:
             # File exists - check if it needs updating (for existing files)
             # Issue #1127: Update change log even for existing files
             if file_info:
-                self._change_log.upsert_change_log(
-                    path=virtual_path,
-                    backend_name=backend.name,
-                    zone_id=zone_id or "default",
-                    size_bytes=file_info.size,
-                    mtime=file_info.mtime,
-                    backend_version=file_info.backend_version,
-                    content_hash=file_info.content_hash,
+                self._enqueue_change_log_upsert(
+                    pending_upserts,
+                    virtual_path,
+                    backend.name,
+                    zone_id or "default",
+                    file_info,
                 )
+
+    def _enqueue_change_log_upsert(
+        self,
+        pending_upserts: list[dict] | None,
+        path: str,
+        backend_name: str,
+        zone_id: str,
+        file_info: FileInfo,
+    ) -> None:
+        """Enqueue a change log upsert for batch flush, or upsert immediately.
+
+        When pending_upserts is provided, appends to the list for batch processing.
+        Otherwise falls back to immediate single upsert for backward compatibility.
+
+        Args:
+            pending_upserts: Batch accumulator list, or None for immediate upsert
+            path: Virtual file path
+            backend_name: Backend identifier
+            zone_id: Zone ID
+            file_info: File info from backend
+        """
+        entry: dict[str, str | int | datetime | None] = {
+            "path": path,
+            "backend_name": backend_name,
+            "zone_id": zone_id,
+            "size_bytes": file_info.size,
+            "mtime": file_info.mtime,
+            "backend_version": file_info.backend_version,
+            "content_hash": file_info.content_hash,
+        }
+        if pending_upserts is not None:
+            pending_upserts.append(entry)
+        else:
+            self._change_log.upsert_change_log(
+                path=path,
+                backend_name=backend_name,
+                zone_id=zone_id,
+                size_bytes=file_info.size,
+                mtime=file_info.mtime,
+                backend_version=file_info.backend_version,
+                content_hash=file_info.content_hash,
+            )
 
     def _file_unchanged(self, file_info: FileInfo, cached: ChangeLogEntry) -> bool:
         """Check if file is unchanged based on rsync-style comparison (Issue #1127).
@@ -864,13 +1181,7 @@ class SyncService:
             return
 
         try:
-            zone_id = get_zone_id(ctx.context) if ctx.context else None
-
-            # Try to extract zone from mount point path
-            if not zone_id and ctx.mount_point:
-                match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
-                if match:
-                    zone_id = match.group(1)
+            zone_id = self._resolve_zone_id(ctx)
 
             if not zone_id:
                 raise ValueError(
@@ -906,15 +1217,19 @@ class SyncService:
     def _sync_deletions(
         self,
         ctx: SyncContext,
+        backend: Any,
         files_found: set[str],
         result: SyncResult,
     ) -> None:
         """Handle file deletions - remove files no longer in backend.
 
         Only performs deletion check when syncing from root (path=None).
+        Also cleans up stale BackendChangeLogModel entries to prevent
+        false skips when files are re-created (Issue #1127).
 
         Args:
             ctx: SyncContext
+            backend: Backend instance (for backend_name in change log cleanup)
             files_found: Set of files found during metadata scan
             result: SyncResult to update
         """
@@ -933,11 +1248,14 @@ class SyncService:
             except Exception:
                 pass
 
+            # Resolve zone_id for change log cleanup
+            zone_id = self._resolve_zone_id(ctx)
+
             # List all files in metadata under this mount
             existing_metas = self._gw.metadata_list(prefix=ctx.mount_point, recursive=True)
-            existing_files = [meta.path for meta in existing_metas]
 
-            for existing_path in existing_files:
+            for meta in existing_metas:
+                existing_path = meta.path
                 # Skip the mount point itself
                 if existing_path == ctx.mount_point:
                     continue
@@ -956,13 +1274,18 @@ class SyncService:
 
                 # Delete from metadata
                 try:
-                    meta = self._gw.metadata_get(existing_path)
-                    if meta:
+                    existing_meta = self._gw.metadata_get(existing_path)
+                    if existing_meta:
                         logger.info(
                             f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
                         )
                         self._gw.metadata_delete(existing_path)
                         result.files_deleted += 1
+
+                        # Issue #1127: Clean up stale change log entry
+                        self._change_log.delete_change_log(
+                            existing_path, backend.name, zone_id or "default"
+                        )
                 except Exception as e:
                     result.errors.append(f"Failed to delete {existing_path}: {e}")
                     logger.warning(f"Failed to delete {existing_path}: {e}")
@@ -1121,8 +1444,13 @@ class SyncService:
         files_found: set[str],
         paths_needing_tuples: list[str],
         flush_fn: Callable[[], None],
+        cached_entries: dict[str, ChangeLogEntry] | None = None,
+        pending_upserts: list[dict] | None = None,
     ) -> set[str]:
-        """Sync a single file.
+        """Sync a single file by delegating to _sync_file.
+
+        Delegates to _sync_file for all file processing (including delta sync),
+        then flushes parent tuples if any were queued.
 
         Args:
             ctx: SyncContext
@@ -1134,66 +1462,36 @@ class SyncService:
             files_found: Set to track found files
             paths_needing_tuples: List for batch tuple creation
             flush_fn: Function to flush parent tuples
+            cached_entries: Pre-fetched change log entries (batch optimization)
+            pending_upserts: Accumulator for batch upsert (batch optimization)
 
         Returns:
             Set of files found
         """
-        from nexus.core._metadata_generated import FileMetadata
+        logger.info(f"[SYNC_MOUNT] Syncing single file: {virtual_path}")
 
-        assert ctx.mount_point is not None
-
+        # Check pattern match with explicit logging for single-file sync
         if not self._matches_patterns(virtual_path, ctx):
             logger.info(f"[SYNC_MOUNT] Skipping {virtual_path} - filtered by patterns")
             return files_found
 
-        logger.info(f"[SYNC_MOUNT] Syncing single file: {virtual_path}")
-        result.files_scanned = 1
-        files_found.add(virtual_path)
+        # Delegate to _sync_file for full processing (including delta sync)
+        self._sync_file(
+            ctx=ctx,
+            backend=backend,
+            virtual_path=virtual_path,
+            backend_path=backend_path,
+            created_by=created_by,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=paths_needing_tuples,
+            cached_entries=cached_entries,
+            pending_upserts=pending_upserts,
+        )
 
-        if ctx.dry_run:
-            return files_found
-
-        existing_meta = self._gw.metadata_get(virtual_path)
-        if not existing_meta:
-            try:
-                # Extract zone_id from context or mount point path
-                zone_id = get_zone_id(ctx.context) if ctx.context else None
-                if not zone_id and ctx.mount_point:
-                    match = re.match(r"^/zone/([^/]+)/", ctx.mount_point)
-                    if match:
-                        zone_id = match.group(1)
-
-                if not zone_id:
-                    raise ValueError(
-                        f"Cannot sync file {virtual_path}: zone_id not found in context or mount point path"
-                    )
-
-                now = datetime.now(UTC)
-                file_size = self._get_file_size(backend, backend_path, ctx)
-
-                # Issue #1126: etag=None during metadata sync
-                # Content hash is computed later by cache_mixin.sync() when content is read
-                meta = FileMetadata(
-                    path=virtual_path,
-                    backend_name=backend.name,
-                    physical_path=backend_path,
-                    size=file_size,
-                    etag=None,
-                    created_at=now,
-                    modified_at=now,
-                    version=1,
-                    created_by=created_by,
-                    zone_id=zone_id,
-                )
-                self._gw.metadata_put(meta)
-                result.files_created = 1
-
-                if self._gw.hierarchy_enabled:
-                    paths_needing_tuples.append(virtual_path)
-                    flush_fn()
-
-            except Exception as e:
-                result.errors.append(f"Failed to add {virtual_path}: {e}")
+        # Flush parent tuples immediately for single file sync
+        if paths_needing_tuples:
+            flush_fn()
 
         return files_found
 

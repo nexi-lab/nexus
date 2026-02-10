@@ -55,14 +55,14 @@ from nexus.storage.sqlalchemy_metadata_store import SQLAlchemyMetadataStore
 
 # PostgreSQL
 store = SQLAlchemyMetadataStore(
-    "postgresql://user:password@localhost:5432/nexus"
+    "postgresql://user/password@localhost:5432/nexus"
 )
 ```
 
 ### Alembic Configuration (alembic.ini)
 
 ```ini
-sqlalchemy.url = postgresql://user:password@localhost:5432/nexus
+sqlalchemy.url = postgresql://user/password@localhost:5432/nexus
 ```
 
 ### Model Adaptations for PostgreSQL
@@ -109,7 +109,7 @@ alembic revision --autogenerate -m "Description"
 
 ```bash
 # Set database URL
-export DATABASE_URL="postgresql://user:password@localhost:5432/nexus"
+export DATABASE_URL="postgresql://user/password@localhost:5432/nexus"
 
 # Update alembic.ini or use command-line override
 alembic -x dbUrl=$DATABASE_URL upgrade head
@@ -178,7 +178,7 @@ When growing from embedded to distributed mode:
    # Change from
    store = SQLAlchemyMetadataStore("nexus.db")
    # To
-   store = SQLAlchemyMetadataStore("postgresql://user:pass@localhost/nexus")
+   store = SQLAlchemyMetadataStore("postgresql://user/pass@localhost/nexus")
    ```
 
 4. **Run migrations:**

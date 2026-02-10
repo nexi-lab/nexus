@@ -54,7 +54,7 @@ def nx(temp_dir: Path, mock_rebac: MagicMock) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -108,7 +108,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill publicly."""
-        result = service.share("/zone/acme/user:alice/skill/test/", "public", context)
+        result = service.share("/zone/acme/user/alice/skill/test/", "public", context)
 
         assert result == "tuple-123"
         # NexusFS.rebac_create internally calls _rebac_manager.rebac_write
@@ -121,7 +121,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a group."""
-        service.share("/zone/acme/user:alice/skill/test/", "group:eng", context)
+        service.share("/zone/acme/user/alice/skill/test/", "group:eng", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("group", "eng", "member")
@@ -130,7 +130,7 @@ class TestSkillServiceShare:
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a user."""
-        service.share("/zone/acme/user:alice/skill/test/", "user:bob", context)
+        service.share("/zone/acme/user/alice/skill/test/", "user:bob", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("user", "bob")
@@ -241,7 +241,7 @@ class TestSkillServiceDiscover:
         """Test discover returns SkillInfo objects."""
         # Create a skill
         nx.write(
-            "/zone/acme/user:alice/skill/test/SKILL.md",
+            "/zone/acme/user/alice/skill/test/SKILL.md",
             b"---\nname: Test\ndescription: A test\nauthor: alice\n---\nContent",
             context=context,
         )
@@ -259,18 +259,18 @@ class TestSkillServiceDiscover:
         """Test discover with subscribed filter."""
         # Create two skills
         nx.write(
-            "/zone/acme/user:alice/skill/sub/SKILL.md",
+            "/zone/acme/user/alice/skill/sub/SKILL.md",
             b"---\nname: Subscribed\n---\n",
             context=context,
         )
         nx.write(
-            "/zone/acme/user:alice/skill/unsub/SKILL.md",
+            "/zone/acme/user/alice/skill/unsub/SKILL.md",
             b"---\nname: NotSubscribed\n---\n",
             context=context,
         )
 
         # Subscribe to one
-        service.subscribe("/zone/acme/user:alice/skill/sub/", context)
+        service.subscribe("/zone/acme/user/alice/skill/sub/", context)
 
         result = service.discover(context, filter="subscribed")
 
@@ -285,7 +285,7 @@ class TestSkillServiceLoad:
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test loading a skill."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone/acme/user/alice/skill/test/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: Test\ndescription: A test\nauthor: alice\nversion: '1.0'\n---\n# Content\nHere",
@@ -327,7 +327,7 @@ class TestSkillServicePromptContext:
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test prompt context with subscribed skills."""
-        skill_path = "/zone/acme/user:alice/skill/test/"
+        skill_path = "/zone/acme/user/alice/skill/test/"
         nx.write(
             f"{skill_path}SKILL.md",
             b"---\nname: PromptSkill\ndescription: For prompts\n---\nContent",

@@ -31,7 +31,7 @@ def test_workspace_namespace_operations():
         nx = create_nexus_fs(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            metadata_store=RaftMetadataStore.local(str(Path(tmpdir) / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,  # Test namespace routing without permissions
         )
@@ -74,7 +74,7 @@ def test_shared_namespace_operations():
         nx = create_nexus_fs(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            metadata_store=RaftMetadataStore.local(str(Path(tmpdir) / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
@@ -113,7 +113,7 @@ def test_external_namespace_operations():
         nx = create_nexus_fs(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            metadata_store=RaftMetadataStore.local(str(Path(tmpdir) / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
@@ -147,7 +147,7 @@ def test_multi_namespace_operations_single_zone():
         nx = create_nexus_fs(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            metadata_store=RaftMetadataStore.local(str(Path(tmpdir) / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )
@@ -181,7 +181,7 @@ def test_namespace_isolation_between_zones():
         nx = create_nexus_fs(
             auto_parse=False,
             backend=LocalBackend(tmpdir),
-            metadata_store=RaftMetadataStore.local(str(Path(tmpdir) / "raft-metadata")),
+            metadata_store=RaftMetadataStore.embedded(str(Path(tmpdir) / "raft-metadata")),
             record_store=SQLAlchemyRecordStore(db_path=Path(tmpdir) / "metadata.db"),
             enforce_permissions=False,
         )

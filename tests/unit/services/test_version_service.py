@@ -165,23 +165,15 @@ class TestVersionServiceListVersions:
         )
 
     @pytest.mark.asyncio
-    async def test_list_versions_calls_metadata_store(self, service, operation_context):
-        """Test that list_versions delegates to metadata store."""
-        # Arrange - mock the metadata store to return versions
-        service.metadata.list_versions.return_value = [
-            {"version": 2, "created_at": "2026-01-02", "size": 2000},
-            {"version": 1, "created_at": "2026-01-01", "size": 1000},
-        ]
-
-        # Act
+    async def test_list_versions_without_session_factory(self, service, operation_context):
+        """Test that list_versions returns empty list when no session_factory."""
+        # Without session_factory, list_versions returns [] (no RecordStore to query)
         result = await service.list_versions(
             path="/test.txt",
             context=operation_context,
         )
 
-        # Assert
-        assert isinstance(result, list)
-        service.metadata.list_versions.assert_called_once_with("/test.txt")
+        assert result == []
 
     # ========================================================================
     # Future Tests
@@ -482,7 +474,7 @@ class TestVersionServiceHelpers:
 #         """Create real metadata store."""
 #         from nexus.storage.raft_metadata_store import RaftMetadataStore
 #
-#         store = RaftMetadataStore.local(str(isolated_db).replace(".db", "-raft"))
+#         store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", "-raft"))
 #         yield store
 #         store.close()
 #

@@ -23,6 +23,8 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
@@ -93,7 +95,7 @@ class VersionService:
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
-        session_factory: Any | None = None,  # Task #45: For VersionManager queries
+        session_factory: Callable[..., Any] | None = None,  # Task #45: For VersionManager queries
     ):
         """Initialize version service.
 
@@ -248,8 +250,10 @@ class VersionService:
         if self._session_factory:
             from nexus.storage.version_manager import VersionManager
 
+            factory = self._session_factory  # bind for closure
+
             def _query_versions() -> builtins.list[dict[str, Any]]:
-                with self._session_factory() as session:
+                with factory() as session:
                     return VersionManager.list_versions(session, path)
 
             return await asyncio.to_thread(_query_versions)

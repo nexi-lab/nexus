@@ -482,11 +482,11 @@ class NexusFSEventsMixin:
                 path=path,
                 ttl=ttl,
             )
-            if extended:
+            if extended.success:
                 logger.debug(f"Lock extended: {lock_id} (TTL: {ttl}s)")
             else:
                 logger.warning(f"Lock extend failed (not owned or expired): {lock_id}")
-            return extended
+            return extended.success
 
         # Layer 1: Same-box locks don't need extension (no TTL)
         if self._is_same_box():

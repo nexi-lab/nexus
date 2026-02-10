@@ -1907,10 +1907,13 @@ class Memory:
             limit=limit,
         )
 
+        # Use provided context or fall back to instance context
+        check_context = context or self.context
+
         results = []
         for memory in memories:
             # Check permission
-            if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
+            if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
                 continue
 
             results.append(

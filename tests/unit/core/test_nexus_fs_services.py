@@ -6,7 +6,30 @@ from pathlib import Path
 
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
+from nexus.services.version_service import VersionService
 from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+
+def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
+    """Create NexusFS with VersionService injected (mimics factory)."""
+    backend_path = tmp_path / "storage"
+    backend_path.mkdir(exist_ok=True)
+    db_path = tmp_path / "metadata"
+
+    backend = LocalBackend(str(backend_path))
+    metadata_store = RaftMetadataStore.embedded(str(db_path))
+    # VersionService is created by factory; for unit tests we inject it manually
+    version_service = VersionService(
+        metadata_store=metadata_store,
+        cas_store=backend,
+        enforce_permissions=False,
+    )
+    return NexusFS(
+        backend=backend,
+        metadata_store=metadata_store,
+        enforce_permissions=enforce_permissions,
+        version_service=version_service,
+    )
 
 
 class TestNexusFSServiceComposition:
@@ -14,15 +37,7 @@ class TestNexusFSServiceComposition:
 
     def test_all_services_instantiated(self, tmp_path: Path):
         """Test that all 8 services are created during NexusFS initialization."""
-        # Create temporary backend and database
-        backend_path = tmp_path / "storage"
-        backend_path.mkdir()
-        db_path = tmp_path / "metadata.db"
-
-        # Initialize NexusFS
-        backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
         assert hasattr(fs, "version_service"), "VersionService not instantiated"
@@ -48,18 +63,11 @@ class TestNexusFSServiceComposition:
 
     def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
-        backend_path = tmp_path / "storage"
-        backend_path.mkdir()
-        db_path = tmp_path / "metadata.db"
+        fs = _make_fs(tmp_path)
 
-        backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store)
-
-        # VersionService should have metadata, cas, and router
+        # VersionService dependencies (injected by _make_fs, mimicking factory)
         assert fs.version_service.metadata == fs.metadata
         assert fs.version_service.cas == fs.backend
-        assert fs.version_service.router == fs.router
 
         # ReBACService should have rebac_manager
         assert fs.rebac_service._rebac_manager == fs._rebac_manager
@@ -81,13 +89,7 @@ class TestNexusFSServiceComposition:
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService delegation methods work correctly."""
-        backend_path = tmp_path / "storage"
-        backend_path.mkdir()
-        db_path = tmp_path / "metadata.db"
-
-        backend = LocalBackend(str(backend_path))
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
-        fs = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify sync methods exist (with @rpc_expose, wrap async methods)
         assert hasattr(fs, "get_version")

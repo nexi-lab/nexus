@@ -33,7 +33,7 @@ Usage::
 
     nx = create_nexus_fs(
         backend=LocalBackend(root_path="./data"),
-        metadata_store=RaftMetadataStore.local("./raft"),
+        metadata_store=RaftMetadataStore.embedded("./raft"),
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         enforce_permissions=False,
     )

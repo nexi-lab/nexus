@@ -63,6 +63,8 @@ class NexusFSCoreMixin:
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
         _overlay_resolver: Any  # Issue #1264: OverlayResolver service
         _workspace_registry: Any  # Workspace registry for overlay config lookup
+        _write_observer: Any  # Duck-typed: on_write()/on_delete()
+        _audit_strict_mode: bool
 
         @property
         def zone_id(self) -> str | None: ...

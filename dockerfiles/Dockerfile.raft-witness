@@ -1,0 +1,57 @@
+# Nexus Raft Witness — Lightweight Voting-Only Node
+#
+# Builds the nexus-witness binary for cost-effective HA.
+# Participates in leader election (votes) but doesn't apply state machine.
+# Enables 2 full nodes + 1 witness = 3-vote quorum at lower cost.
+#
+# Usage:
+#   docker build -f dockerfiles/Dockerfile.raft-witness -t nexus-raft-witness .
+#
+# Run:
+#   docker run -e NEXUS_NODE_ID=3 -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
+#     -e NEXUS_PEERS=1@http://node1:2126,2@http://node2:2126 \
+#     -p 2128:2126 nexus-raft-witness
+
+FROM rust:1-slim-bookworm AS builder
+
+# Install protobuf compiler (required by tonic-build)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy proto files (build.rs expects ../../proto relative to rust/nexus_raft/)
+COPY proto/ ./proto/
+
+# Copy Rust source
+COPY rust/nexus_raft/ ./rust/nexus_raft/
+
+# Build the witness binary
+WORKDIR /build/rust/nexus_raft
+RUN cargo build --release --features grpc --bin nexus-witness
+
+# ---------- Production image ----------
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/rust/nexus_raft/target/release/nexus-witness /usr/local/bin/
+
+# Create non-root user
+RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
+    mkdir -p /home/nexus/data && \
+    chown -R nexus:nexus /home/nexus
+
+USER nexus
+
+ENV NEXUS_NODE_ID=3 \
+    NEXUS_BIND_ADDR=0.0.0.0:2126 \
+    NEXUS_DATA_DIR=/home/nexus/data \
+    RUST_LOG=info,nexus_raft=debug
+
+EXPOSE 2126
+
+ENTRYPOINT ["nexus-witness"]

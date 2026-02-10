@@ -1060,6 +1060,44 @@ class EntityRegistryModel(Base):
             )
 
 
+class AgentRecordModel(Base):
+    """Agent record for lifecycle tracking (Agent OS Phase 1, Issue #1240).
+
+    Stores agent identity, lifecycle state, session generation counter,
+    and heartbeat timestamps. Uses optimistic locking via the generation
+    column for cross-DB (SQLite + PostgreSQL) concurrency control.
+    """
+
+    __tablename__ = "agent_records"
+
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="UNKNOWN")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    agent_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON as string
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        Index("idx_agent_records_zone_state", "zone_id", "state"),
+        Index("idx_agent_records_state_heartbeat", "state", "last_heartbeat"),
+        Index("idx_agent_records_owner", "owner_id"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AgentRecordModel(agent_id={self.agent_id}, state={self.state}, "
+            f"generation={self.generation})>"
+        )
+
+
 class MemoryModel(Base):
     """Memory storage for AI agents.
 

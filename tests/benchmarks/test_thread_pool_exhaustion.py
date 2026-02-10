@@ -231,7 +231,7 @@ def test_in_process_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.local(db_path.replace(".db", "-raft")),
+            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,
         )
@@ -347,7 +347,7 @@ async def test_async_thread_exhaustion(
         # Create NexusFS without permissions for setup
         nx = create_nexus_fs(
             backend=backend,
-            metadata_store=RaftMetadataStore.local(db_path.replace(".db", "-raft")),
+            metadata_store=RaftMetadataStore.embedded(db_path.replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             enforce_permissions=False,  # Disable for setup
         )

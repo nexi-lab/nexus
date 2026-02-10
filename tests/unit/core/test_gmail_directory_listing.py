@@ -46,7 +46,7 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=record_store,
         auto_parse=False,
         enforce_permissions=False,
@@ -313,8 +313,8 @@ class TestDirectoryMarkerCreation:
         try:
             # Create a directory marker as sync would
             dir_marker = FilePathModel(
-                path_id="/zone/test/user:123/connector/gmail/INBOX",
-                virtual_path="/zone/test/user:123/connector/gmail/INBOX",
+                path_id="/zone/test/user/123/connector/gmail/INBOX",
+                virtual_path="/zone/test/user/123/connector/gmail/INBOX",
                 backend_id="gmail",
                 physical_path="/INBOX",
                 size_bytes=0,
@@ -327,7 +327,7 @@ class TestDirectoryMarkerCreation:
             # Verify it was created correctly
             result = (
                 session.query(FilePathModel)
-                .filter_by(virtual_path="/zone/test/user:123/connector/gmail/INBOX")
+                .filter_by(virtual_path="/zone/test/user/123/connector/gmail/INBOX")
                 .first()
             )
             assert result is not None
@@ -362,7 +362,7 @@ class TestAgentCreationFix:
             assert result["user_id"] == "test_user"
 
             # Verify agent config file exists
-            agent_config_path = "/zone/default/user:test_user/agent/TestAgent/config.yaml"
+            agent_config_path = "/zone/default/user/test_user/agent/TestAgent/config.yaml"
             assert nx.exists(agent_config_path)
 
         except Exception as e:

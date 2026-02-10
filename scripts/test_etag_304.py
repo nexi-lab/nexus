@@ -935,7 +935,7 @@ class NexusTestServer:
         backend = LocalBackend(root_path=str(storage_path))
         self.nexus_fs = NexusFS(
             backend=backend,
-            metadata_store=RaftMetadataStore.local(str(db_path).replace(".db", "-raft")),
+            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=True,  # Admin for testing
             enforce_permissions=False,  # Simplified for testing

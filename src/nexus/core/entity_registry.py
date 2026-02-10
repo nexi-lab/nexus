@@ -119,14 +119,14 @@ class EntityRegistry:
 
         logger = logging.getLogger(__name__)
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] register_entity called: {entity_type}:{entity_id}, parent={parent_type}:{parent_id}"
         )
 
         # Check if entity already exists
         existing = self.get_entity(entity_type, entity_id)
         if existing:
-            logger.warning(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
+            logger.debug(f"[ENTITY-REG] Entity already exists: {entity_type}:{entity_id}")
             return existing
 
         # Create new entity
@@ -153,9 +153,7 @@ class EntityRegistry:
 
             # Refresh to ensure we have the committed state
             session.refresh(entity)
-            logger.warning(
-                f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}"
-            )
+            logger.debug(f"[ENTITY-REG] Entity registered successfully: {entity_type}:{entity_id}")
             return entity
 
     def get_entity(self, entity_type: str, entity_id: str) -> EntityRegistryModel | None:
@@ -234,32 +232,30 @@ class EntityRegistry:
 
         logger = logging.getLogger(__name__)
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] get_parent called: entity_type={entity_type}, entity_id={entity_id}"
         )
 
         entity = self.get_entity(entity_type, entity_id)
 
         if not entity:
-            logger.warning(f"[ENTITY-REG] Entity NOT found in database: {entity_type}:{entity_id}")
+            logger.debug(f"[ENTITY-REG] Entity NOT found in database: {entity_type}:{entity_id}")
             return None
 
-        logger.warning(
+        logger.debug(
             f"[ENTITY-REG] Entity found: {entity.entity_type}:{entity.entity_id}, parent={entity.parent_type}:{entity.parent_id}"
         )
 
         if not entity.parent_type or not entity.parent_id:
-            logger.warning("[ENTITY-REG] Entity has no parent")
+            logger.debug("[ENTITY-REG] Entity has no parent")
             return None
 
         # Get the parent entity
         parent = self.get_entity(entity.parent_type, entity.parent_id)
         if parent:
-            logger.warning(f"[ENTITY-REG] Parent found: {parent.entity_type}:{parent.entity_id}")
+            logger.debug(f"[ENTITY-REG] Parent found: {parent.entity_type}:{parent.entity_id}")
         else:
-            logger.warning(
-                f"[ENTITY-REG] Parent NOT found: {entity.parent_type}:{entity.parent_id}"
-            )
+            logger.debug(f"[ENTITY-REG] Parent NOT found: {entity.parent_type}:{entity.parent_id}")
         return parent
 
     def get_children(self, parent_type: str, parent_id: str) -> list[EntityRegistryModel]:

@@ -17,6 +17,7 @@ RUN set -eux; \
         curl \
         build-essential \
         ca-certificates \
+        protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------- Rust Toolchain ----------
@@ -77,6 +78,7 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
     uv pip install --system -i $PIP_INDEX docker e2b e2b-code-interpreter
 
 # ---------- Build Rust extensions ----------
+COPY proto/ ./proto/
 COPY rust/ ./rust/
 
 # Build nexus_fast
@@ -86,7 +88,7 @@ RUN maturin build --release && \
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft
-RUN maturin build --release --features python && \
+RUN maturin build --release --features full && \
     pip install --no-cache-dir target/wheels/nexus_raft-*.whl
 
 WORKDIR /build
@@ -116,7 +118,8 @@ COPY --from=builder /root/go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 
 # ---------- Optional verifications ----------
 RUN python3 -c "import nexus_fast; print('✓ nexus_fast available')" || echo "⚠ nexus_fast not available"
-RUN python3 -c "from _nexus_raft import LocalRaft; print('✓ nexus_raft available')" || echo "⚠ nexus_raft not available"
+RUN python3 -c "from _nexus_raft import Metastore; print('✓ nexus_raft Metastore available')" || echo "⚠ nexus_raft Metastore not available"
+RUN python3 -c "from _nexus_raft import RaftConsensus; print('✓ nexus_raft RaftConsensus available')" || echo "⚠ nexus_raft RaftConsensus not available"
 RUN python3 -c "import docker; print('✓ Docker Python package available')" || echo "⚠ Docker package not available"
 RUN zoekt-index -h > /dev/null 2>&1 && echo "✓ Zoekt binaries available" || echo "⚠ Zoekt not available"
 
@@ -156,7 +159,7 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data
 
-EXPOSE 2026 6070
+EXPOSE 2026 2126 6070
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

@@ -329,7 +329,7 @@ class RaftLockManager(LockManagerBase):
 
     Example:
         >>> from nexus.storage.raft_metadata_store import RaftMetadataStore
-        >>> store = RaftMetadataStore.local("/var/lib/nexus/metadata")
+        >>> store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         >>> manager = RaftLockManager(store)
         >>> lock_id = await manager.acquire("default", "/file.txt", timeout=5.0)
         >>> if lock_id:

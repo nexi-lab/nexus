@@ -54,7 +54,7 @@ class AsyncNexusFS:
         ```python
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-        metadata_store = RaftMetadataStore.local("./raft")
+        metadata_store = RaftMetadataStore.embedded("./raft")
         fs = AsyncNexusFS(
             backend_root=Path("./data"),
             metadata_store=metadata_store,

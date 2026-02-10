@@ -8,9 +8,9 @@
 #   docker build -f dockerfiles/Dockerfile.raft-witness -t nexus-raft-witness .
 #
 # Run:
-#   docker run -e NEXUS_NODE_ID=3 -e NEXUS_BIND_ADDR=0.0.0.0:2026 \
-#     -e NEXUS_PEERS=1@http://node1:2026,2@http://node2:2026 \
-#     -p 2028:2026 nexus-raft-witness
+#   docker run -e NEXUS_NODE_ID=3 -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
+#     -e NEXUS_PEERS=1@http://node1:2126,2@http://node2:2126 \
+#     -p 2128:2126 nexus-raft-witness
 
 FROM rust:1-slim-bookworm AS builder
 
@@ -48,10 +48,10 @@ RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
 USER nexus
 
 ENV NEXUS_NODE_ID=3 \
-    NEXUS_BIND_ADDR=0.0.0.0:2026 \
+    NEXUS_BIND_ADDR=0.0.0.0:2126 \
     NEXUS_DATA_DIR=/home/nexus/data \
     RUST_LOG=info,nexus_raft=debug
 
-EXPOSE 2026
+EXPOSE 2126
 
 ENTRYPOINT ["nexus-witness"]

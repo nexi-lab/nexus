@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message};
 use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
-use tokio::sync::{oneshot, RwLock};
+use tokio::sync::{oneshot, Notify, RwLock};
 
 use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
@@ -56,7 +56,7 @@ impl Default for RaftConfig {
             max_size_per_msg: 1024 * 1024, // 1MB
             max_inflight_msgs: 256,
             is_witness: false,
-            tick_interval: Duration::from_millis(100),
+            tick_interval: Duration::from_millis(10),
         }
     }
 }
@@ -157,6 +157,8 @@ pub struct RaftNode<S: StateMachine> {
     proposal_id: std::sync::atomic::AtomicU64,
     /// Last tick time.
     last_tick: RwLock<Instant>,
+    /// Notify transport loop to advance immediately (e.g., after propose/step).
+    advance_notify: Arc<Notify>,
 }
 
 impl<S: StateMachine + 'static> RaftNode<S> {
@@ -204,6 +206,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             pending: RwLock::new(HashMap::new()),
             proposal_id: std::sync::atomic::AtomicU64::new(0),
             last_tick: RwLock::new(Instant::now()),
+            advance_notify: Arc::new(Notify::new()),
         }))
     }
 
@@ -244,6 +247,15 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         }
     }
 
+    /// Get the advance notifier.
+    ///
+    /// The transport loop should listen on this to wake up immediately
+    /// when new proposals or messages arrive, rather than waiting for
+    /// the next tick interval.
+    pub fn advance_notify(&self) -> Arc<Notify> {
+        self.advance_notify.clone()
+    }
+
     /// Get the current term.
     pub async fn term(&self) -> u64 {
         let node = self.raw_node.read().await;
@@ -282,9 +294,18 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// The proposal ID is prepended to the serialized data so that
     /// `apply_entries()` can match committed entries back to waiting callers.
     ///
+    /// After proposing, wakes the transport loop via `advance_notify` so the
+    /// command is processed immediately rather than waiting for the next tick.
+    ///
+    /// # Timeout
+    /// Proposals time out after 10 seconds. If consensus is not reached within
+    /// that window (e.g., leader lost quorum), returns `RaftError::Timeout`.
+    ///
     /// # Returns
     /// Result of applying the command, or error if proposal failed.
     pub async fn propose(&self, command: Command) -> Result<CommandResult> {
+        const PROPOSAL_TIMEOUT_SECS: u64 = 10;
+
         if !self.is_leader().await {
             return Err(RaftError::NotLeader {
                 leader_hint: self.leader_id().await,
@@ -320,8 +341,25 @@ impl<S: StateMachine + 'static> RaftNode<S> {
                 .map_err(|e| RaftError::Raft(e.to_string()))?;
         }
 
-        // Wait for commit
-        rx.await.map_err(|_| RaftError::ProposalDropped)?
+        // Wake transport loop to advance immediately
+        self.advance_notify.notify_one();
+
+        // Wait for commit with timeout
+        match tokio::time::timeout(
+            Duration::from_secs(PROPOSAL_TIMEOUT_SECS),
+            rx,
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(RaftError::ProposalDropped),
+            Err(_) => {
+                // Timed out — clean up pending proposal
+                let mut pending = self.pending.write().await;
+                pending.remove(&id);
+                Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS))
+            }
+        }
     }
 
     /// Propose a configuration change.
@@ -348,9 +386,15 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     }
 
     /// Process a message from another node.
+    ///
+    /// After stepping, wakes the transport loop via `advance_notify` so the
+    /// response is processed immediately rather than waiting for the next tick.
     pub async fn step(&self, msg: Message) -> Result<()> {
         let mut node = self.raw_node.write().await;
         node.step(msg).map_err(|e| RaftError::Raft(e.to_string()))?;
+        drop(node);
+        // Wake transport loop to advance immediately
+        self.advance_notify.notify_one();
         Ok(())
     }
 

@@ -300,6 +300,21 @@ def connect(
                 for ns in cfg.namespaces
             ]
 
+        def _create_metadata_store(metadata_path: str) -> RaftMetadataStore:
+            """Create metadata store, auto-detecting cluster mode from env."""
+            nexus_peers = os.environ.get("NEXUS_PEERS", "")
+            if nexus_peers:
+                node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
+                bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+                peers = [p.strip() for p in nexus_peers.split(",") if p.strip()]
+                return RaftMetadataStore.sc(
+                    node_id=node_id,
+                    db_path=metadata_path,
+                    bind_address=bind_addr,
+                    peers=peers,
+                )
+            return RaftMetadataStore.embedded(metadata_path)
+
         # Create backend based on configuration
         backend: Backend
         if cfg.backend == "gcs":
@@ -317,18 +332,18 @@ def connect(
                 credentials_path=cfg.gcs_credentials_path,
             )
             # Default metadata_store for GCS backend (Task #14: Dependency Injection)
-            # Use RaftMetadataStore.local() for embedded mode (single-node, sled KV)
+            # Use RaftMetadataStore.embedded() for embedded mode (single-node, sled KV)
             metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
-            metadata_store = RaftMetadataStore.local(metadata_path)
+            metadata_store = RaftMetadataStore.embedded(metadata_path)
         else:
             # Local backend (default)
             data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
             backend = LocalBackend(root_path=Path(data_dir).resolve())
             # Default metadata_store for local backend (Task #14: Dependency Injection)
-            # Use RaftMetadataStore.local() for embedded mode (single-node, sled KV)
+            # Use RaftMetadataStore.embedded() for embedded mode (single-node, sled KV)
             # Sled is 10-100x faster than SQLite for KV operations
             metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
-            metadata_store = RaftMetadataStore.local(metadata_path)
+            metadata_store = RaftMetadataStore.embedded(metadata_path)
 
         # Embedded mode: default to no permissions (like SQLite)
         # User can explicitly enable with config={"enforce_permissions": True}

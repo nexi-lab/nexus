@@ -24,6 +24,10 @@ pub enum RaftError {
     #[error("proposal dropped")]
     ProposalDropped,
 
+    /// Proposal timed out waiting for consensus.
+    #[error("proposal timed out after {0} seconds")]
+    Timeout(u64),
+
     /// Configuration error.
     #[error("config error: {0}")]
     Config(String),

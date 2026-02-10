@@ -16,7 +16,6 @@ Performance Considerations:
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import logging
 import time
 from contextlib import suppress
@@ -25,8 +24,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from nexus.core.reactive_subscriptions import path_matches_pattern
+
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusProtocol, FileEvent
+    from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -86,13 +88,20 @@ class WebSocketManager:
             await manager.disconnect(connection_id)
     """
 
-    def __init__(self, event_bus: EventBusProtocol | None = None) -> None:
+    def __init__(
+        self,
+        event_bus: EventBusProtocol | None = None,
+        reactive_manager: ReactiveSubscriptionManager | None = None,
+    ) -> None:
         """Initialize the WebSocket manager.
 
         Args:
             event_bus: EventBus for Redis Pub/Sub integration (optional)
+            reactive_manager: ReactiveSubscriptionManager for O(1) event
+                matching (optional, falls back to legacy pattern scan)
         """
         self._event_bus = event_bus
+        self._reactive_manager = reactive_manager
         self._started = False
 
         # Connection tracking: zone_id -> connection_id -> ConnectionInfo
@@ -251,6 +260,10 @@ class WebSocketManager:
                         self._subscription_tasks[zone_id].cancel()
                         del self._subscription_tasks[zone_id]
 
+        # Clean up reactive subscriptions for this connection
+        if self._reactive_manager:
+            await self._reactive_manager.unregister_connection(connection_id)
+
         logger.info(f"WebSocket disconnected: connection_id={connection_id}")
 
     async def handle_client(self, websocket: WebSocket, connection_id: str) -> None:
@@ -317,6 +330,10 @@ class WebSocketManager:
     async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
         """Broadcast an event to all connections for a zone.
 
+        When a ReactiveSubscriptionManager is configured, delegates to it
+        for O(1) read-set lookups + O(L*P) pattern fallback. Otherwise
+        falls back to the original linear scan.
+
         Args:
             zone_id: The zone ID
             event: The file event to broadcast
@@ -333,14 +350,32 @@ class WebSocketManager:
             "data": event.to_dict(),
         }
 
+        # Determine which connections should receive this event
+        if self._reactive_manager:
+            try:
+                affected_ids = self._reactive_manager.find_affected_connections(event)
+                target_ids = affected_ids & set(connections.keys())
+            except Exception as e:
+                logger.error(f"Reactive lookup failed, falling back to legacy: {e}")
+                target_ids = {
+                    conn_id
+                    for conn_id, conn_info in connections.items()
+                    if self._matches_filters(event, conn_info)
+                }
+        else:
+            target_ids = {
+                conn_id
+                for conn_id, conn_info in connections.items()
+                if self._matches_filters(event, conn_info)
+            }
+
         sent_count = 0
         failed_connections: list[str] = []
 
-        for conn_id, conn_info in connections.items():
-            # Apply filters
-            if not self._matches_filters(event, conn_info):
+        for conn_id in target_ids:
+            conn_info = connections.get(conn_id)
+            if not conn_info:
                 continue
-
             try:
                 await self._send_to_connection(conn_info, message)
                 sent_count += 1
@@ -385,10 +420,8 @@ class WebSocketManager:
     def _path_matches_pattern(self, path: str, pattern: str) -> bool:
         """Check if a path matches a glob pattern.
 
-        Supports:
-        - * matches any characters except /
-        - ** matches any characters including /
-        - ? matches a single character
+        Delegates to the module-level path_matches_pattern function
+        extracted to nexus.core.reactive_subscriptions.
 
         Args:
             path: The file path to check
@@ -397,44 +430,7 @@ class WebSocketManager:
         Returns:
             True if the path matches the pattern
         """
-        # Handle ** patterns by converting to regex
-        if "**" in pattern:
-            import re
-
-            # Escape special regex chars except * and ?
-            regex_pattern = ""
-            i = 0
-            while i < len(pattern):
-                if pattern[i : i + 2] == "**":
-                    regex_pattern += ".*"  # ** matches anything including /
-                    i += 2
-                    # Skip trailing / after **
-                    if i < len(pattern) and pattern[i] == "/":
-                        regex_pattern += "/?"
-                        i += 1
-                elif pattern[i] == "*":
-                    regex_pattern += "[^/]*"  # * matches anything except /
-                    i += 1
-                elif pattern[i] == "?":
-                    regex_pattern += "."  # ? matches single char
-                    i += 1
-                elif pattern[i] in r"\.[]{}()+^$|":
-                    regex_pattern += "\\" + pattern[i]
-                    i += 1
-                else:
-                    regex_pattern += pattern[i]
-                    i += 1
-
-            # Anchor the pattern
-            regex_pattern = "^" + regex_pattern + "$"
-
-            try:
-                return bool(re.match(regex_pattern, path))
-            except re.error:
-                return False
-
-        # Simple patterns without ** use fnmatch
-        return fnmatch.fnmatch(path, pattern)
+        return path_matches_pattern(path, pattern)
 
     async def _send_to_connection(self, conn_info: ConnectionInfo, message: dict[str, Any]) -> None:
         """Send a message to a specific connection.

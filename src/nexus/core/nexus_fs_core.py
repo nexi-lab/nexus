@@ -61,6 +61,8 @@ class NexusFSCoreMixin:
         _parser_threads_lock: threading.Lock
         _permission_enforcer: PermissionEnforcer | None
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
+        _overlay_resolver: Any  # Issue #1264: OverlayResolver service
+        _workspace_registry: Any  # Workspace registry for overlay config lookup
 
         @property
         def zone_id(self) -> str | None: ...
@@ -81,6 +83,40 @@ class NexusFSCoreMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
+
+    def _get_overlay_config(self, path: str) -> Any:
+        """Get overlay config for a path, if overlay is active.
+
+        Issue #1264: Looks up the workspace containing this path and returns
+        its OverlayConfig if overlay is enabled.
+
+        Args:
+            path: File path to check
+
+        Returns:
+            OverlayConfig if overlay active for this path, None otherwise
+        """
+        registry = getattr(self, "_workspace_registry", None)
+        if registry is None:
+            return None
+
+        ws_config = registry.find_workspace_for_path(path)
+        if ws_config is None:
+            return None
+
+        # Check if workspace has overlay metadata
+        overlay_data = ws_config.metadata.get("overlay_config")
+        if overlay_data is None:
+            return None
+
+        from nexus.services.overlay_resolver import OverlayConfig
+
+        return OverlayConfig(
+            enabled=overlay_data.get("enabled", False),
+            base_manifest_hash=overlay_data.get("base_manifest_hash"),
+            workspace_path=ws_config.path,
+            agent_id=overlay_data.get("agent_id"),
+        )
 
     def _create_tracked_event_task(
         self, coro: Any, timeout: float = 30.0, name: str | None = None
@@ -815,7 +851,18 @@ class NexusFSCoreMixin:
 
         # Check if file exists in metadata (for regular backends)
         meta = self.metadata.get(path)
+
+        # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
+        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+            overlay_config = self._get_overlay_config(path)
+            if overlay_config:
+                meta = self._overlay_resolver.resolve_read(path, overlay_config)
+
         if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
+        # Issue #1264: Reject whiteout markers (file was deleted in overlay)
+        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
             raise NexusFileNotFoundError(path)
 
         content = route.backend.read_content(meta.etag, context=read_context).unwrap()
@@ -2745,6 +2792,16 @@ class NexusFSCoreMixin:
 
         # Check if file exists in metadata
         meta = self.metadata.get(path)
+
+        # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
+        if meta is None and getattr(self, "_overlay_resolver", None):
+            overlay_config = self._get_overlay_config(path)
+            if overlay_config:
+                base_meta = self._overlay_resolver.resolve_read(path, overlay_config)
+                if base_meta is not None and not self._overlay_resolver.is_whiteout(base_meta):
+                    self._overlay_resolver.create_whiteout(path, overlay_config)
+                    return {"deleted": path, "overlay_whiteout": True}
+
         if meta is None:
             raise NexusFileNotFoundError(path)
 

@@ -89,6 +89,11 @@ cython_debug/
 # uv
 .uv/
 
+# Protobuf generated
+*_pb2.py
+*_pb2_grpc.py
+*_pb2.pyi
+
 # Rust
 target/
 # Cargo.lock - keep it for reproducible builds (needed for Docker)

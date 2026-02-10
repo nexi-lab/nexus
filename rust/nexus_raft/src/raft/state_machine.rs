@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{SledStore, SledTree};
+use crate::storage::{SledStore, SledTree, StorageError};
 
 use super::Result;
 
@@ -598,6 +598,34 @@ impl FullStateMachine {
             Some(bytes) => Ok(Some(bincode::deserialize(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    /// List all locks matching a prefix.
+    pub fn list_locks(&self, prefix: &str, limit: usize) -> Result<Vec<LockInfo>> {
+        let mut result = Vec::new();
+        // Helper closure to process iterator items
+        let mut collect = |items: &mut dyn Iterator<
+            Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>,
+        >|
+         -> Result<()> {
+            for item in items {
+                if result.len() >= limit {
+                    break;
+                }
+                let (_, value) = item?;
+                let lock_info: LockInfo = bincode::deserialize(&value)?;
+                if !lock_info.holders.is_empty() {
+                    result.push(lock_info);
+                }
+            }
+            Ok(())
+        };
+        if prefix.is_empty() {
+            collect(&mut self.locks.iter())?;
+        } else {
+            collect(&mut self.locks.scan_prefix(prefix.as_bytes()))?;
+        }
+        Ok(result)
     }
 }
 

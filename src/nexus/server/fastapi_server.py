@@ -808,15 +808,11 @@ async def lifespan(_app: FastAPI) -> Any:
 
         cache_settings = CacheSettings.from_env()
 
-        # Get PostgreSQL engine for cache fallback when Dragonfly is not available
-        pg_engine = getattr(
-            getattr(_app_state.nexus_fs, "_rebac_manager", None),
-            "engine",
-            None,
-        )
+        # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
+        record_store = getattr(_app_state.nexus_fs, "_record_store", None)
 
         _app_state.cache_factory = await init_cache_factory(
-            cache_settings, postgres_engine=pg_engine
+            cache_settings, record_store=record_store
         )
         logger.info(
             f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"

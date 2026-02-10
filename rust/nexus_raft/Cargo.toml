@@ -25,8 +25,13 @@ path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
-# Embedded KV storage (general-purpose, reusable)
+# Embedded KV storage — sled is default, redb is opt-in via `storage-redb` feature.
+# sled 0.34: perpetual beta but battle-tested in this codebase.
+# redb 2.x: 1.0 stable since June 2023, use --features storage-redb to enable.
+# See: docs/rfcs/adr-raft-sled-strategy.md
 sled = "0.34"
+redb = { version = "2", optional = true }
+tempfile = { version = "3", optional = true }  # Used by redb's open_temporary()
 
 # Raft consensus (tikv/raft-rs)
 raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }
@@ -62,21 +67,35 @@ pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 tonic-build = { version = "0.12", optional = true }
 
 [dev-dependencies]
-tempfile = "3"  # For testing with temporary directories
 tokio-test = "0.4"
 
 [features]
 default = []
+
+# Use redb 2.x instead of sled 0.34 for embedded storage.
+# Both backends export identical types (SledStore, SledTree, etc.).
+# Default = sled. Enable this flag to switch to redb.
+storage-redb = ["dep:redb", "dep:tempfile"]
+
 # Enable async support (Tokio runtime)
 async = ["tokio"]
-# Enable gRPC transport (tonic + protobuf)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
-# Enable Raft consensus (tikv/raft-rs)
-consensus = ["raft", "protobuf", "slog", "async"]
-# Enable Python bindings (PyO3 FFI)
+
+# Enable Python bindings (PyO3 FFI) — production path.
+# Provides LocalRaft for ~5μs metadata/lock operations.
 python = ["pyo3"]
-# Enable everything
-full = ["grpc", "consensus", "python"]
+
+# Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
+# Not used in production. Preserved for future multi-node support.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 2)
+consensus = ["raft", "protobuf", "slog", "async"]
+
+# Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
+# Requires `consensus` feature. Not used in production.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
+
+# Enable everything (including experimental features)
+full = ["grpc", "consensus", "python", "storage-redb"]
 
 [profile.release]
 lto = true

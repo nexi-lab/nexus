@@ -1,83 +1,44 @@
-//! Nexus Raft: Consensus and Embedded Storage for Nexus
+//! Nexus Raft: Embedded Storage and Consensus for Nexus
 //!
 //! This crate provides:
 //!
 //! 1. **Embedded Storage** ([`storage`]): General-purpose embedded KV database
-//!    based on sled, reusable for caching, queues, and more.
+//!    using redb (stable, pure Rust). Reusable for caching, queues, and more.
 //!
-//! 2. **Raft Consensus** ([`raft`]): Distributed consensus using tikv/raft-rs
-//!    for STRONG_HA zones.
+//! 2. **State Machine** ([`raft`]): Metadata and lock operations with
+//!    snapshot/restore support.
 //!
-//! 3. **Witness Node** ([`raft::WitnessStateMachine`]): Lightweight vote-only node
-//!    for cost-effective high availability.
+//! 3. **Raft Consensus** (behind `consensus` flag): Distributed consensus using
+//!    tikv/raft-rs. EXPERIMENTAL — not used in production.
 //!
-//! # Architecture
+//! 4. **gRPC Transport** (behind `grpc` flag): Network transport for Raft
+//!    messages. EXPERIMENTAL — not used in production.
 //!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────────┐
-//! │  nexus_raft crate                                               │
-//! │                                                                 │
-//! │  ┌─────────────────────────────────────────────────────────┐   │
-//! │  │  storage module (general-purpose, reusable)             │   │
-//! │  │                                                         │   │
-//! │  │  SledStore ─────┬──► Raft Log Storage                   │   │
-//! │  │                 ├──► Local Cache                        │   │
-//! │  │                 ├──► Task Queues                        │   │
-//! │  │                 └──► Session Storage                    │   │
-//! │  └─────────────────────────────────────────────────────────┘   │
-//! │                                                                 │
-//! │  ┌─────────────────────────────────────────────────────────┐   │
-//! │  │  raft module                                             │   │
-//! │  │                                                         │   │
-//! │  │  RaftNode ──────┬──► Leader Election                    │   │
-//! │  │                 ├──► Log Replication                    │   │
-//! │  │                 └──► State Machine                      │   │
-//! │  └─────────────────────────────────────────────────────────┘   │
-//! │                                                                 │
-//! │  ┌─────────────────────────────────────────────────────────┐   │
-//! │  │  transport module                                        │   │
-//! │  │                                                         │   │
-//! │  │  gRPC (tonic) ──┬──► Raft Messages                      │   │
-//! │  │                 └──► Webhook Streaming (future)         │   │
-//! │  └─────────────────────────────────────────────────────────┘   │
-//! └─────────────────────────────────────────────────────────────────┘
-//! ```
+//! # Feature Flags
+//!
+//! | Flag | Default | Description |
+//! |------|---------|-------------|
+//! | `python` | off | PyO3 bindings for ~5μs metadata/lock ops (production path) |
+//! | `consensus` | off | Raft consensus via tikv/raft-rs (experimental) |
+//! | `grpc` | off | gRPC transport for Raft messages (experimental) |
+//! | `async` | off | Tokio async runtime |
+//! | `full` | off | All features |
 //!
 //! # Quick Start
 //!
-//! ## Embedded Storage (Available Now)
+//! ## Embedded Storage
 //!
 //! ```rust,ignore
 //! use nexus_raft::storage::SledStore;
 //!
-//! // Open a persistent database
 //! let store = SledStore::open("/var/lib/nexus/data").unwrap();
-//!
-//! // Use named trees for different data types
 //! let cache = store.tree("cache").unwrap();
 //! cache.set(b"key", b"value").unwrap();
-//!
-//! // Serialize complex data
-//! use serde::{Serialize, Deserialize};
-//!
-//! #[derive(Serialize, Deserialize)]
-//! struct MyData {
-//!     id: u64,
-//!     name: String,
-//! }
-//!
-//! let data = MyData { id: 1, name: "test".into() };
-//! cache.set_bincode(b"my_data", &data).unwrap();
 //! ```
 //!
-//! # Modules
+//! # Storage Backend
 //!
-//! - [`storage`]: Embedded key-value storage (sled-based)
-//! - [`raft`]: Raft consensus state machine and node
-//!
-//! # Feature Flags
-//!
-//! - `async`: Enable async/await support with Tokio runtime
+//! Uses **redb 2.x** (replaced sled 0.34). See `docs/rfcs/adr-raft-sled-strategy.md`.
 //!
 //! # Issue Reference
 //!

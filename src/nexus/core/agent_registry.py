@@ -331,8 +331,7 @@ class AgentRegistry:
             if expected_generation is not None:
                 stmt = stmt.where(AgentRecordModel.generation == expected_generation)
 
-            cursor = session.execute(stmt)
-            rows_updated = cast(int, cursor.rowcount)
+            rows_updated: int = getattr(session.execute(stmt), "rowcount", 0)
             session.flush()
 
             if rows_updated == 0:

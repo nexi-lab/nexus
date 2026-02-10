@@ -4407,7 +4407,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         zone_id: str,
         state: str | None = None,
         context: dict | None = None,  # noqa: ARG002
-    ) -> list[dict]:
+    ) -> builtins.list[dict]:
         """List agents in a zone (Issue #1240).
 
         Args:

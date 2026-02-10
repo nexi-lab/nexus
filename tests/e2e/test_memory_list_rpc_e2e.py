@@ -29,7 +29,7 @@ def nexus_fs_local(tmp_path: Path):
     storage_path.mkdir()
     backend = LocalBackend(root_path=storage_path)
     raft_dir = str(tmp_path / "raft-metadata")
-    metadata_store = RaftMetadataStore.local(raft_dir)
+    metadata_store = RaftMetadataStore.embedded(raft_dir)
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")
     nx = NexusFS(
         backend=backend,

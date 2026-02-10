@@ -85,7 +85,7 @@ class TestCreateAsyncEngineFromUrl:
 
     def test_postgresql_url(self) -> None:
         """Test creating engine from PostgreSQL URL."""
-        url = "postgresql://user:pass@localhost/db"
+        url = "postgresql://user/pass@localhost/db"
         engine = create_async_engine_from_url(url)
         assert "asyncpg" in str(engine.url)
 

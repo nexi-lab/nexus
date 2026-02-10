@@ -61,6 +61,11 @@ jobs:
       - name: Install protobuf compiler
         run: sudo apt-get install -y protobuf-compiler
 
+      - name: Check Rust formatting (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          cargo fmt --check
+
       - name: Check Rust formatting (nexus_fast)
         run: |
           cd rust/nexus_fast
@@ -71,6 +76,11 @@ jobs:
           cd rust/nexus_raft
           cargo fmt --check
 
+      - name: Run Clippy (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          cargo clippy -- -D warnings
+
       - name: Run Clippy (nexus_fast)
         run: |
           cd rust/nexus_fast
@@ -80,6 +90,11 @@ jobs:
         run: |
           cd rust/nexus_raft
           cargo clippy --all-features -- -D warnings
+
+      - name: Run Rust tests (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          cargo test
 
       - name: Run Rust tests (nexus_fast)
         run: |

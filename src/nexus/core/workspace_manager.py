@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import desc, select
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
+from nexus.core.workspace_manifest import WorkspaceManifest
 from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
@@ -209,14 +210,8 @@ class WorkspaceManager:
         with self.metadata_session_factory() as session:
             files = self.metadata.list(prefix=workspace_prefix)
 
-            # PERFORMANCE OPTIMIZATION: Stream manifest to avoid building large dict in memory
-            # For large workspaces (10K+ files), building entire manifest in memory can use 100s of MB
-            # Instead, we incrementally build JSON and stream to backend
-
-            # First pass: collect metadata and count
-            file_entries = []
-            total_size = 0
-            file_count = 0
+            # Collect file metadata for manifest
+            file_entries: list[tuple[str, str, int, str | None]] = []
 
             for file_meta in files:
                 # Skip directories (no content) and files without etag
@@ -226,35 +221,10 @@ class WorkspaceManager:
                 # Relative path within workspace
                 rel_path = file_meta.path[len(workspace_prefix) :]
                 file_entries.append((rel_path, file_meta.etag, file_meta.size, file_meta.mime_type))
-                total_size += file_meta.size
-                file_count += 1
 
-            # Sort entries by path for deterministic manifest hashing
-            file_entries.sort(key=lambda x: x[0])
-
-            # Stream manifest JSON construction
-            # Build JSON incrementally to avoid large string in memory
-            import io
-
-            manifest_buffer = io.BytesIO()
-            manifest_buffer.write(b"{\n")
-
-            for i, (rel_path, etag, size, mime_type) in enumerate(file_entries):
-                # Write each entry
-                if i > 0:
-                    manifest_buffer.write(b",\n")
-
-                # Use json.dumps for individual values to handle escaping correctly
-                # This is much lighter than json.dumps on entire dict
-                path_json = json.dumps(rel_path)
-                etag_json = json.dumps(etag)
-                mime_json = json.dumps(mime_type) if mime_type else "null"
-
-                entry = f'  {path_json}: {{"hash": {etag_json}, "size": {size}, "mime_type": {mime_json}}}'
-                manifest_buffer.write(entry.encode("utf-8"))
-
-            manifest_buffer.write(b"\n}")
-            manifest_bytes = manifest_buffer.getvalue()
+            # Build manifest (handles sorting and deterministic JSON)
+            manifest = WorkspaceManifest.from_file_list(file_entries)
+            manifest_bytes = manifest.to_json()
 
             # Store manifest in CAS
             manifest_hash = self.backend.write_content(manifest_bytes, context=None).unwrap()
@@ -276,8 +246,8 @@ class WorkspaceManager:
                 workspace_path=workspace_path,
                 snapshot_number=next_snapshot_number,
                 manifest_hash=manifest_hash,
-                file_count=file_count,
-                total_size_bytes=total_size,
+                file_count=manifest.file_count,
+                total_size_bytes=manifest.total_size,
                 description=description,
                 created_by=created_by,
                 tags=json.dumps(tags) if tags else None,
@@ -362,7 +332,7 @@ class WorkspaceManager:
             manifest_bytes = self.backend.read_content(
                 snapshot.manifest_hash, context=None
             ).unwrap()
-            manifest = json.loads(manifest_bytes.decode("utf-8"))
+            manifest = WorkspaceManifest.from_json(manifest_bytes)
 
             # Get workspace path and ensure it ends with /
             workspace_prefix = snapshot.workspace_path
@@ -378,9 +348,10 @@ class WorkspaceManager:
             }
 
             # Delete files not in snapshot
+            manifest_paths = manifest.paths()
             files_deleted = 0
             for current_path in current_paths:
-                if current_path not in manifest and not current_path.endswith("/"):
+                if current_path not in manifest_paths and not current_path.endswith("/"):
                     full_path = workspace_prefix + current_path
                     self.metadata.delete(full_path)
                     files_deleted += 1
@@ -393,13 +364,14 @@ class WorkspaceManager:
 
             from nexus.core._metadata_generated import FileMetadata
 
-            for rel_path, file_info in manifest.items():
+            for rel_path in manifest_paths:
+                entry = manifest.get(rel_path)
+                assert entry is not None  # paths() guarantees entry exists
                 full_path = workspace_prefix + rel_path
-                content_hash = file_info["hash"]
 
                 # Check if file exists with same content
                 existing = self.metadata.get(full_path)
-                if existing and existing.etag == content_hash:
+                if existing and existing.etag == entry.content_hash:
                     continue  # Already up to date
 
                 # Create metadata entry pointing to existing CAS content
@@ -407,10 +379,10 @@ class WorkspaceManager:
                 file_meta = FileMetadata(
                     path=full_path,
                     backend_name="local",  # Backend name for CAS
-                    physical_path=content_hash,  # CAS uses hash as physical path
-                    size=file_info["size"],
-                    etag=content_hash,
-                    mime_type=file_info.get("mime_type"),
+                    physical_path=entry.content_hash,  # CAS uses hash as physical path
+                    size=entry.size,
+                    etag=entry.content_hash,
+                    mime_type=entry.mime_type,
                     modified_at=datetime.now(UTC),
                     version=1,  # Will be updated by metadata store
                     created_by=self.agent_id,  # Track who restored this version
@@ -551,39 +523,42 @@ class WorkspaceManager:
                 )
 
             # Read manifests
-            manifest1 = json.loads(
-                self.backend.read_content(snap1.manifest_hash, context=None)
-                .unwrap()
-                .decode("utf-8")
+            manifest1 = WorkspaceManifest.from_json(
+                self.backend.read_content(snap1.manifest_hash, context=None).unwrap()
             )
-            manifest2 = json.loads(
-                self.backend.read_content(snap2.manifest_hash, context=None)
-                .unwrap()
-                .decode("utf-8")
+            manifest2 = WorkspaceManifest.from_json(
+                self.backend.read_content(snap2.manifest_hash, context=None).unwrap()
             )
 
             # Compute diff
-            paths1 = set(manifest1.keys())
-            paths2 = set(manifest2.keys())
+            paths1 = manifest1.paths()
+            paths2 = manifest2.paths()
 
             added = []
             for path in paths2 - paths1:
-                added.append({"path": path, "size": manifest2[path]["size"]})
+                entry = manifest2.get(path)
+                assert entry is not None
+                added.append({"path": path, "size": entry.size})
 
             removed = []
             for path in paths1 - paths2:
-                removed.append({"path": path, "size": manifest1[path]["size"]})
+                entry = manifest1.get(path)
+                assert entry is not None
+                removed.append({"path": path, "size": entry.size})
 
             modified = []
             for path in paths1 & paths2:
-                if manifest1[path]["hash"] != manifest2[path]["hash"]:
+                entry1 = manifest1.get(path)
+                entry2 = manifest2.get(path)
+                assert entry1 is not None and entry2 is not None
+                if entry1.content_hash != entry2.content_hash:
                     modified.append(
                         {
                             "path": path,
-                            "old_size": manifest1[path]["size"],
-                            "new_size": manifest2[path]["size"],
-                            "old_hash": manifest1[path]["hash"],
-                            "new_hash": manifest2[path]["hash"],
+                            "old_size": entry1.size,
+                            "new_size": entry2.size,
+                            "old_hash": entry1.content_hash,
+                            "new_hash": entry2.content_hash,
                         }
                     )
 
@@ -605,3 +580,91 @@ class WorkspaceManager:
                 "modified": modified,
                 "unchanged": unchanged,
             }
+
+    # === Issue #1264: Overlay operations ===
+
+    def flatten_overlay(
+        self,
+        workspace_path: str,
+        overlay_resolver: Any,
+        overlay_config: Any,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Flatten an overlay workspace into a new snapshot.
+
+        Merges the upper layer (modifications) into a new immutable manifest,
+        stores it in CAS, and records a new snapshot.
+
+        Args:
+            workspace_path: Path to the overlay workspace
+            overlay_resolver: OverlayResolver service instance
+            overlay_config: OverlayConfig for this workspace
+            user_id: User ID for permission check
+            agent_id: Agent ID for permission check
+            zone_id: Zone ID for isolation
+
+        Returns:
+            New snapshot metadata dict
+
+        Raises:
+            NexusPermissionError: If user/agent lacks snapshot:create permission
+            ValueError: If overlay is not enabled
+        """
+        self._check_workspace_permission(
+            workspace_path=workspace_path,
+            permission="snapshot:create",
+            user_id=user_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
+        # Flatten overlay into new manifest
+        merged_manifest = overlay_resolver.flatten(overlay_config)
+        manifest_bytes = merged_manifest.to_json()
+
+        # Store flattened manifest in CAS
+        manifest_hash = self.backend.write_content(manifest_bytes, context=None).unwrap()
+
+        return {
+            "manifest_hash": manifest_hash,
+            "file_count": merged_manifest.file_count,
+            "total_size_bytes": merged_manifest.total_size,
+        }
+
+    def overlay_stats(
+        self,
+        workspace_path: str,
+        overlay_resolver: Any,
+        overlay_config: Any,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        zone_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Get storage statistics for an overlay workspace.
+
+        Args:
+            workspace_path: Path to the overlay workspace
+            overlay_resolver: OverlayResolver service instance
+            overlay_config: OverlayConfig for this workspace
+            user_id: User ID for permission check
+            agent_id: Agent ID for permission check
+            zone_id: Zone ID for isolation
+
+        Returns:
+            Storage statistics dict with shared_ratio, savings, etc.
+
+        Raises:
+            NexusPermissionError: If user/agent lacks snapshot:list permission
+        """
+        self._check_workspace_permission(
+            workspace_path=workspace_path,
+            permission="snapshot:list",
+            user_id=user_id,
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
+        stats = overlay_resolver.overlay_stats(overlay_config)
+        return stats.to_dict()

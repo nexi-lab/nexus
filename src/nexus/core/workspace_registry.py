@@ -190,6 +190,8 @@ class WorkspaceRegistry:
         context: Any | None = None,  # v0.5.0: OperationContext
         session_id: str | None = None,  # v0.5.0: If provided, workspace is session-scoped
         ttl: Any | None = None,  # v0.5.0: timedelta for auto-expiry
+        overlay: bool = False,  # Issue #1264: Enable overlay for this workspace
+        base_snapshot_hash: str | None = None,  # Issue #1264: Base manifest CAS hash
     ) -> WorkspaceConfig:
         """Register a directory as a workspace.
 
@@ -277,13 +279,23 @@ class WorkspaceRegistry:
             expires_at = datetime.now(UTC) + ttl
 
         # Create config
+        ws_metadata = metadata or {}
+
+        # Issue #1264: Store overlay config in workspace metadata
+        if overlay and base_snapshot_hash:
+            ws_metadata["overlay_config"] = {
+                "enabled": True,
+                "base_manifest_hash": base_snapshot_hash,
+                "agent_id": agent_id,
+            }
+
         config = WorkspaceConfig(
             path=path,
             name=name,
             description=description,
             created_at=datetime.now(),
             created_by=created_by or user_id,
-            metadata=metadata or {},
+            metadata=ws_metadata,
         )
 
         # Save to cache

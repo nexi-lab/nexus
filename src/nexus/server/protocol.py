@@ -884,6 +884,20 @@ class WorkspaceDiffParams:
 
 
 @dataclass
+class OverlayFlattenParams:
+    """Parameters for workspace_flatten() method (Issue #1264)."""
+
+    workspace_path: str
+
+
+@dataclass
+class OverlayStatsParams:
+    """Parameters for workspace_overlay_stats() method (Issue #1264)."""
+
+    workspace_path: str
+
+
+@dataclass
 class GetVersionParams:
     """Parameters for get_version() method."""
 

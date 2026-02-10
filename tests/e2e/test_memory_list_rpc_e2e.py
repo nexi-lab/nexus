@@ -47,16 +47,13 @@ def rpc_client(nexus_fs_local: NexusFS, tmp_path: Path, monkeypatch):
     monkeypatch.setenv("NEXUS_ENFORCE_PERMISSIONS", "false")
     monkeypatch.setenv("NEXUS_SEARCH_DAEMON", "false")
 
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import create_app
 
     db_url = f"sqlite:///{tmp_path / 'records.db'}"
     app = create_app(nexus_fs=nexus_fs_local, database_url=db_url)
-    _app_state.nexus_fs = nexus_fs_local
 
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
-
-    _app_state.nexus_fs = None
 
 
 def _rpc_body(method: str, params: dict | None = None) -> str:

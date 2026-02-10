@@ -7,9 +7,9 @@
 #   docker build -f dockerfiles/Dockerfile.raft-server -t nexus-raft-server .
 #
 # Run:
-#   docker run -e NEXUS_NODE_ID=1 -e NEXUS_BIND_ADDR=0.0.0.0:2026 \
-#     -e NEXUS_PEERS=2@http://node2:2026,3@http://node3:2026 \
-#     -p 2026:2026 nexus-raft-server
+#   docker run -e NEXUS_NODE_ID=1 -e NEXUS_BIND_ADDR=0.0.0.0:2126 \
+#     -e NEXUS_PEERS=2@http://node2:2126,3@http://node3:2126 \
+#     -p 2126:2126 nexus-raft-server
 
 FROM rust:1-slim-bookworm AS builder
 
@@ -47,10 +47,10 @@ RUN useradd -r -m -u 1000 -s /bin/bash nexus && \
 USER nexus
 
 ENV NEXUS_NODE_ID=1 \
-    NEXUS_BIND_ADDR=0.0.0.0:2026 \
+    NEXUS_BIND_ADDR=0.0.0.0:2126 \
     NEXUS_DATA_DIR=/home/nexus/data \
     RUST_LOG=info,nexus_raft=debug
 
-EXPOSE 2026
+EXPOSE 2126
 
 ENTRYPOINT ["nexus-raft-server"]

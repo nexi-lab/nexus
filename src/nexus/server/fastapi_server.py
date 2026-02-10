@@ -5159,7 +5159,9 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     results = [
         unscope_internal_dict(r, ["path", "file"])
         if isinstance(r, dict)
-        else unscope_internal_path(r) if isinstance(r, str) else r
+        else unscope_internal_path(r)
+        if isinstance(r, str)
+        else r
         for r in results
     ]
     # Return "results" key to match RemoteNexusFS.grep() expectations

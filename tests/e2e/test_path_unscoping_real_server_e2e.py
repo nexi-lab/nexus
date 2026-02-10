@@ -18,12 +18,14 @@ import pytest
 
 def _rpc_call(client: httpx.Client, method: str, params: dict | None = None) -> dict:
     """Make a real HTTP RPC call and return the result."""
-    body = json.dumps({
-        "jsonrpc": "2.0",
-        "id": str(uuid.uuid4()),
-        "method": method,
-        "params": params or {},
-    })
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params or {},
+        }
+    )
     resp = client.post(
         f"/api/nfs/{method}",
         content=body,
@@ -43,11 +45,13 @@ class TestPathUnscopingRealServer:
         """Write zone-scoped files via real server, verify list returns clean paths."""
         # Write files using internal zone-scoped paths
         _rpc_call(
-            test_app, "write",
+            test_app,
+            "write",
             {"path": "/zone/default/user:alice/workspace/hello.txt", "content": "Hello!"},
         )
         _rpc_call(
-            test_app, "write",
+            test_app,
+            "write",
             {"path": "/zone/default/user:alice/workspace/data.csv", "content": "a,b,c"},
         )
 
@@ -72,7 +76,8 @@ class TestPathUnscopingRealServer:
     def test_list_strips_tenant_prefix_real_server(self, test_app: httpx.Client) -> None:
         """Write legacy tenant-prefixed files, verify list returns clean paths."""
         _rpc_call(
-            test_app, "write",
+            test_app,
+            "write",
             {"path": "/tenant:default/connector/gcs/file.txt", "content": "legacy data"},
         )
 
@@ -90,7 +95,8 @@ class TestPathUnscopingRealServer:
     def test_glob_strips_prefix_real_server(self, test_app: httpx.Client) -> None:
         """glob() returns clean paths from real server."""
         _rpc_call(
-            test_app, "write",
+            test_app,
+            "write",
             {"path": "/zone/default/user:alice/workspace/app.py", "content": "import os"},
         )
 
@@ -105,7 +111,8 @@ class TestPathUnscopingRealServer:
     def test_grep_strips_prefix_real_server(self, test_app: httpx.Client) -> None:
         """grep() returns clean paths from real server."""
         _rpc_call(
-            test_app, "write",
+            test_app,
+            "write",
             {"path": "/zone/default/user:bob/workspace/search.py", "content": "import sys"},
         )
 

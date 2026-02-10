@@ -45,9 +45,7 @@ def mock_handler(mock_filesystem):
 class TestListPathUnscoping:
     """Test that list() results have internal prefixes stripped."""
 
-    def test_list_strips_tenant_prefix_from_paths(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_list_strips_tenant_prefix_from_paths(self, mock_handler, mock_filesystem) -> None:
         """Issue #1202: list('/') should not return /tenant: prefixed paths."""
         mock_filesystem.list = Mock(
             return_value=[
@@ -74,9 +72,7 @@ class TestListPathUnscoping:
             ]
         }
 
-    def test_list_strips_zone_prefix_from_paths(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_list_strips_zone_prefix_from_paths(self, mock_handler, mock_filesystem) -> None:
         """list() strips /zone/ prefixed paths."""
         mock_filesystem.list = Mock(
             return_value=[
@@ -101,9 +97,7 @@ class TestListPathUnscoping:
             ]
         }
 
-    def test_list_strips_prefix_from_detail_dicts(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_list_strips_prefix_from_detail_dicts(self, mock_handler, mock_filesystem) -> None:
         """list(details=True) strips prefixes from path keys in dicts."""
         mock_filesystem.list = Mock(
             return_value=[
@@ -130,9 +124,7 @@ class TestListPathUnscoping:
         assert files[0]["size"] == 100
         assert files[0]["etag"] == "abc123"
 
-    def test_list_preserves_already_clean_paths(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_list_preserves_already_clean_paths(self, mock_handler, mock_filesystem) -> None:
         """list() doesn't modify paths that don't have internal prefixes."""
         mock_filesystem.list = Mock(
             return_value=["/workspace/file.txt", "/skills/my-skill/main.py"]
@@ -147,17 +139,13 @@ class TestListPathUnscoping:
 
         result = mock_handler._dispatch_method("list", params)
 
-        assert result == {
-            "files": ["/workspace/file.txt", "/skills/my-skill/main.py"]
-        }
+        assert result == {"files": ["/workspace/file.txt", "/skills/my-skill/main.py"]}
 
 
 class TestWritePathUnscoping:
     """Test that write() response has internal prefix stripped."""
 
-    def test_write_strips_tenant_prefix(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_write_strips_tenant_prefix(self, mock_handler, mock_filesystem) -> None:
         """write() response path should be unscoped."""
         mock_filesystem.write = Mock(
             return_value={
@@ -184,9 +172,7 @@ class TestWritePathUnscoping:
 class TestReadPathUnscoping:
     """Test that read(return_metadata=True) response has internal prefix stripped."""
 
-    def test_read_metadata_strips_tenant_prefix(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_read_metadata_strips_tenant_prefix(self, mock_handler, mock_filesystem) -> None:
         """read(return_metadata=True) should strip prefix from response path."""
         mock_filesystem.read = Mock(
             return_value={
@@ -213,9 +199,7 @@ class TestReadPathUnscoping:
 class TestAppendPathUnscoping:
     """Test that append() response has internal prefix stripped."""
 
-    def test_append_strips_zone_prefix(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_append_strips_zone_prefix(self, mock_handler, mock_filesystem) -> None:
         """append() response path should be unscoped."""
         mock_filesystem.append = Mock(
             return_value={
@@ -242,9 +226,7 @@ class TestAppendPathUnscoping:
 class TestGetMetadataPathUnscoping:
     """Test that get_metadata() response has internal prefix stripped."""
 
-    def test_get_metadata_strips_tenant_prefix(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_get_metadata_strips_tenant_prefix(self, mock_handler, mock_filesystem) -> None:
         """get_metadata() should strip internal prefix from metadata path."""
         metadata = Mock()
         metadata.path = "/tenant:default/user:admin/workspace/file.txt"
@@ -303,9 +285,7 @@ class TestGlobPathUnscoping:
 class TestGrepPathUnscoping:
     """Test that grep() results have internal prefixes stripped."""
 
-    def test_grep_strips_prefix_from_file_key(
-        self, mock_handler, mock_filesystem
-    ) -> None:
+    def test_grep_strips_prefix_from_file_key(self, mock_handler, mock_filesystem) -> None:
         """grep() should strip internal prefixes from file/path keys in results."""
         mock_filesystem.grep = Mock(
             return_value=[

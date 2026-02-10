@@ -70,8 +70,7 @@ class TestUnscopeInternalPath:
     def test_zone_prefix_without_user(self) -> None:
         """Strip /zone/myzone/ prefix (zone-level resource, no user)."""
         assert (
-            unscope_internal_path("/zone/myzone/connector/s3/data.csv")
-            == "/connector/s3/data.csv"
+            unscope_internal_path("/zone/myzone/connector/s3/data.csv") == "/connector/s3/data.csv"
         )
 
     def test_zone_prefix_only(self) -> None:
@@ -97,10 +96,7 @@ class TestUnscopeInternalPath:
 
     def test_no_prefix_skills(self) -> None:
         """Global namespace paths are unchanged."""
-        assert (
-            unscope_internal_path("/skills/my-skill/main.py")
-            == "/skills/my-skill/main.py"
-        )
+        assert unscope_internal_path("/skills/my-skill/main.py") == "/skills/my-skill/main.py"
 
     def test_no_prefix_system(self) -> None:
         """System paths are unchanged."""
@@ -108,16 +104,12 @@ class TestUnscopeInternalPath:
 
     def test_no_prefix_memory(self) -> None:
         """Memory paths are unchanged."""
-        assert (
-            unscope_internal_path("/memory/by-user/alice/facts")
-            == "/memory/by-user/alice/facts"
-        )
+        assert unscope_internal_path("/memory/by-user/alice/facts") == "/memory/by-user/alice/facts"
 
     def test_no_prefix_connector(self) -> None:
         """Already-clean connector paths are unchanged."""
         assert (
-            unscope_internal_path("/connector/gcs_demo/file.txt")
-            == "/connector/gcs_demo/file.txt"
+            unscope_internal_path("/connector/gcs_demo/file.txt") == "/connector/gcs_demo/file.txt"
         )
 
     # --- Edge cases ---
@@ -133,10 +125,7 @@ class TestUnscopeInternalPath:
     def test_path_with_zone_in_name(self) -> None:
         """Path containing 'zone' as a file/dir name is NOT stripped."""
         # /workspace/zone/data.txt should NOT be treated as a zone prefix
-        assert (
-            unscope_internal_path("/workspace/zone/data.txt")
-            == "/workspace/zone/data.txt"
-        )
+        assert unscope_internal_path("/workspace/zone/data.txt") == "/workspace/zone/data.txt"
 
     def test_path_starting_with_zone_word_not_prefix(self) -> None:
         """Path starting with 'zone' but as a namespace (not /zone/) is unchanged."""

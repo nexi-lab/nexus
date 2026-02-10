@@ -1249,7 +1249,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             serializable_results = [
                 unscope_internal_dict(r, ["path", "file"])
                 if isinstance(r, dict)
-                else unscope_internal_path(r) if isinstance(r, str) else r
+                else unscope_internal_path(r)
+                if isinstance(r, str)
+                else r
                 for r in serializable_results
             ]
             return {"results": serializable_results}

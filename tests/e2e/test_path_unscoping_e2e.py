@@ -89,12 +89,8 @@ def _rpc_post(client: TestClient, method: str, params: dict | None = None) -> di
 def _assert_no_internal_prefix(path: str, label: str = "") -> None:
     """Assert a path does not have internal zone/tenant/user prefixes."""
     prefix_label = f" ({label})" if label else ""
-    assert not path.startswith("/tenant:"), (
-        f"Path{prefix_label} has /tenant: prefix: {path}"
-    )
-    assert not path.startswith("/zone/"), (
-        f"Path{prefix_label} has /zone/ prefix: {path}"
-    )
+    assert not path.startswith("/tenant:"), f"Path{prefix_label} has /tenant: prefix: {path}"
+    assert not path.startswith("/zone/"), f"Path{prefix_label} has /zone/ prefix: {path}"
 
 
 @pytest.mark.e2e
@@ -106,8 +102,12 @@ class TestZoneScopedPathUnscopingE2E:
     """
 
     def _write_zone_scoped_file(
-        self, nexus_fs: NexusFS, zone_id: str, user_id: str,
-        resource_path: str, content: bytes,
+        self,
+        nexus_fs: NexusFS,
+        zone_id: str,
+        user_id: str,
+        resource_path: str,
+        content: bytes,
     ) -> None:
         """Write a file using the internal zone-scoped path format.
 
@@ -123,12 +123,18 @@ class TestZoneScopedPathUnscopingE2E:
         """Issue #1202: list('/') must not return /zone/... prefixed paths."""
         # Write files using internal zone-scoped paths (as provision_user does)
         self._write_zone_scoped_file(
-            nexus_fs_local, "default", "alice",
-            "workspace/hello.txt", b"Hello!",
+            nexus_fs_local,
+            "default",
+            "alice",
+            "workspace/hello.txt",
+            b"Hello!",
         )
         self._write_zone_scoped_file(
-            nexus_fs_local, "default", "alice",
-            "workspace/data.csv", b"a,b,c",
+            nexus_fs_local,
+            "default",
+            "alice",
+            "workspace/data.csv",
+            b"a,b,c",
         )
 
         # List root via RPC — this is what RemoteNexusFS.list('/') calls
@@ -136,10 +142,7 @@ class TestZoneScopedPathUnscopingE2E:
         files = result["files"]
 
         # Extract paths
-        paths = [
-            f["path"] if isinstance(f, dict) else f
-            for f in files
-        ]
+        paths = [f["path"] if isinstance(f, dict) else f for f in files]
 
         # THE BUG: paths should NOT contain /zone/default/user:alice/...
         for p in paths:
@@ -155,12 +158,16 @@ class TestZoneScopedPathUnscopingE2E:
     ) -> None:
         """list(details=True) strips /zone/ prefix from path keys in dicts."""
         self._write_zone_scoped_file(
-            nexus_fs_local, "acme", "bob",
-            "workspace/report.md", b"# Report",
+            nexus_fs_local,
+            "acme",
+            "bob",
+            "workspace/report.md",
+            b"# Report",
         )
 
         result = _rpc_post(
-            rpc_client, "list",
+            rpc_client,
+            "list",
             {"path": "/", "recursive": True, "details": True},
         )
         files = result["files"]
@@ -170,39 +177,43 @@ class TestZoneScopedPathUnscopingE2E:
             if isinstance(f, dict) and "path" in f:
                 _assert_no_internal_prefix(f["path"], "list detail path")
 
-    def test_glob_strips_zone_prefix(
-        self, rpc_client: TestClient, nexus_fs_local: NexusFS
-    ) -> None:
+    def test_glob_strips_zone_prefix(self, rpc_client: TestClient, nexus_fs_local: NexusFS) -> None:
         """glob() strips internal prefixes from zone-scoped matches."""
         self._write_zone_scoped_file(
-            nexus_fs_local, "default", "alice",
-            "workspace/app.py", b"import os",
+            nexus_fs_local,
+            "default",
+            "alice",
+            "workspace/app.py",
+            b"import os",
         )
         self._write_zone_scoped_file(
-            nexus_fs_local, "default", "alice",
-            "workspace/test_app.py", b"def test(): pass",
+            nexus_fs_local,
+            "default",
+            "alice",
+            "workspace/test_app.py",
+            b"def test(): pass",
         )
 
-        result = _rpc_post(
-            rpc_client, "glob", {"pattern": "*.py", "path": "/"}
-        )
+        result = _rpc_post(rpc_client, "glob", {"pattern": "*.py", "path": "/"})
         matches = result["matches"]
         assert len(matches) >= 2
 
         for path in matches:
             _assert_no_internal_prefix(path, "glob match")
 
-    def test_grep_strips_zone_prefix(
-        self, rpc_client: TestClient, nexus_fs_local: NexusFS
-    ) -> None:
+    def test_grep_strips_zone_prefix(self, rpc_client: TestClient, nexus_fs_local: NexusFS) -> None:
         """grep() strips internal prefixes from zone-scoped results."""
         self._write_zone_scoped_file(
-            nexus_fs_local, "default", "alice",
-            "workspace/search_target.py", b"import os\nimport sys",
+            nexus_fs_local,
+            "default",
+            "alice",
+            "workspace/search_target.py",
+            b"import os\nimport sys",
         )
 
         result = _rpc_post(
-            rpc_client, "grep",
+            rpc_client,
+            "grep",
             {"pattern": "import", "path": "/"},
         )
         results = result["results"]
@@ -234,10 +245,7 @@ class TestTenantPrefixUnscopingE2E:
 
         result = _rpc_post(rpc_client, "list", {"path": "/", "recursive": True})
         files = result["files"]
-        paths = [
-            f["path"] if isinstance(f, dict) else f
-            for f in files
-        ]
+        paths = [f["path"] if isinstance(f, dict) else f for f in files]
 
         for p in paths:
             _assert_no_internal_prefix(p, "list with tenant prefix")

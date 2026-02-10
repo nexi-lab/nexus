@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.memory_api import Memory
@@ -27,6 +28,9 @@ if TYPE_CHECKING:
     from nexus.storage.models import MemoryModel
 
 logger = logging.getLogger(__name__)
+
+# Default embedding dimension (OpenAI ada-002)
+_EMBEDDING_DIM = 1536
 
 
 class MemoryWithPaging(Memory):
@@ -54,11 +58,15 @@ class MemoryWithPaging(Memory):
         enable_paging: bool = True,
         main_capacity: int = 100,
         recall_max_age_hours: float = 24.0,
+        warm_up: bool = True,
+        vector_db: Any = None,
+        engine: Any = None,
+        session_factory: Callable[[], Session] | None = None,
     ):
         """Initialize Memory API with paging.
 
         Args:
-            session: SQLAlchemy session
+            session: SQLAlchemy session (used by parent Memory class)
             backend: Content storage backend
             zone_id: Zone ID for multi-tenancy
             user_id: User ID
@@ -67,6 +75,11 @@ class MemoryWithPaging(Memory):
             enable_paging: Enable 3-tier paging (default: True)
             main_capacity: Max memories in main context (default: 100)
             recall_max_age_hours: Age threshold for archival (default: 24h)
+            warm_up: Load recent memories from DB into context on init
+            vector_db: Optional VectorDatabase for pgvector-accelerated archival search
+            engine: Optional SQLAlchemy engine (creates VectorDatabase if vector_db not provided)
+            session_factory: Session factory for thread-safe pager operations.
+                If not provided, falls back to a lambda returning the passed session.
         """
         super().__init__(
             session=session,
@@ -80,12 +93,30 @@ class MemoryWithPaging(Memory):
         self.enable_paging = enable_paging
         self.pager: MemoryPager | None
 
+        # Build session factory: prefer explicit, else derive from session
+        if session_factory is None:
+            # Fallback: wrap the provided session (single-threaded use)
+            session_factory = lambda: session  # noqa: E731
+
+        # Create VectorDatabase from engine if not provided directly
+        if vector_db is None and engine is not None:
+            try:
+                from nexus.search.vector_db import VectorDatabase
+
+                vector_db = VectorDatabase(engine)
+                vector_db.initialize()
+            except Exception as e:
+                logger.warning(f"Failed to initialize VectorDatabase: {e}")
+                vector_db = None
+
         if enable_paging:
             self.pager = MemoryPager(
-                session=session,
+                session_factory=session_factory,
                 zone_id=zone_id or "default",
                 main_capacity=main_capacity,
                 recall_max_age_hours=recall_max_age_hours,
+                warm_up=warm_up,
+                vector_db=vector_db,
             )
             logger.info(
                 f"MemGPT 3-tier paging enabled: "
@@ -262,10 +293,14 @@ class MemoryWithPaging(Memory):
         # For now, return dummy embedding
         import hashlib
 
+        logger.warning(
+            "Using dummy embedding - archival semantic search will return random results. "
+            "Integrate a real embedding provider for production use."
+        )
+
         # Generate deterministic dummy embedding from hash
         hash_val = int(hashlib.sha256(text.encode()).hexdigest(), 16)
-        dim = 1536  # OpenAI embedding dimension
-        return [(hash_val >> (i % 256)) % 100 / 100.0 for i in range(dim)]
+        return [(hash_val >> (i % 256)) % 100 / 100.0 for i in range(_EMBEDDING_DIM)]
 
     def _memory_to_dict(self, memory: MemoryModel) -> dict:
         """Convert MemoryModel to dict.

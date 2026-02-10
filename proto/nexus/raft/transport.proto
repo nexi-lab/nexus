@@ -33,6 +33,12 @@ service RaftService {
 
   // TransferLeader requests the current leader to transfer leadership.
   rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
+
+  // StepMessage forwards a raw raft-rs eraftpb::Message between nodes.
+  // The bytes are opaque to the transport layer — serialized using protobuf v2
+  // (raft-rs's native format). This is the standard pattern (etcd, tikv) for
+  // routing all raft-rs internal message types (~15 types) through a single RPC.
+  rpc StepMessage(StepMessageRequest) returns (StepMessageResponse);
 }
 
 // EventStreamService provides streaming events (reusable for webhooks).
@@ -214,6 +220,20 @@ enum NodeRole {
   ROLE_VOTER = 0;
   ROLE_LEARNER = 1;
   ROLE_WITNESS = 2;
+}
+
+// === StepMessage (Raw Raft Message Transport) ===
+
+// StepMessageRequest carries a serialized eraftpb::Message.
+// The bytes are opaque to the transport layer.
+message StepMessageRequest {
+  bytes message = 1;
+}
+
+// StepMessageResponse acknowledges receipt.
+message StepMessageResponse {
+  bool success = 1;
+  optional string error = 2;
 }
 
 // === Event Streaming Messages (Webhook Pattern) ===

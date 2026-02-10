@@ -192,6 +192,7 @@ class NexusPay:
         credits_service: CreditsService | None = None,
         x402_client: X402Client | None = None,
         x402_enabled: bool = True,
+        scheduler_service: Any | None = None,
         zone_id: str = "default",
     ) -> None:
         match = _API_KEY_PATTERN.match(api_key)
@@ -206,6 +207,7 @@ class NexusPay:
         self._zone_id = zone_id
         self._credits = credits_service
         self._x402: X402Client | None = x402_client if x402_enabled else None
+        self._scheduler = scheduler_service
 
     # =========================================================================
     # Internal helpers
@@ -411,20 +413,61 @@ class NexusPay:
             self.agent_id, self._to_decimal(cost), zone_id=self._zone_id
         )
 
-    async def bid_priority(
+    # =========================================================================
+    # Task Scheduling
+    # =========================================================================
+
+    async def submit_task(
         self,
-        queue: str,  # noqa: ARG002 - stored in reservation metadata
-        bid: float | Decimal,
-        task_id: str = "",
-        timeout: int = 300,
-    ) -> Reservation:
-        """Bid for priority in a queue."""
-        return await self.reserve(
-            amount=bid,
-            timeout=timeout,
-            purpose="priority_bid",
-            task_id=task_id,
+        executor: str,
+        task_type: str,
+        payload: dict[str, Any] | None = None,
+        priority: str = "normal",
+        deadline: datetime | None = None,
+        boost: float | Decimal = 0,
+        idempotency_key: str | None = None,
+    ) -> Any:
+        """Submit a task for priority scheduling.
+
+        Args:
+            executor: Target agent/service to execute the task.
+            task_type: Type identifier for the task.
+            payload: Task data.
+            priority: Priority tier name ("critical", "high", "normal",
+                      "low", "best_effort").
+            deadline: Optional deadline for the task.
+            boost: Credits to pay for priority boost (max +2 tiers).
+            idempotency_key: Optional deduplication key.
+
+        Returns:
+            ScheduledTask with computed priority and queue position.
+
+        Raises:
+            NexusPayError: If scheduler is not configured or priority is invalid.
+        """
+        if self._scheduler is None:
+            raise NexusPayError("SchedulerService not configured")
+
+        from nexus.scheduler.constants import TIER_ALIASES
+        from nexus.scheduler.models import TaskSubmission
+
+        tier = TIER_ALIASES.get(priority)
+        if tier is None:
+            valid = ", ".join(sorted(TIER_ALIASES.keys()))
+            raise NexusPayError(f"Invalid priority '{priority}'. Must be one of: {valid}")
+
+        submission = TaskSubmission(
+            agent_id=self.agent_id,
+            executor_id=executor,
+            task_type=task_type,
+            payload=payload or {},
+            priority=tier,
+            deadline=deadline,
+            boost_amount=self._to_decimal(boost),
+            idempotency_key=idempotency_key,
         )
+
+        return await self._scheduler.submit_task(submission)
 
     # =========================================================================
     # Decorators

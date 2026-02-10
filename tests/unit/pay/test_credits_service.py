@@ -744,12 +744,16 @@ class TestEdgeCases:
 
     def test_micro_conversion_precision(self):
         """Test that micro conversion handles decimal precision correctly."""
-        # Test small amounts
-        assert credits_to_micro(0.000001) == 1
-        assert micro_to_credits(1) == 0.000001
+        # Test Decimal input (preferred)
+        assert credits_to_micro(Decimal("0.000001")) == 1
+        assert micro_to_credits(1) == Decimal("0.000001")
+
+        # Test float input (backward compat)
+        assert credits_to_micro(0.5) == 500_000
+        assert credits_to_micro(1.5) == 1_500_000
 
         # Test rounding
-        micro = credits_to_micro(1.2345678)  # More precision than we store
+        micro = credits_to_micro(Decimal("1.2345678"))  # More precision than we store
         assert micro == 1234567  # Truncated to 6 decimals
 
     def test_agent_id_collision_resistance(self):

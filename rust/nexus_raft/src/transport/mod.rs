@@ -67,8 +67,8 @@ mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    AppendEntriesResponseLocal, ClientConfig, LogEntry, RaftClient, RaftClientPool,
-    VoteResponseLocal,
+    AppendEntriesResponseLocal, ClientConfig, ClusterInfoResult, LogEntry, ProposeResult,
+    QueryResult, RaftApiClient, RaftClient, RaftClientPool, VoteResponseLocal,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{

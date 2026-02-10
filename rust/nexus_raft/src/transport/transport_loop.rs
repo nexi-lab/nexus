@@ -106,21 +106,12 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     }
 
     /// Serialize and send an eraftpb::Message to a peer via gRPC.
-    async fn send_message(
-        &self,
-        target_id: u64,
-        addr: &NodeAddress,
-        msg: raft::eraftpb::Message,
-    ) {
+    async fn send_message(&self, target_id: u64, addr: &NodeAddress, msg: raft::eraftpb::Message) {
         // Serialize the eraftpb::Message to protobuf v2 bytes
         let bytes = match msg.write_to_bytes() {
             Ok(b) => b,
             Err(e) => {
-                tracing::error!(
-                    "Failed to serialize message for node {}: {}",
-                    target_id,
-                    e
-                );
+                tracing::error!("Failed to serialize message for node {}: {}", target_id, e);
                 return;
             }
         };

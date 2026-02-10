@@ -133,7 +133,7 @@ class NexusFS(  # type: ignore[misc]
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
         # Issue #1258: MemGPT 3-tier memory paging
-        enable_memory_paging: bool = False,  # Enable MemGPT-style 3-tier memory paging (default: False)
+        enable_memory_paging: bool = True,  # Enable MemGPT-style 3-tier memory paging (default: True)
         memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
         memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
         # Task #23: Dependency injection for services and router.
@@ -909,6 +909,11 @@ class NexusFS(  # type: ignore[misc]
             if self._enable_memory_paging:
                 from nexus.core.memory_with_paging import MemoryWithPaging
 
+                # Try to get engine for VectorDatabase integration
+                engine = None
+                if self.SessionLocal is not None:
+                    engine = self.SessionLocal.kw.get("bind")
+
                 self._memory_api = MemoryWithPaging(
                     session=session,
                     backend=self.backend,
@@ -919,6 +924,8 @@ class NexusFS(  # type: ignore[misc]
                     enable_paging=True,
                     main_capacity=self._memory_main_capacity,
                     recall_max_age_hours=self._memory_recall_max_age_hours,
+                    engine=engine,
+                    session_factory=self.SessionLocal,
                 )
             else:
                 from nexus.core.memory_api import Memory

@@ -122,6 +122,7 @@ class OperationContext:
     groups: list[str]
     zone_id: str | None = None
     agent_id: str | None = None  # Agent identity (optional)
+    agent_generation: int | None = None  # Session generation counter (Issue #1240)
     is_admin: bool = False
     is_system: bool = False
 
@@ -292,6 +293,8 @@ class PermissionEnforcer:
         enable_hotspot_tracking: bool = True,
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         namespace_manager: NamespaceManager | None = None,
+        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        agent_registry: Any = None,
     ):
         """Initialize permission enforcer.
 
@@ -310,6 +313,7 @@ class PermissionEnforcer:
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
+            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
@@ -318,6 +322,9 @@ class PermissionEnforcer:
 
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         self.namespace_manager: NamespaceManager | None = namespace_manager
+
+        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        self.agent_registry = agent_registry
 
         # P0-4: Enhanced features
         self.allow_admin_bypass = allow_admin_bypass
@@ -639,6 +646,28 @@ class PermissionEnforcer:
                 raise NexusFileNotFoundError(
                     path=path,
                     message="Path not found",  # Intentionally vague — path is invisible
+                )
+
+        # Issue #1240: Stale-session detection (Agent OS Phase 1)
+        # If an agent's session generation doesn't match the current DB generation,
+        # a newer session has superseded this one → reject with 409 Conflict.
+        if (
+            self.agent_registry is not None
+            and context.agent_generation is not None
+            and context.subject_type == "agent"
+        ):
+            agent_id = context.agent_id or context.subject_id
+            if not agent_id:
+                logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
+            elif (
+                current_record := self.agent_registry.get(agent_id)
+            ) and current_record.generation != context.agent_generation:
+                from nexus.core.exceptions import StaleSessionError
+
+                raise StaleSessionError(
+                    agent_id,
+                    f"Session generation {context.agent_generation} is stale "
+                    f"(current: {current_record.generation})",
                 )
 
         # Normal ReBAC check

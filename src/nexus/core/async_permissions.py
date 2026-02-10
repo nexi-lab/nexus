@@ -41,6 +41,7 @@ class AsyncPermissionEnforcer:
         rebac_manager: AsyncReBACManager | None = None,
         backends: dict[str, Any] | None = None,
         namespace_manager: NamespaceManager | None = None,
+        agent_registry: Any = None,
     ):
         """Initialize async permission enforcer.
 
@@ -48,10 +49,12 @@ class AsyncPermissionEnforcer:
             rebac_manager: Async ReBAC manager instance
             backends: Backend registry for determining object types
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
+            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.rebac_manager = rebac_manager
         self.backends = backends or {}
         self.namespace_manager = namespace_manager
+        self.agent_registry = agent_registry
 
     async def check_permission(
         self,
@@ -97,6 +100,24 @@ class AsyncPermissionEnforcer:
                     path=path,
                     message="Path not found",  # Intentionally vague — path is invisible
                 )
+
+        # Issue #1240: Stale-session detection (Agent OS Phase 1)
+        if (
+            self.agent_registry is not None
+            and context.agent_generation is not None
+            and context.subject_type == "agent"
+        ):
+            agent_id = context.agent_id or context.subject_id
+            if agent_id:
+                current_record = self.agent_registry.get(agent_id)
+                if current_record and current_record.generation != context.agent_generation:
+                    from nexus.core.exceptions import StaleSessionError
+
+                    raise StaleSessionError(
+                        agent_id,
+                        f"Session generation {context.agent_generation} is stale "
+                        f"(current: {current_record.generation})",
+                    )
 
         # No ReBAC manager = permissive mode
         if not self.rebac_manager:

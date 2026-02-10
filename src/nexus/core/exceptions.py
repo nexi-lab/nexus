@@ -100,6 +100,23 @@ class PermissionDeniedError(NexusError):
         super().__init__(message, path)
 
 
+class StaleSessionError(NexusError):
+    """Raised when agent's session generation is stale (Issue #1240).
+
+    A newer session has been established for this agent, invalidating the
+    current session. The client should re-authenticate or obtain a new session.
+
+    This is an expected error — maps to HTTP 409 Conflict.
+    """
+
+    is_expected = True  # Agent session was superseded by a newer one
+
+    def __init__(self, agent_id: str, message: str | None = None):
+        self.agent_id = agent_id
+        msg = message or f"Agent session expired for '{agent_id}'"
+        super().__init__(msg)
+
+
 class BackendError(NexusError):
     """Raised when a backend operation fails.
 

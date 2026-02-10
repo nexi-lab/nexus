@@ -393,8 +393,8 @@ def unmount(mount_point: str) -> None:
 @click.option(
     "--enable-memory-paging/--no-memory-paging",
     "enable_memory_paging",
-    default=False,
-    help="Enable MemGPT 3-tier memory paging (Issue #1258, default: disabled)",
+    default=True,
+    help="Enable MemGPT 3-tier memory paging (Issue #1258, default: enabled)",
 )
 @click.option(
     "--memory-main-capacity",

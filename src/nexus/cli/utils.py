@@ -186,7 +186,7 @@ def get_filesystem(
     force_local: bool = False,
     allow_admin_bypass: bool | None = None,
     enforce_zone_isolation: bool | None = None,
-    enable_memory_paging: bool = False,
+    enable_memory_paging: bool = True,
     memory_main_capacity: int = 100,
     memory_recall_max_age_hours: float = 24.0,
 ) -> NexusFilesystem:

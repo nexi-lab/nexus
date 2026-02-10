@@ -818,9 +818,9 @@ async def lifespan(_app: FastAPI) -> Any:
             f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
         )
 
-        # Wire up Dragonfly L2 cache to TigerCache (Issue #1106)
-        # This enables L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL) caching
-        if _app_state.cache_factory.is_using_dragonfly:
+        # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
+        # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
+        if _app_state.cache_factory.has_cache_store:
             tiger_cache = getattr(
                 getattr(_app_state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
@@ -1701,7 +1701,7 @@ def _register_routes(app: FastAPI) -> None:
             from nexus.cache.factory import get_cache_factory
 
             cache_factory = get_cache_factory()
-            if cache_factory.is_using_dragonfly and cache_factory._cache_client:
+            if cache_factory.has_cache_store and cache_factory._cache_client:
                 dragonfly_stats = cache_factory._cache_client.get_pool_stats()
                 dragonfly_info = await cache_factory._cache_client.get_info()
                 metrics["dragonfly"] = {

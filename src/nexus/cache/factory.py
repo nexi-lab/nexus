@@ -8,7 +8,7 @@ Architecture Note:
     CacheFactory owns a CacheStoreABC (the Fourth Pillar driver) and builds
     driver-agnostic domain caches on top of it.
 
-    Dragonfly is used ONLY for hot caching (permission, embedding, tiger cache).
+    CacheStoreABC is used for hot caching (permission, embedding, tiger cache).
     All SSOT data (metadata, locks) is in Raft state machine (sled).
 
 The factory handles:
@@ -63,7 +63,7 @@ class CacheFactory:
     """Factory for creating cache instances based on configuration.
 
     Owns a CacheStoreABC driver and builds domain caches on top.
-    When no driver is injected, creates one from settings (Dragonfly or NullCacheStore).
+    When no driver is injected, creates one from settings or falls back to NullCacheStore.
 
     Note: This factory provides HOT CACHING only.
     SSOT (metadata, locks) is handled by Raft state machine, not this factory.
@@ -89,7 +89,7 @@ class CacheFactory:
         self._cache_client: DragonflyClient | None = None  # kept for embedding cache
         self._record_store: RecordStoreABC | None = record_store
         self._initialized = False
-        self._using_dragonfly = False
+        self._has_cache_store = False
         self._using_postgres = False
 
     async def initialize(self) -> None:
@@ -105,7 +105,7 @@ class CacheFactory:
 
         # If caller injected a real (non-Null) CacheStoreABC, use it as-is
         if not isinstance(self._cache_store, NullCacheStore):
-            self._using_dragonfly = True
+            self._has_cache_store = True
             self._initialized = True
             logger.info(
                 f"Cache factory initialized with injected {type(self._cache_store).__name__}"
@@ -129,25 +129,25 @@ class CacheFactory:
                 )
                 await self._cache_client.connect()
                 self._cache_store = DragonflyCacheStore(self._cache_client)
-                self._using_dragonfly = True
+                self._has_cache_store = True
                 logger.info("Cache factory initialized with Dragonfly backend (hot cache only)")
 
             except ImportError:
                 logger.warning("redis package not installed, falling back to NullCacheStore")
-                self._using_dragonfly = False
+                self._has_cache_store = False
             except Exception as e:
                 if self._settings.cache_backend == "dragonfly":
                     raise
                 logger.warning(
                     f"Failed to connect to Dragonfly ({e}), falling back to NullCacheStore"
                 )
-                self._using_dragonfly = False
+                self._has_cache_store = False
         elif self._record_store is not None:
             self._using_postgres = True
             logger.info("Cache factory initialized with PostgreSQL cache backend (fallback)")
         else:
             logger.info("Cache factory initialized with NullCacheStore (no Dragonfly configured)")
-            self._using_dragonfly = False
+            self._has_cache_store = False
 
         self._initialized = True
 
@@ -158,7 +158,7 @@ class CacheFactory:
         self._cache_store = NullCacheStore()
         self._record_store = None
         self._initialized = False
-        self._using_dragonfly = False
+        self._has_cache_store = False
         self._using_postgres = False
         logger.info("Cache factory shutdown complete")
 
@@ -171,9 +171,9 @@ class CacheFactory:
         return self._cache_store
 
     @property
-    def is_using_dragonfly(self) -> bool:
-        """Check if Dragonfly backend is active."""
-        return self._using_dragonfly
+    def has_cache_store(self) -> bool:
+        """Check if a real CacheStoreABC driver is active (not NullCacheStore)."""
+        return self._has_cache_store
 
     @property
     def is_using_postgres(self) -> bool:
@@ -275,7 +275,7 @@ class CacheFactory:
             "healthy": await self._cache_store.health_check(),
         }
 
-        if self._using_dragonfly and self._cache_client:
+        if self._has_cache_store and self._cache_client:
             result["dragonfly_info"] = await self._cache_client.get_info()
 
         return result

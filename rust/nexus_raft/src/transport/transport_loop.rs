@@ -26,7 +26,7 @@ use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 /// Background task that drives the Raft event loop and sends messages to peers.
 pub struct TransportLoop<S: StateMachine + 'static> {
@@ -36,8 +36,10 @@ pub struct TransportLoop<S: StateMachine + 'static> {
     peers: Arc<HashMap<u64, NodeAddress>>,
     /// Connection pool for sending messages to peers.
     client_pool: RaftClientPool,
-    /// How often to call advance() (default: 100ms).
+    /// How often to call advance() (default: 10ms).
     tick_interval: Duration,
+    /// Notifier to wake the loop immediately (from propose/step).
+    advance_notify: Arc<Notify>,
 }
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
@@ -47,15 +49,17 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         peers: HashMap<u64, NodeAddress>,
         client_pool: RaftClientPool,
     ) -> Self {
+        let advance_notify = node.advance_notify();
         Self {
             node,
             peers: Arc::new(peers),
             client_pool,
-            tick_interval: Duration::from_millis(100),
+            tick_interval: Duration::from_millis(10),
+            advance_notify,
         }
     }
 
-    /// Set the tick interval (default: 100ms).
+    /// Set the tick interval (default: 10ms).
     pub fn with_tick_interval(mut self, interval: Duration) -> Self {
         self.tick_interval = interval;
         self
@@ -63,10 +67,11 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
     /// Run the transport loop until shutdown is signaled.
     ///
-    /// This drives the Raft event loop:
-    /// 1. Calls `node.advance()` to process ticks, persist state, apply entries
-    /// 2. Sends outgoing messages to peers via `RaftClientPool::step_message()`
-    /// 3. Repeats at `tick_interval`
+    /// This drives the Raft event loop with two wake sources:
+    /// 1. **Tick interval** — periodic heartbeat/election timer (must keep running)
+    /// 2. **Notify** — immediate wake on new proposals or incoming messages
+    ///
+    /// Both paths call `advance()` and send outgoing messages to peers.
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) {
         let mut interval = tokio::time::interval(self.tick_interval);
         tracing::info!(
@@ -78,28 +83,34 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    match self.node.advance().await {
-                        Ok(messages) => {
-                            for msg in messages {
-                                let target_id = msg.to;
-                                if let Some(addr) = self.peers.get(&target_id) {
-                                    self.send_message(target_id, addr, msg).await;
-                                } else {
-                                    tracing::warn!(
-                                        "No address for peer {} — dropping message",
-                                        target_id
-                                    );
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("advance() error: {}", e);
-                        }
-                    }
+                    // Periodic tick — drives heartbeat and election timeouts
+                }
+                _ = self.advance_notify.notified() => {
+                    // Immediate wake — new proposal or incoming message
                 }
                 _ = shutdown.changed() => {
                     tracing::info!("Transport loop shutting down");
                     break;
+                }
+            }
+
+            // Both tick and notify paths advance the state machine
+            match self.node.advance().await {
+                Ok(messages) => {
+                    for msg in messages {
+                        let target_id = msg.to;
+                        if let Some(addr) = self.peers.get(&target_id) {
+                            self.send_message(target_id, addr, msg).await;
+                        } else {
+                            tracing::warn!(
+                                "No address for peer {} — dropping message",
+                                target_id
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("advance() error: {}", e);
                 }
             }
         }

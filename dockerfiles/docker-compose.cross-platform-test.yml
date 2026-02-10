@@ -1,137 +1,71 @@
-# Distributed Raft Consensus Test Environment
-# Usage: docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+# Full-Node Distributed NexusFS Test Environment
+# Usage: docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
 #
-# This setup enables testing Raft consensus and distributed operations:
-# - 3-node Raft cluster (2 full members + 1 witness for cost-effective HA)
-# - Network partition simulation via `docker network disconnect`
-# - Leader election and failover testing
-# - Cross-zone coordination via Dragonfly
+# This is the most comprehensive distributed system test environment:
+# - 3-node Raft cluster: 2 full NexusFS nodes + 1 lightweight Raft witness
+# - Each full node embeds RaftConsensus (PyO3) for metadata replication
+# - Shared PostgreSQL for RecordStore (users, API keys, permissions)
+# - Dragonfly for CacheStore (cross-zone coordination, event pub/sub)
 #
 # Test Scenarios:
-# - Raft leader election: stop raft-1, verify raft-2 becomes leader
-# - Network partition: disconnect raft-3 (witness), verify cluster still works
-# - Witness quorum: witness participates in voting but doesn't serve reads
-# - Cross-platform locks: Win/Linux/Mac nodes coordinate via Dragonfly
+# - Raft leader election: stop nexus-1, verify nexus-2 becomes leader
+# - Network partition: disconnect witness, verify cluster still works (2/3 quorum)
+# - Data consistency: write on nexus-1, read on nexus-2 (SC mode)
+# - Failover: kill leader, verify new leader serves requests
+# - Distributed locks: concurrent lock acquisition across nodes
 #
 # Architecture:
-#   ┌─────────────────────────────────────────────────────────────┐
-#   │  Raft Cluster (2 full + 1 witness)                          │
-#   │                                                             │
-#   │  ┌──────────┐   ┌──────────┐   ┌──────────┐               │
-#   │  │ raft-1   │   │ raft-2   │   │ raft-3   │               │
-#   │  │ (Leader) │◄─►│(Follower)│◄─►│(Witness) │               │
-#   │  │ sled+gRPC│   │ sled+gRPC│   │ log only │               │
-#   │  │ :2026    │   │ :2027    │   │ :2028    │               │
-#   │  └──────────┘   └──────────┘   └──────────┘               │
-#   └─────────────────────────────────────────────────────────────┘
-#                              │
-#                              ▼
-#   ┌─────────────────────────────────────────────────────────────┐
-#   │  Cross-Zone Coordination (Dragonfly)                        │
-#   │  - Cross-zone distributed locks                             │
-#   │  - Event pub/sub for file notifications                     │
-#   └─────────────────────────────────────────────────────────────┘
+#   ┌─────────────────────────────────────────────────────────────────────┐
+#   │  Full-Node NexusFS Cluster (2 full + 1 witness)                    │
+#   │                                                                     │
+#   │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐           │
+#   │  │  nexus-1     │   │  nexus-2     │   │  witness     │           │
+#   │  │  (Leader)    │◄─►│  (Follower)  │◄─►│  (Vote-only) │           │
+#   │  │  HTTP :2026  │   │  HTTP :2027  │   │  gRPC :2128  │           │
+#   │  │  Raft :2126  │   │  Raft :2127  │   │  (no HTTP)   │           │
+#   │  │  sled+gRPC   │   │  sled+gRPC   │   │  log only    │           │
+#   │  └──────┬───────┘   └──────┬───────┘   └──────────────┘           │
+#   │         │                  │                                       │
+#   │         ▼                  ▼                                       │
+#   │  ┌──────────────────────────────┐  ┌────────────────────┐         │
+#   │  │  PostgreSQL (RecordStore)    │  │  Dragonfly (Cache)  │         │
+#   │  │  Users, API keys, ReBAC     │  │  Locks, Events      │         │
+#   │  │  :5432                      │  │  :6379               │         │
+#   │  └──────────────────────────────┘  └────────────────────┘         │
+#   └─────────────────────────────────────────────────────────────────────┘
 
 services:
   # ==========================================================================
-  # Raft Node 1 - Initial Leader
+  # PostgreSQL — Shared RecordStore for all NexusFS nodes
   # ==========================================================================
-  nexus-raft-1:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-server
-    container_name: nexus-raft-1
-    hostname: raft-1
+  postgres:
+    image: postgres:18-alpine
+    container_name: nexus-cluster-postgres
+    hostname: postgres
+    restart: unless-stopped
     environment:
-      - NEXUS_NODE_ID=1
-      - NEXUS_BIND_ADDR=0.0.0.0:2026
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - NEXUS_PEERS=2@http://raft-2:2026,3@http://raft-3:2026
-      - RUST_LOG=info,nexus_raft=debug
+      POSTGRES_DB: nexus
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: nexus
     ports:
-      - "2026:2026"  # gRPC for Raft
+      - "5432:5432"
     volumes:
-      - raft1_data:/home/nexus/data
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nexus"]
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
 
   # ==========================================================================
-  # Raft Node 2 - Follower (can become Leader)
-  # ==========================================================================
-  nexus-raft-2:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-server
-    container_name: nexus-raft-2
-    hostname: raft-2
-    environment:
-      - NEXUS_NODE_ID=2
-      - NEXUS_BIND_ADDR=0.0.0.0:2026
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - NEXUS_PEERS=1@http://raft-1:2026,3@http://raft-3:2026
-      - RUST_LOG=info,nexus_raft=debug
-    ports:
-      - "2027:2026"
-    volumes:
-      - raft2_data:/home/nexus/data
-    networks:
-      - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  # ==========================================================================
-  # Raft Node 3 - Witness (votes but doesn't store state machine)
-  # ==========================================================================
-  nexus-raft-3:
-    build:
-      context: ..
-      dockerfile: dockerfiles/Dockerfile.raft-witness
-    container_name: nexus-raft-3
-    hostname: raft-3
-    environment:
-      - NEXUS_NODE_ID=3
-      - NEXUS_BIND_ADDR=0.0.0.0:2026
-      - NEXUS_DATA_DIR=/home/nexus/data
-      - NEXUS_PEERS=1@http://raft-1:2026,2@http://raft-2:2026
-      - RUST_LOG=info,nexus_raft=debug
-    ports:
-      - "2028:2026"
-    volumes:
-      - raft3_data:/home/nexus/data
-    networks:
-      - raft-network
-    depends_on:
-      dragonfly:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2026' 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-
-  # ==========================================================================
-  # Dragonfly - Cross-Zone Coordination
+  # Dragonfly — CacheStore for cross-zone coordination
   # ==========================================================================
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: nexus-dragonfly
+    container_name: nexus-cluster-dragonfly
     hostname: dragonfly
     command: >
       dragonfly
@@ -151,6 +85,146 @@ services:
       timeout: 3s
       retries: 10
 
+  # ==========================================================================
+  # NexusFS Node 1 — Full node (initial leader)
+  # HTTP API on :2026, Raft gRPC on :2126
+  # ==========================================================================
+  nexus-1:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: nexus-fullnode:latest
+    container_name: nexus-node-1
+    hostname: nexus-1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+    environment:
+      # NexusFS server
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+
+      # Raft consensus (auto-detected by _create_metadata_store)
+      NEXUS_NODE_ID: 1
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "2@http://nexus-2:2126,3@http://witness:2126"
+
+      # RecordStore (shared PostgreSQL)
+      NEXUS_DATABASE_URL: postgresql://postgres:nexus@postgres:5432/nexus
+
+      # CacheStore (Dragonfly)
+      NEXUS_DRAGONFLY_URL: redis://dragonfly:6379
+
+      # Auth & permissions
+      NEXUS_ADMIN_USER: admin
+      NEXUS_ENFORCE_PERMISSIONS: "true"
+      NEXUS_ALLOW_ADMIN_BYPASS: "true"
+      NEXUS_SKIP_PERMISSIONS: "false"
+
+      # Disable Zoekt for test simplicity
+      ZOEKT_ENABLED: "false"
+
+      # Logging
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2026:2026"   # HTTP API
+      - "2126:2126"   # Raft gRPC
+    volumes:
+      - nexus1_data:/app/data
+    user: root
+    networks:
+      - raft-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # ==========================================================================
+  # NexusFS Node 2 — Full node (follower, can become leader)
+  # HTTP API on :2027, Raft gRPC on :2127
+  # ==========================================================================
+  nexus-2:
+    image: nexus-fullnode:latest
+    container_name: nexus-node-2
+    hostname: nexus-2
+    restart: unless-stopped
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+    environment:
+      NEXUS_HOST: 0.0.0.0
+      NEXUS_PORT: 2026
+      NEXUS_DATA_DIR: /app/data
+
+      NEXUS_NODE_ID: 2
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@http://nexus-1:2126,3@http://witness:2126"
+
+      NEXUS_DATABASE_URL: postgresql://postgres:nexus@postgres:5432/nexus
+      NEXUS_DRAGONFLY_URL: redis://dragonfly:6379
+
+      NEXUS_ADMIN_USER: admin
+      NEXUS_ENFORCE_PERMISSIONS: "true"
+      NEXUS_ALLOW_ADMIN_BYPASS: "true"
+      NEXUS_SKIP_PERMISSIONS: "false"
+
+      ZOEKT_ENABLED: "false"
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2027:2026"   # HTTP API (host:2027 → container:2026)
+      - "2127:2126"   # Raft gRPC
+    volumes:
+      - nexus2_data:/app/data
+    user: root
+    networks:
+      - raft-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  # ==========================================================================
+  # Raft Witness — Lightweight voting-only node (no NexusFS, no HTTP)
+  # Participates in Raft election but doesn't apply state machine.
+  # Enables 2 full + 1 witness = 3-vote quorum at lower cost.
+  # ==========================================================================
+  witness:
+    build:
+      context: ..
+      dockerfile: dockerfiles/Dockerfile.raft-witness
+    container_name: nexus-witness
+    hostname: witness
+    restart: unless-stopped
+    depends_on:
+      dragonfly:
+        condition: service_healthy
+    environment:
+      NEXUS_NODE_ID: 3
+      NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@http://nexus-1:2126,2@http://nexus-2:2126"
+      NEXUS_DATA_DIR: /home/nexus/data
+      RUST_LOG: info,nexus_raft=debug
+    ports:
+      - "2128:2126"   # Raft gRPC (host:2128 → container:2126)
+    volumes:
+      - witness_data:/home/nexus/data
+    networks:
+      - raft-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/2126' 2>/dev/null || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
 # ==========================================================================
 # Networks
 # ==========================================================================
@@ -160,45 +234,60 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/16
-    # Enable manual IP assignment for partition simulation
-    # docker network disconnect raft-network nexus-raft-3
+    # Enable manual IP assignment for partition simulation:
+    #   docker network disconnect raft-network nexus-witness
 
 # ==========================================================================
-# Volumes (persistent sled data for each node)
+# Volumes
 # ==========================================================================
 volumes:
-  raft1_data:
-    name: nexus-raft1-data
-  raft2_data:
-    name: nexus-raft2-data
-  raft3_data:
-    name: nexus-raft3-data
+  postgres_data:
+    name: nexus-cluster-postgres-data
+  nexus1_data:
+    name: nexus-cluster-node1-data
+  nexus2_data:
+    name: nexus-cluster-node2-data
+  witness_data:
+    name: nexus-cluster-witness-data
   dragonfly_data:
-    name: nexus-dragonfly-data
+    name: nexus-cluster-dragonfly-data
 
 # ==========================================================================
 # Test Commands
 # ==========================================================================
 #
 # Start cluster:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
 #
 # View logs:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
+#
+# Check cluster health:
+#   curl http://localhost:2026/health   # Node 1
+#   curl http://localhost:2027/health   # Node 2
 #
 # Simulate leader failure (test failover):
-#   docker stop nexus-raft-1
-#   # raft-2 should become leader within election timeout
+#   docker stop nexus-node-1
+#   # nexus-2 should become leader within election timeout
+#   curl http://localhost:2027/health   # Node 2 still serves requests
 #
-# Simulate network partition:
-#   docker network disconnect raft-network nexus-raft-3
-#   # Cluster should still work (2/3 quorum)
-#   docker network connect raft-network nexus-raft-3
-#   # Node rejoins and syncs
+# Simulate network partition (witness):
+#   docker network disconnect raft-network nexus-witness
+#   # Cluster still works (2/3 quorum with nodes 1+2)
+#   docker network connect raft-network nexus-witness
 #
-# Run integration tests from host:
-#   export NEXUS_RAFT_ENDPOINTS=localhost:2026,localhost:2027,localhost:2028
-#   pytest tests/integration/test_raft_distributed.py -v
+# Test data consistency (write on node 1, read on node 2):
+#   API_KEY=$(docker logs nexus-node-1 2>&1 | grep "API Key:" | head -1 | sed 's/.*API Key: *//')
+#   # Write on node 1:
+#   curl -X POST http://localhost:2026/api/nfs/write \
+#     -H "Authorization: Bearer $API_KEY" \
+#     -H "Content-Type: application/json" \
+#     -d '{"jsonrpc":"2.0","method":"write","params":{"path":"/test.txt","content":"hello"},"id":1}'
+#   # Read on node 2:
+#   curl -X POST http://localhost:2027/api/nfs/read \
+#     -H "Authorization: Bearer $API_KEY" \
+#     -H "Content-Type: application/json" \
+#     -d '{"jsonrpc":"2.0","method":"read","params":{"path":"/test.txt"},"id":1}'
 #
 # Cleanup:
-#   docker-compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v

@@ -8,7 +8,7 @@ use super::proto::nexus::raft::{
     raft_service_client::RaftServiceClient, AcquireLock, AppendEntriesRequest, DeleteMetadata,
     ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
     LogEntry as ProtoLogEntry, ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery,
-    ReleaseLock, VoteRequest,
+    ReleaseLock, StepMessageRequest, VoteRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -218,6 +218,28 @@ impl RaftClient {
             success: resp.success,
             match_index: resp.match_index,
         })
+    }
+
+    /// Send a raw raft-rs message to this node.
+    ///
+    /// This is the primary transport method used by the transport loop.
+    /// The message bytes are an opaque serialized `eraftpb::Message` (protobuf v2).
+    pub async fn step_message(&mut self, message_bytes: Vec<u8>) -> Result<()> {
+        let request = tonic::Request::new(StepMessageRequest {
+            message: message_bytes,
+        });
+
+        let response = self.inner.step_message(request).await?;
+        let resp = response.into_inner();
+
+        if !resp.success {
+            return Err(TransportError::Rpc(
+                resp.error
+                    .unwrap_or_else(|| "step_message failed".to_string()),
+            ));
+        }
+
+        Ok(())
     }
 }
 

@@ -70,7 +70,7 @@ default = []
 # Enable async support (Tokio runtime)
 async = ["tokio"]
 # Enable gRPC transport (tonic + protobuf)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
 # Enable Raft consensus (tikv/raft-rs)
 consensus = ["raft", "protobuf", "slog", "async"]
 # Enable Python bindings (PyO3 FFI)

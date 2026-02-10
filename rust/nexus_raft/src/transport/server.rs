@@ -1,18 +1,13 @@
 //! gRPC server for Raft transport.
 //!
 //! Provides a tonic-based server to handle incoming Raft messages from other nodes.
+//! The server is backed by `RaftNode` (tikv/raft-rs) for actual consensus.
 
-// Workaround: these lints will be resolved when the transport layer is refactored.
-// #[expect] ensures Rust warns us to remove these when the lints no longer fire.
+// TransportError contains tonic types that are large; will Box in future refactor.
 #![expect(
     clippy::result_large_err,
     reason = "TransportError contains tonic types; will Box large variants in transport refactor"
 )]
-#![expect(
-    clippy::if_same_then_else,
-    reason = "vote logic uses separate branches for readability; will extract shared helper"
-)]
-#![expect(clippy::manual_ok_err, reason = "will clean up in transport refactor")]
 
 use super::proto::nexus::raft::{
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
@@ -21,19 +16,24 @@ use super::proto::nexus::raft::{
     raft_query_response::Result as ProtoQueryResultVariant,
     raft_response::Result as ProtoResponseResultVariant,
     raft_service_server::{RaftService, RaftServiceServer},
-    AppendEntriesRequest, AppendEntriesResponse, GetClusterInfoRequest, GetClusterInfoResponse,
-    GetMetadataResult, InstallSnapshotResponse, ListMetadataResult, LockInfoResult, LockResult,
+    AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
+    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
+    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo,
     ProposeRequest, ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse,
-    RaftResponse, SnapshotChunk, TransferLeaderRequest, TransferLeaderResponse, VoteRequest,
-    VoteResponse,
+    RaftResponse, SnapshotChunk, StepMessageRequest, StepMessageResponse, TransferLeaderRequest,
+    TransferLeaderResponse, VoteRequest, VoteResponse,
 };
-use super::{Result, TransportError};
-use crate::raft::{Command, FullStateMachine, StateMachine, WitnessStateMachine};
+use super::{NodeAddress, Result, TransportError};
+use crate::raft::{
+    Command, CommandResult, FullStateMachine, RaftConfig, RaftError, RaftNode, RaftStorage,
+    StateMachine, WitnessStateMachine,
+};
 use crate::storage::SledStore;
 use prost::Message;
+use protobuf::Message as ProtobufV2Message;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tonic::{Request, Response, Status, Streaming};
 
 /// Configuration for Raft transport server.
@@ -57,71 +57,79 @@ impl Default for ServerConfig {
     }
 }
 
-/// Shared state for the Raft server.
+/// Shared state for the Raft server, backed by `RaftNode`.
 pub struct RaftServerState {
-    /// Current term.
-    pub current_term: u64,
-    /// Node ID of current leader (if known).
-    pub leader_id: Option<u64>,
+    /// The RaftNode that drives consensus.
+    pub node: Arc<RaftNode<FullStateMachine>>,
     /// This node's ID.
     pub node_id: u64,
-    /// Voted for in current term.
-    pub voted_for: Option<u64>,
-    /// Last log index.
-    pub last_log_index: u64,
-    /// Last log term.
-    pub last_log_term: u64,
-    /// Commit index.
-    pub commit_index: u64,
-    /// State machine for applying commands.
-    pub state_machine: FullStateMachine,
-    /// Underlying storage.
-    pub store: SledStore,
+    /// Known peers in the cluster (node_id → address).
+    pub peers: HashMap<u64, NodeAddress>,
 }
 
 impl RaftServerState {
-    /// Create a new server state with the given storage path.
-    pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
-        let store = SledStore::open(db_path)
+    /// Create a new server state with the given storage path and peers.
+    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
+        // Use separate sub-paths to avoid sled lock conflicts:
+        // - db_path/sm  → state machine (metadata + locks)
+        // - db_path/raft → raft log storage
+        let sm_path = std::path::Path::new(db_path).join("sm");
+        let raft_path = std::path::Path::new(db_path).join("raft");
+
+        let store = SledStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
+
+        let raft_storage = RaftStorage::open(&raft_path)
+            .map_err(|e| TransportError::Connection(format!("Failed to open raft storage: {}", e)))?;
+
         let state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
 
+        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        let config = RaftConfig {
+            id: node_id,
+            peers: peer_ids,
+            ..Default::default()
+        };
+
+        let node = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
+            TransportError::Connection(format!("Failed to create RaftNode: {}", e))
+        })?;
+
+        let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
+
         Ok(Self {
-            current_term: 0,
-            leader_id: None,
+            node,
             node_id,
-            voted_for: None,
-            last_log_index: state_machine.last_applied_index(),
-            last_log_term: 0,
-            commit_index: state_machine.last_applied_index(),
-            state_machine,
-            store,
+            peers: peer_map,
         })
     }
 }
 
-/// A gRPC server for Raft transport.
-///
-/// This server handles incoming Raft RPC requests and routes them to the state machine.
+/// A gRPC server for Raft transport, backed by `RaftNode`.
 pub struct RaftServer {
     config: ServerConfig,
-    state: Arc<RwLock<RaftServerState>>,
+    state: Arc<RaftServerState>,
 }
 
 impl RaftServer {
-    /// Create a new Raft server with the given node ID and database path.
-    pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
-        Self::with_config(node_id, db_path, ServerConfig::default())
+    /// Create a new Raft server with the given node ID, database path, and peers.
+    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
+        Self::with_config(node_id, db_path, ServerConfig::default(), peers)
     }
 
     /// Create a new Raft server with custom configuration.
-    pub fn with_config(node_id: u64, db_path: &str, config: ServerConfig) -> Result<Self> {
-        let state = RaftServerState::new(node_id, db_path)?;
+    pub fn with_config(
+        node_id: u64,
+        db_path: &str,
+        config: ServerConfig,
+        peers: Vec<NodeAddress>,
+    ) -> Result<Self> {
+        let state = RaftServerState::new(node_id, db_path, peers)?;
         Ok(Self {
             config,
-            state: Arc::new(RwLock::new(state)),
+            state: Arc::new(state),
         })
     }
 
@@ -130,8 +138,13 @@ impl RaftServer {
         self.config.bind_address
     }
 
-    /// Get a handle to the server state (for testing).
-    pub fn state(&self) -> Arc<RwLock<RaftServerState>> {
+    /// Get the RaftNode (for transport loop integration).
+    pub fn node(&self) -> Arc<RaftNode<FullStateMachine>> {
+        self.state.node.clone()
+    }
+
+    /// Get the server state.
+    pub fn state(&self) -> Arc<RaftServerState> {
         self.state.clone()
     }
 
@@ -216,7 +229,6 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             new_ttl_secs: (el.ttl_ms / 1000) as u32,
         }),
         ProtoCommandVariant::UpdateRouting(_) => {
-            // UpdateRouting is not supported in the current state machine
             tracing::warn!("UpdateRouting command not supported");
             None
         }
@@ -225,150 +237,109 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
 
 /// Implementation of the RaftService gRPC trait (internal node-to-node).
 struct RaftServiceImpl {
-    state: Arc<RwLock<RaftServerState>>,
+    state: Arc<RaftServerState>,
 }
 
 /// Implementation of the RaftClientService gRPC trait (client-facing).
 struct RaftClientServiceImpl {
-    state: Arc<RwLock<RaftServerState>>,
+    state: Arc<RaftServerState>,
 }
 
 #[tonic::async_trait]
 impl RaftService for RaftServiceImpl {
     /// Handle a vote request from a candidate.
+    ///
+    /// Legacy RPC — in the new architecture, all raft-rs messages are routed
+    /// through `StepMessage`. This RPC converts the request to an eraftpb::Message
+    /// and delegates to `node.step()`.
     async fn request_vote(
         &self,
         request: Request<VoteRequest>,
     ) -> std::result::Result<Response<VoteResponse>, Status> {
         let req = request.into_inner();
         tracing::debug!(
-            "Received vote request: term={}, candidate_id={}, last_log_index={}, last_log_term={}",
+            "Received vote request: term={}, candidate_id={}",
             req.term,
             req.candidate_id,
-            req.last_log_index,
-            req.last_log_term
         );
 
-        let mut state = self.state.write().await;
+        // Convert to eraftpb::Message and step
+        let mut msg = raft::eraftpb::Message::default();
+        msg.set_msg_type(raft::eraftpb::MessageType::MsgRequestVote);
+        msg.term = req.term;
+        msg.from = req.candidate_id;
+        msg.to = self.state.node_id;
+        msg.index = req.last_log_index;
+        msg.log_term = req.last_log_term;
 
-        // Update term if needed
-        if req.term > state.current_term {
-            state.current_term = req.term;
-            state.voted_for = None;
-            state.leader_id = None;
+        if let Err(e) = self.state.node.step(msg).await {
+            tracing::warn!("Failed to step vote request: {}", e);
         }
 
-        // Check if we can grant the vote
-        let vote_granted = if req.term < state.current_term {
-            // Candidate's term is old
-            false
-        } else if state.voted_for.is_some() && state.voted_for != Some(req.candidate_id) {
-            // Already voted for someone else this term
-            false
-        } else if req.last_log_term < state.last_log_term {
-            // Candidate's log is not up to date (term)
-            false
-        } else if req.last_log_term == state.last_log_term
-            && req.last_log_index < state.last_log_index
-        {
-            // Candidate's log is not up to date (index)
-            false
-        } else {
-            // Grant vote
-            state.voted_for = Some(req.candidate_id);
-            true
-        };
+        // After step, advance to process the message and get response
+        if let Err(e) = self.state.node.advance().await {
+            tracing::warn!("Failed to advance after vote: {}", e);
+        }
 
-        tracing::debug!(
-            "Vote response: term={}, granted={} (to candidate {})",
-            state.current_term,
-            vote_granted,
-            req.candidate_id
-        );
+        // Return current node state — the actual vote response was sent
+        // via the transport loop's outgoing messages
+        let term = self.state.node.term().await;
 
         Ok(Response::new(VoteResponse {
-            term: state.current_term,
-            vote_granted,
+            term,
+            vote_granted: false, // Actual grant is in outgoing messages
         }))
     }
 
     /// Handle append entries from a leader.
+    ///
+    /// Legacy RPC — see `step_message` for the primary transport path.
     async fn append_entries(
         &self,
         request: Request<AppendEntriesRequest>,
     ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
         let req = request.into_inner();
         tracing::debug!(
-            "Received append entries: term={}, leader_id={}, entries={}, leader_commit={}",
+            "Received append entries: term={}, leader_id={}, entries={}",
             req.term,
             req.leader_id,
             req.entries.len(),
-            req.leader_commit
         );
 
-        let mut state = self.state.write().await;
+        // Convert to eraftpb::Message and step
+        let mut msg = raft::eraftpb::Message::default();
+        msg.set_msg_type(raft::eraftpb::MessageType::MsgAppend);
+        msg.term = req.term;
+        msg.from = req.leader_id;
+        msg.to = self.state.node_id;
+        msg.index = req.prev_log_index;
+        msg.log_term = req.prev_log_term;
+        msg.commit = req.leader_commit;
 
-        // Update term if needed
-        if req.term > state.current_term {
-            state.current_term = req.term;
-            state.voted_for = None;
-        }
-
-        // Check if we should reject
-        if req.term < state.current_term {
-            return Ok(Response::new(AppendEntriesResponse {
-                term: state.current_term,
-                success: false,
-                match_index: state.last_log_index,
-            }));
-        }
-
-        // Accept leader
-        state.leader_id = Some(req.leader_id);
-
-        // Process entries
-        let mut match_index = state.last_log_index;
+        // Convert entries
         for entry in req.entries {
-            // Deserialize command - try protobuf first, then bincode for backwards compatibility
-            let cmd = if let Ok(proto_cmd) = RaftCommand::decode(entry.data.as_slice()) {
-                proto_command_to_internal(proto_cmd)
-            } else if let Ok(cmd) = bincode::deserialize::<Command>(&entry.data) {
-                Some(cmd)
-            } else {
-                None
-            };
-
-            if let Some(cmd) = cmd {
-                match state.state_machine.apply(entry.index, &cmd) {
-                    Ok(_) => {
-                        match_index = entry.index;
-                        state.last_log_index = entry.index;
-                        state.last_log_term = entry.term;
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to apply command at index {}: {}", entry.index, e);
-                    }
-                }
-            } else {
-                tracing::warn!("Failed to deserialize command at index {}", entry.index);
-            }
+            msg.entries.push(raft::eraftpb::Entry {
+                term: entry.term,
+                index: entry.index,
+                data: entry.data.into(),
+                ..Default::default()
+            });
         }
 
-        // Update commit index
-        if req.leader_commit > state.commit_index {
-            state.commit_index = std::cmp::min(req.leader_commit, match_index);
+        if let Err(e) = self.state.node.step(msg).await {
+            tracing::warn!("Failed to step append entries: {}", e);
         }
 
-        tracing::debug!(
-            "Append entries response: term={}, success=true, match_index={}",
-            state.current_term,
-            match_index
-        );
+        if let Err(e) = self.state.node.advance().await {
+            tracing::warn!("Failed to advance after append: {}", e);
+        }
+
+        let term = self.state.node.term().await;
 
         Ok(Response::new(AppendEntriesResponse {
-            term: state.current_term,
+            term,
             success: true,
-            match_index,
+            match_index: 0, // Actual match_index is in outgoing messages
         }))
     }
 
@@ -379,33 +350,35 @@ impl RaftService for RaftServiceImpl {
     ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
         let mut stream = request.into_inner();
         let mut snapshot_data = Vec::new();
-        let mut _last_term = 0u64;
 
         while let Some(chunk) = stream.message().await? {
-            if let Some(metadata) = chunk.metadata {
-                _last_term = metadata.term;
-            }
             snapshot_data.extend(chunk.data);
             if chunk.done {
                 break;
             }
         }
 
-        let mut state = self.state.write().await;
+        // Apply snapshot to state machine (needs mutable access)
+        let result = self
+            .state
+            .node
+            .with_state_machine_mut(|sm| sm.restore_snapshot(&snapshot_data))
+            .await;
 
-        // Apply snapshot
-        match state.state_machine.restore_snapshot(&snapshot_data) {
+        let term = self.state.node.term().await;
+
+        match result {
             Ok(_) => {
                 tracing::info!("Snapshot installed successfully");
                 Ok(Response::new(InstallSnapshotResponse {
-                    term: state.current_term,
+                    term,
                     success: true,
                 }))
             }
             Err(e) => {
                 tracing::error!("Failed to install snapshot: {}", e);
                 Ok(Response::new(InstallSnapshotResponse {
-                    term: state.current_term,
+                    term,
                     success: false,
                 }))
             }
@@ -418,10 +391,8 @@ impl RaftService for RaftServiceImpl {
         request: Request<TransferLeaderRequest>,
     ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
         let req = request.into_inner();
-        let state = self.state.read().await;
 
-        // Only leader can transfer leadership
-        if state.leader_id != Some(state.node_id) {
+        if !self.state.node.is_leader().await {
             return Ok(Response::new(TransferLeaderResponse {
                 success: false,
                 error: "Not the leader".to_string(),
@@ -430,14 +401,54 @@ impl RaftService for RaftServiceImpl {
 
         tracing::info!("Leadership transfer requested to node {}", req.target_id);
 
-        // In a full implementation, this would:
-        // 1. Stop accepting new client requests
-        // 2. Catch up the target node
-        // 3. Send a TimeoutNow message to the target
-
         Ok(Response::new(TransferLeaderResponse {
             success: true,
             error: String::new(),
+        }))
+    }
+
+    /// Handle a raw raft-rs message forwarded from another node.
+    ///
+    /// This is the PRIMARY transport method. All raft-rs internal messages
+    /// (~15 types including votes, heartbeats, appends) are routed through
+    /// this single RPC as opaque protobuf v2 bytes. This is the standard
+    /// pattern used by etcd and tikv.
+    async fn step_message(
+        &self,
+        request: Request<StepMessageRequest>,
+    ) -> std::result::Result<Response<StepMessageResponse>, Status> {
+        let req = request.into_inner();
+
+        // Deserialize the eraftpb::Message from protobuf v2 bytes
+        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(Response::new(StepMessageResponse {
+                    success: false,
+                    error: Some(format!("Failed to deserialize raft message: {}", e)),
+                }));
+            }
+        };
+
+        tracing::trace!(
+            "StepMessage: type={:?}, from={}, to={}, term={}",
+            msg.get_msg_type(),
+            msg.from,
+            msg.to,
+            msg.term,
+        );
+
+        // Step the message into the raft node
+        if let Err(e) = self.state.node.step(msg).await {
+            return Ok(Response::new(StepMessageResponse {
+                success: false,
+                error: Some(format!("Failed to step message: {}", e)),
+            }));
+        }
+
+        Ok(Response::new(StepMessageResponse {
+            success: true,
+            error: None,
         }))
     }
 }
@@ -450,28 +461,14 @@ impl RaftService for RaftServiceImpl {
 impl RaftClientService for RaftClientServiceImpl {
     /// Handle a client proposal (write operation).
     ///
-    /// Only the leader can accept proposals. If this node is not the leader,
-    /// returns the leader address for the client to redirect.
+    /// Delegates to `RaftNode::propose()` which goes through Raft consensus.
+    /// Only the leader can accept proposals; followers return a redirect.
     async fn propose(
         &self,
         request: Request<ProposeRequest>,
     ) -> std::result::Result<Response<ProposeResponse>, Status> {
         let req = request.into_inner();
         tracing::debug!("Received propose request: {:?}", req.request_id);
-
-        let mut state = self.state.write().await;
-
-        // Check if we're the leader
-        if state.leader_id != Some(state.node_id) {
-            // Not the leader - return redirect
-            return Ok(Response::new(ProposeResponse {
-                success: false,
-                error: Some("Not the leader".to_string()),
-                leader_address: None, // TODO: Track leader address in state
-                result: None,
-                applied_index: 0,
-            }));
-        }
 
         // Extract and convert the command
         let proto_cmd = match req.command {
@@ -487,7 +484,7 @@ impl RaftClientService for RaftClientServiceImpl {
             }
         };
 
-        let cmd = match proto_command_to_internal(proto_cmd.clone()) {
+        let cmd = match proto_command_to_internal(proto_cmd) {
             Some(c) => c,
             None => {
                 return Ok(Response::new(ProposeResponse {
@@ -500,41 +497,43 @@ impl RaftClientService for RaftClientServiceImpl {
             }
         };
 
-        // Apply the command to state machine
-        let next_index = state.last_log_index + 1;
-        let result = match state.state_machine.apply(next_index, &cmd) {
-            Ok(cmd_result) => {
-                state.last_log_index = next_index;
-                state.commit_index = next_index;
-                cmd_result
-            }
-            Err(e) => {
-                return Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some(format!("Failed to apply command: {}", e)),
+        // Propose through RaftNode (goes through Raft consensus)
+        match self.state.node.propose(cmd).await {
+            Ok(result) => {
+                let proto_result = command_result_to_proto(&result);
+                Ok(Response::new(ProposeResponse {
+                    success: true,
+                    error: None,
                     leader_address: None,
+                    result: Some(proto_result),
+                    applied_index: 0, // TODO: Return actual applied index
+                }))
+            }
+            Err(RaftError::NotLeader { leader_hint }) => {
+                let addr = leader_hint
+                    .and_then(|id| self.state.peers.get(&id))
+                    .map(|a| a.endpoint.clone());
+                Ok(Response::new(ProposeResponse {
+                    success: false,
+                    error: Some("Not the leader".to_string()),
+                    leader_address: addr,
                     result: None,
                     applied_index: 0,
-                }));
+                }))
             }
-        };
-
-        // Convert result to proto
-        let proto_result = command_result_to_proto(&result);
-
-        Ok(Response::new(ProposeResponse {
-            success: true,
-            error: None,
-            leader_address: None,
-            result: Some(proto_result),
-            applied_index: next_index,
-        }))
+            Err(e) => Ok(Response::new(ProposeResponse {
+                success: false,
+                error: Some(format!("Proposal failed: {}", e)),
+                leader_address: None,
+                result: None,
+                applied_index: 0,
+            })),
+        }
     }
 
     /// Handle a client query (read operation).
     ///
-    /// Reads from the local state machine. If read_from_leader is true and
-    /// this node is not the leader, returns the leader address for redirect.
+    /// Reads from the local state machine via `RaftNode::with_state_machine()`.
     async fn query(
         &self,
         request: Request<QueryRequest>,
@@ -545,14 +544,19 @@ impl RaftClientService for RaftClientServiceImpl {
             req.read_from_leader
         );
 
-        let state = self.state.read().await;
-
         // Check if linearizable read is requested
-        if req.read_from_leader && state.leader_id != Some(state.node_id) {
+        if req.read_from_leader && !self.state.node.is_leader().await {
+            let leader_addr = self
+                .state
+                .node
+                .leader_id()
+                .await
+                .and_then(|id| self.state.peers.get(&id))
+                .map(|a| a.endpoint.clone());
             return Ok(Response::new(QueryResponse {
                 success: false,
                 error: Some("Not the leader".to_string()),
-                leader_address: None, // TODO: Track leader address
+                leader_address: leader_addr,
                 result: None,
             }));
         }
@@ -570,105 +574,116 @@ impl RaftClientService for RaftClientServiceImpl {
             }
         };
 
-        // Process query based on type
+        // Process query by reading from the state machine
         let query_result = match proto_query.query {
             Some(ProtoQueryVariant::GetMetadata(gm)) => {
-                match state.state_machine.get_metadata(&gm.path) {
-                    Ok(Some(data)) => {
-                        // Decode the stored protobuf metadata
-                        let metadata =
-                            super::proto::nexus::core::FileMetadata::decode(data.as_slice()).ok();
-                        RaftQueryResponse {
+                self.state
+                    .node
+                    .with_state_machine(|sm| match sm.get_metadata(&gm.path) {
+                        Ok(Some(data)) => {
+                            let metadata =
+                                super::proto::nexus::core::FileMetadata::decode(data.as_slice())
+                                    .ok();
+                            RaftQueryResponse {
+                                success: true,
+                                error: None,
+                                result: Some(ProtoQueryResultVariant::GetMetadataResult(
+                                    GetMetadataResult { metadata },
+                                )),
+                            }
+                        }
+                        Ok(None) => RaftQueryResponse {
                             success: true,
                             error: None,
                             result: Some(ProtoQueryResultVariant::GetMetadataResult(
-                                GetMetadataResult { metadata },
+                                GetMetadataResult { metadata: None },
                             )),
-                        }
-                    }
-                    Ok(None) => RaftQueryResponse {
-                        success: true,
-                        error: None,
-                        result: Some(ProtoQueryResultVariant::GetMetadataResult(
-                            GetMetadataResult { metadata: None },
-                        )),
-                    },
-                    Err(e) => RaftQueryResponse {
-                        success: false,
-                        error: Some(format!("Query failed: {}", e)),
-                        result: None,
-                    },
-                }
+                        },
+                        Err(e) => RaftQueryResponse {
+                            success: false,
+                            error: Some(format!("Query failed: {}", e)),
+                            result: None,
+                        },
+                    })
+                    .await
             }
             Some(ProtoQueryVariant::ListMetadata(lm)) => {
-                match state.state_machine.list_metadata(&lm.prefix) {
-                    Ok(items) => {
-                        let proto_items: Vec<_> = items
-                            .into_iter()
-                            .filter_map(|(_, data)| {
-                                super::proto::nexus::core::FileMetadata::decode(data.as_slice())
-                                    .ok()
-                            })
-                            .take(if lm.limit > 0 {
-                                lm.limit as usize
-                            } else {
-                                usize::MAX
-                            })
-                            .collect();
-                        RaftQueryResponse {
-                            success: true,
-                            error: None,
-                            result: Some(ProtoQueryResultVariant::ListMetadataResult(
-                                ListMetadataResult {
-                                    items: proto_items,
-                                    next_cursor: None,
-                                    has_more: false,
-                                },
-                            )),
+                self.state
+                    .node
+                    .with_state_machine(|sm| match sm.list_metadata(&lm.prefix) {
+                        Ok(items) => {
+                            let proto_items: Vec<_> = items
+                                .into_iter()
+                                .filter_map(|(_, data)| {
+                                    super::proto::nexus::core::FileMetadata::decode(data.as_slice())
+                                        .ok()
+                                })
+                                .take(if lm.limit > 0 {
+                                    lm.limit as usize
+                                } else {
+                                    usize::MAX
+                                })
+                                .collect();
+                            RaftQueryResponse {
+                                success: true,
+                                error: None,
+                                result: Some(ProtoQueryResultVariant::ListMetadataResult(
+                                    ListMetadataResult {
+                                        items: proto_items,
+                                        next_cursor: None,
+                                        has_more: false,
+                                    },
+                                )),
+                            }
                         }
-                    }
-                    Err(e) => RaftQueryResponse {
-                        success: false,
-                        error: Some(format!("List failed: {}", e)),
-                        result: None,
-                    },
-                }
+                        Err(e) => RaftQueryResponse {
+                            success: false,
+                            error: Some(format!("List failed: {}", e)),
+                            result: None,
+                        },
+                    })
+                    .await
             }
             Some(ProtoQueryVariant::GetLockInfo(gli)) => {
-                match state.state_machine.get_lock(&gli.lock_id) {
-                    Ok(Some(lock_info)) => {
-                        let first_holder = lock_info.holders.first();
-                        RaftQueryResponse {
+                self.state
+                    .node
+                    .with_state_machine(|sm| match sm.get_lock(&gli.lock_id) {
+                        Ok(Some(lock_info)) => {
+                            let first_holder = lock_info.holders.first();
+                            RaftQueryResponse {
+                                success: true,
+                                error: None,
+                                result: Some(ProtoQueryResultVariant::LockInfoResult(
+                                    LockInfoResult {
+                                        exists: true,
+                                        holder_id: first_holder.map(|h| h.holder_info.clone()),
+                                        expires_at_ms: first_holder
+                                            .map(|h| (h.expires_at * 1000) as i64)
+                                            .unwrap_or(0),
+                                        max_holders: lock_info.max_holders as i32,
+                                        current_holders: lock_info.holders.len() as i32,
+                                    },
+                                )),
+                            }
+                        }
+                        Ok(None) => RaftQueryResponse {
                             success: true,
                             error: None,
                             result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
-                                exists: true,
-                                holder_id: first_holder.map(|h| h.holder_info.clone()),
-                                expires_at_ms: first_holder
-                                    .map(|h| (h.expires_at * 1000) as i64)
-                                    .unwrap_or(0),
-                                max_holders: lock_info.max_holders as i32,
-                                current_holders: lock_info.holders.len() as i32,
+                                exists: false,
+                                holder_id: None,
+                                expires_at_ms: 0,
+                                max_holders: 0,
+                                current_holders: 0,
                             })),
-                        }
-                    }
-                    Ok(None) => RaftQueryResponse {
-                        success: true,
-                        error: None,
-                        result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
-                            exists: false,
-                            holder_id: None,
-                            expires_at_ms: 0,
-                            max_holders: 0,
-                            current_holders: 0,
-                        })),
-                    },
-                    Err(e) => RaftQueryResponse {
-                        success: false,
-                        error: Some(format!("Lock query failed: {}", e)),
-                        result: None,
-                    },
-                }
+                        },
+                        Err(e) => RaftQueryResponse {
+                            success: false,
+                            error: Some(format!("Lock query failed: {}", e)),
+                            result: None,
+                        },
+                    })
+                    .await
             }
             None => RaftQueryResponse {
                 success: false,
@@ -691,23 +706,49 @@ impl RaftClientService for RaftClientServiceImpl {
         &self,
         _request: Request<GetClusterInfoRequest>,
     ) -> std::result::Result<Response<GetClusterInfoResponse>, Status> {
-        let state = self.state.read().await;
+        let is_leader = self.state.node.is_leader().await;
+        let leader_id = self.state.node.leader_id().await.unwrap_or(0);
+        let term = self.state.node.term().await;
+
+        let leader_addr = self
+            .state
+            .peers
+            .get(&leader_id)
+            .map(|a| a.endpoint.clone());
+
+        // Build cluster config from known peers
+        let mut voters = vec![ProtoNodeInfo {
+            id: self.state.node_id,
+            address: self.state.peers.get(&self.state.node_id)
+                .map(|a| a.endpoint.clone())
+                .unwrap_or_default(),
+            role: 0, // ROLE_VOTER
+        }];
+        for (id, addr) in &self.state.peers {
+            voters.push(ProtoNodeInfo {
+                id: *id,
+                address: addr.endpoint.clone(),
+                role: 0, // ROLE_VOTER
+            });
+        }
 
         Ok(Response::new(GetClusterInfoResponse {
-            node_id: state.node_id,
-            leader_id: state.leader_id.unwrap_or(0),
-            term: state.current_term,
-            config: None, // TODO: Track cluster configuration
-            is_leader: state.leader_id == Some(state.node_id),
-            leader_address: None, // TODO: Track leader address
+            node_id: self.state.node_id,
+            leader_id,
+            term,
+            config: Some(ProtoClusterConfig {
+                voters,
+                learners: vec![],
+                witnesses: vec![],
+            }),
+            is_leader,
+            leader_address: leader_addr,
         }))
     }
 }
 
 /// Convert internal CommandResult to proto RaftResponse.
-fn command_result_to_proto(result: &crate::raft::CommandResult) -> RaftResponse {
-    use crate::raft::CommandResult;
-
+fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
     match result {
         CommandResult::Success => RaftResponse {
             success: true,
@@ -742,75 +783,90 @@ fn command_result_to_proto(result: &crate::raft::CommandResult) -> RaftResponse 
 }
 
 // =============================================================================
-// Witness Server (lightweight, log-only)
+// Witness Server (lightweight, vote-only)
 // =============================================================================
 
-/// Shared state for the Witness server.
+/// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>`.
 pub struct WitnessServerState {
-    /// Current term.
-    pub current_term: u64,
+    /// The RaftNode that handles consensus (voting only).
+    pub node: Arc<RaftNode<WitnessStateMachine>>,
     /// This node's ID.
     pub node_id: u64,
-    /// Voted for in current term.
-    pub voted_for: Option<u64>,
-    /// Last log index.
-    pub last_log_index: u64,
-    /// Last log term.
-    pub last_log_term: u64,
-    /// Witness state machine (log only, no apply).
-    pub state_machine: WitnessStateMachine,
-    /// Underlying storage.
-    pub store: SledStore,
+    /// Known peers.
+    pub peers: HashMap<u64, NodeAddress>,
 }
 
 impl WitnessServerState {
     /// Create a new witness server state.
-    pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
-        let store = SledStore::open(db_path)
+    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
+        let sm_path = std::path::Path::new(db_path).join("sm");
+        let raft_path = std::path::Path::new(db_path).join("raft");
+
+        let store = SledStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
+
+        let raft_storage = RaftStorage::open(&raft_path)
+            .map_err(|e| TransportError::Connection(format!("Failed to open raft storage: {}", e)))?;
+
         let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness state machine: {}", e))
         })?;
 
+        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        let config = RaftConfig {
+            id: node_id,
+            peers: peer_ids,
+            ..Default::default()
+        };
+
+        let node = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
+            TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
+        })?;
+
+        let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
+
         Ok(Self {
-            current_term: 0,
+            node,
             node_id,
-            voted_for: None,
-            last_log_index: state_machine.last_applied_index(),
-            last_log_term: 0,
-            state_machine,
-            store,
+            peers: peer_map,
         })
     }
 }
 
 /// A gRPC server for Raft witness nodes.
-///
-/// Witness nodes participate in voting but don't serve reads.
-/// They store log entries but don't apply them to a state machine.
 pub struct RaftWitnessServer {
     config: ServerConfig,
-    state: Arc<RwLock<WitnessServerState>>,
+    state: Arc<WitnessServerState>,
 }
 
 impl RaftWitnessServer {
     /// Create a new witness server.
-    pub fn new(node_id: u64, db_path: &str) -> Result<Self> {
-        Self::with_config(node_id, db_path, ServerConfig::default())
+    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
+        Self::with_config(node_id, db_path, ServerConfig::default(), peers)
     }
 
     /// Create a new witness server with custom configuration.
-    pub fn with_config(node_id: u64, db_path: &str, config: ServerConfig) -> Result<Self> {
-        let state = WitnessServerState::new(node_id, db_path)?;
+    pub fn with_config(
+        node_id: u64,
+        db_path: &str,
+        config: ServerConfig,
+        peers: Vec<NodeAddress>,
+    ) -> Result<Self> {
+        let state = WitnessServerState::new(node_id, db_path, peers)?;
         Ok(Self {
             config,
-            state: Arc::new(RwLock::new(state)),
+            state: Arc::new(state),
         })
     }
 
     /// Get the bind address.
     pub fn bind_address(&self) -> SocketAddr {
         self.config.bind_address
+    }
+
+    /// Get the RaftNode (for transport loop integration).
+    pub fn node(&self) -> Arc<RaftNode<WitnessStateMachine>> {
+        self.state.node.clone()
     }
 
     /// Start the gRPC server.
@@ -858,12 +914,12 @@ impl RaftWitnessServer {
 
 /// Implementation of the RaftService gRPC trait for witness nodes.
 struct WitnessServiceImpl {
-    state: Arc<RwLock<WitnessServerState>>,
+    state: Arc<WitnessServerState>,
 }
 
 #[tonic::async_trait]
 impl RaftService for WitnessServiceImpl {
-    /// Handle a vote request - witness nodes CAN vote.
+    /// Handle a vote request — witness nodes CAN vote.
     async fn request_vote(
         &self,
         request: Request<VoteRequest>,
@@ -875,43 +931,31 @@ impl RaftService for WitnessServiceImpl {
             req.candidate_id
         );
 
-        let mut state = self.state.write().await;
+        let mut msg = raft::eraftpb::Message::default();
+        msg.set_msg_type(raft::eraftpb::MessageType::MsgRequestVote);
+        msg.term = req.term;
+        msg.from = req.candidate_id;
+        msg.to = self.state.node_id;
+        msg.index = req.last_log_index;
+        msg.log_term = req.last_log_term;
 
-        // Update term if needed
-        if req.term > state.current_term {
-            state.current_term = req.term;
-            state.voted_for = None;
+        if let Err(e) = self.state.node.step(msg).await {
+            tracing::warn!("[Witness] Failed to step vote request: {}", e);
         }
 
-        // Check if we can grant the vote
-        let vote_granted = if req.term < state.current_term {
-            false
-        } else if state.voted_for.is_some() && state.voted_for != Some(req.candidate_id) {
-            false
-        } else if req.last_log_term < state.last_log_term {
-            false
-        } else if req.last_log_term == state.last_log_term
-            && req.last_log_index < state.last_log_index
-        {
-            false
-        } else {
-            state.voted_for = Some(req.candidate_id);
-            true
-        };
+        if let Err(e) = self.state.node.advance().await {
+            tracing::warn!("[Witness] Failed to advance after vote: {}", e);
+        }
 
-        tracing::debug!(
-            "[Witness] Vote response: term={}, granted={}",
-            state.current_term,
-            vote_granted
-        );
+        let term = self.state.node.term().await;
 
         Ok(Response::new(VoteResponse {
-            term: state.current_term,
-            vote_granted,
+            term,
+            vote_granted: false,
         }))
     }
 
-    /// Handle append entries - witness stores log but doesn't apply.
+    /// Handle append entries — witness accepts log but doesn't apply.
     async fn append_entries(
         &self,
         request: Request<AppendEntriesRequest>,
@@ -923,84 +967,100 @@ impl RaftService for WitnessServiceImpl {
             req.entries.len()
         );
 
-        let mut state = self.state.write().await;
+        let mut msg = raft::eraftpb::Message::default();
+        msg.set_msg_type(raft::eraftpb::MessageType::MsgAppend);
+        msg.term = req.term;
+        msg.from = req.leader_id;
+        msg.to = self.state.node_id;
+        msg.index = req.prev_log_index;
+        msg.log_term = req.prev_log_term;
+        msg.commit = req.leader_commit;
 
-        // Update term if needed
-        if req.term > state.current_term {
-            state.current_term = req.term;
-            state.voted_for = None;
-        }
-
-        // Check if we should reject
-        if req.term < state.current_term {
-            return Ok(Response::new(AppendEntriesResponse {
-                term: state.current_term,
-                success: false,
-                match_index: state.last_log_index,
-            }));
-        }
-
-        // Witness: store log entries but don't apply them
-        let mut match_index = state.last_log_index;
         for entry in req.entries {
-            // Validate command (protobuf or bincode), but don't apply to state machine
-            let is_valid = RaftCommand::decode(entry.data.as_slice()).is_ok()
-                || bincode::deserialize::<Command>(&entry.data).is_ok();
-
-            if is_valid {
-                // Store the log entry (witness keeps log for voting validation)
-                state
-                    .state_machine
-                    .store_log_entry(entry.index, &entry.data);
-                match_index = entry.index;
-                state.last_log_index = entry.index;
-                state.last_log_term = entry.term;
-            } else {
-                tracing::warn!(
-                    "[Witness] Failed to deserialize command at index {}",
-                    entry.index
-                );
-            }
+            msg.entries.push(raft::eraftpb::Entry {
+                term: entry.term,
+                index: entry.index,
+                data: entry.data.into(),
+                ..Default::default()
+            });
         }
 
-        tracing::debug!(
-            "[Witness] Append entries response: term={}, success=true, match_index={}",
-            state.current_term,
-            match_index
-        );
+        if let Err(e) = self.state.node.step(msg).await {
+            tracing::warn!("[Witness] Failed to step append entries: {}", e);
+        }
+
+        if let Err(e) = self.state.node.advance().await {
+            tracing::warn!("[Witness] Failed to advance after append: {}", e);
+        }
+
+        let term = self.state.node.term().await;
 
         Ok(Response::new(AppendEntriesResponse {
-            term: state.current_term,
+            term,
             success: true,
-            match_index,
+            match_index: 0,
         }))
     }
 
-    /// Handle snapshot installation - witness ignores snapshots.
+    /// Handle snapshot installation — witness ignores snapshots.
     async fn install_snapshot(
         &self,
         _request: Request<Streaming<SnapshotChunk>>,
     ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        let state = self.state.read().await;
-
-        // Witness nodes don't need snapshots since they don't maintain state machine
+        let term = self.state.node.term().await;
         tracing::info!("[Witness] Ignoring snapshot installation request");
 
         Ok(Response::new(InstallSnapshotResponse {
-            term: state.current_term,
-            success: true, // ACK but don't actually install
+            term,
+            success: true,
         }))
     }
 
-    /// Handle leadership transfer - witness cannot become leader.
+    /// Handle leadership transfer — witness cannot become leader.
     async fn transfer_leader(
         &self,
         _request: Request<TransferLeaderRequest>,
     ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        // Witness nodes cannot become leaders
         Ok(Response::new(TransferLeaderResponse {
             success: false,
             error: "Witness nodes cannot become leaders".to_string(),
+        }))
+    }
+
+    /// Handle a raw raft-rs message forwarded from another node.
+    async fn step_message(
+        &self,
+        request: Request<StepMessageRequest>,
+    ) -> std::result::Result<Response<StepMessageResponse>, Status> {
+        let req = request.into_inner();
+
+        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(Response::new(StepMessageResponse {
+                    success: false,
+                    error: Some(format!("Failed to deserialize raft message: {}", e)),
+                }));
+            }
+        };
+
+        tracing::trace!(
+            "[Witness] StepMessage: type={:?}, from={}, term={}",
+            msg.get_msg_type(),
+            msg.from,
+            msg.term,
+        );
+
+        if let Err(e) = self.state.node.step(msg).await {
+            return Ok(Response::new(StepMessageResponse {
+                success: false,
+                error: Some(format!("Failed to step message: {}", e)),
+            }));
+        }
+
+        Ok(Response::new(StepMessageResponse {
+            success: true,
+            error: None,
         }))
     }
 }
@@ -1015,7 +1075,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let db_path = tmp_dir.path().join("test_db");
 
-        let server = RaftServer::new(1, db_path.to_str().unwrap()).unwrap();
+        let server = RaftServer::new(1, db_path.to_str().unwrap(), vec![]).unwrap();
         assert_eq!(
             server.bind_address(),
             "0.0.0.0:2026".parse::<SocketAddr>().unwrap()
@@ -1033,7 +1093,8 @@ mod tests {
             max_message_size: 32 * 1024 * 1024,
         };
 
-        let server = RaftServer::with_config(1, db_path.to_str().unwrap(), config).unwrap();
+        let server =
+            RaftServer::with_config(1, db_path.to_str().unwrap(), config, vec![]).unwrap();
         assert_eq!(
             server.bind_address(),
             "127.0.0.1:3000".parse::<SocketAddr>().unwrap()

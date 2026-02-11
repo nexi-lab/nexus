@@ -72,7 +72,7 @@ pub use client::{
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{
-    RaftServer, RaftServerState, RaftWitnessServer, ServerConfig, WitnessServerState,
+    RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessServerState,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use transport_loop::TransportLoop;

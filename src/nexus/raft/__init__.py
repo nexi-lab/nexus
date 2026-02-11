@@ -118,11 +118,14 @@ RaftConsensus = None
 with contextlib.suppress(ImportError):
     from _nexus_raft import RaftConsensus
 
-# ZoneManager + ZoneHandle: Multi-zone Raft registry (requires --features full)
-ZoneManager = None
+# ZoneHandle: Per-zone Raft node handle (requires --features full)
 ZoneHandle = None
 with contextlib.suppress(ImportError):
-    from _nexus_raft import ZoneHandle, ZoneManager
+    from _nexus_raft import ZoneHandle
+
+# Python wrappers for multi-zone federation
+from nexus.raft.zone_manager import ZoneManager
+from nexus.raft.zone_path_resolver import ZonePathResolver
 
 
 def require_metastore() -> None:
@@ -155,8 +158,9 @@ __all__ = [
     "Metastore",
     # PyO3 FFI: Raft consensus driver (SC mode)
     "RaftConsensus",
-    # PyO3 FFI: Multi-zone Raft manager
+    # Multi-zone federation
     "ZoneManager",
+    "ZonePathResolver",
     "ZoneHandle",
     # Lock types
     "LockState",

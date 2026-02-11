@@ -1,17 +1,17 @@
-"""Filesystem consistency levels for close-to-open consistency model (Issue #923).
+"""Filesystem consistency levels and zone-level replication modes.
 
-Inspired by JuiceFS close-to-open consistency and NFS CTO cache coherence.
-Provides three levels of consistency for filesystem metadata operations:
+Issue #923: Per-operation consistency (FSConsistency) — controls read freshness via zookies.
+Issue #1180: Per-zone replication mode (ConsistencyMode) — controls Raft SC vs EC.
+Issue #1180: Store operational mode (StoreMode) — tracks RaftMetadataStore mode.
 
-- EVENTUAL: Fastest. May return stale metadata. Use for bulk reads.
-- CLOSE_TO_OPEN: Default. If a zookie is provided from a prior write,
-  waits for that revision before reading. Otherwise same as EVENTUAL.
-- STRONG: Slowest. Bypasses metadata cache. Raises on timeout.
+These are orthogonal dimensions. FSConsistency controls *how fresh* a read must be.
+ConsistencyMode controls *how writes are replicated*. The COMPATIBILITY_MATRIX
+defines behavior for each (ConsistencyMode × FSConsistency) combination.
 
 Usage:
-    from nexus.core.consistency import FSConsistency
+    from nexus.core.consistency import FSConsistency, ConsistencyMode, StoreMode
 
-    # Set on OperationContext
+    # Per-operation consistency (on OperationContext)
     ctx = OperationContext(
         user="alice",
         groups=[],
@@ -20,10 +20,14 @@ Usage:
     )
     content = fs.read("/file.txt", context=ctx)
 
+    # Per-zone replication mode (on ZoneModel.consistency_mode)
+    zone.consistency_mode = ConsistencyMode.EC  # Eventual consistency
+
 See also:
     - Issue #916: ZedToken consistency for permissions (complementary)
     - Issue #1187: Zookie consistency tokens (foundation)
     - https://man7.org/linux/man-pages/man5/nfs.5.html (NFS CTO)
+    - docs/architecture/federation-memo.md §4.5 (Raft dual mode)
 """
 
 from __future__ import annotations
@@ -70,3 +74,80 @@ class FSConsistency(StrEnum):
 
 # Default consistency level (matches JuiceFS default)
 DEFAULT_CONSISTENCY = FSConsistency.CLOSE_TO_OPEN
+
+
+class ConsistencyMode(StrEnum):
+    """Zone-level Raft replication mode (Issue #1180).
+
+    Controls how writes are replicated across Raft nodes.
+    Orthogonal to FSConsistency (per-operation read freshness).
+    Stored in ZoneModel.consistency_mode column.
+
+    See COMPATIBILITY_MATRIX for interaction with FSConsistency.
+    See docs/architecture/federation-memo.md §4.5 for design rationale.
+    """
+
+    SC = "SC"
+    """Strong Consistency — Raft consensus on every write.
+
+    - Writes: Go through Raft propose → majority ACK → commit
+    - Reads: Linearizable (Leader Read or Read Index)
+    - Latency: ~5-10ms intra-DC, ~50-100ms cross-region
+    - Throughput: ~1K writes/sec
+    - Use for: Financial, legal, compliance workloads
+    """
+
+    EC = "EC"
+    """Eventual Consistency — local apply + async replication.
+
+    - Writes: Apply locally (~5μs), replicate in background via Raft
+    - Reads: May observe stale data (bounded staleness)
+    - Latency: ~1-2ms (local sled read)
+    - Throughput: ~30K writes/sec
+    - Risk: Data loss on leader crash before replication completes
+    - Use for: Media, content delivery, high-throughput ingestion
+    """
+
+
+# Default zone replication mode
+DEFAULT_CONSISTENCY_MODE = ConsistencyMode.SC
+
+
+class StoreMode(StrEnum):
+    """RaftMetadataStore operational mode (Issue #1180).
+
+    Tracks how the metadata store was initialized. Used for mode-aware
+    branching (e.g., compatibility matrix checks, error messages, monitoring).
+
+    Set by factory methods: .embedded(), .sc(), .ec(), .remote().
+    """
+
+    EMBEDDED = "embedded"
+    """Direct sled via Metastore PyO3 (~5μs). No replication."""
+
+    SC = "sc"
+    """Raft consensus via RaftConsensus PyO3 (~2-10ms). Synchronous replication."""
+
+    EC = "ec"
+    """Lazy consensus via RaftConsensus PyO3 (~5μs). Async background replication."""
+
+    REMOTE = "remote"
+    """gRPC thin client (~200μs). Delegates to remote Raft node."""
+
+
+# Compatibility matrix: (ConsistencyMode, FSConsistency) → behavior
+# Defines how per-zone replication mode interacts with per-operation read consistency.
+#
+# Behaviors:
+#   "skip_zookie_wait"  — No zookie check, return cached/local data immediately
+#   "wait_best_effort"  — Wait for zookie revision; on timeout, fall through silently
+#   "wait_or_raise"     — Wait for zookie revision; on timeout, raise ConsistencyTimeoutError
+#   "warn_then_wait"    — Log warning (STRONG on EC is misleading), then wait_best_effort
+COMPATIBILITY_MATRIX: dict[tuple[ConsistencyMode, FSConsistency], str] = {
+    (ConsistencyMode.SC, FSConsistency.EVENTUAL): "skip_zookie_wait",
+    (ConsistencyMode.SC, FSConsistency.CLOSE_TO_OPEN): "wait_best_effort",
+    (ConsistencyMode.SC, FSConsistency.STRONG): "wait_or_raise",
+    (ConsistencyMode.EC, FSConsistency.EVENTUAL): "skip_zookie_wait",
+    (ConsistencyMode.EC, FSConsistency.CLOSE_TO_OPEN): "wait_best_effort",
+    (ConsistencyMode.EC, FSConsistency.STRONG): "warn_then_wait",
+}

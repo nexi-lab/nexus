@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata
-from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
+from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency, StoreMode
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission
@@ -45,8 +45,10 @@ if TYPE_CHECKING:
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
 
-    # Issue #923: Lock for atomic revision increment (prevents duplicate revisions)
-    _revision_lock = threading.Lock()
+    # Issue #1180: Per-zone locks for atomic revision increment.
+    # Replaces global _revision_lock to eliminate cross-zone contention.
+    _revision_locks: dict[str, threading.Lock] = {}
+    _revision_locks_guard = threading.Lock()
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
@@ -236,6 +238,23 @@ class NexusFSCoreMixin:
     # Zookie Consistency Token Support - Issue #1187
     # =========================================================================
 
+    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
+        """Get or create a per-zone lock for revision increments (Issue #1180).
+
+        Always acquires the guard lock for correctness. The overhead is
+        negligible (~50ns uncontended) since this runs once per zone.
+
+        Args:
+            zone_id: The zone to get the lock for
+
+        Returns:
+            Lock instance for this zone
+        """
+        with self._revision_locks_guard:
+            if zone_id not in self._revision_locks:
+                self._revision_locks[zone_id] = threading.Lock()
+            return self._revision_locks[zone_id]
+
     def _increment_and_get_revision(self, zone_id: str) -> int:
         """Atomically increment and return the new revision for a zone.
 
@@ -254,10 +273,9 @@ class NexusFSCoreMixin:
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        # Issue #923: Lock ensures atomic read-modify-write for revision counter.
-        # Without this, concurrent writes could get the same revision number.
-        # TODO: Replace with atomic increment when Raft store supports it.
-        with self._revision_lock:
+        # Issue #1180: Per-zone lock ensures atomic read-modify-write without
+        # cross-zone contention. TODO: Replace with sled atomic_increment (Phase B).
+        with self._get_revision_lock(zone_id):
             try:
                 meta = self.metadata.get(rev_path)
                 new_rev = (meta.version + 1) if meta else 1
@@ -326,7 +344,7 @@ class NexusFSCoreMixin:
             if current >= min_revision:
                 return True
             time.sleep(sleep_ms / 1000)
-            sleep_ms = min(sleep_ms * 2, 100)  # Cap at 100ms
+            sleep_ms = min(sleep_ms * 2, 10)  # Cap at 10ms (Issue #1180)
 
         return False
 
@@ -434,6 +452,22 @@ class NexusFSCoreMixin:
         if consistency == FSConsistency.EVENTUAL:
             return
 
+        # Issue #1180: Downgrade STRONG to CLOSE_TO_OPEN on EC-mode stores.
+        # STRONG guarantees cannot be met on an EC store because writes are
+        # applied locally before being replicated. Emit a warning so operators
+        # can detect misconfigurations.
+        if (
+            consistency == FSConsistency.STRONG
+            and hasattr(self, "metadata")
+            and hasattr(self.metadata, "mode")
+            and self.metadata.mode == StoreMode.EC
+        ):
+            logger.warning(
+                "STRONG consistency requested on EC-mode zone. "
+                "Data may not be fully replicated. Treating as CLOSE_TO_OPEN."
+            )
+            consistency = FSConsistency.CLOSE_TO_OPEN
+
         min_zookie = getattr(context, "min_zookie", None)
         if not min_zookie:
             return
@@ -454,7 +488,10 @@ class NexusFSCoreMixin:
             # Zone mismatch — zookie is for a different zone, skip check
             return
 
-        if not self._wait_for_revision(effective_zone, zookie.revision) and consistency == FSConsistency.STRONG:
+        if (
+            not self._wait_for_revision(effective_zone, zookie.revision)
+            and consistency == FSConsistency.STRONG
+        ):
             from nexus.core.zookie import ConsistencyTimeoutError
 
             raise ConsistencyTimeoutError(

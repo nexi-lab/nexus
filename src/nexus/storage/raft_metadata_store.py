@@ -28,10 +28,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.consistency import StoreMode
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +84,7 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
             proto.ParseFromString(data)
             return MetadataMapper.from_proto(proto)
         except Exception as proto_err:
-            logger.debug(
-                "Protobuf parse failed, trying JSON fallback: %s", proto_err
-            )
+            logger.debug("Protobuf parse failed, trying JSON fallback: %s", proto_err)
 
     # Fallback to JSON format
     try:
@@ -130,16 +128,18 @@ class RaftMetadataStore(FileMetadataProtocol):
         local_raft: Any | None = None,
         remote_client: Any | None = None,
         zone_id: str | None = None,
+        mode: StoreMode = StoreMode.EMBEDDED,
     ):
         """Initialize RaftMetadataStore.
 
-        Use the factory methods `embedded()`, `sc()`, or `remote()` instead
-        of calling this constructor directly.
+        Use the factory methods `embedded()`, `sc()`, `ec()`, or `remote()`
+        instead of calling this constructor directly.
 
         Args:
             local_raft: Metastore or RaftConsensus instance (PyO3 FFI)
             remote_client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
+            mode: Operational mode (Issue #1180). Set by factory methods.
         """
         if local_raft is None and remote_client is None:
             raise ValueError("Either local_raft or remote_client must be provided")
@@ -147,7 +147,120 @@ class RaftMetadataStore(FileMetadataProtocol):
         self._local = local_raft
         self._remote = remote_client
         self._zone_id = zone_id
-        self._is_local = local_raft is not None
+        self._mode = mode
+
+    @property
+    def mode(self) -> StoreMode:
+        """Operational mode of this store (Issue #1180)."""
+        return self._mode
+
+    @property
+    def _is_local(self) -> bool:
+        """True if this store operates on a local sled backend (not remote gRPC)."""
+        return self._mode != StoreMode.REMOTE
+
+    # =========================================================================
+    # Shared Local Helpers — DRY extraction (Issue #1180)
+    # Used by both sync and async public methods for local mode operations.
+    # =========================================================================
+
+    def _get_local(self, path: str) -> FileMetadata | None:
+        """Get metadata from the local sled backend.
+
+        Args:
+            path: Virtual path
+
+        Returns:
+            FileMetadata if found, None otherwise
+        """
+        data = self._local.get_metadata(path)
+        if data is None:
+            return None
+        return _deserialize_metadata(data)
+
+    def _put_local(self, metadata: FileMetadata) -> None:
+        """Store metadata in the local sled backend.
+
+        Args:
+            metadata: File metadata to store
+        """
+        data = _serialize_metadata(metadata)
+        self._local.set_metadata(metadata.path, data)
+
+    def _delete_local(self, path: str) -> dict[str, Any] | None:
+        """Delete metadata from the local sled backend.
+
+        Args:
+            path: Virtual path
+
+        Returns:
+            Dictionary with deleted file info or None
+        """
+        existing = self._get_local(path)
+        self._local.delete_metadata(path)
+        if existing:
+            return {
+                "path": existing.path,
+                "size": existing.size,
+                "etag": existing.etag,
+            }
+        return None
+
+    def _list_local(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        accessible_int_ids: set[int] | None = None,
+    ) -> list[FileMetadata]:
+        """List metadata entries from the local sled backend.
+
+        Args:
+            prefix: Path prefix to filter by
+            recursive: If True, include all nested files
+            accessible_int_ids: Optional set of accessible file int_ids for filtering
+
+        Returns:
+            List of file metadata
+        """
+        entries = self._local.list_metadata(prefix)
+        result = []
+        for path, data in entries:
+            # Skip extended attribute keys (format: "meta:{path}:{key}")
+            if path.startswith("meta:"):
+                continue
+            metadata = _deserialize_metadata(data)
+            if not recursive:
+                # Filter to direct children only
+                rel_path = path[len(prefix) :].lstrip("/")
+                if "/" in rel_path:
+                    continue
+            # Filter by accessible_int_ids if provided
+            if accessible_int_ids is not None:
+                if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
+                    continue
+            result.append(metadata)
+        return result
+
+    # =========================================================================
+    # Replication Monitoring (Issue #1180)
+    # =========================================================================
+
+    def get_replication_status(self) -> dict[str, Any]:
+        """Get replication lag and status for this store.
+
+        Issue #1180: Phase A defines the API. Phase B implements EC monitoring.
+
+        Returns:
+            Dict with mode, lag (uncommitted entries), uncommitted count.
+
+        Raises:
+            NotImplementedError: For EC mode (requires Phase B implementation).
+        """
+        if self._mode == StoreMode.EC:
+            raise NotImplementedError(
+                "EC replication monitoring not yet implemented. See Issue #1180 Phase B."
+            )
+        return {"mode": self._mode.value, "lag": 0, "uncommitted": 0}
 
     @classmethod
     def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
@@ -172,7 +285,7 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         metastore = Metastore(db_path)
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
-        return cls(local_raft=metastore, zone_id=zone_id)
+        return cls(local_raft=metastore, zone_id=zone_id, mode=StoreMode.EMBEDDED)
 
     @classmethod
     def sc(
@@ -211,7 +324,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created SC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id)
+        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.SC)
 
     @classmethod
     def ec(
@@ -250,7 +363,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created EC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id)
+        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.EC)
 
     @classmethod
     async def remote(
@@ -274,7 +387,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         client = RaftClient(address, zone_id=zone_id)
         await client.connect()
         logger.info(f"Created remote RaftMetadataStore connected to {address}")
-        return cls(remote_client=client, zone_id=zone_id)
+        return cls(remote_client=client, zone_id=zone_id, mode=StoreMode.REMOTE)
 
     def get(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.
@@ -286,13 +399,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             FileMetadata if found, None otherwise
         """
         if self._is_local:
-            data = self._local.get_metadata(path)
-            if data is None:
-                return None
-            return _deserialize_metadata(data)
+            return self._get_local(path)
         else:
-            # Remote mode - would need async, but interface is sync
-            # For now, raise error - caller should use async methods
             raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
 
     def put(self, metadata: FileMetadata) -> None:
@@ -301,10 +409,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Args:
             metadata: File metadata to store
         """
-        data = _serialize_metadata(metadata)
-
         if self._is_local:
-            self._local.set_metadata(metadata.path, data)
+            self._put_local(metadata)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
 
@@ -317,21 +423,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary with deleted file info or None
         """
-        # Get existing metadata before delete for return value
-        existing = self.get(path)
-
         if self._is_local:
-            self._local.delete_metadata(path)
+            return self._delete_local(path)
         else:
             raise NotImplementedError("Remote mode requires async. Use delete_async() instead.")
-
-        if existing:
-            return {
-                "path": existing.path,
-                "size": existing.size,
-                "etag": existing.etag,
-            }
-        return None
 
     def exists(self, path: str) -> bool:
         """Check if metadata exists for a path.
@@ -428,25 +523,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         # Note: zone_id is ignored since RaftMetadataStore is zone-local
         if self._is_local:
-            entries = self._local.list_metadata(prefix)
-            result = []
-            for path, data in entries:
-                # Skip extended attribute keys (format: "meta:{path}:{key}")
-                # These are stored by set_file_metadata() and are NOT file entries.
-                if path.startswith("meta:"):
-                    continue
-                metadata = _deserialize_metadata(data)
-                if not recursive:
-                    # Filter to direct children only
-                    rel_path = path[len(prefix) :].lstrip("/")
-                    if "/" in rel_path:
-                        continue
-                # Filter by accessible_int_ids if provided
-                if accessible_int_ids is not None:
-                    if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
-                        continue
-                result.append(metadata)
-            return result
+            return self._list_local(prefix, recursive, accessible_int_ids)
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
 
@@ -809,13 +886,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             FileMetadata if found, None otherwise
         """
         if self._is_local:
-            # For local mode, wrap sync call
-            data = self._local.get_metadata(path)
-            if data is None:
-                return None
-            return _deserialize_metadata(data)
+            return self._get_local(path)
         else:
-            # Remote mode - use RaftClient
             return await self._remote.get_metadata(path, zone_id=self._zone_id)
 
     async def put_async(self, metadata: FileMetadata) -> None:
@@ -825,8 +897,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             metadata: File metadata to store
         """
         if self._is_local:
-            data = _serialize_metadata(metadata)
-            self._local.set_metadata(metadata.path, data)
+            self._put_local(metadata)
         else:
             await self._remote.put_metadata(metadata, zone_id=self._zone_id)
 
@@ -839,21 +910,18 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary with deleted file info or None
         """
-        # Get existing metadata before delete for return value
-        existing = await self.get_async(path)
-
         if self._is_local:
-            self._local.delete_metadata(path)
+            return self._delete_local(path)
         else:
+            existing = await self.get_async(path)
             await self._remote.delete_metadata(path, zone_id=self._zone_id)
-
-        if existing:
-            return {
-                "path": existing.path,
-                "size": existing.size,
-                "etag": existing.etag,
-            }
-        return None
+            if existing:
+                return {
+                    "path": existing.path,
+                    "size": existing.size,
+                    "etag": existing.etag,
+                }
+            return None
 
     async def exists_async(self, path: str) -> bool:
         """Check if metadata exists for a path (async).
@@ -884,20 +952,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             List of file metadata
         """
         if self._is_local:
-            entries = self._local.list_metadata(prefix)
-            result = []
-            for path, data in entries:
-                # Skip extended attribute keys (format: "meta:{path}:{key}")
-                if path.startswith("meta:"):
-                    continue
-                metadata = _deserialize_metadata(data)
-                if not recursive:
-                    # Filter to direct children only
-                    rel_path = path[len(prefix) :].lstrip("/")
-                    if "/" in rel_path:
-                        continue
-                result.append(metadata)
-            return result
+            return self._list_local(prefix, recursive)
         else:
             return await self._remote.list_metadata(
                 prefix=prefix,

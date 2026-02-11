@@ -484,8 +484,8 @@ impl PyMetastore {
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "RaftConsensus")]
 pub struct PyRaftConsensus {
-    /// Shared RaftNode (also used by gRPC server and TransportLoop).
-    node: std::sync::Arc<crate::raft::RaftNode<FullStateMachine>>,
+    /// RaftNode handle (Clone + Send + Sync). The driver is owned by TransportLoop.
+    node: crate::raft::RaftNode<FullStateMachine>,
     /// Background Tokio runtime (owns the gRPC server + transport loop threads).
     runtime: tokio::runtime::Runtime,
     /// Shutdown signal sender.
@@ -549,11 +549,12 @@ impl PyRaftConsensus {
             ..Default::default()
         };
 
-        // Create RaftServer (which creates RaftNode + storage)
-        let server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
+        // Create RaftServer (which creates RaftNode handle + driver)
+        let mut server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create Raft server: {}", e)))?;
 
-        let node = server.node();
+        let node = server.node(); // Clone of handle
+        let driver = server.take_driver(); // Driver goes to transport loop
 
         // Build Tokio runtime for background tasks
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -566,9 +567,9 @@ impl PyRaftConsensus {
         // Shutdown signal
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background
+        // Start transport loop in background — owns the driver exclusively
         let peer_map = peer_addrs.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(node.clone(), peer_map, RaftClientPool::new());
+        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
         let shutdown_rx_transport = shutdown_rx.clone();
         runtime.spawn(transport_loop.run(shutdown_rx_transport));
 
@@ -772,16 +773,14 @@ impl PyRaftConsensus {
     // Cluster Status
     // =========================================================================
 
-    /// Check if this node is the current leader.
-    pub fn is_leader(&self, py: Python<'_>) -> PyResult<bool> {
-        let node = self.node.clone();
-        Ok(py.allow_threads(|| self.runtime.block_on(node.is_leader())))
+    /// Check if this node is the current leader (atomic read, no I/O).
+    pub fn is_leader(&self) -> bool {
+        self.node.is_leader()
     }
 
-    /// Get the current leader ID (None if unknown).
-    pub fn leader_id(&self, py: Python<'_>) -> PyResult<Option<u64>> {
-        let node = self.node.clone();
-        Ok(py.allow_threads(|| self.runtime.block_on(node.leader_id())))
+    /// Get the current leader ID (None if unknown, atomic read).
+    pub fn leader_id(&self) -> Option<u64> {
+        self.node.leader_id()
     }
 
     /// Get this node's ID.

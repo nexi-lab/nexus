@@ -205,9 +205,7 @@ class NexusFSEventsMixin:
         Args:
             path: Virtual path to watch
             timeout: Maximum time to wait in seconds (default: 30.0)
-            since_revision: Only return events with revision > this value (Issue #1187).
-                           Use this with zookie tokens for watch resumption:
-                           ``zookie = Zookie.decode(token); since_revision=zookie.revision``
+            since_revision: Only return events with revision > this value.
             _context: Operation context (optional)
 
         Returns:
@@ -215,7 +213,7 @@ class NexusFSEventsMixin:
                 - type: "file_write", "file_delete", "file_rename", etc.
                 - path: Path that changed
                 - old_path: Previous path (for rename events only)
-                - revision: Event revision number (for zookie-based resumption)
+                - revision: Event revision number
             None if timeout reached
 
         Raises:
@@ -227,9 +225,6 @@ class NexusFSEventsMixin:
             >>> if change:
             ...     print(f"Detected {change['type']} on {change['path']}")
 
-            >>> # Resume watching from a zookie (Issue #1187)
-            >>> zookie = Zookie.decode(write_result["zookie"])
-            >>> change = await nexus.wait_for_changes("/inbox/", since_revision=zookie.revision)
         """
         # Auto-start distributed system and cache invalidation if needed
         await self._ensure_distributed_system_ready()

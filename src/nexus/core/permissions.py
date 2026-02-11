@@ -24,8 +24,6 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
-
 if TYPE_CHECKING:
     from nexus.core.hotspot_detector import HotspotDetector
     from nexus.core.namespace_manager import NamespaceManager
@@ -148,11 +146,6 @@ class OperationContext:
     # to enable precise cache invalidation and efficient subscription updates
     read_set: ReadSet | None = None  # Read set for this operation (lazy-initialized)
     track_reads: bool = False  # Enable read tracking for this operation
-
-    # Issue #923: Close-to-open consistency model
-    # Controls consistency/performance tradeoff for metadata reads
-    consistency: FSConsistency = DEFAULT_CONSISTENCY  # EVENTUAL, CLOSE_TO_OPEN, STRONG
-    min_zookie: str | None = None  # Zookie token from prior write for at-least-as-fresh reads
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""

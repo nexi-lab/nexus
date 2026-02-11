@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
 
-        let server = RaftWitnessServer::with_config(
+        let mut server = RaftWitnessServer::with_config(
             node_id,
             data_path.to_str().unwrap(),
             config,
@@ -115,9 +115,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Set up shutdown signal
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background
+        // Start transport loop in background — owns the driver exclusively
+        let driver = server.take_driver();
         let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
+        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
         tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Witness server starting on {}", bind_addr);

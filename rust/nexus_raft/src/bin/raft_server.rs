@@ -98,16 +98,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ..Default::default()
         };
 
-        let server =
+        let mut server =
             RaftServer::with_config(node_id, data_path.to_str().unwrap(), config, peers.clone())
                 .map_err(|e| format!("Failed to create server: {}", e))?;
 
         // Set up shutdown signal
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background (drives raft ticks + message routing)
+        // Start transport loop in background — owns the driver exclusively
+        let driver = server.take_driver();
         let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
+        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
         tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Raft server starting on {}", bind_addr);

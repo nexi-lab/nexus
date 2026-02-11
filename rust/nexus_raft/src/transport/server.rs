@@ -1,7 +1,8 @@
 //! gRPC server for Raft transport.
 //!
-//! Provides a tonic-based server to handle incoming Raft messages from other nodes.
-//! The server is backed by `RaftNode` (tikv/raft-rs) for actual consensus.
+//! All Raft zones (including single-zone setups) are served through
+//! `ZoneRaftRegistry`. There is no separate "single-zone" code path —
+//! a single-zone deployment is simply a registry with one zone.
 
 // TransportError contains tonic types that are large; will Box in future refactor.
 #![expect(
@@ -25,10 +26,9 @@ use super::proto::nexus::raft::{
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftConfig, RaftError, RaftNode, RaftNodeDriver,
-    RaftStorage, StateMachine, WitnessStateMachine,
+    Command, CommandResult, FullStateMachine, RaftError, RaftNode, RaftNodeDriver,
+    WitnessStateMachine, ZoneRaftRegistry,
 };
-use crate::storage::SledStore;
 use prost::Message;
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
@@ -57,89 +57,23 @@ impl Default for ServerConfig {
     }
 }
 
-/// Shared state for the Raft server, backed by `RaftNode` (handle).
-pub struct RaftServerState {
-    /// The RaftNode handle (Clone + Send + Sync).
-    pub node: RaftNode<FullStateMachine>,
-    /// This node's ID.
-    pub node_id: u64,
-    /// Known peers in the cluster (node_id → address).
-    pub peers: HashMap<u64, NodeAddress>,
-}
+// =============================================================================
+// Raft gRPC Server (zone-routed, serves all zones on one port)
+// =============================================================================
 
-impl RaftServerState {
-    /// Create a new server state with the given storage path and peers.
-    ///
-    /// Returns `(state, driver)` — the driver must be passed to the transport loop.
-    pub fn new(
-        node_id: u64,
-        db_path: &str,
-        peers: Vec<NodeAddress>,
-    ) -> Result<(Self, RaftNodeDriver<FullStateMachine>)> {
-        let sm_path = std::path::Path::new(db_path).join("sm");
-        let raft_path = std::path::Path::new(db_path).join("raft");
-
-        let store = SledStore::open(&sm_path)
-            .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-
-        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
-            TransportError::Connection(format!("Failed to open raft storage: {}", e))
-        })?;
-
-        let state_machine = FullStateMachine::new(&store).map_err(|e| {
-            TransportError::Connection(format!("Failed to create state machine: {}", e))
-        })?;
-
-        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let config = RaftConfig {
-            id: node_id,
-            peers: peer_ids,
-            ..Default::default()
-        };
-
-        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine)
-            .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
-
-        let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
-
-        Ok((
-            Self {
-                node: handle,
-                node_id,
-                peers: peer_map,
-            },
-            driver,
-        ))
-    }
-}
-
-/// A gRPC server for Raft transport, backed by `RaftNode` (handle).
-pub struct RaftServer {
+/// A gRPC server that routes requests to Raft zones via `ZoneRaftRegistry`.
+///
+/// All setups — single-zone and multi-zone — use this server.
+/// A single-zone deployment is just a registry with one zone.
+pub struct RaftGrpcServer {
     config: ServerConfig,
-    state: Arc<RaftServerState>,
-    /// The driver, held temporarily until passed to the transport loop.
-    driver: Option<RaftNodeDriver<FullStateMachine>>,
+    registry: Arc<ZoneRaftRegistry>,
 }
 
-impl RaftServer {
-    /// Create a new Raft server with the given node ID, database path, and peers.
-    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
-        Self::with_config(node_id, db_path, ServerConfig::default(), peers)
-    }
-
-    /// Create a new Raft server with custom configuration.
-    pub fn with_config(
-        node_id: u64,
-        db_path: &str,
-        config: ServerConfig,
-        peers: Vec<NodeAddress>,
-    ) -> Result<Self> {
-        let (state, driver) = RaftServerState::new(node_id, db_path, peers)?;
-        Ok(Self {
-            config,
-            state: Arc::new(state),
-            driver: Some(driver),
-        })
+impl RaftGrpcServer {
+    /// Create a new server backed by the given zone registry.
+    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig) -> Self {
+        Self { config, registry }
     }
 
     /// Get the bind address.
@@ -147,32 +81,20 @@ impl RaftServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode handle (Clone, for sharing with other components).
-    pub fn node(&self) -> RaftNode<FullStateMachine> {
-        self.state.node.clone()
-    }
-
-    /// Take the driver out (must be passed to the transport loop).
-    /// Panics if called more than once.
-    pub fn take_driver(&mut self) -> RaftNodeDriver<FullStateMachine> {
-        self.driver.take().expect("driver already taken")
-    }
-
-    /// Get the server state.
-    pub fn state(&self) -> Arc<RaftServerState> {
-        self.state.clone()
-    }
-
     /// Start the gRPC server.
     pub async fn serve(self) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!("Starting Raft gRPC server on {}", addr);
+        tracing::info!(
+            "Starting Raft gRPC server on {} (zones={})",
+            addr,
+            self.registry.list_zones().len()
+        );
 
         let raft_service = RaftServiceImpl {
-            state: self.state.clone(),
+            registry: self.registry.clone(),
         };
         let client_service = RaftClientServiceImpl {
-            state: self.state.clone(),
+            registry: self.registry.clone(),
         };
 
         tonic::transport::Server::builder()
@@ -185,22 +107,23 @@ impl RaftServer {
         Ok(())
     }
 
-    /// Start the server and return a handle for graceful shutdown.
+    /// Start the gRPC server with graceful shutdown.
     pub async fn serve_with_shutdown(
         self,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
         tracing::info!(
-            "Starting Raft gRPC server on {} (with shutdown signal)",
-            addr
+            "Starting Raft gRPC server on {} (zones={}, with shutdown signal)",
+            addr,
+            self.registry.list_zones().len()
         );
 
         let raft_service = RaftServiceImpl {
-            state: self.state.clone(),
+            registry: self.registry.clone(),
         };
         let client_service = RaftClientServiceImpl {
-            state: self.state.clone(),
+            registry: self.registry.clone(),
         };
 
         tonic::transport::Server::builder()
@@ -214,12 +137,15 @@ impl RaftServer {
     }
 }
 
+// =============================================================================
+// Helpers
+// =============================================================================
+
 /// Convert protobuf RaftCommand to internal Command enum.
 fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
     match proto.command? {
         ProtoCommandVariant::PutMetadata(pm) => {
             let metadata = pm.metadata?;
-            // Store protobuf bytes directly (SSOT: metadata.proto is the source of truth)
             let key = metadata.path.clone();
             Some(Command::SetMetadata {
                 key,
@@ -250,506 +176,21 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
     }
 }
 
-/// Implementation of the RaftService gRPC trait (internal node-to-node).
-struct RaftServiceImpl {
-    state: Arc<RaftServerState>,
-}
-
-/// Implementation of the RaftClientService gRPC trait (client-facing).
-struct RaftClientServiceImpl {
-    state: Arc<RaftServerState>,
-}
-
-#[tonic::async_trait]
-impl RaftService for RaftServiceImpl {
-    /// Handle a vote request from a candidate.
-    ///
-    /// Legacy RPC — in the new architecture, all raft-rs messages are routed
-    /// through `StepMessage`. This RPC converts the request to an eraftpb::Message
-    /// and delegates to `node.step()`.
-    async fn request_vote(
-        &self,
-        request: Request<VoteRequest>,
-    ) -> std::result::Result<Response<VoteResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!(
-            "Received vote request: term={}, candidate_id={}",
-            req.term,
-            req.candidate_id,
-        );
-
-        // Convert to eraftpb::Message and step
-        let mut msg = raft::eraftpb::Message::default();
-        msg.set_msg_type(raft::eraftpb::MessageType::MsgRequestVote);
-        msg.term = req.term;
-        msg.from = req.candidate_id;
-        msg.to = self.state.node_id;
-        msg.index = req.last_log_index;
-        msg.log_term = req.last_log_term;
-
-        if let Err(e) = self.state.node.step(msg) {
-            tracing::warn!("Failed to step vote request: {}", e);
-        }
-
-        // The driver will process this message in its next advance() cycle.
-        // Return current cached state.
-        let term = self.state.node.term();
-
-        Ok(Response::new(VoteResponse {
-            term,
-            vote_granted: false, // Actual grant is in outgoing messages
-        }))
-    }
-
-    /// Handle append entries from a leader.
-    ///
-    /// Legacy RPC — see `step_message` for the primary transport path.
-    async fn append_entries(
-        &self,
-        request: Request<AppendEntriesRequest>,
-    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!(
-            "Received append entries: term={}, leader_id={}, entries={}",
-            req.term,
-            req.leader_id,
-            req.entries.len(),
-        );
-
-        // Convert to eraftpb::Message and step
-        let mut msg = raft::eraftpb::Message::default();
-        msg.set_msg_type(raft::eraftpb::MessageType::MsgAppend);
-        msg.term = req.term;
-        msg.from = req.leader_id;
-        msg.to = self.state.node_id;
-        msg.index = req.prev_log_index;
-        msg.log_term = req.prev_log_term;
-        msg.commit = req.leader_commit;
-
-        // Convert entries
-        for entry in req.entries {
-            msg.entries.push(raft::eraftpb::Entry {
-                term: entry.term,
-                index: entry.index,
-                data: entry.data.into(),
-                ..Default::default()
-            });
-        }
-
-        if let Err(e) = self.state.node.step(msg) {
-            tracing::warn!("Failed to step append entries: {}", e);
-        }
-
-        // The driver will process this in its next advance() cycle.
-        let term = self.state.node.term();
-
-        Ok(Response::new(AppendEntriesResponse {
-            term,
-            success: true,
-            match_index: 0, // Actual match_index is in outgoing messages
-        }))
-    }
-
-    /// Handle snapshot installation (streaming).
-    async fn install_snapshot(
-        &self,
-        request: Request<Streaming<SnapshotChunk>>,
-    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        let mut stream = request.into_inner();
-        let mut snapshot_data = Vec::new();
-
-        while let Some(chunk) = stream.message().await? {
-            snapshot_data.extend(chunk.data);
-            if chunk.done {
-                break;
+/// Look up a zone's RaftNode from the registry, or return a gRPC error.
+fn get_zone_node(
+    registry: &ZoneRaftRegistry,
+    zone_id: &str,
+) -> std::result::Result<RaftNode<FullStateMachine>, Status> {
+    registry.get_node(zone_id).ok_or_else(|| {
+        Status::not_found(format!(
+            "zone '{}' not found on this node",
+            if zone_id.is_empty() {
+                "<empty>"
+            } else {
+                zone_id
             }
-        }
-
-        // Apply snapshot to state machine (needs mutable access)
-        let result = self
-            .state
-            .node
-            .with_state_machine_mut(|sm| sm.restore_snapshot(&snapshot_data))
-            .await;
-
-        let term = self.state.node.term();
-
-        match result {
-            Ok(_) => {
-                tracing::info!("Snapshot installed successfully");
-                Ok(Response::new(InstallSnapshotResponse {
-                    term,
-                    success: true,
-                }))
-            }
-            Err(e) => {
-                tracing::error!("Failed to install snapshot: {}", e);
-                Ok(Response::new(InstallSnapshotResponse {
-                    term,
-                    success: false,
-                }))
-            }
-        }
-    }
-
-    /// Handle leadership transfer request.
-    async fn transfer_leader(
-        &self,
-        request: Request<TransferLeaderRequest>,
-    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        let req = request.into_inner();
-
-        if !self.state.node.is_leader() {
-            return Ok(Response::new(TransferLeaderResponse {
-                success: false,
-                error: "Not the leader".to_string(),
-            }));
-        }
-
-        tracing::info!("Leadership transfer requested to node {}", req.target_id);
-
-        Ok(Response::new(TransferLeaderResponse {
-            success: true,
-            error: String::new(),
-        }))
-    }
-
-    /// Handle a raw raft-rs message forwarded from another node.
-    ///
-    /// This is the PRIMARY transport method. All raft-rs internal messages
-    /// (~15 types including votes, heartbeats, appends) are routed through
-    /// this single RPC as opaque protobuf v2 bytes. This is the standard
-    /// pattern used by etcd and tikv.
-    async fn step_message(
-        &self,
-        request: Request<StepMessageRequest>,
-    ) -> std::result::Result<Response<StepMessageResponse>, Status> {
-        let req = request.into_inner();
-
-        // Deserialize the eraftpb::Message from protobuf v2 bytes
-        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
-            Ok(m) => m,
-            Err(e) => {
-                return Ok(Response::new(StepMessageResponse {
-                    success: false,
-                    error: Some(format!("Failed to deserialize raft message: {}", e)),
-                }));
-            }
-        };
-
-        tracing::trace!(
-            "StepMessage: type={:?}, from={}, to={}, term={}",
-            msg.get_msg_type(),
-            msg.from,
-            msg.to,
-            msg.term,
-        );
-
-        // Send to driver via channel — no .await needed
-        if let Err(e) = self.state.node.step(msg) {
-            return Ok(Response::new(StepMessageResponse {
-                success: false,
-                error: Some(format!("Failed to step message: {}", e)),
-            }));
-        }
-
-        Ok(Response::new(StepMessageResponse {
-            success: true,
-            error: None,
-        }))
-    }
-}
-
-// =============================================================================
-// Client-Facing Service (Propose/Query/GetClusterInfo)
-// =============================================================================
-
-#[tonic::async_trait]
-impl RaftClientService for RaftClientServiceImpl {
-    /// Handle a client proposal (write operation).
-    ///
-    /// Delegates to `RaftNode::propose()` which goes through Raft consensus.
-    /// Only the leader can accept proposals; followers return a redirect.
-    async fn propose(
-        &self,
-        request: Request<ProposeRequest>,
-    ) -> std::result::Result<Response<ProposeResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!("Received propose request: {:?}", req.request_id);
-
-        // Extract and convert the command
-        let proto_cmd = match req.command {
-            Some(cmd) => cmd,
-            None => {
-                return Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some("No command provided".to_string()),
-                    leader_address: None,
-                    result: None,
-                    applied_index: 0,
-                }));
-            }
-        };
-
-        let cmd = match proto_command_to_internal(proto_cmd) {
-            Some(c) => c,
-            None => {
-                return Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some("Unsupported command type".to_string()),
-                    leader_address: None,
-                    result: None,
-                    applied_index: 0,
-                }));
-            }
-        };
-
-        // Propose through RaftNode (goes through Raft consensus)
-        match self.state.node.propose(cmd).await {
-            Ok(result) => {
-                let proto_result = command_result_to_proto(&result);
-                Ok(Response::new(ProposeResponse {
-                    success: true,
-                    error: None,
-                    leader_address: None,
-                    result: Some(proto_result),
-                    applied_index: 0, // TODO: Return actual applied index
-                }))
-            }
-            Err(RaftError::NotLeader { leader_hint }) => {
-                let addr = leader_hint
-                    .and_then(|id| self.state.peers.get(&id))
-                    .map(|a| a.endpoint.clone());
-                Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some("Not the leader".to_string()),
-                    leader_address: addr,
-                    result: None,
-                    applied_index: 0,
-                }))
-            }
-            Err(e) => Ok(Response::new(ProposeResponse {
-                success: false,
-                error: Some(format!("Proposal failed: {}", e)),
-                leader_address: None,
-                result: None,
-                applied_index: 0,
-            })),
-        }
-    }
-
-    /// Handle a client query (read operation).
-    ///
-    /// Reads from the local state machine via `RaftNode::with_state_machine()`.
-    async fn query(
-        &self,
-        request: Request<QueryRequest>,
-    ) -> std::result::Result<Response<QueryResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!(
-            "Received query request, read_from_leader={}",
-            req.read_from_leader
-        );
-
-        // Check if linearizable read is requested
-        if req.read_from_leader && !self.state.node.is_leader() {
-            let leader_addr = self
-                .state
-                .node
-                .leader_id()
-                .and_then(|id| self.state.peers.get(&id))
-                .map(|a| a.endpoint.clone());
-            return Ok(Response::new(QueryResponse {
-                success: false,
-                error: Some("Not the leader".to_string()),
-                leader_address: leader_addr,
-                result: None,
-            }));
-        }
-
-        // Extract query
-        let proto_query = match req.query {
-            Some(q) => q,
-            None => {
-                return Ok(Response::new(QueryResponse {
-                    success: false,
-                    error: Some("No query provided".to_string()),
-                    leader_address: None,
-                    result: None,
-                }));
-            }
-        };
-
-        // Process query by reading from the state machine
-        let query_result = match proto_query.query {
-            Some(ProtoQueryVariant::GetMetadata(gm)) => {
-                self.state
-                    .node
-                    .with_state_machine(|sm| match sm.get_metadata(&gm.path) {
-                        Ok(Some(data)) => {
-                            let metadata =
-                                super::proto::nexus::core::FileMetadata::decode(data.as_slice())
-                                    .ok();
-                            RaftQueryResponse {
-                                success: true,
-                                error: None,
-                                result: Some(ProtoQueryResultVariant::GetMetadataResult(
-                                    GetMetadataResult { metadata },
-                                )),
-                            }
-                        }
-                        Ok(None) => RaftQueryResponse {
-                            success: true,
-                            error: None,
-                            result: Some(ProtoQueryResultVariant::GetMetadataResult(
-                                GetMetadataResult { metadata: None },
-                            )),
-                        },
-                        Err(e) => RaftQueryResponse {
-                            success: false,
-                            error: Some(format!("Query failed: {}", e)),
-                            result: None,
-                        },
-                    })
-                    .await
-            }
-            Some(ProtoQueryVariant::ListMetadata(lm)) => {
-                self.state
-                    .node
-                    .with_state_machine(|sm| match sm.list_metadata(&lm.prefix) {
-                        Ok(items) => {
-                            let proto_items: Vec<_> = items
-                                .into_iter()
-                                .filter_map(|(_, data)| {
-                                    super::proto::nexus::core::FileMetadata::decode(data.as_slice())
-                                        .ok()
-                                })
-                                .take(if lm.limit > 0 {
-                                    lm.limit as usize
-                                } else {
-                                    usize::MAX
-                                })
-                                .collect();
-                            RaftQueryResponse {
-                                success: true,
-                                error: None,
-                                result: Some(ProtoQueryResultVariant::ListMetadataResult(
-                                    ListMetadataResult {
-                                        items: proto_items,
-                                        next_cursor: None,
-                                        has_more: false,
-                                    },
-                                )),
-                            }
-                        }
-                        Err(e) => RaftQueryResponse {
-                            success: false,
-                            error: Some(format!("List failed: {}", e)),
-                            result: None,
-                        },
-                    })
-                    .await
-            }
-            Some(ProtoQueryVariant::GetLockInfo(gli)) => {
-                self.state
-                    .node
-                    .with_state_machine(|sm| match sm.get_lock(&gli.lock_id) {
-                        Ok(Some(lock_info)) => {
-                            let first_holder = lock_info.holders.first();
-                            RaftQueryResponse {
-                                success: true,
-                                error: None,
-                                result: Some(ProtoQueryResultVariant::LockInfoResult(
-                                    LockInfoResult {
-                                        exists: true,
-                                        holder_id: first_holder.map(|h| h.holder_info.clone()),
-                                        expires_at_ms: first_holder
-                                            .map(|h| (h.expires_at * 1000) as i64)
-                                            .unwrap_or(0),
-                                        max_holders: lock_info.max_holders as i32,
-                                        current_holders: lock_info.holders.len() as i32,
-                                    },
-                                )),
-                            }
-                        }
-                        Ok(None) => RaftQueryResponse {
-                            success: true,
-                            error: None,
-                            result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
-                                exists: false,
-                                holder_id: None,
-                                expires_at_ms: 0,
-                                max_holders: 0,
-                                current_holders: 0,
-                            })),
-                        },
-                        Err(e) => RaftQueryResponse {
-                            success: false,
-                            error: Some(format!("Lock query failed: {}", e)),
-                            result: None,
-                        },
-                    })
-                    .await
-            }
-            None => RaftQueryResponse {
-                success: false,
-                error: Some("Unknown query type".to_string()),
-                result: None,
-            },
-        };
-
-        let error = query_result.error.clone();
-        Ok(Response::new(QueryResponse {
-            success: query_result.success,
-            error,
-            leader_address: None,
-            result: Some(query_result),
-        }))
-    }
-
-    /// Get cluster information.
-    async fn get_cluster_info(
-        &self,
-        _request: Request<GetClusterInfoRequest>,
-    ) -> std::result::Result<Response<GetClusterInfoResponse>, Status> {
-        let is_leader = self.state.node.is_leader();
-        let leader_id = self.state.node.leader_id().unwrap_or(0);
-        let term = self.state.node.term();
-
-        let leader_addr = self.state.peers.get(&leader_id).map(|a| a.endpoint.clone());
-
-        // Build cluster config from known peers
-        let mut voters = vec![ProtoNodeInfo {
-            id: self.state.node_id,
-            address: self
-                .state
-                .peers
-                .get(&self.state.node_id)
-                .map(|a| a.endpoint.clone())
-                .unwrap_or_default(),
-            role: 0, // ROLE_VOTER
-        }];
-        for (id, addr) in &self.state.peers {
-            voters.push(ProtoNodeInfo {
-                id: *id,
-                address: addr.endpoint.clone(),
-                role: 0, // ROLE_VOTER
-            });
-        }
-
-        Ok(Response::new(GetClusterInfoResponse {
-            node_id: self.state.node_id,
-            leader_id,
-            term,
-            config: Some(ProtoClusterConfig {
-                voters,
-                learners: vec![],
-                witnesses: vec![],
-            }),
-            is_leader,
-            leader_address: leader_addr,
-        }))
-    }
+        ))
+    })
 }
 
 /// Convert internal CommandResult to proto RaftResponse.
@@ -788,7 +229,391 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 }
 
 // =============================================================================
-// Witness Server (lightweight, vote-only)
+// RaftService (internal node-to-node transport)
+// =============================================================================
+
+/// Zone-routed implementation of the RaftService gRPC trait.
+///
+/// Only `step_message` is used in production — all raft-rs message types
+/// (~15 types including votes, heartbeats, appends) are multiplexed through
+/// this single RPC as opaque protobuf v2 bytes (etcd/tikv pattern).
+///
+/// Legacy RPCs (request_vote, append_entries, etc.) return UNIMPLEMENTED.
+struct RaftServiceImpl {
+    registry: Arc<ZoneRaftRegistry>,
+}
+
+#[tonic::async_trait]
+impl RaftService for RaftServiceImpl {
+    async fn request_vote(
+        &self,
+        _request: Request<VoteRequest>,
+    ) -> std::result::Result<Response<VoteResponse>, Status> {
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
+    }
+
+    async fn append_entries(
+        &self,
+        _request: Request<AppendEntriesRequest>,
+    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
+    }
+
+    async fn install_snapshot(
+        &self,
+        _request: Request<Streaming<SnapshotChunk>>,
+    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
+    }
+
+    async fn transfer_leader(
+        &self,
+        _request: Request<TransferLeaderRequest>,
+    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
+    }
+
+    /// Handle a raw raft-rs message forwarded from another node.
+    ///
+    /// Routes by zone_id to the correct Raft group's RaftNode.
+    async fn step_message(
+        &self,
+        request: Request<StepMessageRequest>,
+    ) -> std::result::Result<Response<StepMessageResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
+            Ok(m) => m,
+            Err(e) => {
+                return Ok(Response::new(StepMessageResponse {
+                    success: false,
+                    error: Some(format!("Failed to deserialize raft message: {}", e)),
+                }));
+            }
+        };
+
+        tracing::trace!(
+            "StepMessage [zone={}]: type={:?}, from={}, to={}, term={}",
+            req.zone_id,
+            msg.get_msg_type(),
+            msg.from,
+            msg.to,
+            msg.term,
+        );
+
+        if let Err(e) = node.step(msg) {
+            return Ok(Response::new(StepMessageResponse {
+                success: false,
+                error: Some(format!("Failed to step message: {}", e)),
+            }));
+        }
+
+        Ok(Response::new(StepMessageResponse {
+            success: true,
+            error: None,
+        }))
+    }
+}
+
+// =============================================================================
+// RaftClientService (client-facing: Propose/Query/GetClusterInfo)
+// =============================================================================
+
+/// Zone-routed implementation of the RaftClientService gRPC trait.
+struct RaftClientServiceImpl {
+    registry: Arc<ZoneRaftRegistry>,
+}
+
+#[tonic::async_trait]
+impl RaftClientService for RaftClientServiceImpl {
+    /// Handle a client proposal (write operation).
+    async fn propose(
+        &self,
+        request: Request<ProposeRequest>,
+    ) -> std::result::Result<Response<ProposeResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+        let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+
+        tracing::debug!(
+            "Received propose request: zone={}, id={:?}",
+            req.zone_id,
+            req.request_id
+        );
+
+        let proto_cmd = match req.command {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(Response::new(ProposeResponse {
+                    success: false,
+                    error: Some("No command provided".to_string()),
+                    leader_address: None,
+                    result: None,
+                    applied_index: 0,
+                }));
+            }
+        };
+
+        let cmd = match proto_command_to_internal(proto_cmd) {
+            Some(c) => c,
+            None => {
+                return Ok(Response::new(ProposeResponse {
+                    success: false,
+                    error: Some("Unsupported command type".to_string()),
+                    leader_address: None,
+                    result: None,
+                    applied_index: 0,
+                }));
+            }
+        };
+
+        match node.propose(cmd).await {
+            Ok(result) => {
+                let proto_result = command_result_to_proto(&result);
+                Ok(Response::new(ProposeResponse {
+                    success: true,
+                    error: None,
+                    leader_address: None,
+                    result: Some(proto_result),
+                    applied_index: 0,
+                }))
+            }
+            Err(RaftError::NotLeader { leader_hint }) => {
+                let addr = leader_hint
+                    .and_then(|id| peers.get(&id))
+                    .map(|a| a.endpoint.clone());
+                Ok(Response::new(ProposeResponse {
+                    success: false,
+                    error: Some("Not the leader".to_string()),
+                    leader_address: addr,
+                    result: None,
+                    applied_index: 0,
+                }))
+            }
+            Err(e) => Ok(Response::new(ProposeResponse {
+                success: false,
+                error: Some(format!("Proposal failed: {}", e)),
+                leader_address: None,
+                result: None,
+                applied_index: 0,
+            })),
+        }
+    }
+
+    /// Handle a client query (read operation).
+    async fn query(
+        &self,
+        request: Request<QueryRequest>,
+    ) -> std::result::Result<Response<QueryResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+        let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+
+        tracing::debug!(
+            "Received query request: zone={}, read_from_leader={}",
+            req.zone_id,
+            req.read_from_leader
+        );
+
+        if req.read_from_leader && !node.is_leader() {
+            let leader_addr = node
+                .leader_id()
+                .and_then(|id| peers.get(&id))
+                .map(|a| a.endpoint.clone());
+            return Ok(Response::new(QueryResponse {
+                success: false,
+                error: Some("Not the leader".to_string()),
+                leader_address: leader_addr,
+                result: None,
+            }));
+        }
+
+        let proto_query = match req.query {
+            Some(q) => q,
+            None => {
+                return Ok(Response::new(QueryResponse {
+                    success: false,
+                    error: Some("No query provided".to_string()),
+                    leader_address: None,
+                    result: None,
+                }));
+            }
+        };
+
+        let query_result = match proto_query.query {
+            Some(ProtoQueryVariant::GetMetadata(gm)) => {
+                node.with_state_machine(|sm| match sm.get_metadata(&gm.path) {
+                    Ok(Some(data)) => {
+                        let metadata =
+                            super::proto::nexus::core::FileMetadata::decode(data.as_slice()).ok();
+                        RaftQueryResponse {
+                            success: true,
+                            error: None,
+                            result: Some(ProtoQueryResultVariant::GetMetadataResult(
+                                GetMetadataResult { metadata },
+                            )),
+                        }
+                    }
+                    Ok(None) => RaftQueryResponse {
+                        success: true,
+                        error: None,
+                        result: Some(ProtoQueryResultVariant::GetMetadataResult(
+                            GetMetadataResult { metadata: None },
+                        )),
+                    },
+                    Err(e) => RaftQueryResponse {
+                        success: false,
+                        error: Some(format!("Query failed: {}", e)),
+                        result: None,
+                    },
+                })
+                .await
+            }
+            Some(ProtoQueryVariant::ListMetadata(lm)) => {
+                node.with_state_machine(|sm| match sm.list_metadata(&lm.prefix) {
+                    Ok(items) => {
+                        let proto_items: Vec<_> = items
+                            .into_iter()
+                            .filter_map(|(_, data)| {
+                                super::proto::nexus::core::FileMetadata::decode(data.as_slice())
+                                    .ok()
+                            })
+                            .take(if lm.limit > 0 {
+                                lm.limit as usize
+                            } else {
+                                usize::MAX
+                            })
+                            .collect();
+                        RaftQueryResponse {
+                            success: true,
+                            error: None,
+                            result: Some(ProtoQueryResultVariant::ListMetadataResult(
+                                ListMetadataResult {
+                                    items: proto_items,
+                                    next_cursor: None,
+                                    has_more: false,
+                                },
+                            )),
+                        }
+                    }
+                    Err(e) => RaftQueryResponse {
+                        success: false,
+                        error: Some(format!("List failed: {}", e)),
+                        result: None,
+                    },
+                })
+                .await
+            }
+            Some(ProtoQueryVariant::GetLockInfo(gli)) => {
+                node.with_state_machine(|sm| match sm.get_lock(&gli.lock_id) {
+                    Ok(Some(lock_info)) => {
+                        let first_holder = lock_info.holders.first();
+                        RaftQueryResponse {
+                            success: true,
+                            error: None,
+                            result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
+                                exists: true,
+                                holder_id: first_holder.map(|h| h.holder_info.clone()),
+                                expires_at_ms: first_holder
+                                    .map(|h| (h.expires_at * 1000) as i64)
+                                    .unwrap_or(0),
+                                max_holders: lock_info.max_holders as i32,
+                                current_holders: lock_info.holders.len() as i32,
+                            })),
+                        }
+                    }
+                    Ok(None) => RaftQueryResponse {
+                        success: true,
+                        error: None,
+                        result: Some(ProtoQueryResultVariant::LockInfoResult(LockInfoResult {
+                            exists: false,
+                            holder_id: None,
+                            expires_at_ms: 0,
+                            max_holders: 0,
+                            current_holders: 0,
+                        })),
+                    },
+                    Err(e) => RaftQueryResponse {
+                        success: false,
+                        error: Some(format!("Lock query failed: {}", e)),
+                        result: None,
+                    },
+                })
+                .await
+            }
+            None => RaftQueryResponse {
+                success: false,
+                error: Some("Unknown query type".to_string()),
+                result: None,
+            },
+        };
+
+        let error = query_result.error.clone();
+        Ok(Response::new(QueryResponse {
+            success: query_result.success,
+            error,
+            leader_address: None,
+            result: Some(query_result),
+        }))
+    }
+
+    /// Get cluster information for a zone.
+    async fn get_cluster_info(
+        &self,
+        request: Request<GetClusterInfoRequest>,
+    ) -> std::result::Result<Response<GetClusterInfoResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+        let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+        let node_id = self.registry.node_id();
+
+        let is_leader = node.is_leader();
+        let leader_id = node.leader_id().unwrap_or(0);
+        let term = node.term();
+        let leader_addr = peers.get(&leader_id).map(|a| a.endpoint.clone());
+
+        let mut voters = vec![ProtoNodeInfo {
+            id: node_id,
+            address: peers
+                .get(&node_id)
+                .map(|a| a.endpoint.clone())
+                .unwrap_or_default(),
+            role: 0,
+        }];
+        for (id, addr) in &peers {
+            voters.push(ProtoNodeInfo {
+                id: *id,
+                address: addr.endpoint.clone(),
+                role: 0,
+            });
+        }
+
+        Ok(Response::new(GetClusterInfoResponse {
+            node_id,
+            leader_id,
+            term,
+            config: Some(ProtoClusterConfig {
+                voters,
+                learners: vec![],
+                witnesses: vec![],
+            }),
+            is_leader,
+            leader_address: leader_addr,
+        }))
+    }
+}
+
+// =============================================================================
+// Witness Server (lightweight, vote-only — separate StateMachine type)
 // =============================================================================
 
 /// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>` handle.
@@ -810,6 +635,9 @@ impl WitnessServerState {
         db_path: &str,
         peers: Vec<NodeAddress>,
     ) -> Result<(Self, RaftNodeDriver<WitnessStateMachine>)> {
+        use crate::raft::{RaftConfig, RaftStorage};
+        use crate::storage::SledStore;
+
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
 
@@ -878,7 +706,7 @@ impl RaftWitnessServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode handle (Clone, for sharing with other components).
+    /// Get the RaftNode handle.
     pub fn node(&self) -> RaftNode<WitnessStateMachine> {
         self.state.node.clone()
     }
@@ -888,34 +716,13 @@ impl RaftWitnessServer {
         self.driver.take().expect("driver already taken")
     }
 
-    /// Start the gRPC server.
-    pub async fn serve(self) -> Result<()> {
-        let addr = self.config.bind_address;
-        tracing::info!("Starting Raft Witness gRPC server on {}", addr);
-
-        let service = WitnessServiceImpl {
-            state: self.state.clone(),
-        };
-
-        tonic::transport::Server::builder()
-            .add_service(RaftServiceServer::new(service))
-            .serve(addr)
-            .await
-            .map_err(TransportError::Tonic)?;
-
-        Ok(())
-    }
-
-    /// Start the server with graceful shutdown.
+    /// Start the gRPC server with graceful shutdown.
     pub async fn serve_with_shutdown(
         self,
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!(
-            "Starting Raft Witness gRPC server on {} (with shutdown signal)",
-            addr
-        );
+        tracing::info!("Starting Raft Witness gRPC server on {}", addr);
 
         let service = WitnessServiceImpl {
             state: self.state.clone(),
@@ -931,111 +738,47 @@ impl RaftWitnessServer {
     }
 }
 
-/// Implementation of the RaftService gRPC trait for witness nodes.
+/// Witness implementation of RaftService — only step_message is active.
 struct WitnessServiceImpl {
     state: Arc<WitnessServerState>,
 }
 
 #[tonic::async_trait]
 impl RaftService for WitnessServiceImpl {
-    /// Handle a vote request — witness nodes CAN vote.
     async fn request_vote(
         &self,
-        request: Request<VoteRequest>,
+        _request: Request<VoteRequest>,
     ) -> std::result::Result<Response<VoteResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!(
-            "[Witness] Received vote request: term={}, candidate_id={}",
-            req.term,
-            req.candidate_id
-        );
-
-        let mut msg = raft::eraftpb::Message::default();
-        msg.set_msg_type(raft::eraftpb::MessageType::MsgRequestVote);
-        msg.term = req.term;
-        msg.from = req.candidate_id;
-        msg.to = self.state.node_id;
-        msg.index = req.last_log_index;
-        msg.log_term = req.last_log_term;
-
-        if let Err(e) = self.state.node.step(msg) {
-            tracing::warn!("[Witness] Failed to step vote request: {}", e);
-        }
-
-        let term = self.state.node.term();
-
-        Ok(Response::new(VoteResponse {
-            term,
-            vote_granted: false,
-        }))
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
     }
 
-    /// Handle append entries — witness accepts log but doesn't apply.
     async fn append_entries(
         &self,
-        request: Request<AppendEntriesRequest>,
+        _request: Request<AppendEntriesRequest>,
     ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        let req = request.into_inner();
-        tracing::debug!(
-            "[Witness] Received append entries: term={}, entries={}",
-            req.term,
-            req.entries.len()
-        );
-
-        let mut msg = raft::eraftpb::Message::default();
-        msg.set_msg_type(raft::eraftpb::MessageType::MsgAppend);
-        msg.term = req.term;
-        msg.from = req.leader_id;
-        msg.to = self.state.node_id;
-        msg.index = req.prev_log_index;
-        msg.log_term = req.prev_log_term;
-        msg.commit = req.leader_commit;
-
-        for entry in req.entries {
-            msg.entries.push(raft::eraftpb::Entry {
-                term: entry.term,
-                index: entry.index,
-                data: entry.data.into(),
-                ..Default::default()
-            });
-        }
-
-        if let Err(e) = self.state.node.step(msg) {
-            tracing::warn!("[Witness] Failed to step append entries: {}", e);
-        }
-
-        let term = self.state.node.term();
-
-        Ok(Response::new(AppendEntriesResponse {
-            term,
-            success: true,
-            match_index: 0,
-        }))
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
     }
 
-    /// Handle snapshot installation — witness ignores snapshots.
     async fn install_snapshot(
         &self,
         _request: Request<Streaming<SnapshotChunk>>,
     ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        let term = self.state.node.term();
-        tracing::info!("[Witness] Ignoring snapshot installation request");
-
-        Ok(Response::new(InstallSnapshotResponse {
-            term,
-            success: true,
-        }))
+        Err(Status::unimplemented(
+            "Use step_message — legacy RPCs are not supported",
+        ))
     }
 
-    /// Handle leadership transfer — witness cannot become leader.
     async fn transfer_leader(
         &self,
         _request: Request<TransferLeaderRequest>,
     ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Ok(Response::new(TransferLeaderResponse {
-            success: false,
-            error: "Witness nodes cannot become leaders".to_string(),
-        }))
+        Err(Status::unimplemented(
+            "Witness nodes cannot become leaders",
+        ))
     }
 
     /// Handle a raw raft-rs message forwarded from another node.
@@ -1079,35 +822,36 @@ impl RaftService for WitnessServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_server_creation() {
-        let tmp_dir = TempDir::new().unwrap();
-        let db_path = tmp_dir.path().join("test_db");
-
-        let server = RaftServer::new(1, db_path.to_str().unwrap(), vec![]).unwrap();
+    #[test]
+    fn test_server_config_default() {
+        let config = ServerConfig::default();
         assert_eq!(
-            server.bind_address(),
+            config.bind_address,
             "0.0.0.0:2026".parse::<SocketAddr>().unwrap()
         );
+        assert_eq!(config.max_message_size, 64 * 1024 * 1024);
     }
 
     #[tokio::test]
-    async fn test_custom_config() {
+    async fn test_zone_registry_server() {
+        use tempfile::TempDir;
+
         let tmp_dir = TempDir::new().unwrap();
-        let db_path = tmp_dir.path().join("test_db");
+        let registry = Arc::new(ZoneRaftRegistry::new(
+            tmp_dir.path().to_path_buf(),
+            1,
+        ));
 
         let config = ServerConfig {
-            bind_address: "127.0.0.1:3000".parse().unwrap(),
-            max_connections: 50,
-            max_message_size: 32 * 1024 * 1024,
+            bind_address: "127.0.0.1:0".parse().unwrap(),
+            ..Default::default()
         };
 
-        let server = RaftServer::with_config(1, db_path.to_str().unwrap(), config, vec![]).unwrap();
+        let server = RaftGrpcServer::new(registry, config);
         assert_eq!(
             server.bind_address(),
-            "127.0.0.1:3000".parse::<SocketAddr>().unwrap()
+            "127.0.0.1:0".parse::<SocketAddr>().unwrap()
         );
     }
 }

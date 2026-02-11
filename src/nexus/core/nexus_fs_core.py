@@ -359,11 +359,16 @@ class NexusFSCoreMixin:
     def _increment_and_get_revision(self, zone_id: str) -> int:
         """Atomically increment and return the new revision for a zone.
 
-        Issue #1187: This provides monotonic revision counters for filesystem
+        Issue #1187: Provides monotonic revision counters for filesystem
         consistency tokens (zookies). Each write operation increments the counter
         and includes the new revision in the returned zookie.
 
-        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+        Issue #1330 Phase 4.2: Uses native redb REVISIONS_TABLE via
+        metadata.increment_revision(). redb's single-writer transaction
+        provides atomicity — no Python _revision_lock needed.
+
+        Falls back to FileMetadata-based counter if increment_revision()
+        is not available on the metadata store.
 
         Args:
             zone_id: The zone to increment revision for
@@ -371,12 +376,18 @@ class NexusFSCoreMixin:
         Returns:
             The new revision number after incrementing
         """
+        # Fast path: native redb counter (no lock, atomic via redb txn)
+        if hasattr(self.metadata, "increment_revision"):
+            try:
+                return self.metadata.increment_revision(zone_id)
+            except Exception as e:
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                return int(time.time() * 1000)
+
+        # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        # Issue #923: Lock ensures atomic read-modify-write for revision counter.
-        # Without this, concurrent writes could get the same revision number.
-        # TODO: Replace with atomic increment when Raft store supports it.
         with self._revision_lock:
             try:
                 meta = self.metadata.get(rev_path)
@@ -394,13 +405,13 @@ class NexusFSCoreMixin:
                 return new_rev
             except Exception as e:
                 logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                # Fallback: return timestamp-based pseudo-revision
                 return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
 
-        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+        Issue #1330 Phase 4.2: Uses native redb get_revision() when available.
+        Falls back to FileMetadata-based lookup.
 
         Args:
             zone_id: The zone to get revision for
@@ -408,6 +419,15 @@ class NexusFSCoreMixin:
         Returns:
             The current revision number (0 if not found)
         """
+        # Fast path: native redb counter
+        if hasattr(self.metadata, "get_revision"):
+            try:
+                return self.metadata.get_revision(zone_id)
+            except Exception as e:
+                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+                return 0
+
+        # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         try:
             meta = self.metadata.get(rev_path)

@@ -1,5 +1,14 @@
 """RecordStore write-through syncer.
 
+.. deprecated::
+    RecordStoreSyncer is deprecated in favour of SqlMetadataStore (Issue #1246).
+    When ``use_sql_metadata=True`` is passed to ``create_nexus_fs()`` /
+    ``create_nexus_services()``, the SqlMetadataStore handles version recording
+    and operation logging directly — no separate write observer is needed.
+
+    This module is retained only for backward compatibility when
+    ``use_sql_metadata=False`` (the current default).
+
 Bundles OperationLogger + VersionRecorder into a single injectable observer.
 Created by factory.py, injected into NexusFS kernel as write_observer.
 
@@ -15,6 +24,7 @@ Architecture:
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -30,9 +40,19 @@ class RecordStoreSyncer:
 
     Duck-typed write observer — kernel calls on_write/on_delete without
     knowing or importing this class.
+
+    .. deprecated::
+        Use ``SqlMetadataStore`` with ``use_sql_metadata=True`` instead.
+        This class will be removed in a future release.
     """
 
     def __init__(self, session_factory: Callable[..., Any]) -> None:
+        warnings.warn(
+            "RecordStoreSyncer is deprecated. Use SqlMetadataStore with "
+            "use_sql_metadata=True in create_nexus_fs() instead (Issue #1246).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._session_factory = session_factory
 
     def on_write(

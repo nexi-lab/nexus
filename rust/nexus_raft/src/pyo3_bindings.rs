@@ -364,6 +364,39 @@ impl PyMetastore {
     }
 
     // =========================================================================
+    // Revision Counter Operations (Issue #1330, Phase 4.2)
+    // =========================================================================
+
+    /// Atomically increment and return the new revision for a zone.
+    ///
+    /// Uses redb's dedicated REVISIONS_TABLE with single-writer transactions.
+    /// No Python lock needed — redb's write transaction provides atomicity.
+    ///
+    /// Args:
+    ///     zone_id: The zone to increment revision for.
+    ///
+    /// Returns:
+    ///     The new revision number after incrementing.
+    pub fn increment_revision(&self, zone_id: &str) -> PyResult<u64> {
+        self.store
+            .increment_revision(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to increment revision: {}", e)))
+    }
+
+    /// Get the current revision for a zone without incrementing.
+    ///
+    /// Args:
+    ///     zone_id: The zone to get revision for.
+    ///
+    /// Returns:
+    ///     The current revision number (0 if not found).
+    pub fn get_revision(&self, zone_id: &str) -> PyResult<u64> {
+        self.store
+            .get_revision(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get revision: {}", e)))
+    }
+
+    // =========================================================================
     // Snapshot Operations
     // =========================================================================
 

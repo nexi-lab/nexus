@@ -243,6 +243,23 @@ async def get_consolidation_engine(
     )
 
 
+async def get_operation_logger(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> Any:
+    """Get OperationLogger scoped to the authenticated user's zone.
+
+    Returns a tuple of (OperationLogger, zone_id) for zone-scoped queries.
+    """
+    from nexus.storage.operation_logger import OperationLogger
+
+    context = _get_operation_context(auth_result)
+    session = nexus_fs.memory.session
+    zone_id = context.zone_id or "default"
+
+    return OperationLogger(session=session), zone_id
+
+
 async def get_hierarchy_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),

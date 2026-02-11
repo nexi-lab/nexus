@@ -41,7 +41,7 @@ def make_engine(pool_size: int = 5, max_overflow: int = 10):
 @contextmanager
 def pg_schema(engine):
     """Create tables, yield, then drop them (clean slate per benchmark)."""
-    from nexus.storage.models._base import Base
+    from nexus.storage.models._base import Base  # noqa: I001
     # Import all models so they register with Base.metadata
     from nexus.storage.models.file_path import FilePathModel  # noqa: F401
     from nexus.storage.models.operation_log import OperationLogModel  # noqa: F401
@@ -229,8 +229,8 @@ def main():
     print("=" * 70)
     print(f"  Sync mean latency:     {sync_result['mean_ms']:.3f}ms/write")
     print(f"  Sync throughput:       {sync_result['throughput_wps']:.0f} writes/sec")
-    print(f"\n  The WriteBuffer decouples the hot path (enqueue) from the")
-    print(f"  cold path (flush to PG). For PostgreSQL with network latency,")
+    print("\n  The WriteBuffer decouples the hot path (enqueue) from the")
+    print("  cold path (flush to PG). For PostgreSQL with network latency,")
     print(f"  the hot path is ~0.01ms vs ~{sync_result['mean_ms']:.1f}ms for sync.")
     print("=" * 70)
 

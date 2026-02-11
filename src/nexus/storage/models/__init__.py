@@ -13,11 +13,15 @@ Extracted modules:
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.zone_settings import ZoneSettings
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -2896,6 +2900,11 @@ class ZoneModel(Base):
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
 
+    # Consistency mode (Issue #1180)
+    consistency_mode: Mapped[str] = mapped_column(
+        String(2), nullable=False, server_default="SC", default="SC"
+    )  # Raft replication mode: "SC" (strong) or "EC" (eventual)
+
     # Settings (extensible JSON field)
     settings: Mapped[str | None] = mapped_column(
         Text, nullable=True
@@ -2923,14 +2932,32 @@ class ZoneModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    # Indexes
+    # Indexes and constraints
     __table_args__ = (
+        CheckConstraint("consistency_mode IN ('SC', 'EC')", name="ck_zones_consistency_mode"),
         Index("idx_zones_name", "name"),
         Index("idx_zones_active", "is_active"),
     )
 
+    @property
+    def parsed_settings(self) -> "ZoneSettings":
+        """Parse settings JSON into a ZoneSettings Pydantic model.
+
+        Returns an empty ZoneSettings if settings is None.
+        Raises json.JSONDecodeError / ValueError for malformed JSON.
+        """
+        from nexus.storage.zone_settings import ZoneSettings
+
+        if self.settings is None:
+            return ZoneSettings()
+        return ZoneSettings(**json.loads(self.settings))
+
     def __repr__(self) -> str:
-        return f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
+        return (
+            f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, "
+            f"domain={self.domain}, consistency_mode={self.consistency_mode}, "
+            f"is_active={self.is_active})>"
+        )
 
 
 class ExternalUserServiceModel(Base):

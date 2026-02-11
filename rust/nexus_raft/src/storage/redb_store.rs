@@ -172,9 +172,7 @@ impl SledStore {
         // Ensure the table exists by doing a write transaction
         let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
         {
-            let _table = write_txn
-                .open_table(table_def)
-                .map_err(|e| db_err(e))?;
+            let _table = write_txn.open_table(table_def).map_err(|e| db_err(e))?;
         }
         write_txn.commit().map_err(|e| db_err(e))?;
 
@@ -425,10 +423,7 @@ impl SledTree {
         let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
         match read_txn.open_table(self.table_def()) {
             Ok(table) => match table.first().map_err(|e| db_err(e))? {
-                Some(entry) => Ok(Some((
-                    entry.0.value().to_vec(),
-                    entry.1.value().to_vec(),
-                ))),
+                Some(entry) => Ok(Some((entry.0.value().to_vec(), entry.1.value().to_vec()))),
                 None => Ok(None),
             },
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
@@ -441,10 +436,7 @@ impl SledTree {
         let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
         match read_txn.open_table(self.table_def()) {
             Ok(table) => match table.last().map_err(|e| db_err(e))? {
-                Some(entry) => Ok(Some((
-                    entry.0.value().to_vec(),
-                    entry.1.value().to_vec(),
-                ))),
+                Some(entry) => Ok(Some((entry.0.value().to_vec(), entry.1.value().to_vec()))),
                 None => Ok(None),
             },
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
@@ -499,10 +491,7 @@ impl SledTree {
                 for entry in iter {
                     match entry {
                         Ok(entry) => {
-                            results.push(Ok((
-                                entry.0.value().to_vec(),
-                                entry.1.value().to_vec(),
-                            )));
+                            results.push(Ok((entry.0.value().to_vec(), entry.1.value().to_vec())));
                         }
                         Err(e) => {
                             results.push(Err(db_err(e)));
@@ -565,10 +554,7 @@ impl SledTree {
                 for entry in iter {
                     match entry {
                         Ok(entry) => {
-                            results.push(Ok((
-                                entry.0.value().to_vec(),
-                                entry.1.value().to_vec(),
-                            )));
+                            results.push(Ok((entry.0.value().to_vec(), entry.1.value().to_vec())));
                         }
                         Err(e) => {
                             results.push(Err(db_err(e)));
@@ -618,10 +604,7 @@ impl SledTree {
                 for entry in iter {
                     match entry {
                         Ok(entry) => {
-                            results.push(Ok((
-                                entry.0.value().to_vec(),
-                                entry.1.value().to_vec(),
-                            )));
+                            results.push(Ok((entry.0.value().to_vec(), entry.1.value().to_vec())));
                         }
                         Err(e) => {
                             results.push(Err(db_err(e)));

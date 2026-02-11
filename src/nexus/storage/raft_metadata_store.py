@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult

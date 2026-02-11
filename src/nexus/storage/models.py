@@ -2103,6 +2103,88 @@ class BackendChangeLogModel(Base):
             raise ValidationError(f"size_bytes cannot be negative, got {self.size_bytes}")
 
 
+class SyncBacklogModel(Base):
+    """Backlog for bidirectional sync write-back operations (Issue #1129).
+
+    Tracks pending write-back operations from Nexus to source backends.
+    Supports coalescing (multiple writes to same path merge into one),
+    retry with backoff, and TTL-based expiry.
+
+    Status flow: pending -> in_progress -> completed/failed/expired
+    """
+
+    __tablename__ = "sync_backlog"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # File identification
+    path: Mapped[str] = mapped_column(String(4096), nullable=False)
+    backend_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+
+    # Operation details
+    operation_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # write, delete, mkdir, rename
+    content_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )  # CAS hash for writes
+    new_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)  # For rename ops
+
+    # Status tracking
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending"
+    )  # pending/in_progress/completed/failed/expired
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    last_attempted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Error tracking
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        # Unique per path+backend+zone for pending entries (enables upsert coalescing)
+        # PostgreSQL: partial unique index; SQLite: regular unique index
+        UniqueConstraint(
+            "path",
+            "backend_name",
+            "zone_id",
+            "status",
+            name="uq_sync_backlog_pending",
+        ),
+        # Pending fetch: ordered by creation time
+        Index("idx_sb_status_created", "status", "created_at"),
+        # Per-backend processing
+        Index("idx_sb_backend_zone_status", "backend_name", "zone_id", "status"),
+        # BRIN index for time-range cleanup
+        Index(
+            "idx_sb_created_brin",
+            "created_at",
+            postgresql_using="brin",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SyncBacklogModel(path={self.path}, backend={self.backend_name}, "
+            f"op={self.operation_type}, status={self.status})>"
+        )
+
+
 # === Workspace & Memory Registry Models ===
 
 

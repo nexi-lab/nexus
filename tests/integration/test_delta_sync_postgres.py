@@ -26,7 +26,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.sync_service import ChangeLogStore
+from nexus.services.change_log_store import ChangeLogStore
 from nexus.storage.models import BackendChangeLogModel
 
 # ============================================================================

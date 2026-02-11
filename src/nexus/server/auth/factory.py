@@ -213,7 +213,20 @@ def create_auth_provider(
 
     if auth_type == "static":
         if not auth_config:
-            raise ValueError("auth_config is required for static authentication")
+            # Support legacy api_key kwarg from CLI
+            api_key = kwargs.get("api_key")
+            if api_key:
+                auth_config = {
+                    "api_keys": {
+                        api_key: {
+                            "subject_type": "user",
+                            "subject_id": "admin",
+                            "is_admin": True,
+                        }
+                    }
+                }
+            else:
+                raise ValueError("auth_config is required for static authentication")
         logger.info("Creating StaticAPIKeyAuth provider")
         return StaticAPIKeyAuth.from_config(auth_config)
 

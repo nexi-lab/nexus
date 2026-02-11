@@ -372,6 +372,8 @@ class AppState:
         self.websocket_manager: Any = None
         # Reactive Subscription Manager for O(1) event matching (Issue #1167)
         self.reactive_subscription_manager: Any = None
+        # WriteBack Service for bidirectional sync (Issue #1129)
+        self.write_back_service: Any = None
 
 
 # Global state (set during app creation)
@@ -841,6 +843,37 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
 
+    # Issue #1129: WriteBack Service for bidirectional sync (Nexus -> Backend)
+    # Enable with NEXUS_WRITE_BACK=true (default: disabled)
+    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
+    if write_back_enabled and _app_state.nexus_fs:
+        try:
+            from nexus.services.change_log_store import ChangeLogStore
+            from nexus.services.gateway import NexusFSGateway
+            from nexus.services.sync_backlog_store import SyncBacklogStore
+            from nexus.services.write_back_service import WriteBackService
+
+            gw = NexusFSGateway(_app_state.nexus_fs)
+            wb_event_bus = None
+            if hasattr(_app_state.nexus_fs, "_event_bus"):
+                wb_event_bus = _app_state.nexus_fs._event_bus
+            if wb_event_bus:
+                backlog_store = SyncBacklogStore(gw)
+                change_log_store = ChangeLogStore(gw)
+                _app_state.write_back_service = WriteBackService(
+                    gateway=gw,
+                    event_bus=wb_event_bus,
+                    backlog_store=backlog_store,
+                    change_log_store=change_log_store,
+                    conflict_policy=os.getenv("NEXUS_CONFLICT_POLICY", "lww"),  # type: ignore[arg-type]
+                )
+                await _app_state.write_back_service.start()
+                logger.info("WriteBack service started for bidirectional sync")
+            else:
+                logger.debug("WriteBack service skipped: no event bus available")
+        except Exception as e:
+            logger.warning(f"Failed to start WriteBack service: {e}")
+
     # Connect Lock Manager coordination client (Issue #1186)
     # Required for distributed lock REST API endpoints
     if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
@@ -1056,6 +1089,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("Search Daemon stopped")
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
+
+    # Issue #1129: Stop WriteBack Service
+    if _app_state.write_back_service:
+        try:
+            await _app_state.write_back_service.stop()
+            logger.info("WriteBack service stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down WriteBack service: {e}")
 
     # Stop DirectoryGrantExpander worker
     if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:

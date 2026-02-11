@@ -229,9 +229,9 @@ def main():
     tp_change = buf['throughput_wps'] / sync['throughput_wps'] if sync['throughput_wps'] > 0 else float('inf')
     print(f"  {'Throughput':<20} {sync['throughput_wps']:.0f} w/s{'':<7} {buf['throughput_wps']:.0f} w/s{'':<7} {tp_change:.1f}x")
 
-    print(f"\n  Note: E2E latency includes HTTP + JSON parsing + Raft consensus +")
-    print(f"  CAS storage. The WriteBuffer only affects the PostgreSQL sync path.")
-    print(f"  Pure PG benefit is ~2000x (see bench_write_buffer_pg.py).")
+    print("\n  Note: E2E latency includes HTTP + JSON parsing + Raft consensus +")
+    print("  CAS storage. The WriteBuffer only affects the PostgreSQL sync path.")
+    print("  Pure PG benefit is ~2000x (see bench_write_buffer_pg.py).")
     print(f"{'=' * 70}")
 
 

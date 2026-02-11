@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core._metadata_generated import FileMetadata, PaginatedResult
+from nexus.core.consistency import StoreMode
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -180,7 +181,7 @@ class TestListPaginated:
 
         # Create store via __new__ to bypass __init__
         store = object.__new__(RaftMetadataStore)
-        store._is_local = True
+        store._mode = StoreMode.EMBEDDED
         store._local = mock_local
         store._remote = None
         store._zone_id = None
@@ -287,7 +288,7 @@ class TestListPaginated:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         store = object.__new__(RaftMetadataStore)
-        store._is_local = True
+        store._mode = StoreMode.EMBEDDED
         store._local = mock_local
         store._remote = None
         store._zone_id = None

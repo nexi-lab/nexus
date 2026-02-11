@@ -1216,13 +1216,13 @@ async def lifespan(_app: FastAPI) -> Any:
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
-                config = getattr(_app_state.nexus_fs, "_config", None)
+                sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
                     db_session=session_factory(),
                     e2b_api_key=os.getenv("E2B_API_KEY"),
                     e2b_team_id=os.getenv("E2B_TEAM_ID"),
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
-                    config=config,
+                    config=sandbox_config,
                 )
 
                 # Get NamespaceManager if available (best-effort)

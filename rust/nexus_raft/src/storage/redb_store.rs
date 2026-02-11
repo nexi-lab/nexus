@@ -186,10 +186,7 @@ impl SledStore {
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(DEFAULT_TABLE) {
-            Ok(table) => Ok(table
-                .get(key)
-                .map_err(db_err)?
-                .map(|v| v.value().to_vec())),
+            Ok(table) => Ok(table.get(key).map_err(db_err)?.map(|v| v.value().to_vec())),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(e) => Err(db_err(e)),
         }
@@ -240,9 +237,7 @@ impl SledStore {
     /// Get database size on disk in bytes.
     pub fn size_on_disk(&self) -> Result<u64> {
         match &self.path {
-            Some(path) => std::fs::metadata(path)
-                .map(|m| m.len())
-                .map_err(db_err),
+            Some(path) => std::fs::metadata(path).map(|m| m.len()).map_err(db_err),
             None => Ok(0),
         }
     }
@@ -313,10 +308,7 @@ impl SledTree {
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(self.table_def()) {
-            Ok(table) => Ok(table
-                .get(key)
-                .map_err(db_err)?
-                .map(|v| v.value().to_vec())),
+            Ok(table) => Ok(table.get(key).map_err(db_err)?.map(|v| v.value().to_vec())),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(e) => Err(db_err(e)),
         }
@@ -353,9 +345,7 @@ impl SledTree {
     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
             table.insert(key, value).map_err(db_err)?;
         }
         write_txn.commit().map_err(db_err)?;
@@ -384,9 +374,7 @@ impl SledTree {
         let write_txn = self.db.begin_write().map_err(db_err)?;
         let result;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
             result = table
                 .remove(key)
                 .map_err(db_err)?
@@ -459,9 +447,7 @@ impl SledTree {
         {
             // Delete and recreate the table to clear all entries
             let _ = write_txn.delete_table(self.table_def());
-            let _table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let _table = write_txn.open_table(self.table_def()).map_err(db_err)?;
         }
         write_txn.commit().map_err(db_err)?;
         Ok(())
@@ -632,14 +618,9 @@ impl SledTree {
     ) -> Result<std::result::Result<(), Option<Vec<u8>>>> {
         let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
 
-            let current = table
-                .get(key)
-                .map_err(db_err)?
-                .map(|v| v.value().to_vec());
+            let current = table.get(key).map_err(db_err)?.map(|v| v.value().to_vec());
 
             let expected_vec = expected.map(|e| e.to_vec());
 
@@ -670,14 +651,9 @@ impl SledTree {
         let write_txn = self.db.begin_write().map_err(db_err)?;
         let old_value;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
 
-            old_value = table
-                .get(key)
-                .map_err(db_err)?
-                .map(|v| v.value().to_vec());
+            old_value = table.get(key).map_err(db_err)?.map(|v| v.value().to_vec());
 
             let new_value = f(old_value.as_deref());
             match new_value {
@@ -697,15 +673,11 @@ impl SledTree {
     pub fn apply_batch(&self, batch: &SledBatch) -> Result<()> {
         let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(db_err)?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
             for op in &batch.operations {
                 match op {
                     BatchOp::Insert(k, v) => {
-                        table
-                            .insert(k.as_slice(), v.as_slice())
-                            .map_err(db_err)?;
+                        table.insert(k.as_slice(), v.as_slice()).map_err(db_err)?;
                     }
                     BatchOp::Remove(k) => {
                         table.remove(k.as_slice()).map_err(db_err)?;
@@ -791,9 +763,7 @@ impl TreeBatch {
             for op in &self.batch.operations {
                 match op {
                     BatchOp::Insert(k, v) => {
-                        table
-                            .insert(k.as_slice(), v.as_slice())
-                            .map_err(db_err)?;
+                        table.insert(k.as_slice(), v.as_slice()).map_err(db_err)?;
                     }
                     BatchOp::Remove(k) => {
                         table.remove(k.as_slice()).map_err(db_err)?;

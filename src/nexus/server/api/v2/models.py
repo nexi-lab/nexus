@@ -514,3 +514,20 @@ class OperationListResponse(BaseModel):
     offset: int | None = None
     total: int | None = None
     next_cursor: str | None = None
+
+
+class AgentActivityResponse(BaseModel):
+    """Response for GET /api/v2/operations/agents/{agent_id}/activity.
+
+    Aggregated activity summary for a specific agent within a time window.
+    All fields are scoped to the since filter (default: last 24h).
+
+    Issue #1198: Add Agent Activity Summary endpoint.
+    """
+
+    agent_id: str
+    total_operations: int = 0
+    operations_by_type: dict[str, int] = Field(default_factory=dict)
+    recent_paths: list[str] = Field(default_factory=list)
+    last_active: str | None = None  # ISO-8601
+    first_seen: str | None = None  # ISO-8601

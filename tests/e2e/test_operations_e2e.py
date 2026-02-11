@@ -1,6 +1,9 @@
-"""E2E tests for Operations REST API (Event Replay) with permission enforcement.
+"""E2E tests for Operations REST API with permission enforcement.
 
 Tests issue #1197: Verify GET /api/v2/operations works correctly when:
+Tests issue #1198: Verify GET /api/v2/operations/agents/{agent_id}/activity
+
+Both tests run with:
 - auth_type = database (API keys stored in DB, JWT tokens)
 - enforce_permissions = true (ReBAC permission checks enabled)
 
@@ -333,3 +336,85 @@ class TestOperationsEndpoint:
             assert "path" in op
             assert "status" in op
             assert "timestamp" in op
+
+
+# =============================================================================
+# Agent Activity Summary Tests (Issue #1198)
+# =============================================================================
+
+
+class TestAgentActivityAuthEnforcement:
+    """Verify auth is enforced on agent activity endpoint."""
+
+    def test_activity_requires_auth(self, unauthenticated_client: httpx.Client):
+        """GET /api/v2/operations/agents/{id}/activity without auth returns 401."""
+        resp = unauthenticated_client.get("/api/v2/operations/agents/test-agent/activity")
+        assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+
+
+class TestAgentActivityEndpoint:
+    """E2E tests for GET /api/v2/operations/agents/{agent_id}/activity."""
+
+    def test_activity_endpoint_exists(self, client: httpx.Client):
+        """Endpoint returns 200 even for an agent with no operations."""
+        resp = client.get("/api/v2/operations/agents/nonexistent-agent/activity")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert data["agent_id"] == "nonexistent-agent"
+        assert data["total_operations"] == 0
+        assert data["operations_by_type"] == {}
+        assert data["recent_paths"] == []
+        assert data["last_active"] is None
+        assert data["first_seen"] is None
+
+    def test_activity_response_shape(self, client: httpx.Client):
+        """Response has all required fields with correct types."""
+        resp = client.get("/api/v2/operations/agents/any-agent/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data["agent_id"], str)
+        assert isinstance(data["total_operations"], int)
+        assert isinstance(data["operations_by_type"], dict)
+        assert isinstance(data["recent_paths"], list)
+
+    def test_activity_with_since_parameter(self, client: httpx.Client):
+        """Explicit since parameter is accepted."""
+        resp = client.get(
+            "/api/v2/operations/agents/test-agent/activity?since=2020-01-01T00:00:00Z"
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_operations" in data
+
+    def test_activity_after_file_writes(self, client: httpx.Client):
+        """After seeding file writes, the admin user's activity is reflected.
+
+        The server runs file writes as the authenticated admin user.
+        The agent_id used by the server for file ops may vary, so we
+        query the operations list first to find the actual agent_id.
+        """
+        # Seed operations
+        _seed_file_operations(client)
+
+        # Find agent_ids from the operations log
+        ops_resp = client.get("/api/v2/operations?limit=10")
+        assert ops_resp.status_code == 200
+        ops_data = ops_resp.json()
+
+        if len(ops_data["operations"]) > 0:
+            # Use the first operation's agent_id (may be None)
+            agent_id = ops_data["operations"][0].get("agent_id")
+            if agent_id:
+                resp = client.get(f"/api/v2/operations/agents/{agent_id}/activity")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["agent_id"] == agent_id
+                assert data["total_operations"] >= 1
+                assert len(data["operations_by_type"]) >= 1
+
+    def test_activity_agent_id_validation(self, client: httpx.Client):
+        """Empty agent_id in path returns 422 (validation error)."""
+        # FastAPI should reject empty path segment — the route won't match
+        # so this becomes a 404 (no route for /agents//activity)
+        resp = client.get("/api/v2/operations/agents//activity")
+        assert resp.status_code in (404, 422)

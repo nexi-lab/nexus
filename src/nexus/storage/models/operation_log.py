@@ -75,6 +75,15 @@ class OperationLogModel(Base):
             "created_at",
             postgresql_using="brin",
         ),
+        # Composite B-tree for agent activity summary queries (#1198).
+        # Covers: WHERE zone_id=? AND agent_id=? AND created_at>=?
+        # + GROUP BY operation_type / GROUP BY path ORDER BY created_at DESC
+        Index(
+            "idx_operation_log_zone_agent_created",
+            "zone_id",
+            "agent_id",
+            created_at.desc(),
+        ),
     )
 
     def __repr__(self) -> str:

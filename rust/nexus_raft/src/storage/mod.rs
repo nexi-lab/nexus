@@ -31,6 +31,11 @@
 //! cache.set(b"item:1", b"cached_value").unwrap();
 //! ```
 
+pub mod migration;
+mod redb_store;
 mod sled_store;
 
+pub use redb_store::{
+    RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError as RedbStorageError,
+};
 pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};

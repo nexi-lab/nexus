@@ -51,6 +51,12 @@ impl From<crate::storage::StorageError> for RaftError {
     }
 }
 
+impl From<crate::storage::RedbStorageError> for RaftError {
+    fn from(e: crate::storage::RedbStorageError) -> Self {
+        RaftError::Storage(e.to_string())
+    }
+}
+
 impl From<bincode::Error> for RaftError {
     fn from(e: bincode::Error) -> Self {
         RaftError::Serialization(e.to_string())

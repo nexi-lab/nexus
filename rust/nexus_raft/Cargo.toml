@@ -27,6 +27,8 @@ required-features = ["grpc"]
 [dependencies]
 # Embedded KV storage (general-purpose, reusable)
 sled = "0.34"
+redb = "2"
+tempfile = "3"
 
 # Raft consensus (tikv/raft-rs)
 raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }

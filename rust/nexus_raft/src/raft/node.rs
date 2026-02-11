@@ -541,13 +541,13 @@ impl<S: StateMachine + 'static> RaftNode<S> {
 mod tests {
     use super::*;
     use crate::raft::state_machine::{FullStateMachine, WitnessStateMachine};
-    use crate::storage::SledStore;
+    use crate::storage::RedbStore;
     use tempfile::TempDir;
 
     async fn create_test_node() -> (Arc<RaftNode<WitnessStateMachine>>, TempDir) {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let store = RedbStore::open(dir.path().join("witness")).unwrap();
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -573,7 +573,7 @@ mod tests {
     async fn test_witness_node() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let store = RedbStore::open(dir.path().join("witness")).unwrap();
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig::witness(1, vec![2, 3]);
@@ -586,7 +586,7 @@ mod tests {
     async fn test_bootstrap_conf_state() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
         let state_machine = FullStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -605,7 +605,7 @@ mod tests {
     async fn test_with_state_machine() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
         let state_machine = FullStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -632,7 +632,7 @@ mod tests {
         for id in 1..=3u64 {
             let dir = TempDir::new().unwrap();
             let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = SledStore::open(dir.path().join("sm")).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
             let state_machine = FullStateMachine::new(&store).unwrap();
 
             let peers: Vec<u64> = (1..=3).filter(|&p| p != id).collect();

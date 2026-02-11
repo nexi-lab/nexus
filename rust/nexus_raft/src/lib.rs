@@ -143,6 +143,7 @@ pub mod transport {
 
 /// Re-export commonly used types for convenience.
 pub mod prelude {
+    pub use crate::storage::{RedbBatch, RedbStore, RedbTree, RedbTreeBatch};
     pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError, TreeBatch};
 
     pub use crate::raft::{

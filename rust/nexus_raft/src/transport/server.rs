@@ -28,7 +28,7 @@ use crate::raft::{
     Command, CommandResult, FullStateMachine, RaftConfig, RaftError, RaftNode, RaftStorage,
     StateMachine, WitnessStateMachine,
 };
-use crate::storage::SledStore;
+use crate::storage::RedbStore;
 use prost::Message;
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ impl RaftServerState {
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
 
-        let store = SledStore::open(&sm_path)
+        let store = RedbStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
         let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
@@ -801,7 +801,7 @@ impl WitnessServerState {
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
 
-        let store = SledStore::open(&sm_path)
+        let store = RedbStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
         let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {

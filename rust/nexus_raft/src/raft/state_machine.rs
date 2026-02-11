@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{SledStore, SledTree, StorageError};
+use crate::storage::{RedbStorageError, RedbStore, RedbTree};
 
 use super::Result;
 
@@ -279,18 +279,18 @@ impl StateMachine for WitnessStateMachineInMemory {
 const TREE_WITNESS_LOG: &str = "witness_log";
 const KEY_WITNESS_LAST_INDEX: &[u8] = b"__witness_last_index__";
 
-/// Persistent witness state machine backed by sled.
+/// Persistent witness state machine backed by redb.
 ///
 /// Stores log entries for vote validation but doesn't apply commands.
 /// This is used for production witness nodes.
 pub struct WitnessStateMachine {
-    log_tree: crate::storage::SledTree,
+    log_tree: RedbTree,
     last_index: u64,
 }
 
 impl WitnessStateMachine {
     /// Create a new witness state machine with storage.
-    pub fn new(store: &crate::storage::SledStore) -> Result<Self> {
+    pub fn new(store: &RedbStore) -> Result<Self> {
         let log_tree = store.tree(TREE_WITNESS_LOG)?;
 
         // Load last index from storage
@@ -335,11 +335,7 @@ impl WitnessStateMachine {
     /// Get a log entry by index.
     pub fn get_log_entry(&self, index: u64) -> Option<Vec<u8>> {
         let key = format!("log:{:020}", index);
-        self.log_tree
-            .get(key.as_bytes())
-            .ok()
-            .flatten()
-            .map(|v| v.to_vec())
+        self.log_tree.get(key.as_bytes()).ok().flatten()
     }
 }
 
@@ -372,13 +368,13 @@ const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
 
 /// Full state machine for STRONG_HA zones.
 ///
-/// Stores metadata and locks in sled for persistence. This is used
+/// Stores metadata and locks in redb for persistence. This is used
 /// by leader and follower nodes (not witnesses).
 ///
 /// # Storage Layout
 ///
 /// ```text
-/// sled database
+/// redb database
 /// ├── sm_metadata/        # File metadata (key: path)
 /// │   ├── "/zone/file1" -> FileMetadata (serialized)
 /// │   ├── "/zone/file2" -> FileMetadata (serialized)
@@ -389,9 +385,9 @@ const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
 /// ```
 pub struct FullStateMachine {
     /// Metadata tree: path -> serialized FileMetadata.
-    metadata: SledTree,
+    metadata: RedbTree,
     /// Locks tree: path -> serialized LockInfo.
-    locks: SledTree,
+    locks: RedbTree,
     /// Last applied log index.
     last_applied: u64,
 }
@@ -400,8 +396,8 @@ impl FullStateMachine {
     /// Create a new full state machine.
     ///
     /// # Arguments
-    /// * `store` - The sled store to use for persistence
-    pub fn new(store: &SledStore) -> Result<Self> {
+    /// * `store` - The redb store to use for persistence
+    pub fn new(store: &RedbStore) -> Result<Self> {
         let metadata = store.tree(TREE_METADATA)?;
         let locks = store.tree(TREE_LOCKS)?;
 
@@ -605,7 +601,7 @@ impl FullStateMachine {
         let mut result = Vec::new();
         // Helper closure to process iterator items
         let mut collect = |items: &mut dyn Iterator<
-            Item = std::result::Result<(Vec<u8>, Vec<u8>), StorageError>,
+            Item = std::result::Result<(Vec<u8>, Vec<u8>), RedbStorageError>,
         >|
          -> Result<()> {
             for item in items {
@@ -794,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_full_state_machine_metadata() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Set metadata
@@ -822,7 +818,7 @@ mod tests {
 
     #[test]
     fn test_full_state_machine_mutex_lock() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire mutex (max_holders = 1)
@@ -883,7 +879,7 @@ mod tests {
 
     #[test]
     fn test_full_state_machine_semaphore_lock() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire semaphore with max_holders = 3
@@ -977,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_full_state_machine_snapshot_restore() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Add some data
@@ -1013,7 +1009,7 @@ mod tests {
         let snapshot_data = sm.snapshot().unwrap();
 
         // Create new state machine and restore
-        let store2 = SledStore::open_temporary().unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
         let mut sm2 = FullStateMachine::new(&store2).unwrap();
         sm2.restore_snapshot(&snapshot_data).unwrap();
 
@@ -1026,7 +1022,7 @@ mod tests {
 
     #[test]
     fn test_lock_idempotent_acquire() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire lock

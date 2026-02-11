@@ -38,7 +38,7 @@ def remote_fs(temp_dir: Path, mock_gcs_backend: Mock) -> Generator[NexusFS, None
     db_path = temp_dir / "test-metadata.db"
     fs = create_nexus_fs(
         backend=mock_gcs_backend,
-        metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,
@@ -56,7 +56,7 @@ class TestNexusFSInitialization:
         sled_path = temp_dir / "metadata"
         assert not sled_path.exists()
 
-        metadata_store = RaftMetadataStore.local(str(sled_path))
+        metadata_store = RaftMetadataStore.embedded(str(sled_path))
         fs = NexusFS(
             backend=mock_gcs_backend,
             metadata_store=metadata_store,
@@ -68,7 +68,7 @@ class TestNexusFSInitialization:
 
     def test_init_with_default_db_path(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test initialization with metadata_store."""
-        metadata_store = RaftMetadataStore.local(str(temp_dir / "metadata"))
+        metadata_store = RaftMetadataStore.embedded(str(temp_dir / "metadata"))
         fs = NexusFS(
             backend=mock_gcs_backend,
             metadata_store=metadata_store,
@@ -89,7 +89,7 @@ class TestNexusFSInitialization:
 
         fs = create_nexus_fs(
             backend=mock_gcs_backend,
-            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-creds")),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-creds")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
         )
 
@@ -102,7 +102,7 @@ class TestNexusFSInitialization:
         db_path = temp_dir / "metadata.db"
         fs = create_nexus_fs(
             backend=mock_gcs_backend,
-            metadata_store=RaftMetadataStore.local(str(temp_dir / "raft-metadata-zone")),
+            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-zone")),
             record_store=SQLAlchemyRecordStore(db_path=db_path),
             zone_id="zone-123",
             agent_id="agent-456",
@@ -790,7 +790,7 @@ class TestClose:
     def test_close(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
         """Test that close releases resources."""
         db_path = temp_dir / "metadata.db"
-        metadata_store = RaftMetadataStore.local(str(db_path).replace(".db", ""))
+        metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
         fs = NexusFS(backend=mock_gcs_backend, metadata_store=metadata_store)
 
         # Close should not raise

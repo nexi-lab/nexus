@@ -33,7 +33,7 @@ Usage::
 
     nx = create_nexus_fs(
         backend=LocalBackend(root_path="./data"),
-        metadata_store=RaftMetadataStore.local("./raft"),
+        metadata_store=RaftMetadataStore.embedded("./raft"),
         record_store=SQLAlchemyRecordStore(db_path="./db.sqlite"),
         enforce_permissions=False,
     )
@@ -77,6 +77,7 @@ def create_nexus_services(
     deferred_flush_interval: float = 0.05,
     zone_id: str | None = None,
     agent_id: str | None = None,
+    enable_write_buffer: bool | None = None,
 ) -> dict[str, Any]:
     """Create default services for NexusFS dependency injection.
 
@@ -98,6 +99,7 @@ def create_nexus_services(
         deferred_flush_interval: Flush interval in seconds (default: 0.05).
         zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
+        enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
 
     Returns:
         Dict of keyword arguments ready to spread into ``NexusFS()``::
@@ -205,12 +207,35 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
-    # --- RecordStore Syncer (Task #45) ---
+    # --- RecordStore Syncer (Task #45, Issue #1246) ---
     # Bundles OperationLogger + VersionRecorder into one write observer.
     # Kernel calls on_write()/on_delete() without knowing the concrete class.
-    from nexus.storage.record_store_syncer import RecordStoreSyncer
+    # Decision 13A: WriteBuffer auto-enabled for PostgreSQL (amortizes network I/O).
+    # SQLite stays synchronous (no network overhead, tests need sync guarantees).
+    # Override via NEXUS_ENABLE_WRITE_BUFFER=true env var.
+    import os
 
-    write_observer = RecordStoreSyncer(session_factory)
+    db_url = getattr(record_store, "database_url", "")
+    use_buffer = enable_write_buffer
+    if use_buffer is None:
+        env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()
+        if env_val in ("true", "1", "yes"):
+            use_buffer = True
+        elif env_val in ("false", "0", "no"):
+            use_buffer = False
+        else:
+            use_buffer = db_url.startswith(("postgres", "postgresql"))
+
+    write_observer: Any
+    if use_buffer:
+        from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+
+        write_observer = BufferedRecordStoreSyncer(session_factory)
+        write_observer.start()
+    else:
+        from nexus.storage.record_store_syncer import RecordStoreSyncer
+
+        write_observer = RecordStoreSyncer(session_factory)
 
     # --- VersionService (Task #45) ---
     # Version history queries go through RecordStore (VersionHistoryModel),
@@ -277,6 +302,7 @@ def create_nexus_fs(
     enable_tiger_cache: bool = True,
     enable_deferred_permissions: bool = True,
     deferred_flush_interval: float = 0.05,
+    enable_write_buffer: bool | None = None,
 ) -> NexusFS:
     """Create NexusFS with default services — the recommended entry point.
 
@@ -325,6 +351,7 @@ def create_nexus_fs(
             deferred_flush_interval=deferred_flush_interval,
             zone_id=zone_id,
             agent_id=agent_id,
+            enable_write_buffer=enable_write_buffer,
         )
 
     return NexusFS(

@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use raft::eraftpb::{ConfChange, ConfChangeType, Entry, EntryType, Message};
-use raft::{Config, RawNode};
+use raft::eraftpb::{ConfChange, ConfChangeType, ConfState, Entry, EntryType, Message};
+use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{oneshot, Notify, RwLock};
 
 use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
@@ -56,7 +56,7 @@ impl Default for RaftConfig {
             max_size_per_msg: 1024 * 1024, // 1MB
             max_inflight_msgs: 256,
             is_witness: false,
-            tick_interval: Duration::from_millis(100),
+            tick_interval: Duration::from_millis(10),
         }
     }
 }
@@ -113,15 +113,12 @@ impl From<raft::StateRole> for NodeRole {
 struct PendingProposal {
     /// Channel to send result back.
     tx: oneshot::Sender<Result<CommandResult>>,
-    /// The command data.
-    #[allow(dead_code)]
-    data: Vec<u8>,
 }
 
 /// A Raft consensus node.
 ///
 /// This wraps tikv/raft-rs's `RawNode` and provides:
-/// - Async proposal API
+/// - Async proposal API with correct proposal tracking
 /// - Automatic tick handling
 /// - Message sending through transport
 /// - State machine application
@@ -139,8 +136,13 @@ struct PendingProposal {
 /// let state_machine = MyStateMachine::new();
 /// let node = RaftNode::new(config, storage, state_machine)?;
 ///
-/// // Start the node
-/// node.run().await?;
+/// // Drive the event loop
+/// loop {
+///     let messages = node.advance().await?;
+///     for msg in messages {
+///         transport.send(msg).await?;
+///     }
+/// }
 /// ```
 pub struct RaftNode<S: StateMachine> {
     /// Node configuration.
@@ -149,26 +151,45 @@ pub struct RaftNode<S: StateMachine> {
     raw_node: RwLock<RawNode<RaftStorage>>,
     /// The state machine.
     state_machine: RwLock<S>,
-    /// Pending proposals waiting for commit.
+    /// Pending proposals waiting for commit, keyed by proposal ID.
     pending: RwLock<HashMap<u64, PendingProposal>>,
     /// Proposal ID counter.
     proposal_id: std::sync::atomic::AtomicU64,
-    /// Channel for outgoing messages.
-    msg_tx: mpsc::Sender<Message>,
-    /// Channel for receiving messages (used by transport layer).
-    _msg_rx: RwLock<mpsc::Receiver<Message>>,
     /// Last tick time.
     last_tick: RwLock<Instant>,
+    /// Notify transport loop to advance immediately (e.g., after propose/step).
+    advance_notify: Arc<Notify>,
 }
 
 impl<S: StateMachine + 'static> RaftNode<S> {
     /// Create a new Raft node.
+    ///
+    /// If the storage has no existing ConfState (fresh cluster), initializes
+    /// the voter set with this node and all configured peers.
     ///
     /// # Arguments
     /// * `config` - Node configuration
     /// * `storage` - Persistent storage for Raft log
     /// * `state_machine` - Application state machine
     pub fn new(config: RaftConfig, storage: RaftStorage, state_machine: S) -> Result<Arc<Self>> {
+        // Bootstrap: set initial ConfState if this is a fresh cluster
+        let initial_state = storage
+            .initial_state()
+            .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+        if initial_state.conf_state.voters.is_empty() && !config.peers.is_empty() {
+            let mut voters = vec![config.id];
+            voters.extend(config.peers.iter());
+            let cs = ConfState {
+                voters: voters.clone(),
+                ..Default::default()
+            };
+            storage
+                .set_conf_state(&cs)
+                .map_err(|e| RaftError::Storage(format!("failed to set initial ConfState: {e}")))?;
+            tracing::info!("Bootstrapped ConfState with voters: {:?}", voters);
+        }
+
         let raft_config = config.to_raft_config();
 
         // Create a discard logger for raft-rs (we use tracing for our own logging)
@@ -178,24 +199,25 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         let raw_node = RawNode::new(&raft_config, storage, &logger)
             .map_err(|e| RaftError::Raft(e.to_string()))?;
 
-        // Create message channel
-        let (msg_tx, msg_rx) = mpsc::channel(1024);
-
         Ok(Arc::new(Self {
             config,
             raw_node: RwLock::new(raw_node),
             state_machine: RwLock::new(state_machine),
             pending: RwLock::new(HashMap::new()),
             proposal_id: std::sync::atomic::AtomicU64::new(0),
-            msg_tx,
-            _msg_rx: RwLock::new(msg_rx),
             last_tick: RwLock::new(Instant::now()),
+            advance_notify: Arc::new(Notify::new()),
         }))
     }
 
     /// Get the node ID.
     pub fn id(&self) -> u64 {
         self.config.id
+    }
+
+    /// Get the node configuration.
+    pub fn config(&self) -> &RaftConfig {
+        &self.config
     }
 
     /// Check if this is a witness node.
@@ -225,10 +247,42 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         }
     }
 
+    /// Get the advance notifier.
+    ///
+    /// The transport loop should listen on this to wake up immediately
+    /// when new proposals or messages arrive, rather than waiting for
+    /// the next tick interval.
+    pub fn advance_notify(&self) -> Arc<Notify> {
+        self.advance_notify.clone()
+    }
+
     /// Get the current term.
     pub async fn term(&self) -> u64 {
         let node = self.raw_node.read().await;
         node.raft.term
+    }
+
+    /// Execute a read-only closure against the state machine.
+    ///
+    /// This provides safe read access for query operations (e.g., get_metadata)
+    /// without going through the Raft log.
+    pub async fn with_state_machine<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&S) -> R,
+    {
+        let sm = self.state_machine.read().await;
+        f(&*sm)
+    }
+
+    /// Execute a mutable closure against the state machine.
+    ///
+    /// Used for operations like snapshot restore that require `&mut self`.
+    pub async fn with_state_machine_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut S) -> R,
+    {
+        let mut sm = self.state_machine.write().await;
+        f(&mut *sm)
     }
 
     /// Propose a command for replication.
@@ -237,9 +291,21 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// will be replicated through Raft and applied to the state machine
     /// once committed.
     ///
+    /// The proposal ID is prepended to the serialized data so that
+    /// `apply_entries()` can match committed entries back to waiting callers.
+    ///
+    /// After proposing, wakes the transport loop via `advance_notify` so the
+    /// command is processed immediately rather than waiting for the next tick.
+    ///
+    /// # Timeout
+    /// Proposals time out after 10 seconds. If consensus is not reached within
+    /// that window (e.g., leader lost quorum), returns `RaftError::Timeout`.
+    ///
     /// # Returns
     /// Result of applying the command, or error if proposal failed.
     pub async fn propose(&self, command: Command) -> Result<CommandResult> {
+        const PROPOSAL_TIMEOUT_SECS: u64 = 10;
+
         if !self.is_leader().await {
             return Err(RaftError::NotLeader {
                 leader_hint: self.leader_id().await,
@@ -254,30 +320,41 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             .proposal_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
+        // Prepend proposal ID to the data so apply_entries() can match it back
+        let mut proposal_data = Vec::with_capacity(8 + data.len());
+        proposal_data.extend_from_slice(&id.to_be_bytes());
+        proposal_data.extend_from_slice(&data);
+
         // Create response channel
         let (tx, rx) = oneshot::channel();
 
-        // Store pending proposal
+        // Store pending proposal keyed by proposal ID
         {
             let mut pending = self.pending.write().await;
-            pending.insert(
-                id,
-                PendingProposal {
-                    tx,
-                    data: data.clone(),
-                },
-            );
+            pending.insert(id, PendingProposal { tx });
         }
 
         // Propose to raft
         {
             let mut node = self.raw_node.write().await;
-            node.propose(vec![], data)
+            node.propose(vec![], proposal_data)
                 .map_err(|e| RaftError::Raft(e.to_string()))?;
         }
 
-        // Wait for commit
-        rx.await.map_err(|_| RaftError::ProposalDropped)?
+        // Wake transport loop to advance immediately
+        self.advance_notify.notify_one();
+
+        // Wait for commit with timeout
+        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(RaftError::ProposalDropped),
+            Err(_) => {
+                // Timed out — clean up pending proposal
+                let mut pending = self.pending.write().await;
+                pending.remove(&id);
+                Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS))
+            }
+        }
     }
 
     /// Propose a configuration change.
@@ -304,9 +381,15 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     }
 
     /// Process a message from another node.
+    ///
+    /// After stepping, wakes the transport loop via `advance_notify` so the
+    /// response is processed immediately rather than waiting for the next tick.
     pub async fn step(&self, msg: Message) -> Result<()> {
         let mut node = self.raw_node.write().await;
         node.step(msg).map_err(|e| RaftError::Raft(e.to_string()))?;
+        drop(node);
+        // Wake transport loop to advance immediately
+        self.advance_notify.notify_one();
         Ok(())
     }
 
@@ -397,26 +480,41 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     }
 
     /// Apply committed entries to the state machine.
+    ///
+    /// Each entry's data is prefixed with an 8-byte proposal ID (set by `propose()`).
+    /// After applying the command, the pending proposal channel is resolved.
     async fn apply_entries(&self, entries: Vec<Entry>) -> Result<()> {
         let mut sm = self.state_machine.write().await;
 
         for entry in entries {
             if entry.data.is_empty() {
-                // Empty entry (e.g., leader election)
+                // Empty entry (e.g., leader election noop)
                 continue;
             }
 
             match entry.get_entry_type() {
                 EntryType::EntryNormal => {
+                    // Data format: [8 bytes proposal_id][bincode command]
+                    if entry.data.len() < 8 {
+                        tracing::warn!(
+                            "Entry at index {} has data shorter than 8 bytes, skipping",
+                            entry.index
+                        );
+                        continue;
+                    }
+
+                    let (id_bytes, cmd_bytes) = entry.data.split_at(8);
+                    let proposal_id = u64::from_be_bytes(
+                        id_bytes.try_into().expect("split_at(8) guarantees 8 bytes"),
+                    );
+
                     // Deserialize and apply command
-                    let command: Command = bincode::deserialize(&entry.data)?;
+                    let command: Command = bincode::deserialize(cmd_bytes)?;
                     let result = sm.apply(entry.index, &command)?;
 
                     // Notify waiting proposal (if any)
-                    // Note: We use index as proposal ID for simplicity
-                    // In production, you'd want a proper proposal tracking mechanism
                     let mut pending = self.pending.write().await;
-                    if let Some(proposal) = pending.remove(&entry.index) {
+                    if let Some(proposal) = pending.remove(&proposal_id) {
                         let _ = proposal.tx.send(Ok(result));
                     }
                 }
@@ -428,11 +526,6 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         }
 
         Ok(())
-    }
-
-    /// Get a channel sender for incoming messages.
-    pub fn message_sender(&self) -> mpsc::Sender<Message> {
-        self.msg_tx.clone()
     }
 
     /// Campaign to become leader.
@@ -447,7 +540,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::raft::state_machine::WitnessStateMachine;
+    use crate::raft::state_machine::{FullStateMachine, WitnessStateMachine};
     use crate::storage::SledStore;
     use tempfile::TempDir;
 
@@ -487,5 +580,159 @@ mod tests {
         let node = RaftNode::new(config, storage, state_machine).unwrap();
 
         assert!(node.is_witness());
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_conf_state() {
+        let dir = TempDir::new().unwrap();
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let state_machine = FullStateMachine::new(&store).unwrap();
+
+        let config = RaftConfig {
+            id: 1,
+            peers: vec![2, 3],
+            ..Default::default()
+        };
+
+        let node = RaftNode::new(config, storage, state_machine).unwrap();
+        assert_eq!(node.id(), 1);
+        // Node should start as follower with peers configured
+        assert_eq!(node.role().await, NodeRole::Follower);
+    }
+
+    #[tokio::test]
+    async fn test_with_state_machine() {
+        let dir = TempDir::new().unwrap();
+        let storage = RaftStorage::open(dir.path()).unwrap();
+        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let state_machine = FullStateMachine::new(&store).unwrap();
+
+        let config = RaftConfig {
+            id: 1,
+            peers: vec![],
+            ..Default::default()
+        };
+
+        let node = RaftNode::new(config, storage, state_machine).unwrap();
+
+        // Read from state machine via with_state_machine
+        let result = node
+            .with_state_machine(|sm| sm.get_metadata("/nonexistent"))
+            .await;
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_three_node_consensus() {
+        // Create 3 nodes
+        let mut nodes = Vec::new();
+        let mut _dirs = Vec::new();
+
+        for id in 1..=3u64 {
+            let dir = TempDir::new().unwrap();
+            let storage = RaftStorage::open(dir.path()).unwrap();
+            let store = SledStore::open(dir.path().join("sm")).unwrap();
+            let state_machine = FullStateMachine::new(&store).unwrap();
+
+            let peers: Vec<u64> = (1..=3).filter(|&p| p != id).collect();
+            let config = RaftConfig {
+                id,
+                peers,
+                tick_interval: Duration::from_millis(10),
+                ..Default::default()
+            };
+
+            let node = RaftNode::new(config, storage, state_machine).unwrap();
+            nodes.push(node);
+            _dirs.push(dir);
+        }
+
+        // Trigger election on node 1
+        nodes[0].campaign().await.unwrap();
+
+        // Drive the event loop, routing messages between nodes
+        for _ in 0..100 {
+            let mut all_messages = vec![];
+            for node in &nodes {
+                match node.advance().await {
+                    Ok(msgs) => all_messages.extend(msgs),
+                    Err(e) => tracing::warn!("advance error: {}", e),
+                }
+            }
+
+            // Route messages to target nodes
+            for msg in all_messages {
+                let target_idx = msg.to as usize - 1; // node IDs are 1-indexed
+                if target_idx < nodes.len() {
+                    let _ = nodes[target_idx].step(msg).await;
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Verify exactly one leader
+        let mut leader_count = 0;
+        let mut leader_idx = 0;
+        for (i, node) in nodes.iter().enumerate() {
+            if node.is_leader().await {
+                leader_count += 1;
+                leader_idx = i;
+            }
+        }
+        assert_eq!(leader_count, 1, "Expected exactly 1 leader");
+
+        // Propose a command on the leader.
+        // propose() awaits the oneshot receiver internally, so we spawn it
+        // in a background task while the advance loop continues to drive
+        // commit and apply — just like production where advance runs as a
+        // background tokio task.
+        let leader = nodes[leader_idx].clone();
+        let propose_handle = tokio::spawn(async move {
+            let cmd = Command::SetMetadata {
+                key: "/test.txt".into(),
+                value: b"hello world".to_vec(),
+            };
+            leader.propose(cmd).await
+        });
+
+        // Drive more rounds — commit the proposal + replicate to followers
+        for _ in 0..100 {
+            let mut all_messages = vec![];
+            for node in &nodes {
+                match node.advance().await {
+                    Ok(msgs) => all_messages.extend(msgs),
+                    Err(e) => tracing::warn!("advance error: {}", e),
+                }
+            }
+            for msg in all_messages {
+                let target_idx = msg.to as usize - 1;
+                if target_idx < nodes.len() {
+                    let _ = nodes[target_idx].step(msg).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Wait for the proposal to complete
+        let result = propose_handle.await.unwrap().unwrap();
+        assert!(
+            matches!(result, CommandResult::Success),
+            "Proposal should succeed"
+        );
+
+        // Verify all nodes have the metadata
+        for (i, node) in nodes.iter().enumerate() {
+            let value = node
+                .with_state_machine(|sm| sm.get_metadata("/test.txt"))
+                .await
+                .unwrap();
+            assert!(
+                value.is_some(),
+                "Node {} should have /test.txt metadata after replication",
+                i + 1
+            );
+        }
     }
 }

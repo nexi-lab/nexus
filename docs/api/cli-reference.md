@@ -888,7 +888,7 @@ export NEXUS_TENANT_ID=org_acme
 export NEXUS_SUBJECT=user:alice
 
 # Database URL (PostgreSQL) - Required for skills approval workflow
-export NEXUS_DATABASE_URL=postgresql://user:pass@localhost/nexus
+export NEXUS_DATABASE_URL=postgresql://user/pass@localhost/nexus
 
 # GCS configuration
 export GCS_PROJECT_ID=my-project
@@ -927,7 +927,7 @@ subject: user:alice
 enforce_permissions: true
 
 # Database (optional)
-database_url: postgresql://user:pass@localhost/nexus
+database_url: postgresql://user/pass@localhost/nexus
 ```
 
 Then use it:

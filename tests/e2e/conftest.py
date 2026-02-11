@@ -122,6 +122,9 @@ def nexus_server(isolated_db, tmp_path):
     env["NEXUS_DATABASE_URL"] = f"sqlite:///{isolated_db}"
     env["PYTHONPATH"] = str(_src_path)
 
+    # Set API key for authenticated tests
+    env["NEXUS_API_KEY"] = "test-e2e-api-key-12345"
+
     # Issue #1186: Enable lock manager if Dragonfly/Redis is available
     dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
     if dragonfly_url:
@@ -136,7 +139,11 @@ def nexus_server(isolated_db, tmp_path):
         [
             sys.executable,
             "-c",
-            f"from nexus.cli import main; main(['serve', '--host', '127.0.0.1', '--port', '{port}', '--data-dir', '{tmp_path}'])",
+            (
+                f"from nexus.cli import main; "
+                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"'--data-dir', '{tmp_path}'])"
+            ),
         ],
         env=env,
         stdout=subprocess.PIPE,
@@ -210,7 +217,7 @@ def nexus_fs(isolated_db, tmp_path):
     storage_path.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=str(storage_path))
 
-    metadata_store = RaftMetadataStore.local(str(isolated_db).replace(".db", ""))
+    metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     record_store = SQLAlchemyRecordStore()  # in-memory SQLite for tests
     nx = create_nexus_fs(
         backend=backend,

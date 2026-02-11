@@ -24,7 +24,7 @@ def nx(tmp_path):
 
     fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         auto_parse=False,
         enforce_permissions=False,  # Disable permissions for basic functionality tests

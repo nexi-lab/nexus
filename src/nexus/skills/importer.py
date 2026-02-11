@@ -97,7 +97,7 @@ class SkillImporter:
             {
                 "imported_skills": ["skill-name"],
                 "skill_paths": [
-                    "/zone/{tid}/user:{uid}/skill/{skill-name}/" for personal,
+                    "/zone/{tid}/user/{uid}/skill/{skill-name}/" for personal,
                     "/zone/{tid}/skill/{skill-name}/" for zone,
                     "/skill/{skill-name}/" for system
                 ],
@@ -365,7 +365,7 @@ class SkillImporter:
 
         Returns:
             Target path string:
-            - personal: /zone/{tid}/user:{uid}/skill/{skill_name}/
+            - personal: /zone/{tid}/user/{uid}/skill/{skill_name}/
             - zone: /zone/{tid}/skill/{skill_name}/
             - system: /skill/{skill_name}/
         """
@@ -378,11 +378,11 @@ class SkillImporter:
         zone_id = context.zone_id or "default"
 
         if tier == "personal":
-            # Personal: /zone/{tid}/user:{uid}/skill/{skill_name}/
+            # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/
             user_id = context.user_id or getattr(context, "user", None)
             if not user_id:
                 raise ValueError("user_id required for personal tier skills")
-            return f"/zone/{zone_id}/user:{user_id}/skill/{skill_name}/"
+            return f"/zone/{zone_id}/user/{user_id}/skill/{skill_name}/"
 
         if tier == "zone":
             # Zone: /zone/{tid}/skill/{skill_name}/

@@ -101,7 +101,7 @@ def run_benchmark(enable_deferred: bool = False):
         # Create NexusFS with permissions ENABLED
         nx = NexusFS(
             backend=backend,
-            metadata_store=RaftMetadataStore.local(str(db_path).replace(".db", "-raft")),
+            metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
             is_admin=False,
             zone_id="benchmark_zone",

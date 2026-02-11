@@ -86,6 +86,13 @@ jobs:
         if: matrix.os != 'windows-latest'
         shell: bash
 
+      - name: Build Rust extension (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          maturin develop --release
+        if: matrix.os != 'windows-latest'
+        shell: bash
+
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev,test]"
@@ -93,7 +100,7 @@ jobs:
       - name: Verify Rust extensions
         run: |
           uv run python -c "import nexus_fast; print('nexus_fast OK')"
-          uv run python -c "from _nexus_raft import LocalRaft; print('nexus_raft OK')"
+          uv run python -c "from _nexus_raft import Metastore; print('nexus_raft OK')"
         if: matrix.os != 'windows-latest'
         shell: bash
 

@@ -42,7 +42,7 @@ def source_nexus_fs(temp_dir):
 
     fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -66,7 +66,7 @@ def target_nexus_fs(temp_dir):
 
     fs = create_nexus_fs(
         backend=LocalBackend(data_dir),
-        metadata_store=RaftMetadataStore.local(str(data_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(str(data_dir / "raft-metadata")),
         record_store=SQLAlchemyRecordStore(db_path=data_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,

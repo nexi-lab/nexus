@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
+
 if TYPE_CHECKING:
     from nexus.core.hotspot_detector import HotspotDetector
     from nexus.core.namespace_manager import NamespaceManager
@@ -122,6 +124,7 @@ class OperationContext:
     groups: list[str]
     zone_id: str | None = None
     agent_id: str | None = None  # Agent identity (optional)
+    agent_generation: int | None = None  # Session generation counter (Issue #1240)
     is_admin: bool = False
     is_system: bool = False
 
@@ -145,6 +148,11 @@ class OperationContext:
     # to enable precise cache invalidation and efficient subscription updates
     read_set: ReadSet | None = None  # Read set for this operation (lazy-initialized)
     track_reads: bool = False  # Enable read tracking for this operation
+
+    # Issue #923: Close-to-open consistency model
+    # Controls consistency/performance tradeoff for metadata reads
+    consistency: FSConsistency = DEFAULT_CONSISTENCY  # EVENTUAL, CLOSE_TO_OPEN, STRONG
+    min_zookie: str | None = None  # Zookie token from prior write for at-least-as-fresh reads
 
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
@@ -292,6 +300,8 @@ class PermissionEnforcer:
         enable_hotspot_tracking: bool = True,
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         namespace_manager: NamespaceManager | None = None,
+        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        agent_registry: Any = None,
     ):
         """Initialize permission enforcer.
 
@@ -310,6 +320,7 @@ class PermissionEnforcer:
             hotspot_detector: HotspotDetector for access pattern tracking (Issue #921)
             enable_hotspot_tracking: Enable hotspot tracking (default: True)
             namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
+            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
         self.rebac_manager: EnhancedReBACManager | None = rebac_manager
@@ -318,6 +329,9 @@ class PermissionEnforcer:
 
         # Issue #1239: Per-subject namespace visibility (Agent OS Phase 0)
         self.namespace_manager: NamespaceManager | None = namespace_manager
+
+        # Issue #1240: Agent registry for stale-session detection (Agent OS Phase 1)
+        self.agent_registry = agent_registry
 
         # P0-4: Enhanced features
         self.allow_admin_bypass = allow_admin_bypass
@@ -639,6 +653,28 @@ class PermissionEnforcer:
                 raise NexusFileNotFoundError(
                     path=path,
                     message="Path not found",  # Intentionally vague — path is invisible
+                )
+
+        # Issue #1240: Stale-session detection (Agent OS Phase 1)
+        # If an agent's session generation doesn't match the current DB generation,
+        # a newer session has superseded this one → reject with 409 Conflict.
+        if (
+            self.agent_registry is not None
+            and context.agent_generation is not None
+            and context.subject_type == "agent"
+        ):
+            agent_id = context.agent_id or context.subject_id
+            if not agent_id:
+                logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
+            elif (
+                current_record := self.agent_registry.get(agent_id)
+            ) and current_record.generation != context.agent_generation:
+                from nexus.core.exceptions import StaleSessionError
+
+                raise StaleSessionError(
+                    agent_id,
+                    f"Session generation {context.agent_generation} is stale "
+                    f"(current: {current_record.generation})",
                 )
 
         # Normal ReBAC check
@@ -1086,13 +1122,11 @@ class PermissionEnforcer:
         ):
             return paths
 
-        # Issue #1239: Namespace pre-filter — only include paths visible to subject
-        # This runs before Tiger cache / ReBAC bulk checks for efficiency
+        # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.
+        # filter_visible() acquires locks once for all paths (not per-path).
         if self.namespace_manager is not None:
             subject = context.get_subject()
-            paths = [
-                p for p in paths if self.namespace_manager.is_visible(subject, p, context.zone_id)
-            ]
+            paths = self.namespace_manager.filter_visible(subject, paths, context.zone_id)
             if not paths:
                 return []
 

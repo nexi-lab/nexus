@@ -6,17 +6,18 @@
 //!
 //! # What is a Witness?
 //!
-//! - Votes in leader elections ✓
-//! - Stores Raft log (for vote validation) ✓
-//! - Does NOT apply state machine ✗
-//! - Does NOT serve reads ✗
-//! - Cannot become leader ✗
+//! - Votes in leader elections
+//! - Stores Raft log (for vote validation)
+//! - Does NOT apply state machine
+//! - Does NOT serve reads
+//! - Cannot become leader
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Start a witness node
-//! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2028 nexus-witness
+//! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2028 \
+//!   NEXUS_PEERS=1@http://10.0.0.1:2026,2@http://10.0.0.2:2026 \
+//!   nexus-witness
 //! ```
 //!
 //! # Resource Requirements
@@ -36,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("nexus_raft=debug".parse()?)
+                .add_directive("_nexus_raft=debug".parse()?)
                 .add_directive("tonic=info".parse()?),
         )
         .init();
@@ -70,24 +71,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Import and start the witness server (requires grpc feature AND proto files)
     #[cfg(all(feature = "grpc", has_protos))]
     {
-        use _nexus_raft::transport::{RaftWitnessServer, ServerConfig};
+        use _nexus_raft::transport::{
+            NodeAddress, RaftClientPool, RaftWitnessServer, ServerConfig, TransportLoop,
+        };
+
+        // Parse peers from NEXUS_PEERS env var
+        let peers: Vec<NodeAddress> = env::var("NEXUS_PEERS")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                NodeAddress::parse(s.trim())
+                    .unwrap_or_else(|e| panic!("Invalid peer address '{}': {}", s, e))
+            })
+            .collect();
+
+        if peers.is_empty() {
+            tracing::warn!("No peers configured (NEXUS_PEERS is empty).");
+        } else {
+            tracing::info!(
+                "Peers: {}",
+                peers
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
 
         let config = ServerConfig {
             bind_address: bind_addr,
             ..Default::default()
         };
 
-        let server = RaftWitnessServer::with_config(node_id, data_path.to_str().unwrap(), config)
-            .map_err(|e| format!("Failed to create witness server: {}", e))?;
+        let server = RaftWitnessServer::with_config(
+            node_id,
+            data_path.to_str().unwrap(),
+            config,
+            peers.clone(),
+        )
+        .map_err(|e| format!("Failed to create witness server: {}", e))?;
+
+        // Set up shutdown signal
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        // Start transport loop in background
+        let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
+        let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
+        tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Witness server starting on {}", bind_addr);
 
         // Handle shutdown signal
-        let shutdown = async {
+        let shutdown = async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("Failed to install Ctrl+C handler");
             tracing::info!("Shutdown signal received");
+            let _ = shutdown_tx.send(true);
         };
 
         server

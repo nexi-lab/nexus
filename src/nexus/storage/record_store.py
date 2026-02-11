@@ -97,10 +97,20 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Resolve database URL
         self.database_url = self._resolve_db_url(db_url, db_path)
 
-        # Create engine
+        # Create engine with appropriate pool configuration
         engine_kwargs: dict[str, Any] = {}
         if self.database_url.startswith("sqlite"):
             engine_kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            # PostgreSQL pool configuration (Issue #1246, Decision 16A)
+            engine_kwargs.update(
+                {
+                    "pool_size": 5,  # Baseline connections
+                    "max_overflow": 10,  # Burst capacity (total max = 15)
+                    "pool_pre_ping": True,  # Detect stale connections
+                    "pool_recycle": 1800,  # Recycle connections every 30min
+                }
+            )
 
         self._engine = create_engine(self.database_url, **engine_kwargs)
 

@@ -4,14 +4,22 @@ This is the primary metadata storage for Nexus, using an embedded sled database
 with optional Raft consensus for multi-node deployments.
 
 Architecture:
-    Local:  Python -> PyO3 FFI -> Rust (nexus_raft) -> sled (~5μs)
-    Remote: Python -> gRPC -> Rust (nexus_raft) -> sled (~200μs)
+    Embedded:  Python -> Metastore (PyO3) -> sled (~5μs)
+    SC mode:   Python -> RaftConsensus (PyO3) -> Raft consensus -> sled (~2-10ms)
+    EC mode:   Python -> RaftConsensus (PyO3, lazy) -> local apply + bg propose (~5μs)
+    Remote:    Python -> gRPC -> Rust (nexus_raft) -> sled (~200μs)
 
 Usage:
-    # Local mode (same box) - DEFAULT
-    store = RaftMetadataStore.local("/var/lib/nexus/metadata")
+    # Embedded mode (same box) - DEFAULT
+    store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
-    # Remote mode (multi-node with Raft consensus)
+    # SC mode (multi-node with Raft consensus)
+    store = RaftMetadataStore.sc(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+
+    # EC mode (multi-node with lazy consensus)
+    store = RaftMetadataStore.ec(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+
+    # Remote mode (thin client)
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
 """
 
@@ -44,41 +52,16 @@ def _serialize_metadata(metadata: FileMetadata) -> bytes:
     """Serialize FileMetadata to bytes for Raft storage.
 
     Uses protobuf when available, falls back to JSON otherwise.
+    Delegates field mapping to MetadataMapper (Issue #1246).
     """
+    from nexus.storage.metadata_mapper import MetadataMapper
+
     if _HAS_PROTOBUF:
-        proto = metadata_pb2.FileMetadata(
-            path=metadata.path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path or "",
-            size=metadata.size,
-            etag=metadata.etag or "",
-            mime_type=metadata.mime_type or "",
-            created_at=metadata.created_at.isoformat() if metadata.created_at else "",
-            modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
-            version=metadata.version,
-            zone_id=metadata.zone_id or "",
-            created_by=metadata.created_by or "",
-            is_directory=metadata.is_directory,
-            owner_id=metadata.owner_id or "",
-        )
+        proto = MetadataMapper.to_proto(metadata)
         return proto.SerializeToString()
     else:
         # Fallback to JSON serialization
-        obj = {
-            "path": metadata.path,
-            "backend_name": metadata.backend_name,
-            "physical_path": metadata.physical_path,
-            "size": metadata.size,
-            "etag": metadata.etag,
-            "mime_type": metadata.mime_type,
-            "created_at": metadata.created_at.isoformat() if metadata.created_at else None,
-            "modified_at": metadata.modified_at.isoformat() if metadata.modified_at else None,
-            "version": metadata.version,
-            "zone_id": metadata.zone_id,
-            "created_by": metadata.created_by,
-            "is_directory": metadata.is_directory,
-            "owner_id": metadata.owner_id,
-        }
+        obj = MetadataMapper.to_json(metadata)
         return json.dumps(obj).encode("utf-8")
 
 
@@ -86,7 +69,10 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
     """Deserialize bytes to FileMetadata.
 
     Supports both protobuf (new) and JSON (fallback) formats.
+    Delegates field mapping to MetadataMapper (Issue #1246).
     """
+    from nexus.storage.metadata_mapper import MetadataMapper
+
     # Handle both bytes and list of ints (from PyO3)
     if isinstance(data, list):
         data = bytes(data)
@@ -96,45 +82,16 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
         try:
             proto = metadata_pb2.FileMetadata()
             proto.ParseFromString(data)
-            # Convert protobuf to dataclass
-            created_at = None
-            modified_at = None
-            if proto.created_at:
-                try:
-                    created_at = datetime.fromisoformat(proto.created_at)
-                except ValueError:
-                    pass
-            if proto.modified_at:
-                try:
-                    modified_at = datetime.fromisoformat(proto.modified_at)
-                except ValueError:
-                    pass
-            return FileMetadata(
-                path=proto.path,
-                backend_name=proto.backend_name,
-                physical_path=proto.physical_path or None,
-                size=proto.size,
-                etag=proto.etag or None,
-                mime_type=proto.mime_type or None,
-                created_at=created_at,
-                modified_at=modified_at,
-                version=proto.version,
-                zone_id=proto.zone_id or None,
-                created_by=proto.created_by or None,
-                is_directory=proto.is_directory,
-                owner_id=proto.owner_id or None,
+            return MetadataMapper.from_proto(proto)
+        except Exception as proto_err:
+            logger.debug(
+                "Protobuf parse failed, trying JSON fallback: %s", proto_err
             )
-        except Exception:
-            pass
 
     # Fallback to JSON format
     try:
         obj = json.loads(data.decode("utf-8"))
-        if obj.get("created_at"):
-            obj["created_at"] = datetime.fromisoformat(obj["created_at"])
-        if obj.get("modified_at"):
-            obj["modified_at"] = datetime.fromisoformat(obj["modified_at"])
-        return FileMetadata(**obj)
+        return MetadataMapper.from_json(obj)
     except Exception as e:
         raise ValueError(f"Failed to deserialize metadata: {e}") from e
 
@@ -145,19 +102,27 @@ class RaftMetadataStore(FileMetadataProtocol):
     This store provides fast local metadata operations (~5μs) with optional
     Raft consensus for multi-node strong consistency.
 
-    Two modes of operation:
-    1. Local mode (DEFAULT): Uses PyO3 FFI for ~5μs latency
-    2. Remote mode: Uses gRPC for ~200μs latency (multi-node Raft)
+    Four modes of operation:
+    1. Embedded mode (DEFAULT): Direct sled via Metastore PyO3 (~5μs latency)
+    2. SC mode: Raft consensus via RaftConsensus PyO3 (~2-10ms, replicated)
+    3. EC mode: Lazy consensus via RaftConsensus PyO3 (~5μs, background replication)
+    4. Remote mode: gRPC client (~200μs latency)
 
     Example:
-        # Local mode (default)
-        store = RaftMetadataStore.local("/var/lib/nexus/metadata")
+        # Embedded mode (default)
+        store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
-        result = store.get("/path/to/file")
 
-        # Remote mode (multi-node)
+        # SC mode (multi-node consensus)
+        store = RaftMetadataStore.sc(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+        store.put(metadata)  # replicated
+
+        # EC mode (multi-node lazy consensus)
+        store = RaftMetadataStore.ec(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+        store.put(metadata)  # local + background replication
+
+        # Remote mode (thin client)
         store = await RaftMetadataStore.remote("10.0.0.2:2026")
-        store.put(metadata)
     """
 
     def __init__(
@@ -168,11 +133,11 @@ class RaftMetadataStore(FileMetadataProtocol):
     ):
         """Initialize RaftMetadataStore.
 
-        Use the factory methods `local()` or `remote()` instead of calling
-        this constructor directly.
+        Use the factory methods `embedded()`, `sc()`, or `remote()` instead
+        of calling this constructor directly.
 
         Args:
-            local_raft: LocalRaft instance (PyO3 FFI)
+            local_raft: Metastore or RaftConsensus instance (PyO3 FFI)
             remote_client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
         """
@@ -185,10 +150,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         self._is_local = local_raft is not None
 
     @classmethod
-    def local(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
-        """Create a local Raft metadata store using PyO3 FFI.
+    def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
+        """Create an embedded metastore using direct sled access.
 
-        This is the fast path (~5μs per operation) for same-box deployments.
+        This is the fast path (~5μs per operation) for embedded/standalone mode.
 
         Args:
             db_path: Path to the sled database directory
@@ -197,16 +162,95 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             RaftMetadataStore instance
         """
-        from nexus.raft import LocalRaft
+        from nexus.raft import Metastore
 
-        if LocalRaft is None:
+        if Metastore is None:
             raise RuntimeError(
-                "LocalRaft not available. Build with: cargo build --release --features python"
+                "Metastore not available. Build with: "
+                "maturin develop -m rust/nexus_raft/Cargo.toml --features python"
             )
 
-        local_raft = LocalRaft(db_path)
-        logger.info(f"Created local RaftMetadataStore at {db_path}")
-        return cls(local_raft=local_raft, zone_id=zone_id)
+        metastore = Metastore(db_path)
+        logger.info(f"Created embedded RaftMetadataStore at {db_path}")
+        return cls(local_raft=metastore, zone_id=zone_id)
+
+    @classmethod
+    def sc(
+        cls,
+        node_id: int,
+        db_path: str,
+        bind_address: str = "0.0.0.0:2126",
+        peers: list[str] | None = None,
+        zone_id: str | None = None,
+    ) -> RaftMetadataStore:
+        """Create an SC (Strong Consistency) metastore with Raft consensus.
+
+        Each NexusFS node becomes a full Raft participant. Writes go through
+        consensus (replicated to peers), reads are local (~5us).
+
+        Args:
+            node_id: Unique node ID within the cluster (1-indexed).
+            db_path: Path to the sled database directory.
+            bind_address: gRPC bind address for Raft inter-node traffic.
+            peers: List of peer addresses in "id@host:port" format.
+            zone_id: Zone ID for this store.
+
+        Returns:
+            RaftMetadataStore instance with Raft consensus (SC mode).
+        """
+        from nexus.raft import RaftConsensus
+
+        if RaftConsensus is None:
+            raise RuntimeError(
+                "RaftConsensus not available. Build with: "
+                "maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+            )
+
+        consensus = RaftConsensus(node_id, db_path, bind_address, peers or [])
+        logger.info(
+            f"Created SC RaftMetadataStore (node={node_id}, bind={bind_address}, "
+            f"peers={len(peers or [])})"
+        )
+        return cls(local_raft=consensus, zone_id=zone_id)
+
+    @classmethod
+    def ec(
+        cls,
+        node_id: int,
+        db_path: str,
+        bind_address: str = "0.0.0.0:2126",
+        peers: list[str] | None = None,
+        zone_id: str | None = None,
+    ) -> RaftMetadataStore:
+        """Create an EC (Eventual Consistency) metastore with lazy consensus.
+
+        Metadata writes apply locally (~5μs) and replicate in the background
+        via Raft propose with retry. Lock operations always use SC (consensus).
+
+        Args:
+            node_id: Unique node ID within the cluster (1-indexed).
+            db_path: Path to the sled database directory.
+            bind_address: gRPC bind address for Raft inter-node traffic.
+            peers: List of peer addresses in "id@host:port" format.
+            zone_id: Zone ID for this store.
+
+        Returns:
+            RaftMetadataStore instance with lazy consensus (EC mode).
+        """
+        from nexus.raft import RaftConsensus
+
+        if RaftConsensus is None:
+            raise RuntimeError(
+                "RaftConsensus not available. Build with: "
+                "maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+            )
+
+        consensus = RaftConsensus(node_id, db_path, bind_address, peers or [], lazy=True)
+        logger.info(
+            f"Created EC RaftMetadataStore (node={node_id}, bind={bind_address}, "
+            f"peers={len(peers or [])})"
+        )
+        return cls(local_raft=consensus, zone_id=zone_id)
 
     @classmethod
     async def remote(
@@ -458,8 +502,12 @@ class RaftMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         if self._is_local:
-            # LocalRaft doesn't need explicit close - sled handles it
-            self._local.flush()
+            if hasattr(self._local, "shutdown"):
+                # RaftConsensus: gracefully stop gRPC server + transport loop
+                self._local.shutdown()
+            else:
+                # Metastore: just flush sled
+                self._local.flush()
         else:
             # Remote client close is async
             # Would need to handle this differently
@@ -672,6 +720,81 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote locks require async. Use extend_lock_async()")
 
+    def get_lock_info(self, path: str) -> dict[str, Any] | None:
+        """Get lock information for a path.
+
+        Args:
+            path: Lock key (typically "zone_id:resource_path")
+
+        Returns:
+            Dict with lock info if lock exists and has holders, None otherwise.
+            Dict keys: path, max_holders, holders (list of holder dicts)
+        """
+        if self._is_local:
+            lock_info = self._local.get_lock(path)
+            if lock_info is None or not lock_info.holders:
+                return None
+            return {
+                "path": lock_info.path,
+                "max_holders": lock_info.max_holders,
+                "holders": [
+                    {
+                        "lock_id": h.lock_id,
+                        "holder_info": h.holder_info,
+                        "acquired_at": h.acquired_at,
+                        "expires_at": h.expires_at,
+                    }
+                    for h in lock_info.holders
+                ],
+            }
+        else:
+            raise NotImplementedError("Remote lock info requires async")
+
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+        """List all active locks matching a prefix.
+
+        Args:
+            prefix: Key prefix to filter by (e.g., "zone_id:" for zone-scoped)
+            limit: Maximum number of results
+
+        Returns:
+            List of lock info dicts
+        """
+        if self._is_local:
+            lock_infos = self._local.list_locks(prefix, limit)
+            return [
+                {
+                    "path": lock.path,
+                    "max_holders": lock.max_holders,
+                    "holders": [
+                        {
+                            "lock_id": h.lock_id,
+                            "holder_info": h.holder_info,
+                            "acquired_at": h.acquired_at,
+                            "expires_at": h.expires_at,
+                        }
+                        for h in lock.holders
+                    ],
+                }
+                for lock in lock_infos
+            ]
+        else:
+            raise NotImplementedError("Remote list_locks requires async")
+
+    def force_release_lock(self, path: str) -> bool:
+        """Force-release all holders of a lock (admin operation).
+
+        Args:
+            path: Lock key to force-release
+
+        Returns:
+            True if a lock was found and released, False if no lock exists
+        """
+        if self._is_local:
+            return self._local.force_release_lock(path)
+        else:
+            raise NotImplementedError("Remote force_release requires async")
+
     # =========================================================================
     # Async Methods (for RemoteNexusFS using remote mode)
     # =========================================================================
@@ -857,6 +980,9 @@ class RaftMetadataStore(FileMetadataProtocol):
     async def close_async(self) -> None:
         """Close the metadata store and release resources (async)."""
         if self._is_local:
-            self._local.flush()
+            if hasattr(self._local, "shutdown"):
+                self._local.shutdown()
+            else:
+                self._local.flush()
         else:
             await self._remote.close()

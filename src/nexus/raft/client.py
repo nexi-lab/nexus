@@ -7,7 +7,7 @@ Architecture:
     - RaftClientService (client-facing): Used by RemoteNexusFS for Propose/Query
     - RaftService (internal): Used for node-to-node Raft protocol (not exposed here)
 
-For local same-box scenarios, use LocalRaft (PyO3 FFI) instead for better
+For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
 performance (~5μs vs ~200μs latency).
 """
 

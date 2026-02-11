@@ -929,12 +929,10 @@ class NexusFSCoreMixin:
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
-        # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
         # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
-            getattr(route.backend, "user_scoped", None) is True
-            and getattr(route.backend, "token_manager", None) is not None
-        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+            route.backend.user_scoped is True and route.backend.has_token_manager is True
+        ) or route.backend.has_virtual_filesystem is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -1258,9 +1256,7 @@ class NexusFSCoreMixin:
                                 raise
             else:
                 # Try parallel I/O for LocalBackend using nexus_fast
-                from nexus.backends.local import LocalBackend
-
-                if isinstance(backend, LocalBackend) and len(paths_for_backend) > 1:
+                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
                     # Use Rust parallel mmap reads for LocalBackend
                     try:
                         from nexus_fast import read_files_bulk
@@ -1597,9 +1593,9 @@ class NexusFSCoreMixin:
         # For now, we can't easily get size without reading - set to 0 and update on next read
         # A better approach would be for write_stream to return (hash, size) tuple
         size = 0
-        if hasattr(route.backend, "get_content_size"):
-            with contextlib.suppress(Exception):
-                size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # get_content_size is an abstract method on Backend, always available
+        with contextlib.suppress(Exception):
+            size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -3124,11 +3120,12 @@ class NexusFSCoreMixin:
         # For connector backends, also verify the file exists in backend storage
         # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            if hasattr(new_route.backend, "rename_file"):
+            if new_route.backend.supports_rename is True:
                 # Connector backend - verify file actually exists in storage
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
                     # Check if this is a GCS connector backend (has bucket attribute)
+                    # NOTE: bucket/blob access is GCS-specific, kept as hasattr for now
                     if (
                         hasattr(new_route.backend, "bucket")
                         and hasattr(new_route.backend, "_get_blob_path")
@@ -3167,7 +3164,7 @@ class NexusFSCoreMixin:
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
-        if hasattr(old_route.backend, "rename_file"):
+        if old_route.backend.supports_rename is True:
             # Connector backend - move the file in backend storage
             try:
                 old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
@@ -3484,9 +3481,10 @@ class NexusFSCoreMixin:
         try:
             # Query all files under directory (using new path since already renamed)
             # The files have already been renamed via metadata update, so query new paths
-            files = self.metadata.list(prefix=new_prefix, recursive=True, zone_id=zone_id)
             result = []
-            for file_meta in files:
+            for file_meta in self.metadata.list_iter(
+                prefix=new_prefix, recursive=True, zone_id=zone_id
+            ):
                 new_file_path = file_meta.path
                 if new_file_path:
                     # Compute what the old path would have been

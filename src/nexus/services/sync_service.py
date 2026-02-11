@@ -19,6 +19,7 @@ Example:
 
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 import threading
@@ -37,6 +38,16 @@ if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
+
+
+def _belongs_to_other_mount(path: str, sorted_mounts: list[str]) -> bool:
+    """Check if path belongs to another mount using binary search. O(log m)."""
+    idx = bisect.bisect_right(sorted_mounts, path)
+    if idx > 0:
+        candidate = sorted_mounts[idx - 1]
+        if path == candidate or path.startswith(candidate + "/"):
+            return True
+    return False
 
 
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
@@ -838,17 +849,19 @@ class SyncService:
                     mp = m.get("mount_point", "")
                     if mp and mp != ctx.mount_point and mp != "/":
                         other_mount_points.add(mp)
-            except Exception:
-                pass
+            except (OSError, ValueError, KeyError) as e:
+                logger.debug(f"Could not list other mount points: {e}")
 
             # Resolve zone_id for change log cleanup
             zone_id = self._resolve_zone_id(ctx)
 
             # List all files in metadata under this mount
             existing_metas = self._gw.metadata_list(prefix=ctx.mount_point, recursive=True)
+            existing_by_path = {meta.path: meta for meta in existing_metas}
 
-            for meta in existing_metas:
-                existing_path = meta.path
+            sorted_mounts = sorted(other_mount_points)
+
+            for existing_path in existing_by_path:
                 # Skip the mount point itself
                 if existing_path == ctx.mount_point:
                     continue
@@ -858,17 +871,13 @@ class SyncService:
                     continue
 
                 # Skip if belongs to another mount
-                belongs_to_other = any(
-                    existing_path.startswith(mp + "/") or existing_path == mp
-                    for mp in other_mount_points
-                )
-                if belongs_to_other:
+                if _belongs_to_other_mount(existing_path, sorted_mounts):
                     continue
 
                 # Delete from metadata
                 try:
-                    existing_meta = self._gw.metadata_get(existing_path)
-                    if existing_meta:
+                    meta = existing_by_path[existing_path]
+                    if meta:
                         logger.info(
                             f"[SYNC_MOUNT] Deleting file no longer in backend: {existing_path}"
                         )
@@ -1023,8 +1032,12 @@ class SyncService:
             entries = backend.list_dir(backend_path, context=context)
             # Empty directory or file - check extension
             return bool(not entries and osp.splitext(backend_path)[1])
-        except Exception:
+        except (OSError, FileNotFoundError, NotADirectoryError):
+            # list_dir on a file path raises OS-level errors — treat as single file
             return True
+        except Exception as e:
+            logger.warning(f"Unexpected error checking if single file {backend_path}: {e}")
+            return False
 
     def _sync_single_file(
         self,
@@ -1106,14 +1119,19 @@ class SyncService:
         """
         try:
             if hasattr(backend, "get_content_size"):
-                from nexus.core.operation_context import OperationContext
+                from nexus.core.permissions import OperationContext
 
-                size_context = OperationContext(backend_path=backend_path)
+                size_context = OperationContext(
+                    user="system",
+                    groups=[],
+                    is_system=True,
+                    backend_path=backend_path,
+                )
                 # Note: content_hash is ignored by connectors - they use backend_path from context
                 result: int = backend.get_content_size("", size_context).unwrap()
                 return result
-        except Exception:
-            pass
+        except (OSError, ValueError, AttributeError) as e:
+            logger.debug(f"Could not get file size for {backend_path}: {e}")
         return 0
 
     def _matches_patterns(self, file_path: str, ctx: SyncContext) -> bool:

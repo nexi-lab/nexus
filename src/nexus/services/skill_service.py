@@ -745,8 +745,10 @@ class SkillService:
                 if data:
                     result: list[str] = data.get("subscribed_skills", [])
                     return result
-        except Exception:
-            pass  # File doesn't exist or invalid
+        except FileNotFoundError:
+            pass  # Expected: subscriptions file doesn't exist yet
+        except (OSError, ValueError, yaml.YAMLError) as e:
+            logger.debug(f"Could not load subscribed skills from {path}: {e}")
 
         return []
 
@@ -861,10 +863,10 @@ class SkillService:
                             if self._gw.exists(skill_md, context=context):
                                 skill_paths.append(skill_path)
                                 seen_skills.add(skill_name)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+                        except (FileNotFoundError, OSError) as e:
+                            logger.debug(f"Could not check skill {skill_md}: {e}")
+            except (FileNotFoundError, OSError) as e:
+                logger.debug(f"Could not list skills in {base_dir}: {e}")
 
         # System skills
         find_skills_in_dir("/skill/")

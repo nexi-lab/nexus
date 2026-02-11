@@ -351,6 +351,13 @@ class GoogleDriveConnectorBackend(Backend):
         """Backend identifier name."""
         return "gdrive"
 
+    # --- Capability flags ---
+
+    @property
+    def has_token_manager(self) -> bool:
+        """GDrive connector manages OAuth tokens."""
+        return True
+
     def _get_drive_service(self, context: "OperationContext | None" = None) -> "Resource":
         """Get Google Drive service with user's OAuth credentials.
 

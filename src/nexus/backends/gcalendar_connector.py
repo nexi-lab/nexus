@@ -258,6 +258,13 @@ send_notifications: true
         """This backend requires per-user OAuth credentials."""
         return True
 
+    # --- Capability flags ---
+
+    @property
+    def has_token_manager(self) -> bool:
+        """GCalendar connector manages OAuth tokens."""
+        return True
+
     # =========================================================================
     # OAuth / Service
     # =========================================================================

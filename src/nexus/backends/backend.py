@@ -182,6 +182,102 @@ class Backend(ABC):
         """
         return True
 
+    # === Capability Flags ===
+    # These properties declare backend capabilities so that core code can use
+    # polymorphic dispatch instead of hasattr/isinstance/getattr checks.
+    # Each defaults to False; concrete backends override to return True.
+
+    @property
+    def supports_rename(self) -> bool:
+        """Whether this backend supports direct file rename/move.
+
+        Backends with path-based storage (e.g., blob connectors) can move
+        files at the storage level. CAS backends only need metadata rename.
+
+        Returns:
+            True if backend implements rename_file(), False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def has_virtual_filesystem(self) -> bool:
+        """Whether this backend uses a virtual filesystem (e.g., API-backed).
+
+        Virtual filesystem backends (e.g., HackerNews, local_connector)
+        map API data or external files to virtual directory structures.
+        These backends use path-based reads instead of content-hash reads.
+
+        Returns:
+            True if backend uses virtual filesystem, False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def has_root_path(self) -> bool:
+        """Whether this backend has a local root_path for physical storage.
+
+        Only LocalBackend has a root_path attribute pointing to local
+        disk storage with CAS and directory subdirectories.
+
+        Returns:
+            True if backend has root_path attribute, False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def has_token_manager(self) -> bool:
+        """Whether this backend manages OAuth tokens.
+
+        OAuth-based connectors (Google Drive, Gmail, X, Slack, etc.)
+        use a TokenManager for credential management.
+
+        Returns:
+            True if backend has a token_manager, False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def has_data_dir(self) -> bool:
+        """Whether this backend has a data_dir for ancillary data storage.
+
+        Some backends provide a data_dir attribute for storing
+        non-content data like skills, configs, etc.
+
+        Returns:
+            True if backend has data_dir attribute, False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def is_passthrough(self) -> bool:
+        """Whether this backend is a PassthroughBackend for same-box mode.
+
+        PassthroughBackend supports OS-native file watching, in-memory
+        advisory locking, and stable pointer paths.
+
+        Returns:
+            True if backend is a passthrough backend, False otherwise
+            Default: False
+        """
+        return False
+
+    @property
+    def supports_parallel_mmap_read(self) -> bool:
+        """Whether this backend supports Rust-accelerated parallel mmap reads.
+
+        Only LocalBackend supports this via the nexus_fast native module.
+
+        Returns:
+            True if backend supports parallel mmap reads, False otherwise
+            Default: False
+        """
+        return False
+
     # === Connection Management ===
 
     def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":

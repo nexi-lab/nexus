@@ -71,6 +71,13 @@ class BaseBlobStorageConnector(Backend):
         self.prefix = prefix.rstrip("/")  # Remove trailing slash
         self.versioning_enabled = versioning_enabled
 
+    # --- Capability flags ---
+
+    @property
+    def supports_rename(self) -> bool:
+        """Blob storage connectors support direct file rename/move."""
+        return True
+
     # === Helper Methods (Shared Implementation) ===
 
     def _compute_hash(self, content: bytes) -> str:

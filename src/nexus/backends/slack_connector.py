@@ -193,6 +193,13 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin):
         """This backend requires per-user OAuth credentials."""
         return True
 
+    # --- Capability flags ---
+
+    @property
+    def has_token_manager(self) -> bool:
+        """Slack connector manages OAuth tokens."""
+        return True
+
     def _get_slack_client(self, context: "OperationContext | None" = None) -> Any:
         """Get Slack WebClient with user's OAuth credentials.
 

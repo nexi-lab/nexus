@@ -229,14 +229,10 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Initialize content cache if enabled and backend supports it
-        if enable_content_cache:
-            # Import here to avoid circular import
-            from nexus.backends.local import LocalBackend
-
-            if isinstance(backend, LocalBackend):
-                # Create content cache and attach to LocalBackend
-                content_cache = ContentCache(max_size_mb=content_cache_size_mb)
-                backend.content_cache = content_cache
+        if enable_content_cache and backend.has_root_path is True:
+            # Create content cache and attach to LocalBackend
+            content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+            backend.content_cache = content_cache
 
         # Store backend
         self.backend = backend
@@ -710,36 +706,22 @@ class NexusFS(  # type: ignore[misc]
             return 0
 
         try:
-            # Get all files from metadata store
-            all_files = self.metadata.list("/", recursive=True)
-            total = len(all_files)
-
-            if total == 0:
-                logger.debug("No files in metadata - nothing to sync")
-                return 0
-
-            logger.info(f"Syncing {total} files to tiger_resource_map...")
-
+            # Stream files from metadata store instead of materializing full list
             count = 0
-            batch_size = 1000
+            log_interval = 1000
 
-            for i in range(0, total, batch_size):
-                batch = all_files[i : i + batch_size]
-
-                for meta in batch:
-                    # Register resource in the map (idempotent operation)
-                    # Note: zone_id removed from resource map (Issue #xyz)
-                    resource_map.get_or_create_int_id(
-                        resource_type="file",
-                        resource_id=meta.path,
-                    )
-                    count += 1
+            for meta in self.metadata.list_iter("/", recursive=True):
+                # Register resource in the map (idempotent operation)
+                # Note: zone_id removed from resource map (Issue #xyz)
+                resource_map.get_or_create_int_id(
+                    resource_type="file",
+                    resource_id=meta.path,
+                )
+                count += 1
 
                 # Log progress for large datasets
-                if total > batch_size:
-                    logger.debug(
-                        f"Tiger resource map sync progress: {min(i + batch_size, total)}/{total}"
-                    )
+                if count % log_interval == 0:
+                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
 
             logger.info(f"Tiger resource map sync complete: {count} resources")
             return count
@@ -2488,7 +2470,7 @@ class NexusFS(  # type: ignore[misc]
 
         all_files = [
             m
-            for m in self.metadata.list(filter.path_prefix)
+            for m in self.metadata.list_iter(filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -5350,7 +5332,7 @@ class NexusFS(  # type: ignore[misc]
         had_content = False  # Track if directory had any content
 
         # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and hasattr(self.backend, "root_path"):
+        if hasattr(self, "backend") and self.backend.has_root_path is True:
             try:
                 # Convert virtual path to physical path
                 # LocalBackend stores directories under "dirs" subdirectory
@@ -5612,7 +5594,7 @@ class NexusFS(  # type: ignore[misc]
             possible_dirs.append(data_dir / "skills")
 
         # 2. Try backend data directory if available
-        if hasattr(self.backend, "data_dir") and self.backend.data_dir:
+        if self.backend.has_data_dir is True and self.backend.data_dir:
             backend_data_dir = Path(self.backend.data_dir)
             possible_dirs.append(backend_data_dir / "skills")
 

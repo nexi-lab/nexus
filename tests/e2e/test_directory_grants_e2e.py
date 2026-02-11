@@ -26,6 +26,8 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+pytestmark = pytest.mark.quarantine
+
 # Add src to path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:

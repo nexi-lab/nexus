@@ -257,6 +257,13 @@ class GmailConnectorBackend(
         """This backend requires per-user OAuth credentials."""
         return True
 
+    # --- Capability flags ---
+
+    @property
+    def has_token_manager(self) -> bool:
+        """Gmail connector manages OAuth tokens."""
+        return True
+
     def generate_skill_doc(self, mount_path: str) -> str:
         """Load SKILL.md from static file with mount path replacement.
 

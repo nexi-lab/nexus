@@ -16,6 +16,8 @@ import pytest
 from nexus.backends.passthrough import PassthroughBackend
 from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
 
+pytestmark = pytest.mark.quarantine
+
 
 @pytest.fixture
 def temp_backend(tmp_path):

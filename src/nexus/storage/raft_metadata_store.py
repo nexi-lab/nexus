@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
@@ -447,6 +447,50 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
 
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        **kwargs: Any,
+    ) -> Iterator[FileMetadata]:
+        """Iterate over file metadata matching prefix.
+
+        Memory-efficient alternative to list(). Yields results one at a time
+        instead of materializing the full result list.
+
+        The underlying sled store returns all matching entries at once, but this
+        generator lets callers avoid accumulating all results into a second list.
+
+        Args:
+            prefix: Path prefix to filter by
+            recursive: If True, include all nested files
+            **kwargs: Accepts zone_id (ignored) and accessible_int_ids for filtering
+
+        Yields:
+            FileMetadata entries matching the prefix
+        """
+        accessible_int_ids: set[int] | None = kwargs.get("accessible_int_ids")
+
+        if self._is_local:
+            entries = self._local.list_metadata(prefix)
+            for path, data in entries:
+                # Skip extended attribute keys (format: "meta:{path}:{key}")
+                if path.startswith("meta:"):
+                    continue
+                metadata = _deserialize_metadata(data)
+                if not recursive:
+                    # Filter to direct children only
+                    rel_path = path[len(prefix) :].lstrip("/")
+                    if "/" in rel_path:
+                        continue
+                # Filter by accessible_int_ids if provided
+                if accessible_int_ids is not None:
+                    if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
+                        continue
+                yield metadata
+        else:
+            raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
+
     def list_paginated(
         self,
         prefix: str = "",
@@ -526,22 +570,99 @@ class RaftMetadataStore(FileMetadataProtocol):
         return {path: self.get(path) for path in paths}
 
     def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
-        """Store or update multiple file metadata entries.
+        """Store or update multiple file metadata entries atomically.
+
+        All entries are serialized upfront to fail fast on bad data.
+        If any write fails mid-batch, previously written entries are
+        rolled back on a best-effort basis.
 
         Args:
             metadata_list: List of file metadata to store
+
+        Raises:
+            RuntimeError: If a write fails (includes details of partial progress)
         """
-        for metadata in metadata_list:
-            self.put(metadata)
+        if not metadata_list:
+            return
+
+        # Phase 1: serialize all entries upfront (fail fast before any writes)
+        serialized: list[tuple[str, bytes]] = [
+            (m.path, _serialize_metadata(m)) for m in metadata_list
+        ]
+
+        # Phase 2: apply all writes, tracking progress for rollback
+        completed_paths: list[str] = []
+        try:
+            if self._is_local:
+                for path, data in serialized:
+                    self._local.set_metadata(path, data)
+                    completed_paths.append(path)
+            else:
+                raise NotImplementedError(
+                    "Remote mode requires async. Use put_batch_async() instead."
+                )
+        except NotImplementedError:
+            raise
+        except Exception as e:
+            # Best-effort rollback: delete entries that were written
+            for rollback_path in completed_paths:
+                try:
+                    self._local.delete_metadata(rollback_path)
+                except Exception:
+                    logger.warning("put_batch rollback failed for path: %s", rollback_path)
+            raise RuntimeError(
+                f"put_batch failed after writing {len(completed_paths)}/{len(serialized)} "
+                f"entries (rolled back {len(completed_paths)} writes): {e}"
+            ) from e
 
     def delete_batch(self, paths: Sequence[str]) -> None:
-        """Delete multiple files.
+        """Delete multiple file metadata entries atomically.
+
+        Existing metadata is captured upfront so that previously deleted
+        entries can be restored on a best-effort basis if a failure occurs
+        mid-batch.
 
         Args:
             paths: List of virtual paths to delete
+
+        Raises:
+            RuntimeError: If a delete fails (includes details of partial progress)
         """
-        for path in paths:
-            self.delete(path)
+        if not paths:
+            return
+
+        # Phase 1: capture existing metadata for rollback
+        snapshots: list[tuple[str, bytes | None]] = []
+        if self._is_local:
+            for path in paths:
+                existing_data = self._local.get_metadata(path)
+                snapshots.append((path, existing_data))
+        else:
+            raise NotImplementedError(
+                "Remote mode requires async. Use delete_batch_async() instead."
+            )
+
+        # Phase 2: apply all deletes, tracking progress for rollback
+        completed: list[tuple[str, bytes | None]] = []
+        try:
+            for path, existing_data in snapshots:
+                self._local.delete_metadata(path)
+                completed.append((path, existing_data))
+        except Exception as e:
+            # Best-effort rollback: restore entries that were deleted
+            for rollback_path, rollback_data in completed:
+                if rollback_data is not None:
+                    try:
+                        self._local.set_metadata(rollback_path, rollback_data)
+                    except Exception:
+                        logger.warning(
+                            "delete_batch rollback failed for path: %s",
+                            rollback_path,
+                        )
+            raise RuntimeError(
+                f"delete_batch failed after deleting {len(completed)}/{len(paths)} "
+                f"entries (rolled back {len(completed)} deletes): {e}"
+            ) from e
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         """Get content IDs (hashes) for multiple paths.

@@ -38,15 +38,10 @@ from tenacity import (
 )
 
 from nexus.core.exceptions import (
-    ConflictError,
-    InvalidPathError,
-    NexusError,
     NexusFileNotFoundError,
-    NexusPermissionError,
-    ValidationError,
 )
+from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.server.protocol import (
-    RPCErrorCode,
     RPCRequest,
     RPCResponse,
     decode_rpc_message,
@@ -65,7 +60,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AsyncRemoteNexusFS:
+class AsyncRemoteNexusFS(BaseRemoteNexusFS):
     """Async remote Nexus filesystem client.
 
     This client uses httpx.AsyncClient for non-blocking HTTP calls,
@@ -149,62 +144,6 @@ class AsyncRemoteNexusFS:
         self._negative_bloom: Any = None
         self._init_negative_cache()
 
-    def _init_negative_cache(self) -> None:
-        """Initialize Bloom filter for negative caching of non-existent files."""
-        try:
-            from nexus_fast import BloomFilter
-
-            self._negative_bloom = BloomFilter(
-                self._negative_cache_capacity, self._negative_cache_fp_rate
-            )
-            logger.debug(
-                f"Negative cache initialized: capacity={self._negative_cache_capacity}, "
-                f"fp_rate={self._negative_cache_fp_rate}, memory={self._negative_bloom.memory_bytes} bytes"
-            )
-        except ImportError:
-            logger.debug("nexus_fast not available, negative cache disabled")
-            self._negative_bloom = None
-        except Exception as e:
-            logger.warning(f"Failed to initialize negative cache: {e}")
-            self._negative_bloom = None
-
-    def _negative_cache_key(self, path: str) -> str:
-        """Generate cache key with zone isolation."""
-        return f"{self._zone_id or 'default'}:{path}"
-
-    def _negative_cache_check(self, path: str) -> bool:
-        """Check if path is known to not exist (in negative cache).
-
-        Returns:
-            True if path is definitely non-existent (skip RPC)
-            False if path might exist (need to check server)
-        """
-        if self._negative_bloom is None:
-            return False
-        key = self._negative_cache_key(path)
-        return bool(self._negative_bloom.might_exist(key))
-
-    def _negative_cache_add(self, path: str) -> None:
-        """Add path to negative cache (file confirmed to not exist)."""
-        if self._negative_bloom is None:
-            return
-        key = self._negative_cache_key(path)
-        self._negative_bloom.add(key)
-
-    def _negative_cache_invalidate(self, path: str) -> None:
-        """Invalidate negative cache entry for path."""
-        if self._negative_bloom is None:
-            return
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to write/delete of {path}")
-
-    def _negative_cache_invalidate_bulk(self, paths: list[str]) -> None:
-        """Invalidate negative cache for multiple paths."""
-        if self._negative_bloom is None or not paths:
-            return
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
-
     async def __aenter__(self) -> AsyncRemoteNexusFS:
         """Async context manager entry."""
         await self._ensure_initialized()
@@ -227,26 +166,6 @@ class AsyncRemoteNexusFS:
                 logger.warning(f"Failed to fetch auth info: {e}")
             self._initialized = True
 
-    @property
-    def zone_id(self) -> str | None:
-        """Zone ID for this filesystem instance."""
-        return self._zone_id
-
-    @zone_id.setter
-    def zone_id(self, value: str | None) -> None:
-        """Set zone ID."""
-        self._zone_id = value
-
-    @property
-    def agent_id(self) -> str | None:
-        """Agent ID for this filesystem instance."""
-        return self._agent_id
-
-    @agent_id.setter
-    def agent_id(self, value: str | None) -> None:
-        """Set agent ID."""
-        self._agent_id = value
-
     async def _fetch_auth_info(self) -> None:
         """Fetch authenticated user info from server."""
         try:
@@ -257,19 +176,7 @@ class AsyncRemoteNexusFS:
 
             if response.status_code == 200:
                 auth_info = response.json()
-                if auth_info.get("authenticated"):
-                    self._zone_id = auth_info.get("zone_id")
-                    subject_type = auth_info.get("subject_type")
-                    if subject_type == "agent":
-                        self._agent_id = auth_info.get("subject_id")
-                    else:
-                        self._agent_id = None
-                    logger.info(
-                        f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(zone: {self._zone_id})"
-                    )
-                else:
-                    logger.debug("Not authenticated (anonymous access)")
+                self._parse_auth_info(auth_info)
             else:
                 logger.warning(f"Failed to fetch auth info: HTTP {response.status_code}")
         except Exception as e:
@@ -424,33 +331,6 @@ class AsyncRemoteNexusFS:
                 method=method,
             ) from e
 
-    def _handle_rpc_error(self, error: dict[str, Any]) -> None:
-        """Handle RPC error response."""
-        code = error.get("code", -32603)
-        message = error.get("message", "Unknown error")
-        data = error.get("data")
-
-        if code == RPCErrorCode.FILE_NOT_FOUND.value:
-            path = data.get("path") if data else None
-            raise NexusFileNotFoundError(path or message)
-        elif code == RPCErrorCode.FILE_EXISTS.value:
-            raise FileExistsError(message)
-        elif code == RPCErrorCode.INVALID_PATH.value:
-            raise InvalidPathError(message)
-        elif (
-            code == RPCErrorCode.ACCESS_DENIED.value or code == RPCErrorCode.PERMISSION_ERROR.value
-        ):
-            raise NexusPermissionError(message)
-        elif code == RPCErrorCode.VALIDATION_ERROR.value:
-            raise ValidationError(message)
-        elif code == RPCErrorCode.CONFLICT.value:
-            expected_etag = data.get("expected_etag") if data else "(unknown)"
-            current_etag = data.get("current_etag") if data else "(unknown)"
-            path = data.get("path") if data else "unknown"
-            raise ConflictError(path, expected_etag, current_etag)
-        else:
-            raise NexusError(f"RPC error [{code}]: {message}")
-
     # ============================================================
     # Core File Operations (Async)
     # ============================================================
@@ -480,8 +360,6 @@ class AsyncRemoteNexusFS:
         if self._negative_cache_check(path):
             raise NexusFileNotFoundError(path)
 
-        import base64
-
         params = {"path": path, "return_metadata": return_metadata, "parsed": parsed}
         try:
             result = await self._call_rpc("read", params)
@@ -489,42 +367,7 @@ class AsyncRemoteNexusFS:
             self._negative_cache_add(path)
             raise
 
-        # Handle standard bytes format: {__type__: 'bytes', data: '...'}
-        # This is the format from encode_rpc_message in protocol.py
-        if isinstance(result, dict) and result.get("__type__") == "bytes" and "data" in result:
-            decoded_content = base64.b64decode(result["data"])
-            if return_metadata:
-                return {"content": decoded_content}
-            return decoded_content
-
-        # Handle legacy format: {content: '...', encoding: 'base64'}
-        # (kept for backward compatibility with older servers)
-        if isinstance(result, dict) and "content" in result:
-            content = result["content"]
-            encoding = result.get("encoding", "base64")
-
-            # Decode base64 content to bytes
-            if encoding == "base64" and isinstance(content, str):
-                decoded_content = base64.b64decode(content)
-            elif isinstance(content, bytes):
-                decoded_content = content
-            else:
-                # Already decoded or unknown format
-                decoded_content = content.encode() if isinstance(content, str) else content
-
-            if return_metadata:
-                # Return dict with decoded content and metadata
-                result["content"] = decoded_content
-                return result
-            else:
-                # Return just the bytes
-                return decoded_content
-
-        # Handle raw bytes (if result is already bytes)
-        if isinstance(result, bytes):
-            return result
-
-        return result  # type: ignore[no-any-return]
+        return self._parse_read_response(result, return_metadata)
 
     async def read_bulk(
         self,
@@ -657,8 +500,6 @@ class AsyncRemoteNexusFS:
             - {"delta": bytes, "server_hash": ..., "is_full": False} if delta returned
             - {"content": bytes, "server_hash": ..., "is_full": True} if full file returned
         """
-        import base64
-
         params: dict[str, Any] = {
             "path": path,
             "max_delta_ratio": max_delta_ratio,
@@ -672,25 +513,7 @@ class AsyncRemoteNexusFS:
 
         result = await self._call_rpc("delta_read", params)
 
-        # Decode binary fields
-        if isinstance(result, dict):
-            # Decode delta if present
-            if (
-                "delta" in result
-                and isinstance(result["delta"], dict)
-                and result["delta"].get("__type__") == "bytes"
-            ):
-                result["delta"] = base64.b64decode(result["delta"]["data"])
-
-            # Decode content if present
-            if (
-                "content" in result
-                and isinstance(result["content"], dict)
-                and result["content"].get("__type__") == "bytes"
-            ):
-                result["content"] = base64.b64decode(result["content"]["data"])
-
-        return result  # type: ignore[no-any-return]
+        return self._decode_delta_read_response(result)
 
     async def delta_write(
         self,
@@ -1105,12 +928,7 @@ class AsyncRemoteNexusFS:
             "read_range",
             {"path": path, "start": start, "end": end},
         )
-        # Result should be bytes (base64-decoded by protocol)
-        if isinstance(result, str):
-            import base64
-
-            return base64.b64decode(result)
-        return result  # type: ignore[no-any-return]
+        return self._decode_bytes_field(result)
 
     async def stream(
         self,

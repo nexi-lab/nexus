@@ -79,9 +79,7 @@ class NexusFSEventsMixin:
         Returns:
             True if using PassthroughBackend, False otherwise
         """
-        from nexus.backends.passthrough import PassthroughBackend
-
-        return isinstance(self.backend, PassthroughBackend)
+        return self.backend.is_passthrough is True
 
     def _has_distributed_events(self) -> bool:
         """Check if distributed event bus is available.
@@ -257,8 +255,8 @@ class NexusFSEventsMixin:
             logger.debug(f"Using same-box file watcher for {path}")
             from nexus.backends.passthrough import PassthroughBackend
 
-            if not isinstance(self.backend, PassthroughBackend):
-                raise NotImplementedError("Backend mismatch")
+            # Type narrowing for PassthroughBackend-specific attributes below
+            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
 
             # Import FileEvent for unified response format
             from nexus.core.event_bus import FileEvent
@@ -417,8 +415,8 @@ class NexusFSEventsMixin:
             logger.debug(f"Using same-box lock for {path} ({mode})")
             from nexus.backends.passthrough import PassthroughBackend
 
-            if not isinstance(self.backend, PassthroughBackend):
-                raise NotImplementedError("Backend mismatch")
+            # Type narrowing for PassthroughBackend-specific attributes below
+            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
 
             # Note: Same-box locks don't support TTL - they're in-memory only
             lock_id = self.backend.lock(path, timeout=timeout, max_holders=max_holders)
@@ -546,8 +544,8 @@ class NexusFSEventsMixin:
         if self._is_same_box():
             from nexus.backends.passthrough import PassthroughBackend
 
-            if not isinstance(self.backend, PassthroughBackend):
-                raise NotImplementedError("Backend mismatch")
+            # Type narrowing for PassthroughBackend-specific attributes below
+            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
 
             released = self.backend.unlock(lock_id)
             if released:
@@ -650,13 +648,14 @@ class NexusFSEventsMixin:
                 if self._is_same_box():
                     from nexus.backends.passthrough import PassthroughBackend
 
-                    if isinstance(self.backend, PassthroughBackend):
-                        # Strip base path to get virtual path
-                        base_path = str(self.backend.base_path)
-                        if path.startswith(base_path):
-                            virtual_path = path[len(base_path) :]
-                            if not virtual_path.startswith("/"):
-                                virtual_path = "/" + virtual_path
+                    # Type narrowing: is_passthrough guarantees PassthroughBackend
+                    assert isinstance(self.backend, PassthroughBackend)
+                    # Strip base path to get virtual path
+                    base_path = str(self.backend.base_path)
+                    if path.startswith(base_path):
+                        virtual_path = path[len(base_path) :]
+                        if not virtual_path.startswith("/"):
+                            virtual_path = "/" + virtual_path
 
                 cache.invalidate_path(virtual_path)
                 logger.debug(f"Cache invalidated: {virtual_path}")
@@ -798,25 +797,26 @@ class NexusFSEventsMixin:
         if self._is_same_box():
             from nexus.backends.passthrough import PassthroughBackend
 
-            if isinstance(self.backend, PassthroughBackend):
-                try:
-                    watcher = self._get_file_watcher()
+            # Type narrowing: is_passthrough guarantees PassthroughBackend
+            assert isinstance(self.backend, PassthroughBackend)
+            try:
+                watcher = self._get_file_watcher()
 
-                    # Start watcher if not already started
-                    if not watcher._started:
-                        try:
-                            loop = asyncio.get_running_loop()
-                            watcher.start(loop)
-                        except RuntimeError:
-                            watcher.start()
+                # Start watcher if not already started
+                if not watcher._started:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        watcher.start(loop)
+                    except RuntimeError:
+                        watcher.start()
 
-                    # Watch the root directory
-                    root_path = self.backend.base_path
-                    watcher.add_watch(root_path, self._on_file_change, recursive=True)
+                # Watch the root directory
+                root_path = self.backend.base_path
+                watcher.add_watch(root_path, self._on_file_change, recursive=True)
 
-                    logger.info(f"Started same-box cache invalidation: {root_path}")
-                except Exception as e:
-                    logger.warning(f"Could not start same-box cache invalidation: {e}")
+                logger.info(f"Started same-box cache invalidation: {root_path}")
+            except Exception as e:
+                logger.warning(f"Could not start same-box cache invalidation: {e}")
 
     def _stop_cache_invalidation(self) -> None:
         """Stop all cache invalidation listeners.

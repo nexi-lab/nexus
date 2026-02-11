@@ -79,8 +79,9 @@ class CompactFileMetadata:
     version: int
     zone_id_intern: int
     created_by_id: int
-    is_directory: bool
     owner_id_intern: int
+    entry_type: int
+    target_zone_id_intern: int
 
     @classmethod
     def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
@@ -97,8 +98,9 @@ class CompactFileMetadata:
             version=m.version,
             zone_id_intern=_intern(m.zone_id),
             created_by_id=_intern(m.created_by),
-            is_directory=m.is_directory,
             owner_id_intern=_intern(m.owner_id),
+            entry_type=m.entry_type,
+            target_zone_id_intern=_intern(m.target_zone_id),
         )
 
     def to_file_metadata(self) -> FileMetadata:
@@ -117,8 +119,9 @@ class CompactFileMetadata:
             version=self.version,
             zone_id=_resolve(self.zone_id_intern),
             created_by=_resolve(self.created_by_id),
-            is_directory=self.is_directory,
             owner_id=_resolve(self.owner_id_intern),
+            entry_type=self.entry_type,
+            target_zone_id=_resolve(self.target_zone_id_intern),
         )
 
 

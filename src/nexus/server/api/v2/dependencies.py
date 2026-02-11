@@ -182,7 +182,7 @@ async def get_reflector(
     return Reflector(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
@@ -236,7 +236,7 @@ async def get_consolidation_engine(
     return ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
@@ -276,7 +276,7 @@ async def get_hierarchy_manager(
     consolidation_engine = ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,

@@ -1321,13 +1321,13 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.tasks import is_available
 
             if is_available():
-                service = _app_state.nexus_fs._task_queue_service
+                service = _app_state.nexus_fs.task_queue_service
                 engine = service.get_engine()
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
                 runner = AsyncTaskRunner(engine=engine, max_workers=4)
-                service._runner = runner
+                service.set_runner(runner)
                 _app_state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
                 logger.info("Task Queue runner started (4 workers)")

@@ -46,6 +46,7 @@ from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
+from nexus.core.nexus_fs_tasks import NexusFSTasksMixin
 
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
@@ -77,6 +78,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSMCPMixin,
     NexusFSLLMMixin,
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
+    NexusFSTasksMixin,  # Issue #574: Durable task queue
     NexusFilesystem,
 ):
     """
@@ -3501,29 +3503,45 @@ class NexusFS(  # type: ignore[misc]
     def list_workspaces(self, context: Any | None = None) -> list[dict]:
         """List all registered workspaces for the current user.
 
+        Requires authenticated context (raises ValueError if missing).
+
+        Filters workspaces by:
+        1. Workspaces created by the user (created_by matches user_id)
+        2. OR workspaces in the user's zone-scoped path
+
         Args:
-            context: Optional operation context (passed by RPC auto-dispatch)
+            context: Required operation context with user_id and zone_id
 
         Returns:
             List of workspace configuration dicts filtered by current user
 
+        Raises:
+            ValueError: If context is None or missing user_id/zone_id
+
         Example:
-            >>> workspaces = nx.list_workspaces()
+            >>> workspaces = nx.list_workspaces(context=ctx)
             >>> for ws in workspaces:
             ...     print(f"{ws['path']}: {ws['name']}")
         """
-        configs = self._workspace_registry.list_workspaces()
-
-        # Filter by current user if context is available
+        # Require authenticated context to prevent leaking all workspaces
+        user_id = None
+        zone_id = None
         if context is not None:
-            user_id = getattr(context, "user_id", None)
+            user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
             zone_id = getattr(context, "zone_id", None)
 
-            if user_id and zone_id:
-                # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /zone/{zone_id}/user/{user_id}/workspace/...
-                user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
-                configs = [c for c in configs if c.path.startswith(user_prefix)]
+        if not user_id or not zone_id:
+            raise ValueError(
+                "list_workspaces requires authenticated context with user_id and zone_id"
+            )
+
+        configs = self._workspace_registry.list_workspaces()
+
+        # Filter workspaces belonging to the current user by:
+        # 1. created_by matches user_id (workspaces the user registered at any path)
+        # 2. OR path follows zone/user pattern (workspaces in user's scoped directory)
+        user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
+        configs = [c for c in configs if c.created_by == user_id or c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
 

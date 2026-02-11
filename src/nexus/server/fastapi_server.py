@@ -411,6 +411,8 @@ class AppState:
         self.agent_event_log: Any = None
         # SandboxAuthService for authenticated sandbox creation (Issue #1307)
         self.sandbox_auth_service: Any = None
+        # Task Queue Runner (Issue #574)
+        self.task_runner: Any = None
 
 
 # Global state (set during app creation)
@@ -1269,10 +1271,44 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
+    # Issue #574: Task Queue Engine - Start background worker
+    task_runner_task: asyncio.Task[Any] | None = None
+    if _app_state.nexus_fs:
+        try:
+            from nexus.tasks import is_available
+
+            if is_available():
+                service = _app_state.nexus_fs._task_queue_service
+                engine = service.get_engine()
+
+                from nexus.tasks.runner import AsyncTaskRunner
+
+                runner = AsyncTaskRunner(engine=engine, max_workers=4)
+                service._runner = runner
+                _app_state.task_runner = runner
+                task_runner_task = asyncio.create_task(runner.run())
+                logger.info("Task Queue runner started (4 workers)")
+            else:
+                logger.debug("Task Queue: nexus_tasks Rust extension not available")
+        except Exception as e:
+            logger.warning(f"Task Queue runner not started: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #574: Stop Task Queue runner
+    if task_runner_task:
+        try:
+            if _app_state.task_runner:
+                await _app_state.task_runner.shutdown()
+            task_runner_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_runner_task
+            logger.info("Task Queue runner stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down Task Queue runner: {e}")
 
     # Issue #1212: Shutdown scheduler pool
     if _scheduler_pool:
@@ -2013,11 +2049,12 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.server.api.v2.routers import (
             consolidation,
+            curate,
             feedback,
             memories,
             mobile_search,
             playbooks,
-            reflection,
+            reflect,
             trajectories,
         )
 
@@ -2025,10 +2062,11 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(trajectories.router)
         app.include_router(feedback.router)
         app.include_router(playbooks.router)
-        app.include_router(reflection.router)
+        app.include_router(reflect.router)
+        app.include_router(curate.router)
         app.include_router(consolidation.router)
         app.include_router(mobile_search.router)
-        logger.info("API v2 routes registered (32 endpoints)")
+        logger.info("API v2 routes registered (37 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
@@ -4205,6 +4243,24 @@ def _register_routes(app: FastAPI) -> None:
 
             # Get operation context
             context = get_operation_context(auth_result)
+
+            # Issue #923: Parse X-Nexus-Consistency header for CTO consistency model
+            x_consistency = request.headers.get("X-Nexus-Consistency")
+            if x_consistency:
+                try:
+                    from dataclasses import replace
+
+                    from nexus.core.consistency import FSConsistency
+
+                    context = replace(context, consistency=FSConsistency(x_consistency))
+                except ValueError:
+                    return _error_response(
+                        rpc_request.id,
+                        RPCErrorCode.INVALID_PARAMS,
+                        f"Invalid X-Nexus-Consistency value: {x_consistency}. "
+                        f"Valid values: eventual, close_to_open, strong",
+                    )
+
             _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
             # Early 304 check for read operations - check ETag BEFORE reading content
@@ -4235,51 +4291,69 @@ def _register_routes(app: FastAPI) -> None:
                     # If ETag check fails, fall through to normal read
                     logger.debug(f"Early ETag check failed for {params.path}: {e}")
 
-            # Issue #1187: Handle X-Nexus-Zookie header for consistency
+            # Issue #1187 + #923: Handle X-Nexus-Zookie header for consistency
             x_nexus_zookie = request.headers.get("X-Nexus-Zookie")
             if x_nexus_zookie and method in ("read", "list", "glob", "get_metadata", "exists"):
-                try:
-                    from nexus.core.zookie import (
-                        ConsistencyTimeoutError,
-                        InvalidZookieError,
-                        Zookie,
-                    )
+                # Set min_zookie on context for core-layer consistency checks
+                from dataclasses import replace
 
-                    zookie = Zookie.decode(x_nexus_zookie)
-                    # Wait for revision if needed (AT_LEAST_AS_FRESH semantics)
-                    if _app_state.nexus_fs:
-                        # Get zone from context
-                        zone_id = context.zone_id if context else "default"
-                        if zone_id != zookie.zone_id:
-                            logger.warning(
-                                f"Zookie zone mismatch: request={zone_id}, zookie={zookie.zone_id}"
+                context = replace(context, min_zookie=x_nexus_zookie)
+
+                # For read/list, the core layer handles the zookie wait via
+                # _check_consistency_before_read() (Issue #923).
+                # For other methods (glob, get_metadata, exists), do the wait here.
+                if method not in ("read", "list"):
+                    try:
+                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
+                        from nexus.core.zookie import (
+                            ConsistencyTimeoutError,
+                            InvalidZookieError,
+                            Zookie,
+                        )
+
+                        consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
+
+                        # EVENTUAL: skip zookie check entirely
+                        if consistency != FSConsistency.EVENTUAL:
+                            zookie = Zookie.decode(x_nexus_zookie)
+                            if _app_state.nexus_fs:
+                                zone_id = context.zone_id if context else "default"
+                                if zone_id != zookie.zone_id:
+                                    logger.warning(
+                                        f"Zookie zone mismatch: request={zone_id}, "
+                                        f"zookie={zookie.zone_id}"
+                                    )
+                                if not _app_state.nexus_fs._wait_for_revision(
+                                    zookie.zone_id, zookie.revision, timeout_ms=5000
+                                ) and consistency == FSConsistency.STRONG:
+                                    raise ConsistencyTimeoutError(
+                                        f"Timeout waiting for revision {zookie.revision}",
+                                        zone_id=zookie.zone_id,
+                                        requested_revision=zookie.revision,
+                                        current_revision=_app_state.nexus_fs._get_current_revision(
+                                            zookie.zone_id
+                                        ),
+                                        timeout_ms=5000,
+                                    )
+                                # CTO: timeout is acceptable, fall through
+
+                    except InvalidZookieError as e:
+                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
+
+                        if getattr(context, "consistency", DEFAULT_CONSISTENCY) == FSConsistency.STRONG:
+                            return _error_response(
+                                rpc_request.id,
+                                RPCErrorCode.INVALID_PARAMS,
+                                f"Invalid X-Nexus-Zookie header: {e.message}",
                             )
-                        # Wait for revision with 5s timeout
-                        if not _app_state.nexus_fs._wait_for_revision(
-                            zookie.zone_id, zookie.revision, timeout_ms=5000
-                        ):
-                            raise ConsistencyTimeoutError(
-                                f"Timeout waiting for revision {zookie.revision}",
-                                zone_id=zookie.zone_id,
-                                requested_revision=zookie.revision,
-                                current_revision=_app_state.nexus_fs._get_current_revision(
-                                    zookie.zone_id
-                                ),
-                                timeout_ms=5000,
-                            )
-                except InvalidZookieError as e:
-                    return _error_response(
-                        rpc_request.id,
-                        RPCErrorCode.INVALID_PARAMS,
-                        f"Invalid X-Nexus-Zookie header: {e.message}",
-                    )
-                except ConsistencyTimeoutError as e:
-                    return _error_response(
-                        rpc_request.id,
-                        RPCErrorCode.INTERNAL_ERROR,
-                        f"Consistency timeout: requested revision {e.requested_revision}, "
-                        f"current revision {e.current_revision}",
-                    )
+                        # CTO/EVENTUAL: ignore invalid zookies gracefully
+                    except ConsistencyTimeoutError as e:
+                        return _error_response(
+                            rpc_request.id,
+                            RPCErrorCode.INTERNAL_ERROR,
+                            f"Consistency timeout: requested revision {e.requested_revision}, "
+                            f"current revision {e.current_revision}",
+                        )
 
             # Dispatch method
             _dispatch_start = _time.time()

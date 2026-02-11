@@ -10,8 +10,19 @@ Tests the full zookie flow:
 from __future__ import annotations
 
 import base64
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from contextlib import closing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import httpx
+import pytest
 from starlette.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -439,3 +450,408 @@ class TestZookieWithRealServer:
 
         assert read_response.status_code == 200
         assert "result" in read_response.json()
+
+
+# =============================================================================
+# Issue #923: CTO Consistency Header E2E Tests
+# =============================================================================
+
+
+class TestConsistencyHeadersE2E:
+    """E2E tests for X-Nexus-Consistency header support (Issue #923)."""
+
+    def test_consistency_header_in_read_request(self, nexus_fs: NexusFS) -> None:
+        """X-Nexus-Consistency header should be accepted on read requests."""
+        from nexus.server.fastapi_server import create_app
+
+        app = create_app(nexus_fs)
+
+        with TestClient(app) as client:
+            # Write a file first
+            client.post(
+                "/api/nfs/write",
+                json={"params": {"path": "/cto_header.txt", "content": _make_bytes_content("test")}},
+            )
+
+            # Read with X-Nexus-Consistency header (all 3 levels)
+            for level in ("eventual", "close_to_open", "strong"):
+                read_response = client.post(
+                    "/api/nfs/read",
+                    json={"params": {"path": "/cto_header.txt"}},
+                    headers={"X-Nexus-Consistency": level},
+                )
+                assert read_response.status_code == 200, (
+                    f"Read with consistency={level} failed: {read_response.json()}"
+                )
+
+    def test_invalid_consistency_header_returns_error(self, nexus_fs: NexusFS) -> None:
+        """Invalid X-Nexus-Consistency value should return an error."""
+        from nexus.server.fastapi_server import create_app
+
+        nexus_fs.write("/invalid_header.txt", b"content")
+        app = create_app(nexus_fs)
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/nfs/read",
+                json={"params": {"path": "/invalid_header.txt"}},
+                headers={"X-Nexus-Consistency": "invalid_level"},
+            )
+            assert response.status_code == 200  # JSON-RPC returns 200 with error in body
+            data = response.json()
+            assert "error" in data, f"Expected error for invalid consistency level, got: {data}"
+            assert "Invalid X-Nexus-Consistency" in data["error"]["message"]
+
+    def test_full_cto_flow_via_api(self, nexus_fs: NexusFS) -> None:
+        """Full CTO flow: write -> get zookie -> read with zookie + consistency -> verify."""
+        from nexus.server.fastapi_server import create_app
+
+        # Write directly to get a valid zookie (avoids audit log table issues)
+        result = nexus_fs.write("/cto_flow.txt", b"CTO flow data")
+        zookie = result["zookie"]
+
+        app = create_app(nexus_fs)
+
+        with TestClient(app) as client:
+            # Read with CTO consistency + zookie from the write
+            read_response = client.post(
+                "/api/nfs/read",
+                json={"params": {"path": "/cto_flow.txt"}},
+                headers={
+                    "X-Nexus-Consistency": "close_to_open",
+                    "X-Nexus-Zookie": zookie,
+                },
+            )
+            assert read_response.status_code == 200
+            data = read_response.json()
+            assert "result" in data, f"Expected result for CTO read, got: {data}"
+
+    def test_eventual_consistency_with_future_zookie(self, nexus_fs: NexusFS) -> None:
+        """EVENTUAL consistency should ignore a future zookie (no timeout/error)."""
+        from nexus.core.zookie import Zookie
+        from nexus.server.fastapi_server import create_app
+
+        nexus_fs.write("/eventual_test.txt", b"data")
+        app = create_app(nexus_fs)
+
+        future_zookie = Zookie.encode("default", 999999)
+
+        with TestClient(app) as client:
+            # Read with EVENTUAL + future zookie — should succeed, no error
+            read_response = client.post(
+                "/api/nfs/read",
+                json={"params": {"path": "/eventual_test.txt"}},
+                headers={
+                    "X-Nexus-Consistency": "eventual",
+                    "X-Nexus-Zookie": future_zookie,
+                },
+            )
+            assert read_response.status_code == 200
+            data = read_response.json()
+            assert "result" in data, f"Expected result for EVENTUAL read, got: {data}"
+
+
+# =============================================================================
+# Issue #923: Real Server E2E Tests (real subprocess, open access mode)
+# =============================================================================
+
+_PYTHON = sys.executable
+_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
+
+
+def _find_free_port() -> int:
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _wait_for_health(base_url: str, timeout: float = 30.0) -> None:
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            resp = httpx.get(f"{base_url}/health", timeout=1.0, trust_env=False)
+            if resp.status_code == 200:
+                return
+        except (httpx.ConnectError, httpx.ReadTimeout):
+            pass
+        time.sleep(0.2)
+    pytest.fail(f"Server at {base_url} did not become healthy in {timeout}s")
+
+
+_PG_URL = os.environ.get(
+    "NEXUS_TEST_DATABASE_URL",
+    "postgresql://scorpio:scorpio@127.0.0.1:5432/nexus_e2e_test",
+)
+
+_CTO_API_KEY = "sk-cto-test-key-12345"
+
+
+@pytest.fixture(scope="module")
+def cto_server(tmp_path_factory):
+    """Start a real nexus serve with auth enabled and PostgreSQL."""
+    data_dir = str(tmp_path_factory.mktemp("cto_e2e"))
+    port = _find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+
+    env = {
+        **os.environ,
+        "PYTHONPATH": _SRC_DIR,
+        "HTTP_PROXY": "",
+        "HTTPS_PROXY": "",
+        "http_proxy": "",
+        "https_proxy": "",
+        "NO_PROXY": "*",
+        "NEXUS_DATABASE_URL": _PG_URL,
+        "NEXUS_ENFORCE_PERMISSIONS": "true",
+        "NEXUS_RATE_LIMIT_ENABLED": "false",
+        "NEXUS_SEARCH_DAEMON": "false",
+    }
+
+    proc = subprocess.Popen(
+        [
+            _PYTHON,
+            "-c",
+            (
+                "from nexus.cli import main; "
+                f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
+                f"'--data-dir', '{data_dir}', "
+                f"'--auth-type', 'static', '--api-key', '{_CTO_API_KEY}'])"
+            ),
+        ],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        preexec_fn=os.setsid if sys.platform != "win32" else None,
+    )
+
+    try:
+        _wait_for_health(base_url)
+        yield {"base_url": base_url, "port": port, "process": proc}
+    except Exception:
+        if sys.platform != "win32":
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        else:
+            proc.terminate()
+        proc.wait(timeout=5)
+        stdout = proc.stdout.read() if proc.stdout else ""
+        pytest.fail(f"CTO test server failed to start. Output:\n{stdout}")
+    finally:
+        if proc.poll() is None:
+            if sys.platform != "win32":
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    proc.terminate()
+            else:
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        shutil.rmtree(data_dir, ignore_errors=True)
+
+
+@pytest.fixture()
+def cto_admin_client(cto_server) -> httpx.Client:
+    """Authenticated admin httpx client for CTO tests."""
+    with httpx.Client(
+        base_url=cto_server["base_url"],
+        timeout=30.0,
+        trust_env=False,
+        headers={
+            "Authorization": f"Bearer {_CTO_API_KEY}",
+        },
+    ) as client:
+        yield client
+
+
+@pytest.fixture()
+def cto_user_client(cto_server) -> httpx.Client:
+    """Non-admin user httpx client for CTO tests."""
+    with httpx.Client(
+        base_url=cto_server["base_url"],
+        timeout=30.0,
+        trust_env=False,
+        headers={
+            "Authorization": f"Bearer {_CTO_API_KEY}",
+            "X-Nexus-Subject": "user:alice",
+            "X-Nexus-Zone-ID": "default",
+        },
+    ) as client:
+        yield client
+
+
+def _unique_path(name: str) -> str:
+    """Generate unique file path to avoid stale DB collisions."""
+    import uuid
+
+    return f"/cto_e2e_{uuid.uuid4().hex[:8]}_{name}"
+
+
+class TestCTORealServer:
+    """Real server E2E: CTO consistency with auth enabled (Issue #923).
+
+    Tests run against a real `nexus serve` subprocess with:
+    - PostgreSQL database
+    - Static API key authentication (--auth-type static)
+    - Raft metadata store
+    """
+
+    def test_health(self, cto_admin_client: httpx.Client) -> None:
+        """Server health check."""
+        resp = cto_admin_client.get("/health")
+        assert resp.status_code == 200
+
+    def test_write_read_with_consistency_header(
+        self, cto_admin_client: httpx.Client
+    ) -> None:
+        """Admin writes, then reads with X-Nexus-Consistency + zookie."""
+        path = _unique_path("cto_read.txt")
+        write_resp = cto_admin_client.post(
+            "/api/nfs/write",
+            json={
+                "params": {
+                    "path": path,
+                    "content": _make_bytes_content("real server CTO"),
+                }
+            },
+        )
+        assert write_resp.status_code == 200
+        data = write_resp.json()
+        assert "result" in data, f"Write failed: {data}"
+
+        zookie = write_resp.headers.get("X-Nexus-Zookie")
+        if not zookie:
+            zookie = _extract_zookie_from_write_result(data["result"])
+
+        # Read with CTO consistency + zookie
+        read_resp = cto_admin_client.post(
+            "/api/nfs/read",
+            json={"params": {"path": path}},
+            headers={
+                "X-Nexus-Consistency": "close_to_open",
+                "X-Nexus-Zookie": zookie,
+            },
+        )
+        assert read_resp.status_code == 200
+        read_data = read_resp.json()
+        assert "result" in read_data, f"Read with CTO failed: {read_data}"
+
+    def test_eventual_consistency_ignores_future_zookie(
+        self, cto_admin_client: httpx.Client
+    ) -> None:
+        """EVENTUAL consistency should not block on a future zookie."""
+        from nexus.core.zookie import Zookie
+
+        path = _unique_path("eventual.txt")
+        cto_admin_client.post(
+            "/api/nfs/write",
+            json={
+                "params": {
+                    "path": path,
+                    "content": _make_bytes_content("eventual data"),
+                }
+            },
+        )
+
+        future_zookie = Zookie.encode("default", 999999)
+        read_resp = cto_admin_client.post(
+            "/api/nfs/read",
+            json={"params": {"path": path}},
+            headers={
+                "X-Nexus-Consistency": "eventual",
+                "X-Nexus-Zookie": future_zookie,
+            },
+        )
+        assert read_resp.status_code == 200
+        data = read_resp.json()
+        assert "result" in data, f"EVENTUAL read should succeed, got: {data}"
+
+    def test_invalid_consistency_returns_error(
+        self, cto_admin_client: httpx.Client
+    ) -> None:
+        """Invalid X-Nexus-Consistency value should return an error."""
+        resp = cto_admin_client.post(
+            "/api/nfs/read",
+            json={"params": {"path": "/nonexistent.txt"}},
+            headers={"X-Nexus-Consistency": "bogus_level"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "error" in data, f"Expected error for invalid consistency, got: {data}"
+        assert "Invalid X-Nexus-Consistency" in data["error"]["message"]
+
+    def test_strong_consistency_with_valid_zookie(
+        self, cto_admin_client: httpx.Client
+    ) -> None:
+        """STRONG consistency with valid (satisfied) zookie should succeed."""
+        path = _unique_path("strong.txt")
+        write_resp = cto_admin_client.post(
+            "/api/nfs/write",
+            json={
+                "params": {
+                    "path": path,
+                    "content": _make_bytes_content("strong data"),
+                }
+            },
+        )
+        assert write_resp.status_code == 200
+        data = write_resp.json()
+        assert "result" in data, f"Write failed: {data}"
+
+        zookie = write_resp.headers.get("X-Nexus-Zookie")
+        if not zookie:
+            zookie = _extract_zookie_from_write_result(data["result"])
+
+        read_resp = cto_admin_client.post(
+            "/api/nfs/read",
+            json={"params": {"path": path}},
+            headers={
+                "X-Nexus-Consistency": "strong",
+                "X-Nexus-Zookie": zookie,
+            },
+        )
+        assert read_resp.status_code == 200
+        read_data = read_resp.json()
+        assert "result" in read_data, f"STRONG read failed: {read_data}"
+
+    def test_user_read_with_consistency(
+        self, cto_admin_client: httpx.Client, cto_user_client: httpx.Client
+    ) -> None:
+        """Non-admin user reads with CTO consistency after admin writes."""
+        path = _unique_path("user_cto.txt")
+        # Admin writes
+        write_resp = cto_admin_client.post(
+            "/api/nfs/write",
+            json={
+                "params": {
+                    "path": path,
+                    "content": _make_bytes_content("user readable"),
+                }
+            },
+        )
+        assert write_resp.status_code == 200
+        write_data = write_resp.json()
+        assert "result" in write_data, f"Admin write failed: {write_data}"
+
+        zookie = write_resp.headers.get("X-Nexus-Zookie")
+        if not zookie:
+            zookie = _extract_zookie_from_write_result(write_data["result"])
+
+        # Non-admin user reads with CTO consistency + zookie
+        read_resp = cto_user_client.post(
+            "/api/nfs/read",
+            json={"params": {"path": path}},
+            headers={
+                "X-Nexus-Consistency": "close_to_open",
+                "X-Nexus-Zookie": zookie,
+            },
+        )
+        assert read_resp.status_code == 200
+        read_data = read_resp.json()
+        assert "result" in read_data, f"User CTO read failed: {read_data}"

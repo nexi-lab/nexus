@@ -58,7 +58,6 @@ class ZoneResponse(BaseModel):
     name: str
     domain: str | None = None
     description: str | None = None
-    consistency_mode: str = "SC"
     is_active: bool
     created_at: str
     updated_at: str
@@ -69,22 +68,6 @@ class ZoneListResponse(BaseModel):
 
     zones: list[ZoneResponse]
     total: int
-
-
-class UpdateConsistencyModeRequest(BaseModel):
-    """Request to change a zone's consistency mode (Issue #1180)."""
-
-    target_mode: str = Field(
-        ...,
-        description="Target consistency mode: 'SC' (strong) or 'EC' (eventual)",
-        pattern=r"^(SC|EC)$",
-    )
-    timeout_s: float = Field(
-        30.0,
-        description="Maximum time for migration in seconds",
-        gt=0,
-        le=300,
-    )
 
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
@@ -167,7 +150,6 @@ async def create_zone_endpoint(
                 name=zone.name,
                 domain=zone.domain,
                 description=zone.description,
-                consistency_mode=zone.consistency_mode,
                 is_active=bool(zone.is_active),
                 created_at=zone.created_at.isoformat(),
                 updated_at=zone.updated_at.isoformat(),
@@ -322,7 +304,6 @@ async def list_zones(
                     name=t.name,
                     domain=t.domain,
                     description=t.description,
-                    consistency_mode=t.consistency_mode,
                     is_active=bool(t.is_active),
                     created_at=t.created_at.isoformat(),
                     updated_at=t.updated_at.isoformat(),
@@ -331,121 +312,3 @@ async def list_zones(
             ],
             total=total,
         )
-
-
-class MigrationResponse(BaseModel):
-    """Response for consistency mode migration (Issue #1180)."""
-
-    success: bool
-    zone_id: str
-    from_mode: str
-    to_mode: str
-    duration_ms: float
-    error: str | None = None
-
-
-@router.patch("/{zone_id}/consistency-mode", response_model=MigrationResponse)
-async def update_consistency_mode(
-    zone_id: str,
-    request: UpdateConsistencyModeRequest,
-    user_info: tuple[str, str] = Depends(get_authenticated_user),
-    auth: DatabaseLocalAuth = Depends(get_auth_provider),
-) -> MigrationResponse:
-    """Migrate a zone's consistency mode (SC ↔ EC).
-
-    Issue #1180: Orchestrates live migration between replication modes.
-    Only zone owners and global admins can change the consistency mode.
-
-    Args:
-        zone_id: Zone identifier
-        request: Migration request with target_mode and optional timeout_s
-        user_info: Authenticated user (user_id, email) from JWT token
-        auth: Authentication provider
-
-    Returns:
-        Migration result with success/failure details
-
-    Raises:
-        400: Invalid target mode or migration not allowed
-        401: Not authenticated
-        403: Not a zone owner or admin
-        404: Zone not found
-        500: Migration failed
-        503: NexusFS or migration service not available
-    """
-    user_id, _email = user_info
-
-    # Authorization: must be zone owner or global admin
-    with auth.session_factory() as session:
-        user = get_user_by_id(session, user_id)
-        is_global_admin = user and user.is_global_admin == 1
-
-        if not is_global_admin:
-            nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
-                # Check for owner role
-                if not user_belongs_to_zone(nx._rebac_manager, user_id, zone_id):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Access denied: you are not a member of zone '{zone_id}'",
-                    )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: zone membership verification unavailable",
-                )
-
-        # Verify zone exists
-        zone = session.get(ZoneModel, zone_id)
-        if not zone:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Zone '{zone_id}' not found",
-            )
-
-    # Perform migration via NexusFS
-    nx = get_nexus_instance()
-    if not nx or not hasattr(nx, "migrate_consistency_mode"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Consistency migration service not available",
-        )
-
-    try:
-        result = await asyncio.to_thread(
-            nx.migrate_consistency_mode,
-            zone_id=zone_id,
-            target_mode=request.target_mode,
-            timeout_s=request.timeout_s,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        ) from e
-    except Exception as e:
-        logger.error(f"Migration failed for zone {zone_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Migration failed: {e}",
-        ) from e
-
-    if not result["success"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result["error"] or "Migration failed",
-        )
-
-    return MigrationResponse(
-        success=result["success"],
-        zone_id=result["zone_id"],
-        from_mode=result["from_mode"],
-        to_mode=result["to_mode"],
-        duration_ms=result["duration_ms"],
-        error=result["error"],
-    )

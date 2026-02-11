@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Embedded key-value storage using redb.
 //!
 //! Drop-in replacement for SledStore, providing the same API surface.

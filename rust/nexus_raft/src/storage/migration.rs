@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 //! Sled → redb migration tool.
 //!
 //! Copies all data from a sled database to a redb database,

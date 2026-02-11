@@ -81,9 +81,7 @@ class TestWriteCallsObserver:
         assert kwargs.kwargs["is_new"] is False
         assert kwargs.kwargs["path"] == "/file.txt"
 
-    def test_on_write_receives_metadata_object(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_on_write_receives_metadata_object(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.write("/test.txt", b"content")
 
         call_kwargs = observer.on_write.call_args
@@ -96,9 +94,7 @@ class TestWriteCallsObserver:
 class TestDeleteCallsObserver:
     """delete() should call on_delete() with correct arguments."""
 
-    def test_delete_calls_on_delete(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_delete_calls_on_delete(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.write("/test.txt", b"content")
         observer.reset_mock()
 
@@ -108,9 +104,7 @@ class TestDeleteCallsObserver:
         kwargs = observer.on_delete.call_args.kwargs
         assert kwargs["path"] == "/test.txt"
 
-    def test_delete_passes_snapshot_hash(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_delete_passes_snapshot_hash(self, nx: NexusFS, observer: MagicMock) -> None:
         result = nx.write("/test.txt", b"content")
         etag = result["etag"]
         observer.reset_mock()
@@ -124,9 +118,7 @@ class TestDeleteCallsObserver:
 class TestRenameCallsObserver:
     """rename() should call on_rename() with correct arguments."""
 
-    def test_rename_calls_on_rename(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_rename_calls_on_rename(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.write("/old.txt", b"content")
         observer.reset_mock()
 
@@ -141,9 +133,7 @@ class TestRenameCallsObserver:
 class TestWriteBatchCallsObserver:
     """write_batch() should call on_write_batch() with correct arguments."""
 
-    def test_batch_calls_on_write_batch(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_batch_calls_on_write_batch(self, nx: NexusFS, observer: MagicMock) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb")]
         nx.write_batch(files)
 
@@ -173,9 +163,7 @@ class TestWriteBatchCallsObserver:
 class TestWriteStreamCallsObserver:
     """write_stream() now calls on_write() via _notify_observer (gap closed)."""
 
-    def test_write_stream_calls_on_write(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_write_stream_calls_on_write(self, nx: NexusFS, observer: MagicMock) -> None:
         if not hasattr(nx, "write_stream"):
             pytest.skip("write_stream not available")
 
@@ -190,9 +178,7 @@ class TestWriteStreamCallsObserver:
 class TestMkdirDoesNotCallObserver:
     """mkdir() currently does NOT call any observer method."""
 
-    def test_mkdir_skips_observer(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_mkdir_skips_observer(self, nx: NexusFS, observer: MagicMock) -> None:
         nx.mkdir("/testdir")
 
         # Document the gap: observer should be called but isn't
@@ -202,9 +188,7 @@ class TestMkdirDoesNotCallObserver:
 class TestRmdirDoesNotCallObserver:
     """rmdir() currently does NOT call any observer method."""
 
-    def test_rmdir_skips_observer(
-        self, nx: NexusFS, observer: MagicMock
-    ) -> None:
+    def test_rmdir_skips_observer(self, nx: NexusFS, observer: MagicMock) -> None:
         # Create a directory and a file in it
         nx.mkdir("/mydir")
         observer.reset_mock()

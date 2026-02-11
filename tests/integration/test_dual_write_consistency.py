@@ -53,9 +53,7 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
 
 
 @pytest.fixture
-def nx(
-    temp_dir: Path, record_store: SQLAlchemyRecordStore
-) -> Generator[NexusFS, None, None]:
+def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
     raft_store = _try_create_raft_store(str(temp_dir / "raft-metadata"))
     if raft_store is None:
         # Fallback to InMemoryFileMetadataStore with factory-style wiring
@@ -106,10 +104,14 @@ class TestWriteConsistency:
 
         # RecordStore has the file
         with record_store.session_factory() as session:
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/test.txt",
-                FilePathModel.deleted_at.is_(None),
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/test.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .one()
+            )
             assert fp.content_hash == result["etag"]
             assert fp.size_bytes == len(b"hello world")
             assert fp.current_version == 1
@@ -124,10 +126,14 @@ class TestWriteConsistency:
         assert meta is not None
 
         with record_store.session_factory() as session:
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/consistent.txt",
-                FilePathModel.deleted_at.is_(None),
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/consistent.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .one()
+            )
 
             # Field-by-field consistency check
             assert fp.virtual_path == meta.path
@@ -148,16 +154,25 @@ class TestWriteConsistency:
         assert meta.version == 3
 
         with record_store.session_factory() as session:
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/ver.txt",
-                FilePathModel.deleted_at.is_(None),
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/ver.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .one()
+            )
             assert fp.current_version == 3
 
             # Should have 3 version history entries
-            vhs = session.query(VersionHistoryModel).filter(
-                VersionHistoryModel.resource_id == fp.path_id,
-            ).order_by(VersionHistoryModel.version_number).all()
+            vhs = (
+                session.query(VersionHistoryModel)
+                .filter(
+                    VersionHistoryModel.resource_id == fp.path_id,
+                )
+                .order_by(VersionHistoryModel.version_number)
+                .all()
+            )
             assert len(vhs) == 3
             assert [v.version_number for v in vhs] == [1, 2, 3]
 
@@ -185,9 +200,13 @@ class TestDeleteConsistency:
         nx.delete("/del.txt")
 
         with record_store.session_factory() as session:
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/del.txt",
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/del.txt",
+                )
+                .one()
+            )
             assert fp.deleted_at is not None
 
     def test_delete_audit_trail_exists(
@@ -223,9 +242,7 @@ class TestRenameConsistency:
         assert meta is not None
         assert meta.path == "/new.txt"
 
-    def test_rename_audit_trail(
-        self, nx: NexusFS, record_store: SQLAlchemyRecordStore
-    ) -> None:
+    def test_rename_audit_trail(self, nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
         nx.write("/old.txt", b"content")
         nx.rename("/old.txt", "/new.txt")
 
@@ -264,9 +281,13 @@ class TestBatchWriteConsistency:
 
         # All files in RecordStore
         with record_store.session_factory() as session:
-            fps = session.query(FilePathModel).filter(
-                FilePathModel.deleted_at.is_(None),
-            ).all()
+            fps = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .all()
+            )
             record_paths = {fp.virtual_path for fp in fps}
             for path, _ in files:
                 assert path in record_paths, f"{path} missing from RecordStore"

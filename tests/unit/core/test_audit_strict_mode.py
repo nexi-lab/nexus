@@ -75,9 +75,7 @@ class TestWriteStrictModeTrue:
         finally:
             nx.close()
 
-    def test_write_file_still_exists_in_metastore_after_error(
-        self, temp_dir: Path
-    ) -> None:
+    def test_write_file_still_exists_in_metastore_after_error(self, temp_dir: Path) -> None:
         """Even when AuditLogError is raised, the sled write has already committed."""
         observer = _failing_observer()
         nx = _make_nx(temp_dir, audit_strict_mode=True, write_observer=observer)
@@ -126,9 +124,7 @@ class TestWriteStrictModeFalse:
 class TestDeleteRespectsStrictMode:
     """delete() raises AuditLogError when audit_strict_mode=True."""
 
-    def test_delete_raises_audit_log_error_with_strict_mode_true(
-        self, temp_dir: Path
-    ) -> None:
+    def test_delete_raises_audit_log_error_with_strict_mode_true(self, temp_dir: Path) -> None:
         """delete() raises AuditLogError when observer fails and strict mode is on."""
         observer = _failing_observer()
         nx = _make_nx(temp_dir, audit_strict_mode=True, write_observer=observer)
@@ -160,9 +156,7 @@ class TestDeleteRespectsStrictMode:
         finally:
             nx.close()
 
-    def test_delete_observer_is_called_before_metastore_delete(
-        self, temp_dir: Path
-    ) -> None:
+    def test_delete_observer_is_called_before_metastore_delete(self, temp_dir: Path) -> None:
         """Verify observer is called on delete."""
         observer = MagicMock()  # non-failing observer
         nx = _make_nx(temp_dir, audit_strict_mode=True, write_observer=observer)
@@ -186,9 +180,7 @@ class TestDeleteRespectsStrictMode:
 class TestRenameRespectsStrictMode:
     """rename() raises AuditLogError when audit_strict_mode=True."""
 
-    def test_rename_raises_audit_log_error_with_strict_mode_true(
-        self, temp_dir: Path
-    ) -> None:
+    def test_rename_raises_audit_log_error_with_strict_mode_true(self, temp_dir: Path) -> None:
         observer = _failing_observer()
         nx = _make_nx(temp_dir, audit_strict_mode=True, write_observer=observer)
 
@@ -225,9 +217,7 @@ class TestRenameRespectsStrictMode:
 class TestWriteBatchRespectsStrictMode:
     """write_batch() raises AuditLogError when audit_strict_mode=True."""
 
-    def test_write_batch_raises_audit_log_error_with_strict_mode_true(
-        self, temp_dir: Path
-    ) -> None:
+    def test_write_batch_raises_audit_log_error_with_strict_mode_true(self, temp_dir: Path) -> None:
         observer = _failing_observer()
         nx = _make_nx(temp_dir, audit_strict_mode=True, write_observer=observer)
 
@@ -238,9 +228,7 @@ class TestWriteBatchRespectsStrictMode:
         finally:
             nx.close()
 
-    def test_write_batch_succeeds_with_strict_mode_false(
-        self, temp_dir: Path
-    ) -> None:
+    def test_write_batch_succeeds_with_strict_mode_false(self, temp_dir: Path) -> None:
         observer = _failing_observer()
         nx = _make_nx(temp_dir, audit_strict_mode=False, write_observer=observer)
 

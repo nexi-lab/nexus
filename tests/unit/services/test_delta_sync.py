@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.services.change_log_store import ChangeLogEntry
 from nexus.services.sync_service import (
-    ChangeLogEntry,
     SyncContext,
     SyncResult,
     SyncService,

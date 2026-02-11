@@ -457,3 +457,29 @@ class NexusFSGateway:
                 }
             )
         return mounts
+
+    def get_mount_for_path(self, path: str) -> dict[str, Any] | None:
+        """Get mount info and backend-relative path for a virtual path.
+
+        Used by WriteBackService to resolve which backend to write back to.
+
+        Args:
+            path: Virtual file path
+
+        Returns:
+            Dict with mount_point, backend, backend_path, readonly keys,
+            or None if no mount matches.
+        """
+        for mount in self.router.list_mounts():
+            mp = mount.mount_point
+            if path == mp or path.startswith(mp + "/") or mp == "/":
+                # Strip mount prefix to get backend-relative path
+                backend_path = path.lstrip("/") if mp == "/" else path[len(mp) :].lstrip("/")
+                return {
+                    "mount_point": mp,
+                    "backend": mount.backend,
+                    "backend_path": backend_path,
+                    "readonly": mount.readonly,
+                    "backend_name": getattr(mount.backend, "name", type(mount.backend).__name__),
+                }
+        return None

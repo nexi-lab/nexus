@@ -405,6 +405,12 @@ class AppState:
         self.websocket_manager: Any = None
         # Reactive Subscription Manager for O(1) event matching (Issue #1167)
         self.reactive_subscription_manager: Any = None
+        # Agent Registry for agent lifecycle (Issue #1240)
+        self.agent_registry: Any = None
+        # Agent Event Log for sandbox lifecycle events (Issue #1307)
+        self.agent_event_log: Any = None
+        # SandboxAuthService for authenticated sandbox creation (Issue #1307)
+        self.sandbox_auth_service: Any = None
 
 
 # Global state (set during app creation)
@@ -1147,6 +1153,66 @@ async def lifespan(_app: FastAPI) -> Any:
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
+    # Issue #1307: Initialize SandboxAuthService for authenticated sandbox creation
+    if _app_state.nexus_fs and not _app_state.agent_registry:
+        logger.info(
+            "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
+        )
+    if _app_state.nexus_fs and _app_state.agent_registry:
+        try:
+            from nexus.sandbox.auth_service import SandboxAuthService
+            from nexus.sandbox.events import AgentEventLog
+            from nexus.sandbox.sandbox_manager import SandboxManager
+
+            session_factory = getattr(_app_state.nexus_fs, "SessionLocal", None)
+            if session_factory and callable(session_factory):
+                # Create AgentEventLog for sandbox lifecycle audit
+                _app_state.agent_event_log = AgentEventLog(session_factory=session_factory)
+
+                # Create SandboxManager for SandboxAuthService
+                # (separate from NexusFS's lazy sandbox manager — different layers)
+                config = getattr(_app_state.nexus_fs, "_config", None)
+                sandbox_mgr = SandboxManager(
+                    db_session=session_factory(),
+                    e2b_api_key=os.getenv("E2B_API_KEY"),
+                    e2b_team_id=os.getenv("E2B_TEAM_ID"),
+                    e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
+                    config=config,
+                )
+
+                # Get NamespaceManager if available (best-effort)
+                namespace_manager = None
+                sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                if sync_rebac:
+                    try:
+                        from nexus.core.namespace_manager import NamespaceManager
+
+                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
+                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
+                        namespace_manager = NamespaceManager(
+                            rebac_manager=sync_rebac,
+                            cache_maxsize=10_000,
+                            cache_ttl=ns_cache_ttl,
+                            revision_window=ns_revision_window,
+                        )
+                    except Exception as e:
+                        logger.info(
+                            "[SANDBOX-AUTH] NamespaceManager not available (%s), "
+                            "sandbox mount tables will be empty",
+                            e,
+                        )
+
+                _app_state.sandbox_auth_service = SandboxAuthService(
+                    agent_registry=_app_state.agent_registry,
+                    sandbox_manager=sandbox_mgr,
+                    namespace_manager=namespace_manager,
+                    event_log=_app_state.agent_event_log,
+                    budget_enforcement=False,
+                )
+                logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
+        except Exception as e:
+            logger.warning(f"[SANDBOX-AUTH] Failed to initialize SandboxAuthService: {e}")
+
     # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
     _scheduler_pool = None
     if _app_state.database_url and "postgresql" in _app_state.database_url:
@@ -1252,6 +1318,16 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Issue #1307: Close SandboxAuthService database session
+    if _app_state.sandbox_auth_service:
+        try:
+            sandbox_mgr = _app_state.sandbox_auth_service._sandbox_manager
+            if hasattr(sandbox_mgr, "db") and sandbox_mgr.db:
+                sandbox_mgr.db.close()
+            logger.info("[SANDBOX-AUTH] SandboxAuthService session closed")
+        except Exception as e:
+            logger.warning(f"[SANDBOX-AUTH] Error closing session: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:

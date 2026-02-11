@@ -22,7 +22,9 @@
 #[cfg(all(feature = "grpc", has_protos))]
 mod grpc_cluster {
     use _nexus_raft::raft::ZoneRaftRegistry;
-    use _nexus_raft::transport::{ClientConfig, NodeAddress, RaftApiClient, RaftGrpcServer, ServerConfig};
+    use _nexus_raft::transport::{
+        ClientConfig, NodeAddress, RaftApiClient, RaftGrpcServer, ServerConfig,
+    };
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -150,7 +152,12 @@ mod grpc_cluster {
             ));
 
             let _node = registry
-                .create_zone("default", all_peers[i].clone(), false, &tokio::runtime::Handle::current())
+                .create_zone(
+                    "default",
+                    all_peers[i].clone(),
+                    false,
+                    &tokio::runtime::Handle::current(),
+                )
                 .expect("Failed to create zone");
 
             // Start gRPC server in background

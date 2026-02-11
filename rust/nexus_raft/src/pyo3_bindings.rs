@@ -561,9 +561,7 @@ impl PyRaftConsensus {
 
         let node = registry
             .create_zone("default", peer_addrs, lazy, runtime.handle())
-            .map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to create zone: {}", e))
-            })?;
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
 
         // Shutdown signal for gRPC server
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

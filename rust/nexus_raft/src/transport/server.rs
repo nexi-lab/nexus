@@ -776,9 +776,7 @@ impl RaftService for WitnessServiceImpl {
         &self,
         _request: Request<TransferLeaderRequest>,
     ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Err(Status::unimplemented(
-            "Witness nodes cannot become leaders",
-        ))
+        Err(Status::unimplemented("Witness nodes cannot become leaders"))
     }
 
     /// Handle a raw raft-rs message forwarded from another node.
@@ -838,10 +836,7 @@ mod tests {
         use tempfile::TempDir;
 
         let tmp_dir = TempDir::new().unwrap();
-        let registry = Arc::new(ZoneRaftRegistry::new(
-            tmp_dir.path().to_path_buf(),
-            1,
-        ));
+        let registry = Arc::new(ZoneRaftRegistry::new(tmp_dir.path().to_path_buf(), 1));
 
         let config = ServerConfig {
             bind_address: "127.0.0.1:0".parse().unwrap(),

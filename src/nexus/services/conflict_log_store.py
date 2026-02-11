@@ -18,7 +18,7 @@ from nexus.services.conflict_resolution import (
     ConflictStrategy,
     ResolutionOutcome,
 )
-from nexus.services.sync_store_base import SyncStoreBase
+from nexus.storage.sync_store_base import SyncStoreBase
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ class ConflictLogStore(SyncStoreBase):
                 )
             )
             session.commit()
-            return updated > 0
+            return bool(updated > 0)
         except Exception as e:
             logger.warning(f"Failed to resolve conflict {conflict_id}: {e}")
             session.rollback()

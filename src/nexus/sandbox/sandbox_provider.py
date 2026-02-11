@@ -6,10 +6,80 @@ Provides a unified interface for managing sandboxes across different providers
 
 from __future__ import annotations
 
+import re
+import urllib.parse
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.sandbox.security_profile import SandboxSecurityProfile
+
+# Validation patterns for shell-safe inputs
+_MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
+_AGENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_,\-.:@]+$")
+
+
+def validate_mount_path(path: str) -> str:
+    """Validate a mount path is safe for shell interpolation.
+
+    Args:
+        path: Mount path (must be absolute, no shell metacharacters).
+
+    Returns:
+        The validated path.
+
+    Raises:
+        ValueError: If the path contains invalid characters.
+    """
+    if not _MOUNT_PATH_PATTERN.match(path):
+        raise ValueError(
+            f"Invalid mount path: {path!r} — must be absolute and contain only "
+            "alphanumeric, '/', '_', '-', '.' characters"
+        )
+    return path
+
+
+def validate_nexus_url(url: str) -> str:
+    """Validate a Nexus server URL is safe for shell interpolation.
+
+    Args:
+        url: Nexus server URL (must be http or https).
+
+    Returns:
+        The validated URL.
+
+    Raises:
+        ValueError: If the URL scheme is invalid or contains shell metacharacters.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid URL scheme: {url!r} — must be http or https")
+    # Check for shell metacharacters in the full URL
+    if any(c in url for c in ";&|`$(){}[]!#~"):
+        raise ValueError(f"URL contains shell metacharacters: {url!r}")
+    return url
+
+
+def validate_agent_id(agent_id: str) -> str:
+    """Validate an agent ID is safe for shell interpolation.
+
+    Args:
+        agent_id: Agent identifier.
+
+    Returns:
+        The validated agent ID.
+
+    Raises:
+        ValueError: If the agent ID contains invalid characters.
+    """
+    if not _AGENT_ID_PATTERN.match(agent_id):
+        raise ValueError(
+            f"Invalid agent_id: {agent_id!r} — must contain only "
+            "alphanumeric, '_', ',', '-', '.', ':', '@' characters"
+        )
+    return agent_id
 
 
 @dataclass
@@ -47,6 +117,7 @@ class SandboxProvider(ABC):
         template_id: str | None = None,
         timeout_minutes: int = 10,
         metadata: dict[str, Any] | None = None,
+        security_profile: SandboxSecurityProfile | None = None,
     ) -> str:
         """Create a new sandbox.
 
@@ -54,6 +125,9 @@ class SandboxProvider(ABC):
             template_id: Template ID for pre-configured environment
             timeout_minutes: Timeout for sandbox creation
             metadata: Provider-specific metadata
+            security_profile: Security profile for container settings.
+                Providers that manage their own isolation (e.g., E2B)
+                may ignore this parameter.
 
         Returns:
             Sandbox ID

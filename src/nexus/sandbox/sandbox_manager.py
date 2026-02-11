@@ -171,12 +171,22 @@ class SandboxManager:
                 f"Use sandbox_get_or_create() to reuse it or choose a different name."
             )
 
+        # Resolve agent trust tier to security profile
+        from nexus.sandbox.security_profile import SandboxSecurityProfile
+
+        agent_name = agent_id.split(",", 1)[1] if agent_id and "," in agent_id else None
+        security_profile = SandboxSecurityProfile.from_trust_tier(agent_name)
+        logger.info(
+            f"Using '{security_profile.name}' security profile for sandbox (agent={agent_id})"
+        )
+
         # Create sandbox via provider (async call)
         provider_obj = self.providers[provider]
         sandbox_id = await provider_obj.create(
             template_id=template_id,
             timeout_minutes=ttl_minutes,
             metadata={"name": name},
+            security_profile=security_profile,
         )
 
         # OPTIMIZATION: Start pre-warming Python imports in background
@@ -853,7 +863,6 @@ class SandboxManager:
         try:
             expired = self._execute_with_retry(_find_expired, context="expired sandbox query")
         except SQLAlchemyError:
-            # Return 0 on persistent error to avoid breaking cleanup
             return 0
 
         count = 0

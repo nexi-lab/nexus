@@ -23,6 +23,9 @@ from nexus.sandbox.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
     UnsupportedLanguageError,
+    validate_agent_id,
+    validate_mount_path,
+    validate_nexus_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,6 +81,7 @@ class DockerSandboxProvider(SandboxProvider):
         cpu_limit: float = 1.0,
         network_name: str | None = None,
         docker_config: Any = None,  # DockerTemplateConfig | None
+        egress_proxy_enabled: bool = False,
     ):
         """Initialize Docker sandbox provider.
 
@@ -90,6 +94,9 @@ class DockerSandboxProvider(SandboxProvider):
             cpu_limit: CPU limit in cores (e.g., 1.0 = 1 core)
             network_name: Docker network name (defaults to NEXUS_DOCKER_NETWORK env var)
             docker_config: Docker template configuration for custom images
+            egress_proxy_enabled: Enable shared egress proxy for network isolation.
+                When True, profiles with allowed_egress_domains route through a
+                Squid proxy on an internal Docker network instead of network=none.
         """
         if not DOCKER_AVAILABLE:
             raise RuntimeError("docker package not installed. Install with: pip install docker")
@@ -139,6 +146,10 @@ class DockerSandboxProvider(SandboxProvider):
             )
         # Note: network_name is optional - if not set, containers will use default bridge network
 
+        # Egress proxy manager (lazily initialized when a profile needs egress)
+        self._egress_proxy_enabled = egress_proxy_enabled
+        self._egress_proxy: Any | None = None  # EgressProxyManager | None
+
         # Cache for active containers
         self._containers: dict[str, ContainerInfo] = {}
 
@@ -151,6 +162,7 @@ class DockerSandboxProvider(SandboxProvider):
         template_id: str | None = None,
         timeout_minutes: int = 10,
         metadata: dict[str, Any] | None = None,
+        security_profile: Any | None = None,  # SandboxSecurityProfile | None
     ) -> str:
         """Create a new Docker sandbox.
 
@@ -158,6 +170,8 @@ class DockerSandboxProvider(SandboxProvider):
             template_id: Docker image to use (defaults to default_image)
             timeout_minutes: Sandbox TTL in minutes
             metadata: Additional metadata
+            security_profile: Security profile for container settings.
+                If None, defaults to SandboxSecurityProfile.standard().
 
         Returns:
             Sandbox ID (container ID)
@@ -179,11 +193,12 @@ class DockerSandboxProvider(SandboxProvider):
             # Extract name from metadata if provided
             container_name = metadata.get("name") if metadata else None
 
-            # Create container with resource limits
+            # Create container with security profile
             container = await asyncio.to_thread(
                 self._create_container,
                 image,
                 container_name,
+                security_profile,
             )
 
             # Generate sandbox ID (use first 12 chars of container ID)
@@ -502,6 +517,12 @@ class DockerSandboxProvider(SandboxProvider):
         container_info = self._get_container_info(sandbox_id)
         container = container_info.container
 
+        # Validate all inputs before shell interpolation (CWE-78 prevention)
+        mount_path = validate_mount_path(mount_path)
+        nexus_url = validate_nexus_url(nexus_url)
+        if agent_id is not None:
+            agent_id = validate_agent_id(agent_id)
+
         logger.info(f"[MOUNT-STEP-1] Starting mount process for sandbox {sandbox_id}")
         logger.info(f"[MOUNT-STEP-1] Mount path: {mount_path}, Nexus URL: {nexus_url}")
 
@@ -617,8 +638,22 @@ class DockerSandboxProvider(SandboxProvider):
             f"api_key={'***' + api_key[-10:] if api_key else 'None'}"
             + (f", agent_id={agent_id}" if agent_id else "")
         )
+        # Write API key to a temp file with restrictive permissions to avoid
+        # leaking it in process args, /proc/PID/environ, or ps output (CWE-214)
+        api_key_file = "/tmp/.nexus_api_key"
+        write_key_cmd = f"printf '%s' '{api_key}' > {api_key_file} && chmod 600 {api_key_file}"
+        key_result = await asyncio.to_thread(
+            container.exec_run,
+            ["sh", "-c", write_key_cmd],
+        )
+        if key_result.exit_code != 0:
+            logger.warning("[MOUNT-STEP-4] Failed to write API key file, falling back to env var")
+            api_key_source = f"NEXUS_API_KEY={api_key} "
+        else:
+            api_key_source = f"NEXUS_API_KEY=$(cat {api_key_file}) "
+
         base_mount = (
-            f"sudo NEXUS_API_KEY={api_key} "
+            f"sudo {api_key_source}"
             f"nexus mount {mount_path} "
             f"--remote-url {nexus_url} "
             f"--allow-other "
@@ -843,46 +878,71 @@ class DockerSandboxProvider(SandboxProvider):
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
         return self._containers[sandbox_id]
 
-    def _create_container(self, image: str, name: str | None = None) -> Any:  # -> Container
-        """Create a Docker container.
+    def _sanitize_container_name(self, name: str | None) -> str | None:
+        """Sanitize a container name for Docker (alphanumeric, hyphens, underscores).
+
+        Args:
+            name: Raw container name (may contain invalid chars)
+
+        Returns:
+            Sanitized name, or None if name is empty/None.
+        """
+        if not name:
+            return None
+        sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
+        sanitized = sanitized.strip("-_")
+        return sanitized or None
+
+    def _ensure_container_name_available(self, container_name: str) -> None:
+        """Stop and remove any existing container with the given name.
+
+        Args:
+            container_name: Docker container name to free up.
+        """
+        try:
+            existing_container = self.docker_client.containers.get(container_name)
+            logger.info(
+                f"Found existing container with name '{container_name}', stopping and removing..."
+            )
+            try:
+                existing_container.stop(timeout=5)
+            except Exception as stop_err:
+                logger.debug(f"Error stopping container (may already be stopped): {stop_err}")
+            existing_container.remove(force=True)
+            logger.info(f"Removed existing container '{container_name}'")
+        except NotFound:
+            # Container doesn't exist, this is the normal case
+            pass
+        except Exception as e:
+            logger.warning(f"Error checking/removing existing container '{container_name}': {e}")
+            # Continue anyway - the run() call will handle the conflict
+
+    def _create_container(
+        self,
+        image: str,
+        name: str | None = None,
+        security_profile: Any | None = None,  # SandboxSecurityProfile | None
+    ) -> Any:  # -> Container
+        """Create a Docker container with security profile.
 
         Args:
             image: Docker image to use
             name: Optional container name (will be sanitized for Docker)
+            security_profile: Security profile for container settings.
+                If None, uses SandboxSecurityProfile.standard() as default.
 
         Returns:
             Container instance
         """
-        # Sanitize name for Docker (alphanumeric, hyphens, underscores only)
-        container_name = None
-        if name:
-            # Replace invalid chars with hyphens, remove leading/trailing hyphens
-            sanitized = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
-            sanitized = sanitized.strip("-_")
-            if sanitized:
-                container_name = sanitized
+        # Lazy import to avoid circular dependency at module level
+        from nexus.sandbox.security_profile import SandboxSecurityProfile
 
-        # If a container with this name already exists, stop and remove it first
+        profile = security_profile or SandboxSecurityProfile.standard()
+
+        # Sanitize and ensure name is available
+        container_name = self._sanitize_container_name(name)
         if container_name:
-            try:
-                existing_container = self.docker_client.containers.get(container_name)
-                logger.info(
-                    f"Found existing container with name '{container_name}', stopping and removing..."
-                )
-                try:
-                    existing_container.stop(timeout=5)
-                except Exception as stop_err:
-                    logger.debug(f"Error stopping container (may already be stopped): {stop_err}")
-                existing_container.remove(force=True)
-                logger.info(f"Removed existing container '{container_name}'")
-            except NotFound:
-                # Container doesn't exist, this is the normal case
-                pass
-            except Exception as e:
-                logger.warning(
-                    f"Error checking/removing existing container '{container_name}': {e}"
-                )
-                # Continue anyway - the run() call will handle the conflict
+            self._ensure_container_name_available(container_name)
 
         # Build volumes for container
         volumes = {}
@@ -891,26 +951,69 @@ class DockerSandboxProvider(SandboxProvider):
             volumes[self._nexus_src_path] = {"bind": "/nexus-src", "mode": "ro"}
             logger.info(f"[DEV-MODE] Mounting {self._nexus_src_path} -> /nexus-src")
 
+        # Get security settings from profile
+        docker_kwargs = profile.to_docker_kwargs()
+
+        # If egress proxy is enabled and profile has specific egress domains,
+        # route through the shared proxy instead of using network_mode=none
+        if (
+            self._egress_proxy_enabled
+            and profile.allowed_egress_domains
+            and profile.allowed_egress_domains != ("*",)
+        ):
+            proxy_config = self._get_egress_proxy_config(profile.allowed_egress_domains)
+            if proxy_config:
+                # Override network_mode with egress network
+                docker_kwargs.pop("network_mode", None)
+                # Merge proxy environment with profile environment
+                existing_env = docker_kwargs.get("environment", {})
+                proxy_env = proxy_config.pop("environment", {})
+                existing_env.update(proxy_env)
+                docker_kwargs["environment"] = existing_env
+                docker_kwargs.update(proxy_config)
+
+        # Only mount /dev/fuse when FUSE is allowed by the profile
+        devices = ["/dev/fuse:/dev/fuse:rwm"] if profile.allow_fuse else []
+
         return self.docker_client.containers.run(
             image=image,
-            # Use image default CMD (sleep infinity in sandbox image)
             detach=True,
-            name=container_name,  # Set container name if provided
-            cap_add=["SYS_ADMIN"],  # Needed for FUSE
-            devices=["/dev/fuse:/dev/fuse:rwm"],  # FUSE device access
-            security_opt=[
-                "no-new-privileges:false",  # Allow sudo for FUSE mounting
-                "apparmor=unconfined",  # Disable AppArmor for FUSE
-            ],
-            mem_limit=self.memory_limit,
-            cpu_quota=int(self.cpu_limit * 100000),
-            cpu_period=100000,
-            network_mode=self.network_name
-            if self.network_name
-            else None,  # Only set if network_name is provided
+            name=container_name,
+            devices=devices if devices else None,
             remove=False,  # Don't auto-remove, we'll handle cleanup
-            volumes=volumes if volumes else None,  # Mount volumes if any
+            volumes=volumes if volumes else None,
+            **docker_kwargs,
         )
+
+    def _get_egress_proxy_config(
+        self,
+        allowed_domains: tuple[str, ...],
+    ) -> dict[str, Any]:
+        """Get egress proxy configuration for a container.
+
+        Lazily initializes the shared egress proxy manager and returns
+        the Docker kwargs needed to route the container through it.
+
+        Args:
+            allowed_domains: Domains to allow through the proxy.
+
+        Returns:
+            Dict of Docker kwargs to merge, or empty dict if proxy
+            is not available.
+        """
+        try:
+            if self._egress_proxy is None:
+                from nexus.sandbox.egress_proxy import EgressProxyManager
+
+                self._egress_proxy = EgressProxyManager(self.docker_client)
+
+            return self._egress_proxy.get_container_network_config(allowed_domains)
+        except Exception as e:
+            logger.warning(
+                "Egress proxy unavailable, container will use profile network_mode: %s",
+                e,
+            )
+            return {}
 
     def _ensure_image(self, image_name: str) -> None:
         """Ensure Docker image exists locally.
@@ -997,5 +1100,12 @@ class DockerSandboxProvider(SandboxProvider):
                 await self.destroy(sandbox_id)
             except Exception as e:
                 logger.error(f"Failed to destroy sandbox {sandbox_id}: {e}")
+
+        # Cleanup egress proxy
+        if self._egress_proxy is not None:
+            try:
+                self._egress_proxy.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up egress proxy: {e}")
 
         logger.info("Docker sandbox provider closed")

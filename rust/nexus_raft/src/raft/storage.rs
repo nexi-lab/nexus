@@ -72,8 +72,11 @@ impl RaftStorage {
     }
 
     /// Create Raft storage from a path.
+    ///
+    /// Appends `raft.redb` to the path so callers can pass a directory
+    /// (sled used the path as a directory; redb uses it as a file).
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let store = RedbStore::open(path)?;
+        let store = RedbStore::open(path.as_ref().join("raft.redb"))?;
         Self::new(store)
     }
 

@@ -1,6 +1,7 @@
 """API v2 routers."""
 
 from nexus.server.api.v2.routers import (
+    conflicts,
     consolidation,
     curate,
     feedback,
@@ -14,6 +15,7 @@ from nexus.server.api.v2.routers import (
 )
 
 __all__ = [
+    "conflicts",
     "memories",
     "trajectories",
     "feedback",

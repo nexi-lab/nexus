@@ -16,6 +16,7 @@ class MountConfig:
     backend: "Backend"  # Backend instance
     priority: int = 0  # For tie-breaking (higher = preferred)
     readonly: bool = False
+    conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
 
 
 @dataclass

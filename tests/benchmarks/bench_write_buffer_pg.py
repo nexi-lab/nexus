@@ -63,6 +63,7 @@ def count_rows(session_factory, table: str) -> int:
 
 # ── Fake metadata object ────────────────────────────────────────────────
 
+
 class FakeMetadata:
     """Minimal object satisfying FileMetadata protocol for benchmarks."""
 
@@ -85,6 +86,7 @@ class FakeMetadata:
 
 # ── Benchmark: Synchronous RecordStoreSyncer ────────────────────────────
 
+
 def bench_sync(engine, session_factory, n: int) -> dict:
     """Benchmark sync writes (one DB round-trip per write)."""
     from nexus.storage.record_store_syncer import RecordStoreSyncer
@@ -93,7 +95,9 @@ def bench_sync(engine, session_factory, n: int) -> dict:
 
     latencies = []
     for i in range(n):
-        meta = FakeMetadata(path=f"/bench/sync/file_{i}.txt", content_hash=f"hash_{i:06d}", size=i * 100)
+        meta = FakeMetadata(
+            path=f"/bench/sync/file_{i}.txt", content_hash=f"hash_{i:06d}", size=i * 100
+        )
         t0 = time.perf_counter()
         syncer.on_write(meta, is_new=True, path=meta.path, zone_id="bench")
         latencies.append(time.perf_counter() - t0)
@@ -120,7 +124,10 @@ def bench_sync(engine, session_factory, n: int) -> dict:
 
 # ── Benchmark: Buffered WriteBuffer ─────────────────────────────────────
 
-def bench_buffered(engine, session_factory, n: int, flush_interval_ms: int = 50, max_buffer_size: int = 50) -> dict:
+
+def bench_buffered(
+    engine, session_factory, n: int, flush_interval_ms: int = 50, max_buffer_size: int = 50
+) -> dict:
     """Benchmark buffered writes (hot path = enqueue only, flush in background)."""
     from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
 
@@ -133,7 +140,9 @@ def bench_buffered(engine, session_factory, n: int, flush_interval_ms: int = 50,
 
     latencies = []
     for i in range(n):
-        meta = FakeMetadata(path=f"/bench/buffered/file_{i}.txt", content_hash=f"hash_{i:06d}", size=i * 100)
+        meta = FakeMetadata(
+            path=f"/bench/buffered/file_{i}.txt", content_hash=f"hash_{i:06d}", size=i * 100
+        )
         t0 = time.perf_counter()
         syncer.on_write(meta, is_new=True, path=meta.path, zone_id="bench")
         latencies.append(time.perf_counter() - t0)
@@ -166,6 +175,7 @@ def bench_buffered(engine, session_factory, n: int, flush_interval_ms: int = 50,
 
 # ── Main ────────────────────────────────────────────────────────────────
 
+
 def print_result(r: dict):
     print(f"\n  Mode:       {r['mode']}")
     print(f"  Writes:     {r['writes']}")
@@ -177,7 +187,9 @@ def print_result(r: dict):
     print(f"  Throughput: {r['throughput_wps']:.0f} writes/sec")
     if "flush_wait_sec" in r:
         print(f"  Flush wait: {r['flush_wait_sec']:.3f}s")
-    print(f"  DB rows:    file_paths={r['file_paths']}, operation_log={r['operation_log']}, version_history={r['version_history']}")
+    print(
+        f"  DB rows:    file_paths={r['file_paths']}, operation_log={r['operation_log']}, version_history={r['version_history']}"
+    )
 
 
 def main():
@@ -204,8 +216,8 @@ def main():
 
     # ── Buffered variants ──
     configs = [
-        (50, 20),    # 50ms interval, batch of 20
-        (50, 50),    # 50ms interval, batch of 50
+        (50, 20),  # 50ms interval, batch of 20
+        (50, 50),  # 50ms interval, batch of 50
         (100, 100),  # 100ms interval, batch of 100
     ]
 
@@ -216,7 +228,9 @@ def main():
 
         with pg_schema(engine):
             sf = sessionmaker(bind=engine)
-            buf_result = bench_buffered(engine, sf, WRITE_COUNT, flush_interval_ms=interval, max_buffer_size=batch)
+            buf_result = bench_buffered(
+                engine, sf, WRITE_COUNT, flush_interval_ms=interval, max_buffer_size=batch
+            )
             print_result(buf_result)
 
             # Speedup

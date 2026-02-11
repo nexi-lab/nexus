@@ -75,6 +75,7 @@ def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> 
     create_fresh_db(db_name)
 
     import tempfile
+
     tmp_path = Path(tempfile.mkdtemp(prefix=f"nexus_wb_{db_name}_"))
     (tmp_path / "storage").mkdir()
 
@@ -94,7 +95,8 @@ def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> 
 
     process = subprocess.Popen(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             (
                 "from nexus.cli import main; "
                 f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
@@ -139,10 +141,15 @@ def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> 
             for i in range(write_count):
                 content = f"File content {i} - benchmark data for performance measurement".encode()
                 t0 = time.perf_counter()
-                result = rpc(client, "write", {
-                    "path": f"/bench/file_{i:04d}.txt",
-                    "content": encode_bytes(content),
-                }, headers=auth_headers)
+                result = rpc(
+                    client,
+                    "write",
+                    {
+                        "path": f"/bench/file_{i:04d}.txt",
+                        "content": encode_bytes(content),
+                    },
+                    headers=auth_headers,
+                )
                 latencies.append(time.perf_counter() - t0)
 
                 if result.get("error"):
@@ -162,6 +169,7 @@ def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> 
         pg_engine.dispose()
 
         import statistics
+
         return {
             "mode": mode_name,
             "writes": write_count,
@@ -198,9 +206,13 @@ def main():
         print(f"Sync test failed: {sync['error']}")
         sys.exit(1)
 
-    print(f"  Total: {sync['total_sec']:.3f}s | Mean: {sync['mean_ms']:.1f}ms | "
-          f"P95: {sync['p95_ms']:.1f}ms | Throughput: {sync['throughput_wps']:.0f} w/s")
-    print(f"  DB: file_paths={sync['file_paths']}, op_log={sync['operation_log']}, versions={sync['version_history']}")
+    print(
+        f"  Total: {sync['total_sec']:.3f}s | Mean: {sync['mean_ms']:.1f}ms | "
+        f"P95: {sync['p95_ms']:.1f}ms | Throughput: {sync['throughput_wps']:.0f} w/s"
+    )
+    print(
+        f"  DB: file_paths={sync['file_paths']}, op_log={sync['operation_log']}, versions={sync['version_history']}"
+    )
 
     # Run buffered
     print("\n--- BUFFERED (WriteBuffer ON) ---")
@@ -209,25 +221,39 @@ def main():
         print(f"Buffered test failed: {buf['error']}")
         sys.exit(1)
 
-    print(f"  Total: {buf['total_sec']:.3f}s | Mean: {buf['mean_ms']:.1f}ms | "
-          f"P95: {buf['p95_ms']:.1f}ms | Throughput: {buf['throughput_wps']:.0f} w/s")
-    print(f"  DB: file_paths={buf['file_paths']}, op_log={buf['operation_log']}, versions={buf['version_history']}")
+    print(
+        f"  Total: {buf['total_sec']:.3f}s | Mean: {buf['mean_ms']:.1f}ms | "
+        f"P95: {buf['p95_ms']:.1f}ms | Throughput: {buf['throughput_wps']:.0f} w/s"
+    )
+    print(
+        f"  DB: file_paths={buf['file_paths']}, op_log={buf['operation_log']}, versions={buf['version_history']}"
+    )
 
     # Comparison
     print(f"\n{'=' * 70}")
     print("COMPARISON (E2E: client → FastAPI → Raft+CAS → PostgreSQL)")
     print(f"{'=' * 70}")
     print(f"  {'Metric':<20} {'Sync':<15} {'Buffered':<15} {'Change':<15}")
-    print(f"  {'-'*60}")
+    print(f"  {'-' * 60}")
 
-    speedup = sync['mean_ms'] / buf['mean_ms'] if buf['mean_ms'] > 0 else float('inf')
-    print(f"  {'Mean latency':<20} {sync['mean_ms']:.1f}ms{'':<8} {buf['mean_ms']:.1f}ms{'':<8} {speedup:.1f}x {'faster' if speedup > 1 else 'slower'}")
+    speedup = sync["mean_ms"] / buf["mean_ms"] if buf["mean_ms"] > 0 else float("inf")
+    print(
+        f"  {'Mean latency':<20} {sync['mean_ms']:.1f}ms{'':<8} {buf['mean_ms']:.1f}ms{'':<8} {speedup:.1f}x {'faster' if speedup > 1 else 'slower'}"
+    )
 
-    speedup_p95 = sync['p95_ms'] / buf['p95_ms'] if buf['p95_ms'] > 0 else float('inf')
-    print(f"  {'P95 latency':<20} {sync['p95_ms']:.1f}ms{'':<8} {buf['p95_ms']:.1f}ms{'':<8} {speedup_p95:.1f}x {'faster' if speedup_p95 > 1 else 'slower'}")
+    speedup_p95 = sync["p95_ms"] / buf["p95_ms"] if buf["p95_ms"] > 0 else float("inf")
+    print(
+        f"  {'P95 latency':<20} {sync['p95_ms']:.1f}ms{'':<8} {buf['p95_ms']:.1f}ms{'':<8} {speedup_p95:.1f}x {'faster' if speedup_p95 > 1 else 'slower'}"
+    )
 
-    tp_change = buf['throughput_wps'] / sync['throughput_wps'] if sync['throughput_wps'] > 0 else float('inf')
-    print(f"  {'Throughput':<20} {sync['throughput_wps']:.0f} w/s{'':<7} {buf['throughput_wps']:.0f} w/s{'':<7} {tp_change:.1f}x")
+    tp_change = (
+        buf["throughput_wps"] / sync["throughput_wps"]
+        if sync["throughput_wps"] > 0
+        else float("inf")
+    )
+    print(
+        f"  {'Throughput':<20} {sync['throughput_wps']:.0f} w/s{'':<7} {buf['throughput_wps']:.0f} w/s{'':<7} {tp_change:.1f}x"
+    )
 
     print("\n  Note: E2E latency includes HTTP + JSON parsing + Raft consensus +")
     print("  CAS storage. The WriteBuffer only affects the PostgreSQL sync path.")

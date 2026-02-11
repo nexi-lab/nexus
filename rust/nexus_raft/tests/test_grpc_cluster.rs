@@ -135,7 +135,7 @@ mod grpc_cluster {
                 ..Default::default()
             };
 
-            let server = RaftServer::with_config(
+            let mut server = RaftServer::with_config(
                 node_id,
                 temp_dirs[i].path().to_str().unwrap(),
                 config,
@@ -147,7 +147,8 @@ mod grpc_cluster {
             let peer_map: HashMap<u64, NodeAddress> =
                 all_peers[i].iter().map(|p| (p.id, p.clone())).collect();
 
-            let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
+            let driver = server.take_driver();
+            let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
 
             let shutdown_rx_clone = shutdown_rx.clone();
             tokio::spawn(async move {

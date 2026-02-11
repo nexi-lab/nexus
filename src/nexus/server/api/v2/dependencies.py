@@ -182,7 +182,7 @@ async def get_reflector(
     return Reflector(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         trajectory_manager=traj_manager,
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
@@ -236,11 +236,28 @@ async def get_consolidation_engine(
     return ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,
     )
+
+
+async def get_operation_logger(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> Any:
+    """Get OperationLogger scoped to the authenticated user's zone.
+
+    Returns a tuple of (OperationLogger, zone_id) for zone-scoped queries.
+    """
+    from nexus.storage.operation_logger import OperationLogger
+
+    context = _get_operation_context(auth_result)
+    session = nexus_fs.SessionLocal()
+    zone_id = context.zone_id or "default"
+
+    return OperationLogger(session=session), zone_id
 
 
 async def get_hierarchy_manager(
@@ -259,7 +276,7 @@ async def get_hierarchy_manager(
     consolidation_engine = ConsolidationEngine(
         session=session,
         backend=backend,
-        llm_provider=llm_provider,
+        llm_provider=llm_provider,  # type: ignore[arg-type]
         user_id=context.user_id or context.user or "anonymous",
         agent_id=getattr(context, "agent_id", None),
         zone_id=context.zone_id,

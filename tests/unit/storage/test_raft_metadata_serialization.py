@@ -159,7 +159,9 @@ class TestSerializeMetadata:
 class TestListPaginated:
     """Tests for RaftMetadataStore.list_paginated."""
 
-    def _make_store_with_entries(self, entries: list[tuple[str, FileMetadata]]) -> RaftMetadataStore:
+    def _make_store_with_entries(
+        self, entries: list[tuple[str, FileMetadata]]
+    ) -> RaftMetadataStore:
         """Create a mock RaftMetadataStore with pre-loaded entries."""
         from nexus.storage.raft_metadata_store import (
             RaftMetadataStore,
@@ -189,10 +191,7 @@ class TestListPaginated:
 
     def test_paginated_basic(self) -> None:
         """Basic pagination returns first page."""
-        entries = [
-            (f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt"))
-            for i in range(5)
-        ]
+        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(5)]
         store = self._make_store_with_entries(entries)
 
         result = store.list_paginated(prefix="/files/", limit=3)
@@ -205,10 +204,7 @@ class TestListPaginated:
 
     def test_paginated_all_fit_in_one_page(self) -> None:
         """When all items fit in one page, has_more should be False."""
-        entries = [
-            (f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt"))
-            for i in range(3)
-        ]
+        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(3)]
         store = self._make_store_with_entries(entries)
 
         result = store.list_paginated(prefix="/files/", limit=10)
@@ -282,7 +278,10 @@ class TestListPaginated:
         mock_local = MagicMock()
         mock_local.list_metadata.return_value = [
             ("/files/a.txt", _serialize_metadata(_make_metadata(path="/files/a.txt"))),
-            ("meta:/files/a.txt:custom_attr", _serialize_metadata(_make_metadata(path="meta:/files/a.txt:custom_attr"))),
+            (
+                "meta:/files/a.txt:custom_attr",
+                _serialize_metadata(_make_metadata(path="meta:/files/a.txt:custom_attr")),
+            ),
         ]
 
         from nexus.storage.raft_metadata_store import RaftMetadataStore

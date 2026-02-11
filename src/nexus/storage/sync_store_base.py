@@ -70,6 +70,54 @@ class SyncStoreBase:
                 self._is_postgres = False
             return self._is_postgres
 
+    def _dialect_insert(self, model: type) -> Any:
+        """Return dialect-appropriate INSERT statement for the given model.
+
+        Centralizes dialect-specific imports so business logic doesn't need them.
+
+        Args:
+            model: SQLAlchemy model class
+
+        Returns:
+            Dialect-appropriate insert statement (pg_insert or sqlite_insert)
+        """
+        if self._detect_dialect():
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            return pg_insert(model)
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        return sqlite_insert(model)
+
+    def _dialect_upsert(
+        self,
+        session: Any,
+        model: type,
+        values: dict[str, Any],
+        *,
+        pg_constraint: str,
+        sqlite_index_elements: list[str],
+        update_set: dict[str, Any],
+    ) -> None:
+        """Dialect-aware single-row INSERT ON CONFLICT DO UPDATE.
+
+        Centralizes pg_insert/sqlite_insert so subclasses don't need dialect imports.
+
+        Args:
+            session: SQLAlchemy session
+            model: SQLAlchemy model class
+            values: Column values for INSERT
+            pg_constraint: PostgreSQL constraint name for ON CONFLICT
+            sqlite_index_elements: SQLite index columns for ON CONFLICT
+            update_set: Columns to update on conflict
+        """
+        stmt = self._dialect_insert(model).values(**values)
+        if self._detect_dialect():
+            stmt = stmt.on_conflict_do_update(constraint=pg_constraint, set_=update_set)
+        else:
+            stmt = stmt.on_conflict_do_update(index_elements=sqlite_index_elements, set_=update_set)
+        session.execute(stmt)
+
     @contextmanager
     def _with_session(self) -> Generator[Any, None, None]:
         """Context manager for database sessions.

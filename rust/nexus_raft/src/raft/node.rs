@@ -746,7 +746,26 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                     }
                 }
                 EntryType::EntryConfChange | EntryType::EntryConfChangeV2 => {
-                    tracing::info!("Applied config change at index {}", entry.index);
+                    let cc: ConfChange = protobuf::Message::parse_from_bytes(&entry.data)
+                        .map_err(|e| RaftError::Serialization(e.to_string()))?;
+
+                    let cs = self
+                        .raw_node
+                        .apply_conf_change(&cc)
+                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+
+                    self.raw_node
+                        .mut_store()
+                        .set_conf_state(&cs)
+                        .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+                    tracing::info!(
+                        index = entry.index,
+                        change_type = ?cc.get_change_type(),
+                        node_id = cc.node_id,
+                        voters = ?cs.voters,
+                        "raft.conf_change.applied",
+                    );
                 }
             }
         }

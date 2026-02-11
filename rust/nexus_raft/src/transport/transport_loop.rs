@@ -81,7 +81,11 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         let mut interval = tokio::time::interval(self.tick_interval);
         tracing::info!(
             "Transport loop started (zone={}, tick_interval={}ms, peers={})",
-            if self.zone_id.is_empty() { "<single>" } else { &self.zone_id },
+            if self.zone_id.is_empty() {
+                "<single>"
+            } else {
+                &self.zone_id
+            },
             self.tick_interval.as_millis(),
             self.peers.len()
         );

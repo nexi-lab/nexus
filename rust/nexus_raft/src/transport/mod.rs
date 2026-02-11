@@ -71,9 +71,7 @@ pub use client::{
     QueryResult, RaftApiClient, RaftClient, RaftClientPool, VoteResponseLocal,
 };
 #[cfg(all(feature = "grpc", has_protos))]
-pub use server::{
-    RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessServerState,
-};
+pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessServerState};
 #[cfg(all(feature = "grpc", has_protos))]
 pub use transport_loop::TransportLoop;
 

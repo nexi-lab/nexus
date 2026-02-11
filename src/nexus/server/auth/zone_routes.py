@@ -3,7 +3,6 @@
 Provides endpoints for creating, updating, and managing zones.
 """
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status

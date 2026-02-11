@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nexus.services.sync_store_base import SyncStoreBase
+from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway

@@ -41,7 +41,7 @@ class NexusFSTasksMixin:
     # =========================================================================
 
     @cached_property
-    def _task_queue_service(self) -> TaskQueueService:
+    def task_queue_service(self) -> TaskQueueService:
         """Get or create TaskQueueService."""
         from nexus.services.task_queue_service import TaskQueueService
 
@@ -106,7 +106,7 @@ class NexusFSTasksMixin:
         Returns:
             Dict with task_id, status, task_type
         """
-        return self._task_queue_service.submit_task(
+        return self.task_queue_service.submit_task(
             task_type=task_type,
             params_json=params_json,
             priority=priority,
@@ -128,7 +128,7 @@ class NexusFSTasksMixin:
         Returns:
             Task details dict or None if not found
         """
-        return self._task_queue_service.get_task(task_id)
+        return self.task_queue_service.get_task(task_id)
 
     @rpc_expose(description="Cancel a pending or running task")
     def cancel_task(
@@ -145,7 +145,7 @@ class NexusFSTasksMixin:
         Returns:
             Dict with success status and message
         """
-        return self._task_queue_service.cancel_task(task_id)
+        return self.task_queue_service.cancel_task(task_id)
 
     @rpc_expose(description="List tasks with optional filters")
     def list_queue_tasks(
@@ -169,7 +169,7 @@ class NexusFSTasksMixin:
         Returns:
             List of task dicts
         """
-        return self._task_queue_service.list_tasks(
+        return self.task_queue_service.list_tasks(
             task_type=task_type,
             status=status,
             limit=limit,
@@ -189,4 +189,4 @@ class NexusFSTasksMixin:
         Returns:
             Dict with pending, running, completed, failed, dead_letter counts
         """
-        return self._task_queue_service.get_task_stats()
+        return self.task_queue_service.get_task_stats()

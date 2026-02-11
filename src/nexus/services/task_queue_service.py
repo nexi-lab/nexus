@@ -102,6 +102,16 @@ class TaskQueueService:
         """
         return self._get_engine()
 
+    def set_runner(self, runner: Any) -> None:
+        """Attach an AsyncTaskRunner to this service.
+
+        Called by server lifespan to wire up the background task runner.
+
+        Args:
+            runner: AsyncTaskRunner instance
+        """
+        self._runner = runner
+
     def submit_task(
         self,
         task_type: str,

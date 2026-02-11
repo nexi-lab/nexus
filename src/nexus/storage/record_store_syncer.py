@@ -6,10 +6,16 @@ Created by factory.py, injected into NexusFS kernel as write_observer.
 The kernel calls on_write()/on_delete() after Metastore mutations.
 This syncer handles all RecordStore side-effects in a single transaction.
 
+Two implementations:
+    RecordStoreSyncer         — synchronous, blocks hot path (~2-10ms per write)
+    BufferedRecordStoreSyncer — async via WriteBuffer (~0.1ms amortized)
+
 Architecture:
     Kernel → write_observer.on_write() → [OperationLogger + VersionRecorder]
     Kernel → write_observer.on_delete() → [OperationLogger + VersionRecorder]
     Error policy owned by kernel (audit_strict_mode). Syncer just raises on failure.
+
+Issue #1246: BufferedRecordStoreSyncer implements Decision 13A (write-behind buffer).
 """
 
 from __future__ import annotations
@@ -154,3 +160,122 @@ class RecordStoreSyncer:
             )
             VersionRecorder(session).record_delete(path)
             session.commit()
+
+
+class BufferedRecordStoreSyncer:
+    """Async write observer backed by WriteBuffer (Issue #1246, Decision 13A).
+
+    Same duck-typed interface as RecordStoreSyncer, but enqueues events
+    into a WriteBuffer instead of writing synchronously. Hot path returns
+    immediately (~0.1ms amortized vs ~2-10ms synchronous).
+
+    Must call start() before use and stop() on shutdown.
+    """
+
+    def __init__(
+        self,
+        session_factory: Callable[..., Any],
+        *,
+        flush_interval_ms: int = 100,
+        max_buffer_size: int = 100,
+        max_retries: int = 3,
+    ) -> None:
+        from nexus.storage.write_buffer import WriteBuffer
+
+        self._buffer = WriteBuffer(
+            session_factory,
+            flush_interval_ms=flush_interval_ms,
+            max_buffer_size=max_buffer_size,
+            max_retries=max_retries,
+        )
+
+    def start(self) -> None:
+        """Start the background flush thread."""
+        self._buffer.start()
+
+    def stop(self, timeout: float = 5.0) -> None:
+        """Stop and drain remaining events."""
+        self._buffer.stop(timeout=timeout)
+
+    @property
+    def metrics(self) -> dict[str, int]:
+        """Return buffer metrics."""
+        return self._buffer.metrics
+
+    def on_write(
+        self,
+        metadata: FileMetadata,
+        *,
+        is_new: bool,
+        path: str,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        snapshot_hash: str | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Enqueue a write event. Returns immediately."""
+        self._buffer.enqueue_write(
+            metadata,
+            is_new=is_new,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
+
+    def on_write_batch(
+        self,
+        items: list[tuple[FileMetadata, bool]],
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> None:
+        """Enqueue a batch of write events. Returns immediately."""
+        for metadata, is_new in items:
+            self._buffer.enqueue_write(
+                metadata,
+                is_new=is_new,
+                path=metadata.path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                snapshot_hash=metadata.etag,
+            )
+
+    def on_rename(
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        snapshot_hash: str | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Enqueue a rename event. Returns immediately."""
+        self._buffer.enqueue_rename(
+            old_path=old_path,
+            new_path=new_path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
+
+    def on_delete(
+        self,
+        path: str,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        snapshot_hash: str | None = None,
+        metadata_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Enqueue a delete event. Returns immediately."""
+        self._buffer.enqueue_delete(
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )

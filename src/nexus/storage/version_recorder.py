@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import FilePathModel, VersionHistoryModel
@@ -30,13 +30,6 @@ if TYPE_CHECKING:
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     return datetime.now(UTC).replace(tzinfo=None)
-
-
-def _to_naive(dt: datetime | None) -> datetime | None:
-    """Strip timezone from datetime (SQLite stores naive UTC)."""
-    if dt is None:
-        return None
-    return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
 
 class VersionRecorder:
@@ -86,30 +79,20 @@ class VersionRecorder:
 
     def _record_create(self, metadata: FileMetadata) -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
-        # Remove any soft-deleted entries at this path
-        deleted_entry = self.session.execute(
-            select(FilePathModel).where(
+        # Remove any soft-deleted entries at this path (single statement, no SELECT)
+        self.session.execute(
+            delete(FilePathModel).where(
                 FilePathModel.virtual_path == metadata.path,
                 FilePathModel.deleted_at.is_not(None),
             )
-        ).scalar_one_or_none()
-        if deleted_entry:
-            self.session.delete(deleted_entry)
-            self.session.flush()
+        )
 
+        from nexus.storage.metadata_mapper import MetadataMapper
+
+        values = MetadataMapper.to_file_path_values(metadata)
         file_path = FilePathModel(
             path_id=str(uuid.uuid4()),
-            virtual_path=metadata.path,
-            backend_id=metadata.backend_name or "local",
-            physical_path=metadata.physical_path or metadata.path,
-            size_bytes=metadata.size or 0,
-            content_hash=metadata.etag,
-            file_type=metadata.mime_type,
-            created_at=_to_naive(metadata.created_at) or _utcnow_naive(),
-            updated_at=_to_naive(metadata.modified_at) or _utcnow_naive(),
-            current_version=1,
-            zone_id=metadata.zone_id or "default",
-            posix_uid=metadata.owner_id,
+            **values,
         )
         self.session.add(file_path)
         self.session.flush()
@@ -144,6 +127,15 @@ class VersionRecorder:
             self._record_create(metadata)
             return
 
+        from nexus.storage.metadata_mapper import MetadataMapper
+
+        update_values = MetadataMapper.to_file_path_update_values(metadata)
+        # Preserve existing values for fields the metadata doesn't override
+        if not metadata.backend_name:
+            update_values["backend_id"] = existing.backend_id
+        if not metadata.physical_path:
+            update_values["physical_path"] = existing.physical_path
+
         if metadata.etag is not None:
             # Get previous version for lineage
             prev_version = self.session.execute(
@@ -161,12 +153,7 @@ class VersionRecorder:
                 update(FilePathModel)
                 .where(FilePathModel.path_id == existing.path_id)
                 .values(
-                    backend_id=metadata.backend_name or existing.backend_id,
-                    physical_path=metadata.physical_path or existing.physical_path,
-                    size_bytes=metadata.size or 0,
-                    content_hash=metadata.etag,
-                    file_type=metadata.mime_type,
-                    updated_at=_to_naive(metadata.modified_at) or _utcnow_naive(),
+                    **update_values,
                     current_version=FilePathModel.current_version + 1,
                 )
                 .returning(FilePathModel.current_version)
@@ -192,12 +179,5 @@ class VersionRecorder:
             self.session.execute(
                 update(FilePathModel)
                 .where(FilePathModel.path_id == existing.path_id)
-                .values(
-                    backend_id=metadata.backend_name or existing.backend_id,
-                    physical_path=metadata.physical_path or existing.physical_path,
-                    size_bytes=metadata.size or 0,
-                    content_hash=metadata.etag,
-                    file_type=metadata.mime_type,
-                    updated_at=_to_naive(metadata.modified_at) or _utcnow_naive(),
-                )
+                .values(**update_values)
             )

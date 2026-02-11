@@ -1965,35 +1965,18 @@ class NexusFSCoreMixin:
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
-        if self._write_observer:
-            try:
-                self._write_observer.on_write(
-                    metadata=metadata,
-                    is_new=(meta is None),
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
-            except Exception as e:
-                from nexus.core.exceptions import AuditLogError
-
-                if self._audit_strict_mode:
-                    logger.error(
-                        f"AUDIT LOG FAILURE: Write to '{path}' ABORTED. "
-                        f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                    )
-                    raise AuditLogError(
-                        f"Write operation aborted: audit logging failed: {e}",
-                        path=path,
-                        original_error=e,
-                    ) from e
-                else:
-                    logger.critical(
-                        f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
-                        f"Error: {e}. This creates an audit trail gap!"
-                    )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "write",
+            path,
+            metadata=metadata,
+            is_new=(meta is None),
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
@@ -2632,17 +2615,17 @@ class NexusFSCoreMixin:
         self.metadata.put_batch(metadata_list)
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                items = [
-                    (metadata, existing_metadata.get(metadata.path) is None)
-                    for metadata in metadata_list
-                ]
-                self._write_observer.on_write_batch(
-                    items,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                )
+        # Issue #1246: Unified error handling — no longer silently suppressed.
+        items = [
+            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
+        ]
+        self._notify_observer(
+            "write_batch",
+            f"batch({len(metadata_list)} files)",
+            items=items,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
@@ -2758,6 +2741,46 @@ class NexusFSCoreMixin:
                 self._auto_parse_file(path)
 
         return results
+
+    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
+        """Notify the write observer of a mutation, with unified error policy.
+
+        Replaces the inconsistent error handling where single writes used
+        audit_strict_mode but batch/delete/rename silently suppressed errors.
+
+        Issue #1246: All observer calls now follow the same policy:
+        - audit_strict_mode=True: raise AuditLogError on failure
+        - audit_strict_mode=False: log critical warning, continue
+
+        Args:
+            operation: One of 'write', 'write_batch', 'delete', 'rename'.
+            op_path: Primary path affected (for error messages only).
+            **kwargs: Passed directly to the observer method.
+        """
+        if not self._write_observer:
+            return
+
+        try:
+            method = getattr(self._write_observer, f"on_{operation}")
+            method(**kwargs)
+        except Exception as e:
+            from nexus.core.exceptions import AuditLogError
+
+            if self._audit_strict_mode:
+                logger.error(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
+                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
+                )
+                raise AuditLogError(
+                    f"Operation aborted: audit logging failed for {operation}: {e}",
+                    path=op_path,
+                    original_error=e,
+                ) from e
+            else:
+                logger.critical(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
+                    f"Error: {e}. This creates an audit trail gap!"
+                )
 
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
@@ -2917,15 +2940,16 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_delete(
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "delete",
+            path,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -3218,16 +3242,17 @@ class NexusFSCoreMixin:
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
         # Task #45: Sync to RecordStore (audit trail)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_rename(
-                    old_path=old_path,
-                    new_path=new_path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "rename",
+            old_path,
+            old_path=old_path,
+            new_path=new_path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]

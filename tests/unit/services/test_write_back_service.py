@@ -1,7 +1,7 @@
-"""Unit tests for WriteBackService (Issue #1129).
+"""Unit tests for WriteBackService (Issue #1129, #1130).
 
-Tests event handling, backlog processing, conflict resolution,
-and rate limiting using mocked dependencies.
+Tests event handling, backlog processing, conflict resolution
+with all 6 strategies, per-mount config, and rate limiting.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.services.conflict_resolution import ConflictStrategy
 from nexus.services.sync_backlog_store import SyncBacklogEntry
 from nexus.services.write_back_service import WriteBackService
 
@@ -72,6 +73,7 @@ def mock_gateway():
         "backend_path": "file.txt",
         "readonly": False,
         "backend_name": "gcs",
+        "conflict_strategy": None,
     }
     gw.list_mounts.return_value = [
         {
@@ -79,9 +81,10 @@ def mock_gateway():
             "readonly": False,
             "backend_type": "GCSConnector",
             "backend": MagicMock(name="gcs"),
+            "conflict_strategy": None,
         }
     ]
-    gw.metadata_get.return_value = MagicMock(mtime=datetime.now(UTC), content_hash="abc")
+    gw.metadata_get.return_value = MagicMock(mtime=datetime.now(UTC), content_hash="abc", size=1024)
     gw.read.return_value = b"test content"
     return gw
 
@@ -125,6 +128,14 @@ def mock_change_log_store():
 
 
 @pytest.fixture
+def mock_conflict_log_store():
+    """Mock conflict log store."""
+    store = MagicMock()
+    store.log_conflict.return_value = "conflict-1"
+    return store
+
+
+@pytest.fixture
 def service(mock_gateway, mock_event_bus, mock_backlog_store, mock_change_log_store):
     """Create WriteBackService with all mocks."""
     return WriteBackService(
@@ -132,9 +143,49 @@ def service(mock_gateway, mock_event_bus, mock_backlog_store, mock_change_log_st
         event_bus=mock_event_bus,
         backlog_store=mock_backlog_store,
         change_log_store=mock_change_log_store,
-        conflict_policy="lww",
+        default_strategy=ConflictStrategy.KEEP_NEWER,
         max_concurrent_per_backend=2,
         poll_interval_seconds=0.1,
+    )
+
+
+def _setup_conflict(
+    mock_gateway,
+    mock_change_log_store,
+    *,
+    nexus_newer: bool = True,
+    nexus_size: int = 1024,
+    backend_size: int = 2048,
+):
+    """Set up a conflict scenario for testing."""
+    from nexus.services.change_log_store import ChangeLogEntry
+
+    old_time = datetime.now(UTC) - timedelta(hours=2)
+    mock_change_log_store.get_change_log.return_value = ChangeLogEntry(
+        path="/mnt/gcs/file.txt",
+        backend_name="gcs",
+        content_hash="old_hash",
+        mtime=old_time,
+        backend_version="v1",
+    )
+
+    backend = mock_gateway.get_mount_for_path.return_value["backend"]
+    if nexus_newer:
+        backend_mtime = datetime.now(UTC) - timedelta(hours=1)
+        nexus_mtime = datetime.now(UTC)
+    else:
+        backend_mtime = datetime.now(UTC)
+        nexus_mtime = datetime.now(UTC) - timedelta(hours=1)
+
+    backend.get_file_info.return_value = FakeFileInfo(
+        backend_version="v2",
+        mtime=backend_mtime,
+        size=backend_size,
+    )
+    mock_gateway.metadata_get.return_value = MagicMock(
+        mtime=nexus_mtime,
+        content_hash="new_nexus_hash",
+        size=nexus_size,
     )
 
 
@@ -192,6 +243,7 @@ class TestOnFileEvent:
             "backend_path": "file.txt",
             "readonly": True,
             "backend_name": "ro_backend",
+            "conflict_strategy": None,
         }
 
         event = FileEvent(
@@ -259,76 +311,380 @@ class TestWriteBackProcessing:
         )
 
     @pytest.mark.asyncio
-    async def test_write_back_conflict_detected_lww_nexus_wins(
+    async def test_write_back_conflict_keep_newer_nexus_wins(
         self, service, mock_gateway, mock_change_log_store, mock_event_bus
     ):
-        """When conflict detected and Nexus is newer, write-back proceeds."""
-        from nexus.services.change_log_store import ChangeLogEntry
-
+        """KEEP_NEWER: Nexus newer -> write-back proceeds."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
         entry = _make_entry()
         sem = asyncio.Semaphore(1)
 
-        # Set up conflict scenario: both sides changed
-        old_time = datetime.now(UTC) - timedelta(hours=2)
-        mock_change_log_store.get_change_log.return_value = ChangeLogEntry(
-            path="/mnt/gcs/file.txt",
-            backend_name="gcs",
-            content_hash="old_hash",
-            mtime=old_time,
-            backend_version="v1",
-        )
-
-        backend = mock_gateway.get_mount_for_path.return_value["backend"]
-        backend.get_file_info.return_value = FakeFileInfo(
-            backend_version="v2",
-            mtime=datetime.now(UTC) - timedelta(hours=1),
-        )
-
-        # Nexus is newest (gateway.metadata_get returns newer mtime)
-        mock_gateway.metadata_get.return_value = MagicMock(
-            mtime=datetime.now(UTC),
-            content_hash="new_nexus_hash",
-        )
-
         await service._process_entry(entry, sem)
 
-        # Should still complete (Nexus wins)
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
         backend.write_content.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_write_back_conflict_backend_wins_skips_write(
+    async def test_write_back_conflict_keep_newer_backend_wins(
         self, service, mock_gateway, mock_change_log_store, mock_backlog_store
     ):
-        """When conflict detected and backend is newer, write-back is skipped."""
-        from nexus.services.change_log_store import ChangeLogEntry
+        """KEEP_NEWER: Backend newer -> write-back skipped."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=False)
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await service._process_entry(entry, sem)
+
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_not_called()
+
+
+# =============================================================================
+# Per-Mount Strategy Resolution Tests
+# =============================================================================
+
+
+class TestPerMountStrategy:
+    """Tests for per-mount conflict strategy resolution chain."""
+
+    def test_mount_explicit_strategy(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """Mount has explicit strategy -> use it."""
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "keep_remote"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            default_strategy=ConflictStrategy.KEEP_NEWER,
+        )
+
+        mount_info = mock_gateway.get_mount_for_path.return_value
+        result = svc._resolve_strategy(mount_info)
+        assert result == ConflictStrategy.KEEP_REMOTE
+
+    def test_mount_none_falls_to_global(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """Mount has no strategy -> fall back to global default."""
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = None
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            default_strategy=ConflictStrategy.KEEP_LARGER,
+        )
+
+        mount_info = mock_gateway.get_mount_for_path.return_value
+        result = svc._resolve_strategy(mount_info)
+        assert result == ConflictStrategy.KEEP_LARGER
+
+    def test_invalid_mount_strategy_falls_to_global(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """Mount has invalid strategy string -> fall back to global default."""
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "invalid_strategy"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            default_strategy=ConflictStrategy.KEEP_NEWER,
+        )
+
+        mount_info = mock_gateway.get_mount_for_path.return_value
+        result = svc._resolve_strategy(mount_info)
+        assert result == ConflictStrategy.KEEP_NEWER
+
+    def test_default_strategy_is_keep_newer(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """Default constructor uses KEEP_NEWER."""
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+        )
+        assert svc._default_strategy == ConflictStrategy.KEEP_NEWER
+
+
+# =============================================================================
+# Strategy-Specific Conflict Tests
+# =============================================================================
+
+
+class TestStrategyConflicts:
+    """Tests for specific conflict resolution strategies in write-back."""
+
+    @pytest.mark.asyncio
+    async def test_abort_strategy_raises_and_marks_failed(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """ABORT strategy raises ConflictAbortError -> marks failed."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "abort"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            default_strategy=ConflictStrategy.ABORT,
+        )
 
         entry = _make_entry()
         sem = asyncio.Semaphore(1)
 
-        old_time = datetime.now(UTC) - timedelta(hours=2)
-        mock_change_log_store.get_change_log.return_value = ChangeLogEntry(
-            path="/mnt/gcs/file.txt",
-            backend_name="gcs",
-            content_hash="old_hash",
-            mtime=old_time,
-            backend_version="v1",
+        await svc._process_entry(entry, sem)
+
+        mock_backlog_store.mark_failed.assert_called_once()
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keep_remote_always_skips_write(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """KEEP_REMOTE -> backend wins, write-back skipped."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "keep_remote"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
         )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
 
         backend = mock_gateway.get_mount_for_path.return_value["backend"]
-        backend.get_file_info.return_value = FakeFileInfo(
-            backend_version="v2",
-            mtime=datetime.now(UTC),  # Backend is newest
-        )
-
-        mock_gateway.metadata_get.return_value = MagicMock(
-            mtime=datetime.now(UTC) - timedelta(hours=1),  # Nexus is older
-            content_hash="nexus_hash",
-        )
-
-        await service._process_entry(entry, sem)
-
-        # Backend write should NOT be called (backend wins)
         backend.write_content.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_keep_local_always_proceeds(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """KEEP_LOCAL -> nexus wins, write-back proceeds."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=False)
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "keep_local"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_keep_larger_nexus_larger_proceeds(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """KEEP_LARGER: Nexus larger -> proceeds with write-back."""
+        _setup_conflict(
+            mock_gateway,
+            mock_change_log_store,
+            nexus_newer=False,
+            nexus_size=5000,
+            backend_size=1000,
+        )
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "keep_larger"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_keep_larger_backend_larger_skips(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """KEEP_LARGER: Backend larger -> skips write-back."""
+        _setup_conflict(
+            mock_gateway,
+            mock_change_log_store,
+            nexus_newer=True,
+            nexus_size=500,
+            backend_size=5000,
+        )
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "keep_larger"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rename_conflict_creates_copy_and_proceeds(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+    ):
+        """RENAME_CONFLICT: creates conflict copy and proceeds with write-back."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
+        mock_gateway.get_mount_for_path.return_value["conflict_strategy"] = "rename_conflict"
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        # Should create conflict copy via gateway.write
+        mock_gateway.write.assert_called_once()
+        conflict_path = mock_gateway.write.call_args[0][0]
+        assert ".sync-conflict-" in conflict_path
+
+        # Should still proceed with write-back
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_called_once()
+
+
+# =============================================================================
+# Conflict Logging Tests
+# =============================================================================
+
+
+class TestConflictLogging:
+    """Tests for conflict audit log integration."""
+
+    @pytest.mark.asyncio
+    async def test_conflict_logged_to_store(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+        mock_conflict_log_store,
+    ):
+        """Conflict events are logged to ConflictLogStore."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            conflict_log_store=mock_conflict_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        mock_conflict_log_store.log_conflict.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_conflict_log_failure_does_not_block_write(
+        self,
+        mock_gateway,
+        mock_event_bus,
+        mock_backlog_store,
+        mock_change_log_store,
+        mock_conflict_log_store,
+    ):
+        """If conflict logging fails, write-back still proceeds."""
+        _setup_conflict(mock_gateway, mock_change_log_store, nexus_newer=True)
+        mock_conflict_log_store.log_conflict.side_effect = RuntimeError("DB error")
+
+        svc = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=mock_backlog_store,
+            change_log_store=mock_change_log_store,
+            conflict_log_store=mock_conflict_log_store,
+        )
+
+        entry = _make_entry()
+        sem = asyncio.Semaphore(1)
+
+        await svc._process_entry(entry, sem)
+
+        # Write should still proceed
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.write_content.assert_called_once()
 
 
 # =============================================================================
@@ -381,8 +737,38 @@ class TestStats:
     """Tests for get_stats."""
 
     def test_get_stats_returns_service_info(self, service):
-        """Stats include running state and backlog stats."""
+        """Stats include running state and strategy info."""
         stats = service.get_stats()
         assert stats["running"] is False
-        assert stats["conflict_policy"] == "lww"
+        assert stats["default_strategy"] == "keep_newer"
         assert "backlog_stats" in stats
+
+
+# =============================================================================
+# Conflict Copy Path Generation Tests
+# =============================================================================
+
+
+class TestConflictCopyPath:
+    """Tests for _generate_conflict_copy_path."""
+
+    def test_generates_expected_format(self):
+        path = WriteBackService._generate_conflict_copy_path(
+            "/mnt/gcs/docs/report.pdf", "gcs_backend"
+        )
+        assert "/mnt/gcs/docs/" in path
+        assert ".sync-conflict-" in path
+        assert "-gcs_backend" in path
+        assert path.endswith(".pdf")
+
+    def test_handles_no_extension(self):
+        path = WriteBackService._generate_conflict_copy_path("/mnt/gcs/Makefile", "s3")
+        assert ".sync-conflict-" in path
+        assert "-s3" in path
+        # No extension — should end with backend name
+        assert not path.endswith(".")
+
+    def test_handles_hidden_files(self):
+        path = WriteBackService._generate_conflict_copy_path("/mnt/gcs/.gitignore", "local")
+        assert ".sync-conflict-" in path
+        assert "-local" in path

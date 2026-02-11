@@ -102,6 +102,15 @@ async def get_llm_provider(
 # =============================================================================
 
 
+async def get_conflict_log_store() -> Any:
+    """Get ConflictLogStore instance from app state."""
+    app_state = _get_app_state()
+    store = getattr(app_state, "conflict_log_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Conflict log store not initialized")
+    return store
+
+
 async def get_trajectory_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),

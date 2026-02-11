@@ -497,58 +497,175 @@ we can introduce Multi-Raft sharding within a zone (like TiKV), but this is not 
 mount points. A parent zone's DT_MOUNT entry points to a child zone's UUID + address.
 This is a namespace-level concept, not a storage-level shard.
 
-### 6.2 Zone Properties
+### 6.2 Mount = Join Raft Group (DECIDED 2026-02-11)
 
-- **Path format**: `/zone/{zone_id}/path/to/file`
-- **Physical**: Each Zone is an independent Raft Group with its own sled, own nodes, own root `/`
-- **Logical**: Hierarchical namespace composed through **Mount Points** (see §7a)
-- **Intra-zone**: Raft consensus guarantees linearizable reads/writes within the zone
-- **Cross-zone reads**: gRPC call to target zone, client-side VFS traversal across DT_MOUNT boundaries
-- **Cross-zone writes**: gRPC call to target zone's Raft leader
-- **Cross-zone transactions**: Spanner-like 2PC (future, Task #40)
-- **Mount semantics**: NFS-style (reject if path exists, no shadow). See Issue #1326 for shadow discussion.
+**Core decision**: Mounting a zone means your node **joins the zone's Raft group as a Learner**.
+There is no "remote redirect" mode — every mounted zone has a local sled replica.
 
-### 6.3 Cross-Zone Shared Folder (Example)
+**Why not redirect + cache (NFS-style)?**
+- Redirect requires gRPC for every read (~200ms) — unacceptable for filesystem workloads
+- Client-side cache requires cache invalidation — effectively re-inventing a weaker Raft
+- Raft already solves "multiple parties see consistent view" — use it directly
+
+**Mount semantics**:
+
+| Aspect | Behavior |
+|--------|----------|
+| Mount = | Node joins target zone's Raft group as **Learner** (raft-rs native) |
+| Read latency | ~5μs (local sled, page cache) — **always local** |
+| Write latency | Raft propose → commit (~ms same region, ~200ms cross-continent) |
+| Consistency | Linearizable (Raft guarantees) — **no cache invalidation needed** |
+| Data locality | Full metadata replica in local sled |
+| Unmount = | Node leaves Raft group, local sled data can be cleaned up |
+
+**Raft roles**:
+
+| Role | Votes | Receives log | Local sled | Use case |
+|------|-------|-------------|-----------|----------|
+| **Voter** | Yes | Yes | Full replica | Zone's core nodes |
+| **Learner** | No | Yes | Full replica | Nodes that mount the zone |
+
+Learners don't affect quorum or elections. They receive all Raft log entries and maintain
+an up-to-date local sled. This is how Spanner works: every Spanserver that serves data
+IS a Paxos participant. No "remote read without being in the group."
+
+**No redirect-only mode**: If a zone owner doesn't want your node in their Raft group,
+they simply don't grant you mount permission. You cannot browse a zone without joining it.
+"贡献 storage 的一方有绝对主动权" — the zone owner controls who can join.
+
+### 6.3 Multi-Party Sharing (Example)
 
 ```
-Scenario: Alice (Zone_US) and Bob (Zone_EU) want to share files.
+Scenario: Alice, Bob, and Charlie want to collaborate.
 
-1. Create a shared zone:
-   nexus zone create shared-proj --region us-west
-   → Zone_Shared created with its own Raft group in US-West
+1. Alice creates a shared zone:
+   nexus share /my-project --with bob,charlie
+   # Implicit: system creates Zone_MyProject, splits /my-project from Zone_Alice
 
-2. Alice (Zone_US) mounts it:
-   nexus mount /my-project zone-shared-uuid --address us-west-1:2126
-   → Zone_US sled: DT_MOUNT{zone_id: zone-shared-uuid, address: "us-west-1:2126"}
+   Explicit equivalent:
+     nexus zone create my-project-zone
+     nexus mount /my-project my-project-zone:/
+     nexus zone invite my-project-zone bob charlie
 
-3. Bob (Zone_EU) mounts it:
-   nexus mount /work/project zone-shared-uuid --address us-west-1:2126
-   → Zone_EU sled: DT_MOUNT{zone_id: zone-shared-uuid, address: "us-west-1:2126"}
+2. Zone_MyProject Raft group membership:
+   Voters:   [alice-node-1, alice-node-2]     ← zone creator's core nodes
+   Learners: [bob-node, charlie-node]         ← invited participants
 
-4. Bob does `ls /work/project/`:
-   → NexusFS sees DT_MOUNT → gRPC to us-west-1:2126 → returns file list
-   → Latency: EU→US network RTT + zone-shared Raft read (~50-200ms)
+3. All three have local sled replicas of Zone_MyProject:
+   Alice:   /my-project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
+   Bob:     /shared/alice-project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
+   Charlie: /collab/project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
+
+4. Alice writes /my-project/new.txt:
+   → Raft propose → committed by voters → replicated to all learners
+   → Bob and Charlie see new.txt immediately (no cache invalidation needed)
 ```
 
-### 6.4 DT_MOUNT Entry Structure
+### 6.4 Implicit vs Explicit Zone Management (DECIDED 2026-02-11)
+
+**Default: Implicit** (zone is an implementation detail, not a user concept).
+**Available: Explicit** (for advanced users and admin operations).
+
+| Mode | User sees | System does |
+|------|-----------|-------------|
+| **Implicit** | `nexus share /path --with user` | Auto zone create + DT_MOUNT + invite + Raft join |
+| **Explicit** | `nexus zone create`, `nexus mount` | Manual zone lifecycle, Raft config, placement |
+
+**Implicit share (`nexus share /path`)** internally:
+1. Creates a new zone for the subtree
+2. Migrates metadata from parent zone's sled → new zone's sled (like `git subtree split`)
+3. Replaces original path with DT_MOUNT in parent zone
+4. Creator's node becomes Voter in new zone's Raft group
+5. Invited users' nodes join as Learners
+6. Creates DT_MOUNT in each invited user's zone
+
+**When explicit is needed**:
+- Zone migration to different region (`nexus zone migrate`)
+- Raft configuration (voter/learner ratio, quorum size)
+- Storage quota management
+- Admin/ops operations
+
+### 6.5 Zone Discovery: DNS-Style Hierarchical Resolution (DECIDED 2026-02-11)
+
+**Source**: Validated by Gemini analysis (Spanner, AFS, Ceph, HDFS comparison).
+
+**Decision**: DNS-style hierarchical delegation, NOT a global registry.
+
+Each zone only knows about its **direct DT_MOUNT targets** (child zones). Path resolution
+is zone-by-zone, like DNS recursive resolution. No global zone registry on the critical path.
+
+```
+Path resolution for /company/engineering/team1/file.txt:
+
+  Step 1: Root Zone → /company is DT_MOUNT → Zone_Company @ us-west:2126
+  Step 2: Zone_Company → /engineering is DT_MOUNT → Zone_Eng @ us-east:2126
+  Step 3: Zone_Eng → /team1/file.txt is local → return FileMetadata
+
+  But: mounting node is Learner in all zones on the path, so ALL reads are local (~5μs).
+  DNS-style resolution is only needed for initial mount, not per-read.
+```
+
+**Client-side PathResolver cache** (per Gemini recommendation):
+```python
+class PathResolver:
+    def resolve(self, path: str) -> (ZoneClient, RelativePath):
+        # Longest prefix match → skip already-resolved zone hops
+        cached = self.cache.longest_prefix_match(path)
+        if cached:
+            return cached.zone_client, cached.remaining_path
+        # Cold path: recursive resolution from root
+        return self.resolve_from_root(path)
+```
+
+**Scalability**: Supports billions of zones (same as DNS supporting billions of domains).
+Root zone only stores top-level zones. Subtree failure is isolated.
+
+**Bootstrap**: MVP uses manual zone address configuration. Future: bootstrap zone
+(like DNS root servers) where zones register on startup.
+
+### 6.6 DT_MOUNT Entry Structure
 
 ```python
 class DT_MOUNT:
     name: str               # Mount point name in parent directory
-    entry_type: "DT_MOUNT"
+    entry_type: "DT_MOUNT"  # Alongside DT_DIR, DT_REG
     target_zone_id: str     # Target zone UUID
-    target_address: str     # Target zone's Raft leader/endpoint address
-    # Future: target_address could be a list for HA, or resolved via Zone Registry
+    # No target_address needed: mounting node is a Raft Learner,
+    # so it has local sled replica. Address is resolved at mount time
+    # and stored in Raft group membership, not in the DT_MOUNT entry.
 ```
 
-### 6.5 Implications for Current Code
+**Mount conflict**: Reject if path already exists as DT_DIR or DT_REG (NFS-style,
+no shadow). See Issue #1326 for shadow discussion.
+
+**Reference counting**: `i_links_count` tracks DT_MOUNT refs to a zone.
+New zone starts at 1 (owner reference). Each DT_MOUNT adds 1. Drop to 0 is impossible
+(owner ref is implicit). `nexus zone destroy` required for actual deletion.
+
+### 6.7 Metastore as Cache Backing Store
+
+Since mounting = joining Raft group, every mounted zone has a **local sled replica**.
+The existing `Metastore` (PyO3, non-Raft sled wrapper) serves dual purpose:
+
+| Use case | sled instance | Raft? | Data |
+|----------|--------------|-------|------|
+| **Own zone (authoritative)** | RaftConsensus (SC/EC) | Yes | This zone's metadata |
+| **Mounted zone (Learner)** | Metastore (local sled) | Yes (Learner) | Replicated metadata from mounted zone |
+
+Both use sled's built-in page cache (~5μs for hot data). No separate cache layer needed.
+Raft log replication IS the cache invalidation mechanism.
+
+### 6.8 Implications for Current Code
 
 | Component | Single-Zone (now) | Multi-Zone (federation) |
 |-----------|-------------------|------------------------|
-| `_create_metadata_store()` | 1 RaftMetadataStore per node | 1 per node (only manages its own zone) |
-| DT_MOUNT resolution | N/A | gRPC call to `target_address` |
-| Node discovery | `NEXUS_PEERS` (static, intra-zone) | Zone Registry (inter-zone, future) |
+| `_create_metadata_store()` | 1 RaftMetadataStore | 1 per zone the node participates in |
+| Mount operation | N/A | Join target zone's Raft group as Learner |
+| Read path | Local sled | Local sled (always, Learner has replica) |
+| Write path | Raft propose | Raft propose to target zone's leader |
+| Node discovery | `NEXUS_PEERS` (static) | DNS-style resolution + bootstrap |
 | 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
+| Multi-Raft sharding | N/A | Future: Issue #1327 (when single zone too large) |
 
 ---
 
@@ -588,17 +705,17 @@ A new entry type alongside `DT_DIR` and `DT_REG`:
 | `entry_type` | `DT_MOUNT` |
 | `target_zone_id` | `Zone_B_UUID` |
 
-#### Client-Side Traversal (ls -R /company/)
+#### Cross-Zone Read Path (Raft Learner Model)
 
-1. Client → Zone A: `list /` → returns `docs/, hr/, engineering(DT_MOUNT→Zone_B)`
-2. Client sees DT_MOUNT, pauses recursion
-3. Client resolves Zone_B address, connects
-4. Client → Zone B: `list /` → returns `code/, design/`
-5. Client merges Zone B results under `engineering/` name
-6. Final result presented to user as unified tree
+Since mounting = joining the Raft group as Learner, cross-zone reads are **always local**:
 
-**Mixed consistency**: Zone A can be eventual, Zone B can be strong.
-Client handles the boundary transparently.
+1. Node has local sled replicas for ALL mounted zones (Raft Learner)
+2. `ls -R /company/` → Zone A sled (local) → sees DT_MOUNT → Zone B sled (also local)
+3. All reads are ~5μs — no gRPC needed for data access
+4. gRPC is only used for Raft log replication (background, async)
+
+**Mixed consistency**: Zone A can be EC, Zone B can be SC. Each zone's Raft group
+operates independently. The node participates as Learner in both.
 
 #### Unified Mount Logic (DRY)
 

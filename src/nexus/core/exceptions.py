@@ -308,5 +308,26 @@ class AuthenticationError(NexusError):
         super().__init__(message, path)
 
 
+class ZoneQuiescedError(NexusError):
+    """Raised when a write is attempted on a quiesced zone (Issue #1180).
+
+    During consistency mode migration, the zone is temporarily quiesced
+    (writes blocked) to ensure a clean switchover. This is an expected
+    error — the client should retry after the migration completes.
+
+    Maps to HTTP 503 Service Unavailable with Retry-After header.
+    """
+
+    is_expected = True  # Transient condition during migration
+
+    def __init__(self, zone_id: str, message: str | None = None):
+        self.zone_id = zone_id
+        msg = message or (
+            f"Zone '{zone_id}' is temporarily quiesced during consistency mode migration. "
+            f"Retry shortly."
+        )
+        super().__init__(msg)
+
+
 # Alias for convenience (used in time-travel debugging)
 NotFoundError = NexusFileNotFoundError

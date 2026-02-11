@@ -41,7 +41,7 @@ def make_engine(pool_size: int = 5, max_overflow: int = 10):
 @contextmanager
 def pg_schema(engine):
     """Create tables, yield, then drop them (clean slate per benchmark)."""
-    from nexus.storage.models._base import Base  # noqa: I001
+    from nexus.storage.models._base import Base
 
     # Import all models so they register with Base.metadata
     from nexus.storage.models.file_path import FilePathModel  # noqa: F401

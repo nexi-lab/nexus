@@ -301,6 +301,8 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Tracked in Issue #1141
         "atomic_update",  # Async - read-modify-write with distributed lock
         "locked",  # Async context manager - distributed lock acquisition
+        # Consistency migration - server-side orchestration only (Issue #1180)
+        "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
     }
 
     # Get all public methods

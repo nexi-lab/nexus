@@ -273,8 +273,12 @@ def remove_user_from_zone(
 def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
+    Uses direct DB query on rebac_tuples to find all zones where the user
+    has any relation (owner, admin, member). Matches on the zone_id context
+    column, which is set by add_user_to_zone() for all roles.
+
     Args:
-        rebac_manager: ReBAC manager instance
+        rebac_manager: ReBAC manager instance (must have _connection())
         user_id: User ID
 
     Returns:
@@ -284,30 +288,31 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
         zones = get_user_zones(rebac_mgr, "user-123")
         # Returns: ["acme", "techcorp"]
     """
-    # Query ReBAC for user's group memberships
-    tuples = rebac_manager.rebac_query(
-        subject=("user", user_id),
-        relation="member",
-        object_type="group",
-    )
-
-    # Extract zone IDs from zone groups
-    zone_ids = []
-    for t in tuples:
-        zone_id = parse_zone_from_group(t.object.entity_id)
-        if zone_id and zone_id not in zone_ids:
-            # Remove role suffixes if present
-            if zone_id.endswith("-owners"):
-                zone_id = zone_id[: -len("-owners")]
-            elif zone_id.endswith("-admins"):
-                zone_id = zone_id[: -len("-admins")]
-            zone_ids.append(zone_id)
-
+    zone_ids: list[str] = []
+    try:
+        with rebac_manager._connection() as conn:
+            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
+            cursor.execute(
+                "SELECT DISTINCT zone_id FROM rebac_tuples "
+                "WHERE subject_type = 'user' AND subject_id = ? "
+                "AND zone_id IS NOT NULL",
+                (user_id,),
+            )
+            for row in cursor.fetchall():
+                zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
+                if zid and zid not in zone_ids:
+                    zone_ids.append(zid)
+    except Exception:
+        pass
     return zone_ids
 
 
 def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone.
+
+    Checks rebac_tuples for any tuple where the user is the subject and the
+    zone_id context column matches. This covers all roles (owner, admin,
+    member) since add_user_to_zone() always sets zone_id on the tuple.
 
     Args:
         rebac_manager: ReBAC manager instance
@@ -317,7 +322,19 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
     Returns:
         True if user belongs to zone
     """
-    return zone_id in get_user_zones(rebac_manager, user_id)
+    try:
+        with rebac_manager._connection() as conn:
+            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
+            cursor.execute(
+                "SELECT 1 FROM rebac_tuples "
+                "WHERE subject_type = 'user' AND subject_id = ? "
+                "AND zone_id = ? "
+                "LIMIT 1",
+                (user_id, zone_id),
+            )
+            return cursor.fetchone() is not None
+    except Exception:
+        return False
 
 
 # ==============================================================================

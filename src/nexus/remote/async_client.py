@@ -558,6 +558,8 @@ class AsyncRemoteNexusFS:
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
     ) -> dict[str, Any]:
         """Write content to a file (async).
 
@@ -568,6 +570,10 @@ class AsyncRemoteNexusFS:
             if_match: Optional etag for optimistic concurrency
             if_none_match: If True, create-only mode
             force: If True, skip version check
+            lock: If True, acquire distributed lock before writing (server-side).
+                Adds ~2-10ms latency for lock acquire/release.
+                For read-modify-write patterns, use locked() context manager instead.
+            lock_timeout: Max time to wait for lock in seconds (only used if lock=True).
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)
@@ -575,16 +581,19 @@ class AsyncRemoteNexusFS:
         if isinstance(content, str):
             content = content.encode("utf-8")
 
-        result = await self._call_rpc(
-            "write",
-            {
-                "path": path,
-                "content": content,
-                "if_match": if_match,
-                "if_none_match": if_none_match,
-                "force": force,
-            },
-        )
+        params: dict[str, Any] = {
+            "path": path,
+            "content": content,
+            "if_match": if_match,
+            "if_none_match": if_none_match,
+            "force": force,
+        }
+        if lock:
+            params["lock"] = True
+        if lock_timeout != 30.0:
+            params["lock_timeout"] = lock_timeout
+
+        result = await self._call_rpc("write", params)
 
         # Invalidate negative cache after successful write (issue #858)
         self._negative_cache_invalidate(path)

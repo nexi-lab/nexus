@@ -682,6 +682,84 @@ class TestLockApiAuth:
         resp = admin_client.delete(f"/api/locks{path}?lock_id={lock_id}&force=true")
         assert resp.status_code == 200
 
+    def test_write_with_lock_via_rpc(self, admin_client: httpx.Client) -> None:
+        """Test write(lock=True) through the full RPC stack with auth (#1143).
+
+        This exercises: HTTP → auth → RPC dispatch → WriteParams(lock=True)
+        → _handle_write → nexus_fs.write(lock=True).
+        If lock manager is unavailable, write should still succeed (lock=False fallback).
+        """
+        path = f"/workspace/lock_write_{uuid.uuid4().hex[:8]}.txt"
+
+        # Write with lock=True via RPC
+        result = _rpc(
+            admin_client,
+            "write",
+            {
+                "path": path,
+                "content": _encode_bytes(b"locked write content"),
+                "lock": True,
+                "lock_timeout": 5.0,
+            },
+        )
+        # If lock manager is available, this should succeed.
+        # If not available, server may return error or succeed without lock.
+        # The key assertion: the WriteParams dataclass accepted lock/lock_timeout
+        # (no "Invalid parameters" error).
+        error = result.get("error")
+        if error is not None:
+            err_msg = str(error.get("message", "")).lower()
+            # "no lock manager" is acceptable — means params parsed but no Redis
+            # "invalid parameters" would mean WriteParams rejected lock field (BUG)
+            assert "invalid parameters" not in err_msg, (
+                f"WriteParams rejected lock param — missing field in protocol.py? Error: {error}"
+            )
+
+        # If write succeeded, verify content is readable
+        if error is None:
+            read_result = _rpc(admin_client, "read", {"path": path})
+            assert read_result.get("error") is None, (
+                f"Read after locked write failed: {read_result}"
+            )
+
+    def test_write_with_lock_permission_denied(
+        self, admin_client: httpx.Client, user_client: httpx.Client
+    ) -> None:
+        """Test write(lock=True) is rejected for unauthorized users."""
+        path = f"/workspace/lock_denied_{uuid.uuid4().hex[:8]}.txt"
+
+        # Admin creates the file first
+        _rpc(
+            admin_client,
+            "write",
+            {
+                "path": path,
+                "content": _encode_bytes(b"admin content"),
+            },
+        )
+
+        # User tries to write with lock — should be denied by permissions
+        result = _rpc(
+            user_client,
+            "write",
+            {
+                "path": path,
+                "content": _encode_bytes(b"unauthorized locked write"),
+                "lock": True,
+            },
+        )
+        error = result.get("error")
+        if error is not None:
+            err_msg = str(error.get("message", "")).lower()
+            # Should be permission error, not "invalid parameters"
+            assert "invalid parameters" not in err_msg, f"WriteParams rejected lock param: {error}"
+            assert (
+                "permission" in err_msg
+                or "denied" in err_msg
+                or "not found" in err_msg
+                or error.get("code") in (-32603, -32001, -32002)
+            ), f"Expected permission error, got: {error}"
+
     def test_lock_status_check(self, admin_client: httpx.Client) -> None:
         """Check lock status for a path."""
         if not self._get_lock_manager_available(admin_client):

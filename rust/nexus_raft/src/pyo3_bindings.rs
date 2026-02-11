@@ -526,9 +526,9 @@ impl PyRaftConsensus {
         peers: Vec<String>,
         lazy: bool,
     ) -> PyResult<Self> {
-        use crate::transport::{
-            NodeAddress, RaftClientPool, RaftServer, ServerConfig, TransportLoop,
-        };
+        use crate::raft::ZoneRaftRegistry;
+        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
+        use std::sync::Arc;
 
         // Parse peer addresses
         let peer_addrs: Vec<NodeAddress> = peers
@@ -544,18 +544,6 @@ impl PyRaftConsensus {
             PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
         })?;
 
-        let config = ServerConfig {
-            bind_address: bind_socket,
-            ..Default::default()
-        };
-
-        // Create RaftServer (which creates RaftNode handle + driver)
-        let mut server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create Raft server: {}", e)))?;
-
-        let node = server.node(); // Clone of handle
-        let driver = server.take_driver(); // Driver goes to transport loop
-
         // Build Tokio runtime for background tasks
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -564,16 +552,28 @@ impl PyRaftConsensus {
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        // Shutdown signal
+        // Create zone registry and register a single zone
+        // (ZoneRaftRegistry::create_zone spawns TransportLoop + auto-campaigns for single-node)
+        let registry = Arc::new(ZoneRaftRegistry::new(
+            std::path::PathBuf::from(db_path),
+            node_id,
+        ));
+
+        let node = registry
+            .create_zone("default", peer_addrs, lazy, runtime.handle())
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create zone: {}", e))
+            })?;
+
+        // Shutdown signal for gRPC server
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background — owns the driver exclusively
-        let peer_map = peer_addrs.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
-        let shutdown_rx_transport = shutdown_rx.clone();
-        runtime.spawn(transport_loop.run(shutdown_rx_transport));
-
         // Start gRPC server in background
+        let config = ServerConfig {
+            bind_address: bind_socket,
+            ..Default::default()
+        };
+        let server = RaftGrpcServer::new(registry.clone(), config);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {
@@ -584,18 +584,6 @@ impl PyRaftConsensus {
                 tracing::error!("Raft gRPC server error: {}", e);
             }
         });
-
-        // Single-node: campaign immediately to become leader
-        if peers.is_empty() {
-            let campaign_node = node.clone();
-            runtime.spawn(async move {
-                // Give the transport loop a moment to start
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Err(e) = campaign_node.campaign().await {
-                    tracing::error!("Failed to campaign: {}", e);
-                }
-            });
-        }
 
         let mode = if lazy { "EC (lazy)" } else { "SC" };
         tracing::info!(

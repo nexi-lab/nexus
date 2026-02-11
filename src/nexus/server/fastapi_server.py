@@ -306,6 +306,8 @@ class AppState:
         self.write_back_service: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Agent Registry for stale-session detection (Issue #1240)
+        self.agent_registry: Any = None
 
 
 # Global state (set during app creation)

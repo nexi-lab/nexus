@@ -275,7 +275,7 @@ class AsyncPermissionEnforcer:
         # Check if path matches a backend mount
         for mount_point, backend in self.backends.items():
             if path.startswith(mount_point):
-                return backend.get_object_type(path[len(mount_point) :])
+                return str(backend.get_object_type(path[len(mount_point) :]))
 
         # Default to "file"
         return "file"

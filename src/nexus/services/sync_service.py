@@ -1121,7 +1121,12 @@ class SyncService:
             if hasattr(backend, "get_content_size"):
                 from nexus.core.permissions import OperationContext
 
-                size_context = OperationContext(backend_path=backend_path)
+                size_context = OperationContext(
+                    user="system",
+                    groups=[],
+                    is_system=True,
+                    backend_path=backend_path,
+                )
                 # Note: content_hash is ignored by connectors - they use backend_path from context
                 result: int = backend.get_content_size("", size_context).unwrap()
                 return result

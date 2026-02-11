@@ -257,7 +257,7 @@ class BaseRemoteNexusFS:
             return base64.b64decode(value)
         return value  # type: ignore[no-any-return]
 
-    def _decode_delta_read_response(self, result: Any) -> Any:
+    def _decode_delta_read_response(self, result: Any) -> dict[str, Any]:
         """Decode binary fields in a delta_read RPC response.
 
         Decodes 'delta' and 'content' fields if they are in the standard
@@ -270,7 +270,7 @@ class BaseRemoteNexusFS:
             Result with binary fields decoded to bytes
         """
         if not isinstance(result, dict):
-            return result
+            return {"result": result}
 
         decoded = dict(result)
 

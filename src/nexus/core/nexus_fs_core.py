@@ -256,7 +256,7 @@ class NexusFSCoreMixin:
             return
 
         # Get current revision for this zone
-        zone_id = context.zone_id or "default"
+        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
         revision = 0  # TODO: Replace with proper Raft read-index
 
         # Record the read

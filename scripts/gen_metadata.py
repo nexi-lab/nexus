@@ -261,7 +261,7 @@ def _generate_enum_properties(
         prefix = _enum_common_prefix(enum_values)
         for vname, vnum in enum_values:
             prop_name = "is_" + vname.removeprefix(prefix).lower()
-            lines.append(f"    @property")
+            lines.append("    @property")
             lines.append(f"    def {prop_name}(self) -> bool:")
             lines.append(f"        return self.{field_name} == {vnum}")
             lines.append("")

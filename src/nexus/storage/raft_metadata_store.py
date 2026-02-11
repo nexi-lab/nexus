@@ -31,7 +31,6 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
-from nexus.core.consistency import StoreMode
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +127,6 @@ class RaftMetadataStore(FileMetadataProtocol):
         local_raft: Any | None = None,
         remote_client: Any | None = None,
         zone_id: str | None = None,
-        mode: StoreMode = StoreMode.EMBEDDED,
     ):
         """Initialize RaftMetadataStore.
 
@@ -139,7 +137,6 @@ class RaftMetadataStore(FileMetadataProtocol):
             local_raft: Metastore or RaftConsensus instance (PyO3 FFI)
             remote_client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
-            mode: Operational mode (Issue #1180). Set by factory methods.
         """
         if local_raft is None and remote_client is None:
             raise ValueError("Either local_raft or remote_client must be provided")
@@ -147,26 +144,11 @@ class RaftMetadataStore(FileMetadataProtocol):
         self._local = local_raft
         self._remote = remote_client
         self._zone_id = zone_id
-        self._mode = mode
-
-        # Issue #1180 Phase B: EC pending write counter.
-        # Tracks writes that have been applied locally but not yet ACKed by Raft.
-        # Only initialized for EC mode to avoid overhead in other modes.
-        if mode == StoreMode.EC:
-            import threading
-
-            self._ec_pending: int = 0
-            self._ec_lock = threading.Lock()
-
-    @property
-    def mode(self) -> StoreMode:
-        """Operational mode of this store (Issue #1180)."""
-        return self._mode
 
     @property
     def _is_local(self) -> bool:
         """True if this store operates on a local sled backend (not remote gRPC)."""
-        return self._mode != StoreMode.REMOTE
+        return self._local is not None
 
     # =========================================================================
     # Shared Local Helpers — DRY extraction (Issue #1180)
@@ -195,10 +177,6 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         data = _serialize_metadata(metadata)
         self._local.set_metadata(metadata.path, data)
-        # Issue #1180 Phase B: Increment EC pending counter.
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                self._ec_pending += 1
 
     def _delete_local(self, path: str) -> dict[str, Any] | None:
         """Delete metadata from the local sled backend.
@@ -211,10 +189,6 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         existing = self._get_local(path)
         self._local.delete_metadata(path)
-        # Issue #1180 Phase B: Increment EC pending counter.
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                self._ec_pending += 1
         if existing:
             return {
                 "path": existing.path,
@@ -258,49 +232,6 @@ class RaftMetadataStore(FileMetadataProtocol):
             result.append(metadata)
         return result
 
-    # =========================================================================
-    # Replication Monitoring (Issue #1180)
-    # =========================================================================
-
-    def get_replication_status(self) -> dict[str, Any]:
-        """Get replication lag and status for this store.
-
-        Issue #1180: Phase B — EC mode returns pending write count.
-        TODO(rust): Replace lag estimate with actual Raft progress data
-        from replication_status() once PyO3 binding is available.
-
-        Returns:
-            Dict with mode, lag (uncommitted entries), uncommitted count.
-        """
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                pending = self._ec_pending
-            return {"mode": "ec", "lag": pending, "uncommitted": pending}
-        return {"mode": self._mode.value, "lag": 0, "uncommitted": 0}
-
-    def acknowledge_replication(self, count: int) -> None:
-        """Acknowledge that `count` EC writes have been replicated.
-
-        Called when Raft confirms that pending writes have been committed.
-        TODO(rust): Wire to Raft callback via PyO3 when available.
-
-        Args:
-            count: Number of writes that were successfully replicated.
-
-        Raises:
-            ValueError: If count is negative.
-            RuntimeError: If store is not in EC mode.
-        """
-        if self._mode != StoreMode.EC:
-            raise RuntimeError(
-                f"acknowledge_replication() is only valid in EC mode, "
-                f"current mode is {self._mode.value}"
-            )
-        if count < 0:
-            raise ValueError(f"count must be non-negative, got {count}")
-        with self._ec_lock:
-            self._ec_pending = max(0, self._ec_pending - count)
-
     @classmethod
     def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
         """Create an embedded metastore using direct sled access.
@@ -324,7 +255,7 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         metastore = Metastore(db_path)
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
-        return cls(local_raft=metastore, zone_id=zone_id, mode=StoreMode.EMBEDDED)
+        return cls(local_raft=metastore, zone_id=zone_id)
 
     @classmethod
     def sc(
@@ -363,7 +294,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created SC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.SC)
+        return cls(local_raft=consensus, zone_id=zone_id)
 
     @classmethod
     def ec(
@@ -402,7 +333,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created EC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.EC)
+        return cls(local_raft=consensus, zone_id=zone_id)
 
     @classmethod
     async def remote(
@@ -426,7 +357,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         client = RaftClient(address, zone_id=zone_id)
         await client.connect()
         logger.info(f"Created remote RaftMetadataStore connected to {address}")
-        return cls(remote_client=client, zone_id=zone_id, mode=StoreMode.REMOTE)
+        return cls(remote_client=client, zone_id=zone_id)
 
     def get(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.

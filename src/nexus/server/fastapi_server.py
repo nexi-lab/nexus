@@ -3901,23 +3901,6 @@ def _register_routes(app: FastAPI) -> None:
             # Get operation context
             context = get_operation_context(auth_result)
 
-            # Issue #923: Parse X-Nexus-Consistency header for CTO consistency model
-            x_consistency = request.headers.get("X-Nexus-Consistency")
-            if x_consistency:
-                try:
-                    from dataclasses import replace
-
-                    from nexus.core.consistency import FSConsistency
-
-                    context = replace(context, consistency=FSConsistency(x_consistency))
-                except ValueError:
-                    return _error_response(
-                        rpc_request.id,
-                        RPCErrorCode.INVALID_PARAMS,
-                        f"Invalid X-Nexus-Consistency value: {x_consistency}. "
-                        f"Valid values: eventual, close_to_open, strong",
-                    )
-
             _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
             # Early 304 check for read operations - check ETag BEFORE reading content
@@ -3947,76 +3930,6 @@ def _register_routes(app: FastAPI) -> None:
                 except Exception as e:
                     # If ETag check fails, fall through to normal read
                     logger.debug(f"Early ETag check failed for {params.path}: {e}")
-
-            # Issue #1187 + #923: Handle X-Nexus-Zookie header for consistency
-            x_nexus_zookie = request.headers.get("X-Nexus-Zookie")
-            if x_nexus_zookie and method in ("read", "list", "glob", "get_metadata", "exists"):
-                # Set min_zookie on context for core-layer consistency checks
-                from dataclasses import replace
-
-                context = replace(context, min_zookie=x_nexus_zookie)
-
-                # For read/list, the core layer handles the zookie wait via
-                # _check_consistency_before_read() (Issue #923).
-                # For other methods (glob, get_metadata, exists), do the wait here.
-                if method not in ("read", "list"):
-                    try:
-                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
-                        from nexus.core.zookie import (
-                            ConsistencyTimeoutError,
-                            InvalidZookieError,
-                            Zookie,
-                        )
-
-                        consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
-
-                        # EVENTUAL: skip zookie check entirely
-                        if consistency != FSConsistency.EVENTUAL:
-                            zookie = Zookie.decode(x_nexus_zookie)
-                            if _app_state.nexus_fs:
-                                zone_id = context.zone_id if context else "default"
-                                if zone_id != zookie.zone_id:
-                                    logger.warning(
-                                        f"Zookie zone mismatch: request={zone_id}, "
-                                        f"zookie={zookie.zone_id}"
-                                    )
-                                if (
-                                    not _app_state.nexus_fs._wait_for_revision(
-                                        zookie.zone_id, zookie.revision, timeout_ms=5000
-                                    )
-                                    and consistency == FSConsistency.STRONG
-                                ):
-                                    raise ConsistencyTimeoutError(
-                                        f"Timeout waiting for revision {zookie.revision}",
-                                        zone_id=zookie.zone_id,
-                                        requested_revision=zookie.revision,
-                                        current_revision=_app_state.nexus_fs._get_current_revision(
-                                            zookie.zone_id
-                                        ),
-                                        timeout_ms=5000,
-                                    )
-                                # CTO: timeout is acceptable, fall through
-
-                    except InvalidZookieError as e:
-                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
-
-                        if (
-                            getattr(context, "consistency", DEFAULT_CONSISTENCY)
-                            == FSConsistency.STRONG
-                        ):
-                            return _error_response(
-                                rpc_request.id,
-                                RPCErrorCode.INVALID_PARAMS,
-                                f"Invalid X-Nexus-Zookie header: {e.message}",
-                            )
-                        # CTO/EVENTUAL: ignore invalid zookies gracefully
-                    except ConsistencyTimeoutError as e:
-                        return _error_response(
-                            rpc_request.id,
-                            RPCErrorCode.INTERNAL_ERROR,
-                            f"Consistency timeout: requested revision {e.requested_revision}, "
-                            f"current revision {e.current_revision}",
-                        )
 
             # Dispatch method
             _dispatch_start = _time.time()
@@ -4145,17 +4058,6 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
     # Write/delete operations - no cache
     elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
         headers["Cache-Control"] = "no-store"
-        # Issue #1187: Return zookie in response header for consistency tracking
-        # Check for zookie at top level or nested in bytes_written (for write)
-        if isinstance(result, dict):
-            if "zookie" in result:
-                headers["X-Nexus-Zookie"] = result["zookie"]
-            elif (
-                "bytes_written" in result
-                and isinstance(result["bytes_written"], dict)
-                and "zookie" in result["bytes_written"]
-            ):
-                headers["X-Nexus-Zookie"] = result["bytes_written"]["zookie"]
 
     # Delta read - cache like regular read
     elif method == "delta_read":
@@ -4869,13 +4771,7 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     except TypeError:
         result = nexus_fs.delete(params.path)
 
-    # Issue #1187: Include zookie in response for consistency tracking
     response: dict[str, Any] = {"deleted": True}
-    if isinstance(result, dict):
-        if "zookie" in result:
-            response["zookie"] = result["zookie"]
-        if "revision" in result:
-            response["revision"] = result["revision"]
     return response
 
 
@@ -4890,13 +4786,7 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     except TypeError:
         result = nexus_fs.rename(params.old_path, params.new_path)
 
-    # Issue #1187: Include zookie in response for consistency tracking
     response: dict[str, Any] = {"renamed": True}
-    if isinstance(result, dict):
-        if "zookie" in result:
-            response["zookie"] = result["zookie"]
-        if "revision" in result:
-            response["revision"] = result["revision"]
     return response
 
 

@@ -32,7 +32,10 @@ struct ZoneEntry {
     /// Known peers for this zone.
     peers: HashMap<u64, NodeAddress>,
     /// This node's ID within the zone.
-    #[expect(dead_code, reason = "needed for ConfChange in Phase 3; remove expect when used")]
+    #[expect(
+        dead_code,
+        reason = "needed for ConfChange in Phase 3; remove expect when used"
+    )]
     node_id: u64,
     /// Shutdown signal for the transport loop.
     shutdown_tx: watch::Sender<bool>,
@@ -110,11 +113,13 @@ impl ZoneRaftRegistry {
         let store = SledStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
-        let raft_storage = RaftStorage::open(&raft_path)
-            .map_err(|e| TransportError::Connection(format!("Failed to open raft storage: {}", e)))?;
+        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
+            TransportError::Connection(format!("Failed to open raft storage: {}", e))
+        })?;
 
-        let state_machine = FullStateMachine::new(&store)
-            .map_err(|e| TransportError::Connection(format!("Failed to create state machine: {}", e)))?;
+        let state_machine = FullStateMachine::new(&store).map_err(|e| {
+            TransportError::Connection(format!("Failed to create state machine: {}", e))
+        })?;
 
         // Configure Raft node
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();

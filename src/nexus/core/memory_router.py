@@ -221,7 +221,7 @@ class MemoryViewRouter:
             include_invalid: Include invalidated memories (default False). #1183
             valid_at_point: Point-in-time query - return facts valid at this time (as_of_event). #1183
             system_at_point: System-time query - return what system knew at this time (as_of_system). #1185
-            limit: Maximum number of results.
+            limit: Maximum number of results (applied as SQL safety cap before permission filtering).
 
         Returns:
             List of matching memories.
@@ -321,6 +321,11 @@ class MemoryViewRouter:
         # Order by created_at DESC for consistent ordering
         stmt = stmt.order_by(MemoryModel.created_at.desc())
 
+        # NOTE: Only limit is applied in SQL as a safety cap to prevent
+        # unbounded queries. Offset is NOT applied here because permission
+        # filtering happens in memory_api.query() AFTER this call.
+        # Applying offset in SQL would break pagination when permission
+        # checks remove rows from the result set.
         if limit:
             stmt = stmt.limit(limit)
 

@@ -14,6 +14,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from nexus.server.api.v2.dependencies import (
+    _get_require_auth,
+    get_consolidation_engine,
+    get_hierarchy_manager,
+    get_llm_provider,
+    get_memory_api,
+)
 from nexus.server.api.v2.models import (
     ConsolidateRequest,
     ConsolidationResponse,
@@ -28,75 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/consolidate", tags=["consolidation"])
 
 
-def _get_require_auth() -> Any:
-    """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import require_auth
-
-    return require_auth
-
-
-def _get_app_state() -> Any:
-    """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import _app_state
-
-    return _app_state
-
-
-def _get_operation_context(auth_result: dict[str, Any]) -> Any:
-    """Get operation context from auth result."""
-    from nexus.server.fastapi_server import get_operation_context
-
-    return get_operation_context(auth_result)
-
-
-def _get_consolidation_engine(auth_result: dict[str, Any]) -> Any:
-    """Create ConsolidationEngine with user context."""
-    from nexus.core.ace.consolidation import ConsolidationEngine
-
-    app_state = _get_app_state()
-    context = _get_operation_context(auth_result)
-    session = app_state.nexus_fs.memory.session
-    backend = app_state.nexus_fs.memory.backend
-    llm_provider = getattr(app_state.nexus_fs, "_llm_provider", None)
-
-    return ConsolidationEngine(
-        session=session,
-        backend=backend,
-        llm_provider=llm_provider,  # type: ignore[arg-type]
-        user_id=context.user_id or context.user or "anonymous",
-        agent_id=getattr(context, "agent_id", None),
-        zone_id=context.zone_id,
-    )
-
-
-def _get_hierarchy_manager(auth_result: dict[str, Any]) -> Any:
-    """Create HierarchicalMemoryManager with user context."""
-    from nexus.core.ace.consolidation import ConsolidationEngine
-    from nexus.core.ace.memory_hierarchy import HierarchicalMemoryManager
-
-    app_state = _get_app_state()
-    context = _get_operation_context(auth_result)
-    session = app_state.nexus_fs.memory.session
-    backend = app_state.nexus_fs.memory.backend
-    llm_provider = getattr(app_state.nexus_fs, "_llm_provider", None)
-
-    # Create consolidation engine for hierarchy manager
-    consolidation_engine = ConsolidationEngine(
-        session=session,
-        backend=backend,
-        llm_provider=llm_provider,  # type: ignore[arg-type]
-        user_id=context.user_id or context.user or "anonymous",
-        agent_id=getattr(context, "agent_id", None),
-        zone_id=context.zone_id,
-    )
-
-    return HierarchicalMemoryManager(
-        consolidation_engine=consolidation_engine,
-        session=session,
-        zone_id=context.zone_id or "default",
-    )
-
-
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -105,7 +43,7 @@ def _get_hierarchy_manager(auth_result: dict[str, Any]) -> Any:
 @router.post("", response_model=ConsolidationResponse)
 async def consolidate_by_affinity(
     request: ConsolidateRequest,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    engine: Any = Depends(get_consolidation_engine),
 ) -> ConsolidationResponse:
     """Consolidate memories using affinity-based clustering.
 
@@ -114,20 +52,8 @@ async def consolidate_by_affinity(
 
     The affinity formula is:
         affinity = beta * cos(vi, vj) + (1-beta) * exp(-lambda * |ti - tj|)
-
-    Where:
-    - beta: Weight for semantic similarity (default 0.7)
-    - lambda_decay: Temporal decay rate (default 0.1)
-    - cos(vi, vj): Cosine similarity of embeddings
-    - |ti - tj|: Time difference in specified units
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
     try:
-        engine = _get_consolidation_engine(auth_result)
-
         result = await engine.consolidate_by_affinity_async(
             memory_ids=request.memory_ids,
             beta=request.beta,
@@ -139,7 +65,6 @@ async def consolidate_by_affinity(
             limit=request.limit,
         )
 
-        # Extract results summary
         clusters = result.get("clusters", [])
         total_consolidated = sum(len(c.get("memory_ids", [])) for c in clusters)
 
@@ -152,31 +77,20 @@ async def consolidate_by_affinity(
 
     except Exception as e:
         logger.error(f"Consolidation error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Consolidation error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to consolidate memories") from e
 
 
 @router.post("/hierarchy", response_model=HierarchyResponse)
 async def build_hierarchy(
     request: HierarchyBuildRequest,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    hierarchy_manager: Any = Depends(get_hierarchy_manager),
+    llm_provider: Any = Depends(get_llm_provider),
 ) -> HierarchyResponse:
     """Build a memory hierarchy.
 
-    Creates a multi-level abstraction hierarchy from atomic memories:
-    - Level 0: Atomic memories (original)
-    - Level 1: Clusters of related memories
-    - Level 2: Abstract summaries of clusters
-    - Level 3+: Meta-abstractions
-
-    This enables efficient retrieval by searching higher-level abstracts
-    first and drilling down to atomic memories when needed.
+    Creates a multi-level abstraction hierarchy from atomic memories.
+    Requires an LLM provider for generating abstracts.
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-    # Check if LLM provider is available (needed for abstracts)
-    llm_provider = getattr(app_state.nexus_fs, "_llm_provider", None)
     if llm_provider is None:
         raise HTTPException(
             status_code=503,
@@ -184,8 +98,6 @@ async def build_hierarchy(
         )
 
     try:
-        hierarchy_manager = _get_hierarchy_manager(auth_result)
-
         result = await hierarchy_manager.build_hierarchy_async(
             memory_ids=request.memory_ids,
             max_levels=request.max_levels,
@@ -195,7 +107,6 @@ async def build_hierarchy(
             time_unit_hours=request.time_unit_hours,
         )
 
-        # Convert HierarchyResult to response format
         levels_dict = {}
         if hasattr(result, "levels"):
             for level_num, level_data in result.levels.items():
@@ -216,28 +127,17 @@ async def build_hierarchy(
 
     except Exception as e:
         logger.error(f"Hierarchy build error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Hierarchy build error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to build hierarchy") from e
 
 
 @router.get("/hierarchy/{memory_id}")
 async def get_hierarchy_for_memory(
     memory_id: str,
     include_children: bool = True,
-    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    hierarchy_manager: Any = Depends(get_hierarchy_manager),
 ) -> dict[str, Any]:
-    """Get hierarchy information for a memory.
-
-    Returns the memory's position in the hierarchy including:
-    - Parent abstract (if any)
-    - Child memories (if this is an abstract)
-    - Abstraction level
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Get hierarchy information for a memory."""
     try:
-        hierarchy_manager = _get_hierarchy_manager(auth_result)
         result = hierarchy_manager.get_hierarchy_for_memory(
             memory_id=memory_id,
             include_children=include_children,
@@ -249,32 +149,21 @@ async def get_hierarchy_for_memory(
         raise HTTPException(status_code=404, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Hierarchy get error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Hierarchy get error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to retrieve hierarchy") from e
 
 
 @router.post("/decay", response_model=DecayResponse)
 async def apply_decay(
     request: DecayRequest,
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> DecayResponse:
     """Apply importance decay to memories.
 
     Batch updates memory importance scores based on time-based decay.
-    Run periodically (e.g., daily cron) to maintain importance freshness.
-
-    The decay formula is:
-        importance_new = max(min_importance, importance_current * decay_factor ^ days_since_access)
-
-    Where:
-    - decay_factor: Decay rate per period (default 0.95)
-    - min_importance: Floor value for importance (default 0.1)
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
     try:
-        result = app_state.nexus_fs.memory.apply_decay_batch(
+        result = memory_api.apply_decay_batch(
             decay_factor=request.decay_factor,
             min_importance=request.min_importance,
             batch_size=request.batch_size,
@@ -290,4 +179,4 @@ async def apply_decay(
 
     except Exception as e:
         logger.error(f"Decay error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Decay error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to apply decay") from e

@@ -617,6 +617,7 @@ class Memory:
         | datetime
         | None = None,  # #1185: What did SYSTEM KNOW at time X? (created_at)
         limit: int | None = None,
+        offset: int = 0,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
         """Query memories by relationships and metadata.
@@ -642,6 +643,7 @@ class Memory:
             as_of_event: What was TRUE at time X? Filters by valid_at/invalid_at. #1185
             as_of_system: What did SYSTEM KNOW at time X? Filters by created_at, returns historical content. #1185
             limit: Maximum number of results.
+            offset: Number of results to skip (for pagination).
             context: Optional operation context to override identity (v0.7.1+).
 
         Returns:
@@ -742,6 +744,14 @@ class Memory:
             # Check read permission
             if self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
                 accessible_memories.append(memory)
+
+        # Apply offset/limit AFTER permission filtering for correct pagination.
+        # Applying offset in SQL would skip rows before permission checks,
+        # causing pages to have fewer results than expected.
+        if offset:
+            accessible_memories = accessible_memories[offset:]
+        if limit:
+            accessible_memories = accessible_memories[:limit]
 
         # #1185: For as_of_system queries, resolve historical content hashes
         # If a memory was updated after the system_at_point, get the version that was current at that time
@@ -1252,6 +1262,31 @@ class Memory:
             memory = successor
 
         return memory
+
+    def resolve_to_current(self, memory_id: str) -> Any:
+        """Public wrapper for _resolve_to_current (#1193).
+
+        Follow the superseded_by chain to find the current memory.
+        Returns the current MemoryModel, or None if not found.
+        """
+        return self._resolve_to_current(memory_id)
+
+    def ensure_upsert_key(self, memory_id: str, existing: dict[str, Any]) -> str:
+        """Ensure memory has a path_key for upsert operations (#1193).
+
+        If the existing memory has no path_key, assigns memory_id as its
+        path_key and commits the change. Returns the effective path_key.
+
+        This avoids direct model mutation from the router layer.
+        """
+        upsert_path_key = existing.get("path_key")
+        if not upsert_path_key:
+            memory_model = self.memory_router.get_memory_by_id(memory_id)
+            if memory_model:
+                memory_model.path_key = memory_id
+                self.memory_router.session.commit()
+            upsert_path_key = memory_id
+        return upsert_path_key
 
     def get(
         self,

@@ -9,8 +9,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
-import pytest
-
 from nexus.core._metadata_generated import FileMetadata
 from nexus.storage.reconciler import Reconciler, ReconciliationStats
 

@@ -109,7 +109,11 @@ def bob_ctx():
 
 
 def _grant_permission(
-    nx, subject_id: str, relation: str, path: str, zone_id: str = "default",
+    nx,
+    subject_id: str,
+    relation: str,
+    path: str,
+    zone_id: str = "default",
 ):
     """Grant a ReBAC permission tuple."""
     nx.rebac_create(
@@ -372,10 +376,7 @@ class TestNoRecordStoreSyncer:
         if hasattr(store, "_session_factory"):
             with store._session_factory() as session:
                 rows = session.execute(
-                    text(
-                        "SELECT operation_type, path FROM operation_log "
-                        "WHERE path = :path"
-                    ),
+                    text("SELECT operation_type, path FROM operation_log WHERE path = :path"),
                     {"path": "/logged/file.txt"},
                 ).fetchall()
                 assert len(rows) >= 1, "Expected at least 1 operation log entry"
@@ -448,6 +449,4 @@ class TestReconcilerIntegration:
         assert stats.stale_cache_entries >= 1, (
             f"Expected stale entries, got {stats.stale_cache_entries}"
         )
-        assert stats.repairs_applied >= 1, (
-            f"Expected repairs, got {stats.repairs_applied}"
-        )
+        assert stats.repairs_applied >= 1, f"Expected repairs, got {stats.repairs_applied}"

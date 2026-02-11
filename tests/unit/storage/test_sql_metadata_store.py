@@ -120,11 +120,7 @@ class TestPut:
         store.put(meta)
 
         with record_store.session_factory() as session:
-            versions = (
-                session.query(VersionHistoryModel)
-                .filter_by(resource_type="file")
-                .all()
-            )
+            versions = session.query(VersionHistoryModel).filter_by(resource_type="file").all()
             assert len(versions) == 1
             assert versions[0].version_number == 1
             assert versions[0].content_hash == "h1"
@@ -384,11 +380,7 @@ class TestRename:
         store.rename_path("/rlog.txt", "/rlog_new.txt")
 
         with record_store.session_factory() as session:
-            ops = (
-                session.query(OperationLogModel)
-                .filter_by(operation_type="rename")
-                .all()
-            )
+            ops = session.query(OperationLogModel).filter_by(operation_type="rename").all()
             assert len(ops) == 1
             assert ops[0].path == "/rlog.txt"
             assert ops[0].new_path == "/rlog_new.txt"
@@ -409,9 +401,7 @@ class TestImplicitDirectory:
 
 
 class TestDelegation:
-    def test_extended_metadata_without_raft_store(
-        self, store: SqlMetadataStore
-    ) -> None:
+    def test_extended_metadata_without_raft_store(self, store: SqlMetadataStore) -> None:
         """Without raft_store, get returns None, set raises."""
         assert store.get_file_metadata("/f.txt", "key") is None
         with pytest.raises(NotImplementedError):

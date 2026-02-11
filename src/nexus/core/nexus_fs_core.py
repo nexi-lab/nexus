@@ -594,7 +594,10 @@ class NexusFSCoreMixin:
             # Zone mismatch — zookie is for a different zone, skip check
             return
 
-        if not self._wait_for_revision(effective_zone, zookie.revision) and consistency == FSConsistency.STRONG:
+        if (
+            not self._wait_for_revision(effective_zone, zookie.revision)
+            and consistency == FSConsistency.STRONG
+        ):
             from nexus.core.zookie import ConsistencyTimeoutError
 
             raise ConsistencyTimeoutError(
@@ -2705,8 +2708,7 @@ class NexusFSCoreMixin:
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
         batch_items = [
-            (metadata, existing_metadata.get(metadata.path) is None)
-            for metadata in metadata_list
+            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
         self._notify_observer(
             "on_write_batch",

@@ -23,6 +23,7 @@ Usage::
 
 from __future__ import annotations
 
+import builtins
 import logging
 import uuid
 from collections.abc import Sequence
@@ -320,11 +321,7 @@ class SqlMetadataStore(FileMetadataProtocol):
 
             # Apply non-recursive filter in Python
             if not recursive:
-                rows = [
-                    r
-                    for r in rows
-                    if "/" not in r.virtual_path[len(prefix) :].lstrip("/")
-                ]
+                rows = [r for r in rows if "/" not in r.virtual_path[len(prefix) :].lstrip("/")]
 
             has_more = len(rows) > limit
             if has_more:
@@ -444,7 +441,7 @@ class SqlMetadataStore(FileMetadataProtocol):
         """
         if self._raft_store is None:
             raise NotImplementedError("Revision counter requires raft_store")
-        return self._raft_store.increment_revision(zone_id)
+        return int(self._raft_store.increment_revision(zone_id))
 
     def get_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone without incrementing.
@@ -457,7 +454,7 @@ class SqlMetadataStore(FileMetadataProtocol):
         """
         if self._raft_store is None:
             return 0
-        return self._raft_store.get_revision(zone_id)
+        return int(self._raft_store.get_revision(zone_id))
 
     # =========================================================================
     # Extended Operations — rename, implicit directories
@@ -548,17 +545,18 @@ class SqlMetadataStore(FileMetadataProtocol):
         """Get custom metadata value for multiple files."""
         if self._raft_store is None:
             return dict.fromkeys(paths)
-        return self._raft_store.get_file_metadata_bulk(paths, key)
+        return dict(self._raft_store.get_file_metadata_bulk(paths, key))
 
     def get_searchable_text(self, path: str) -> str | None:
         """Get cached searchable text for a file."""
-        return self.get_file_metadata(path, "parsed_text")
+        result = self.get_file_metadata(path, "parsed_text")
+        return str(result) if result is not None else None
 
     def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:
         """Get cached searchable text for multiple files."""
         if self._raft_store is None:
             return {}
-        return self._raft_store.get_searchable_text_bulk(paths)
+        return dict(self._raft_store.get_searchable_text_bulk(paths))
 
     # =========================================================================
     # Lock Operations (delegate to raft_store — redb provides atomicity)
@@ -574,37 +572,38 @@ class SqlMetadataStore(FileMetadataProtocol):
         """Acquire a distributed lock on a path."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return self._raft_store.acquire_lock(path, holder_id, max_holders, ttl_secs)
+        return bool(self._raft_store.acquire_lock(path, holder_id, max_holders, ttl_secs))
 
     def release_lock(self, path: str, holder_id: str) -> bool:
         """Release a distributed lock."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return self._raft_store.release_lock(path, holder_id)
+        return bool(self._raft_store.release_lock(path, holder_id))
 
     def extend_lock(self, path: str, holder_id: str, ttl_secs: int = 30) -> bool:
         """Extend a lock's TTL (heartbeat)."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return self._raft_store.extend_lock(path, holder_id, ttl_secs)
+        return bool(self._raft_store.extend_lock(path, holder_id, ttl_secs))
 
     def get_lock_info(self, path: str) -> dict[str, Any] | None:
         """Get lock information for a path."""
         if self._raft_store is None:
             return None
-        return self._raft_store.get_lock_info(path)
+        result = self._raft_store.get_lock_info(path)
+        return dict(result) if result is not None else None
 
-    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> builtins.list[dict[str, Any]]:
         """List all active locks matching a prefix."""
         if self._raft_store is None:
             return []
-        return self._raft_store.list_locks(prefix, limit)
+        return builtins.list(self._raft_store.list_locks(prefix, limit))
 
     def force_release_lock(self, path: str) -> bool:
         """Force-release all holders of a lock (admin operation)."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return self._raft_store.force_release_lock(path)
+        return bool(self._raft_store.force_release_lock(path))
 
     # =========================================================================
     # Async Methods (for RemoteNexusFS compatibility)
@@ -631,7 +630,7 @@ class SqlMetadataStore(FileMetadataProtocol):
         prefix: str = "",
         recursive: bool = True,
         zone_id: str | None = None,
-    ) -> list[FileMetadata]:
+    ) -> builtins.list[FileMetadata]:
         """List metadata (async — wraps sync for local SQL)."""
         return self.list(prefix, recursive, zone_id=zone_id)
 
@@ -645,23 +644,21 @@ class SqlMetadataStore(FileMetadataProtocol):
         """Acquire lock (async — delegates to raft_store)."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return await self._raft_store.acquire_lock_async(
-            path, holder_id, max_holders, ttl_secs
+        return bool(
+            await self._raft_store.acquire_lock_async(path, holder_id, max_holders, ttl_secs)
         )
 
     async def release_lock_async(self, path: str, holder_id: str) -> bool:
         """Release lock (async — delegates to raft_store)."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return await self._raft_store.release_lock_async(path, holder_id)
+        return bool(await self._raft_store.release_lock_async(path, holder_id))
 
-    async def extend_lock_async(
-        self, path: str, holder_id: str, ttl_secs: int = 30
-    ) -> bool:
+    async def extend_lock_async(self, path: str, holder_id: str, ttl_secs: int = 30) -> bool:
         """Extend lock TTL (async — delegates to raft_store)."""
         if self._raft_store is None:
             raise NotImplementedError("Lock operations require raft_store")
-        return await self._raft_store.extend_lock_async(path, holder_id, ttl_secs)
+        return bool(await self._raft_store.extend_lock_async(path, holder_id, ttl_secs))
 
     async def close_async(self) -> None:
         """Close the metadata store (async)."""

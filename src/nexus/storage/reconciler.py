@@ -188,6 +188,8 @@ class Reconciler:
         3. List all entries in redb cache for the prefix
         4. Find stale entries (in redb but not in SQL)
         """
+        assert self._raft_store is not None  # Guarded by reconcile_once()
+
         # Step 1: Get SQL entries (SSOT)
         sql_entries = self._sql_store.list(prefix=self._prefix, recursive=True)
         sql_paths = {e.path for e in sql_entries}
@@ -198,7 +200,8 @@ class Reconciler:
 
         # Filter out system paths and extended metadata keys
         raft_entries = [
-            e for e in raft_entries
+            e
+            for e in raft_entries
             if not e.path.startswith("/__sys__/") and not e.path.startswith("meta:")
         ]
         raft_paths = {e.path for e in raft_entries}

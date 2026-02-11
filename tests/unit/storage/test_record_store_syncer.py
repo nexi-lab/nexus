@@ -85,9 +85,7 @@ class TestOnWriteHappyPath:
             assert ops[0].operation_type == "write"
             assert ops[0].path == "/new.txt"
 
-            fps = session.query(FilePathModel).filter(
-                FilePathModel.deleted_at.is_(None)
-            ).all()
+            fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
             assert len(fps) == 1
             assert fps[0].virtual_path == "/new.txt"
             assert fps[0].content_hash == "hash1"
@@ -110,16 +108,25 @@ class TestOnWriteHappyPath:
         syncer.on_write(m2, is_new=False, path="/file.txt", zone_id="default")
 
         with record_store.session_factory() as session:
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/file.txt",
-                FilePathModel.deleted_at.is_(None),
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/file.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .one()
+            )
             assert fp.current_version == 2
             assert fp.content_hash == "v2hash"
 
-            vhs = session.query(VersionHistoryModel).filter(
-                VersionHistoryModel.resource_id == fp.path_id,
-            ).order_by(VersionHistoryModel.version_number).all()
+            vhs = (
+                session.query(VersionHistoryModel)
+                .filter(
+                    VersionHistoryModel.resource_id == fp.path_id,
+                )
+                .order_by(VersionHistoryModel.version_number)
+                .all()
+            )
             assert len(vhs) == 2
             assert vhs[0].version_number == 1
             assert vhs[1].version_number == 2
@@ -142,15 +149,23 @@ class TestOnDeleteHappyPath:
 
         with record_store.session_factory() as session:
             # Should be soft-deleted (deleted_at set)
-            fp = session.query(FilePathModel).filter(
-                FilePathModel.virtual_path == "/del.txt",
-            ).one()
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/del.txt",
+                )
+                .one()
+            )
             assert fp.deleted_at is not None
 
             # Operation log should have delete entry
-            ops = session.query(OperationLogModel).filter(
-                OperationLogModel.operation_type == "delete",
-            ).all()
+            ops = (
+                session.query(OperationLogModel)
+                .filter(
+                    OperationLogModel.operation_type == "delete",
+                )
+                .all()
+            )
             assert len(ops) == 1
 
     def test_delete_nonexistent_is_noop(
@@ -160,9 +175,13 @@ class TestOnDeleteHappyPath:
         syncer.on_delete(path="/nonexistent.txt", zone_id="default")
 
         with record_store.session_factory() as session:
-            ops = session.query(OperationLogModel).filter(
-                OperationLogModel.operation_type == "delete",
-            ).all()
+            ops = (
+                session.query(OperationLogModel)
+                .filter(
+                    OperationLogModel.operation_type == "delete",
+                )
+                .all()
+            )
             assert len(ops) == 1  # Operation logged even if file didn't exist
 
 
@@ -204,9 +223,7 @@ class TestOnWriteBatchHappyPath:
             ops = session.query(OperationLogModel).all()
             assert len(ops) == 3
 
-            fps = session.query(FilePathModel).filter(
-                FilePathModel.deleted_at.is_(None)
-            ).all()
+            fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
             assert len(fps) == 3
 
             paths = {fp.virtual_path for fp in fps}
@@ -221,14 +238,10 @@ class TestOnWriteBatchHappyPath:
 class TestSQLFailure:
     """Test behavior when SQL operations fail."""
 
-    def test_session_commit_failure_raises(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
+    def test_session_commit_failure_raises(self, record_store: SQLAlchemyRecordStore) -> None:
         """When session.commit() fails, the exception should propagate."""
         mock_session = MagicMock()
-        mock_session.commit.side_effect = OperationalError(
-            "connection lost", {}, None
-        )
+        mock_session.commit.side_effect = OperationalError("connection lost", {}, None)
 
         def failing_session_factory():
             return mock_session
@@ -243,13 +256,9 @@ class TestSQLFailure:
         with pytest.raises(OperationalError):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
-    def test_delete_with_session_failure_raises(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
+    def test_delete_with_session_failure_raises(self, record_store: SQLAlchemyRecordStore) -> None:
         mock_session = MagicMock()
-        mock_session.commit.side_effect = OperationalError(
-            "connection lost", {}, None
-        )
+        mock_session.commit.side_effect = OperationalError("connection lost", {}, None)
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
 
@@ -269,10 +278,13 @@ class TestPartialFailure:
         syncer = RecordStoreSyncer(record_store.session_factory)
         metadata = _make_metadata()
 
-        with patch(
-            "nexus.storage.version_recorder.VersionRecorder.record_write",
-            side_effect=ValueError("simulated version recorder failure"),
-        ), pytest.raises(ValueError, match="simulated version recorder failure"):
+        with (
+            patch(
+                "nexus.storage.version_recorder.VersionRecorder.record_write",
+                side_effect=ValueError("simulated version recorder failure"),
+            ),
+            pytest.raises(ValueError, match="simulated version recorder failure"),
+        ):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
         # Verify nothing was committed (transaction rolled back)
@@ -290,10 +302,13 @@ class TestPartialFailure:
         syncer = RecordStoreSyncer(record_store.session_factory)
         metadata = _make_metadata()
 
-        with patch(
-            "nexus.storage.operation_logger.OperationLogger.log_operation",
-            side_effect=ValueError("simulated logger failure"),
-        ), pytest.raises(ValueError, match="simulated logger failure"):
+        with (
+            patch(
+                "nexus.storage.operation_logger.OperationLogger.log_operation",
+                side_effect=ValueError("simulated logger failure"),
+            ),
+            pytest.raises(ValueError, match="simulated logger failure"),
+        ):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
 
         with record_store.session_factory() as session:
@@ -323,9 +338,7 @@ class TestSessionFactoryFailure:
 class TestBatchPartialFailure:
     """Test batch operations with mid-batch failures."""
 
-    def test_batch_failure_rolls_back_all(
-        self, record_store: SQLAlchemyRecordStore
-    ) -> None:
+    def test_batch_failure_rolls_back_all(self, record_store: SQLAlchemyRecordStore) -> None:
         """If batch write fails partway through, no items should be committed."""
         syncer = RecordStoreSyncer(record_store.session_factory)
 
@@ -348,9 +361,10 @@ class TestBatchPartialFailure:
 
         original_record_write = VersionRecorder.record_write
 
-        with patch.object(
-            VersionRecorder, "record_write", failing_on_second_call
-        ), pytest.raises(ValueError, match="simulated failure on second item"):
+        with (
+            patch.object(VersionRecorder, "record_write", failing_on_second_call),
+            pytest.raises(ValueError, match="simulated failure on second item"),
+        ):
             syncer.on_write_batch(items, zone_id="default")
 
         # Nothing committed

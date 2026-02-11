@@ -71,6 +71,11 @@ class MockDynamicConnector(Backend):
         """Mark this connector as user-scoped (like Gmail, HN, etc)."""
         return True
 
+    @property
+    def has_token_manager(self) -> bool:
+        """This mock connector has a token manager."""
+        return True
+
     def list_dir(self, path: str, context: OperationContext | None = None) -> list[str]:
         """List directory contents."""
         # Return mock file names

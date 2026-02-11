@@ -273,12 +273,33 @@ def cleanup_inactive_sessions(
     """
     cutoff = datetime.now(UTC) - inactive_threshold
 
-    inactive = session.query(UserSessionModel).filter(UserSessionModel.last_activity < cutoff).all()
+    # Collect all inactive session IDs in a single query
+    inactive_ids = [
+        row[0]
+        for row in session.query(UserSessionModel.session_id)
+        .filter(UserSessionModel.last_activity < cutoff)
+        .all()
+    ]
 
-    count = 0
-    for user_session in inactive:
-        delete_session(session, user_session.session_id)
-        count += 1
+    if not inactive_ids:
+        return 0
+
+    # Bulk-delete related resources (avoids N+1 per-session queries)
+    session.query(WorkspaceConfigModel).filter(
+        WorkspaceConfigModel.session_id.in_(inactive_ids)
+    ).delete(synchronize_session=False)
+
+    session.query(MemoryConfigModel).filter(MemoryConfigModel.session_id.in_(inactive_ids)).delete(
+        synchronize_session=False
+    )
+
+    session.query(MemoryModel).filter(MemoryModel.session_id.in_(inactive_ids)).delete(
+        synchronize_session=False
+    )
+
+    session.query(UserSessionModel).filter(UserSessionModel.session_id.in_(inactive_ids)).delete(
+        synchronize_session=False
+    )
 
     session.flush()
-    return count
+    return len(inactive_ids)

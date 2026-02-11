@@ -284,14 +284,16 @@ class TestCleanupInactiveSessions:
         session.add(inactive)
         session.commit()
 
+        # Capture ID before cleanup (bulk delete invalidates ORM state)
+        inactive_id = inactive.session_id
+        session.expire(inactive)
+
         count = cleanup_inactive_sessions(session, inactive_threshold=timedelta(days=30))
 
         assert count == 1
 
         # Verify session is deleted
-        remaining = (
-            session.query(UserSessionModel).filter_by(session_id=inactive.session_id).first()
-        )
+        remaining = session.query(UserSessionModel).filter_by(session_id=inactive_id).first()
         assert remaining is None
 
     def test_cleanup_preserves_active_sessions(self, session):

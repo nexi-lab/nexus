@@ -118,6 +118,13 @@ class PassthroughBackend(Backend):
         """Backend identifier name."""
         return "passthrough"
 
+    # --- Capability flags ---
+
+    @property
+    def is_passthrough(self) -> bool:
+        """PassthroughBackend supports same-box file watching and locking."""
+        return True
+
     def _ensure_roots(self) -> None:
         """Create root directories if they don't exist."""
         try:

@@ -16,7 +16,7 @@ import pytest
 UTC = UTC
 
 # Run these tests in the same xdist worker to avoid server conflicts
-pytestmark = pytest.mark.xdist_group("memory_pit")
+pytestmark = [pytest.mark.xdist_group("memory_pit"), pytest.mark.quarantine]
 
 
 class TestPointInTimeQueryE2E:

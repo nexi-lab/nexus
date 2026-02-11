@@ -1379,7 +1379,7 @@ class NexusFSSearchMixin:
                     "created_at": meta.created_at,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,
-                    "is_directory": meta.is_directory if hasattr(meta, "is_directory") else False,
+                    "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
                 }
                 for meta in result_items
             ]

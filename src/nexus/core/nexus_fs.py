@@ -7766,3 +7766,12 @@ class NexusFS(  # type: ignore[misc]
         # Close TokenManager to release database connection
         if hasattr(self, "_token_manager") and self._token_manager is not None:
             self._token_manager.close()
+
+        # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
+        if hasattr(self, "router"):
+            import contextlib
+
+            for mount in self.router.list_mounts():
+                with contextlib.suppress(Exception):
+                    if hasattr(mount.backend, "token_manager"):
+                        mount.backend.token_manager.close()

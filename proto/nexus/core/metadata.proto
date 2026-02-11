@@ -9,6 +9,14 @@ syntax = "proto3";
 
 package nexus.core;
 
+// Directory entry type — classifies what a path represents.
+// Mirrors POSIX d_type but for the Nexus virtual filesystem.
+enum DirEntryType {
+  DT_REG = 0;     // Regular file (proto3 default)
+  DT_DIR = 1;     // Directory
+  DT_MOUNT = 2;   // Mount point to another zone
+}
+
 // FileMetadata represents the metadata for a single file or directory in Nexus.
 //
 // All string fields use empty string as the default/absent value.
@@ -47,9 +55,14 @@ message FileMetadata {
   // User or agent ID who created/modified this version.
   string created_by = 11;
 
-  // Whether this path represents a directory.
-  bool is_directory = 12;
-
   // Owner ID for O(1) permission checks (posix_uid).
-  string owner_id = 13;
+  string owner_id = 12;
+
+  // Entry type: DT_REG (0), DT_DIR (1), or DT_MOUNT (2).
+  // SSOT for file/directory/mount distinction.
+  DirEntryType entry_type = 13;
+
+  // Target zone ID for DT_MOUNT entries. Only set when entry_type == DT_MOUNT.
+  // Contains the zone_id of the mounted zone for cross-zone path resolution.
+  string target_zone_id = 14;
 }

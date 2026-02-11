@@ -327,7 +327,8 @@ class RaftClient:
             version=metadata.version,
             zone_id=zone,
             created_by=metadata.created_by or "",
-            is_directory=metadata.is_directory,
+            entry_type=metadata.entry_type,
+            target_zone_id=metadata.target_zone_id or "",
             owner_id=metadata.owner_id or "",
         )
 
@@ -465,7 +466,8 @@ class RaftClient:
             version=proto.version,
             zone_id=proto.zone_id or None,
             created_by=proto.created_by or None,
-            is_directory=proto.is_directory,
+            entry_type=proto.entry_type,
+            target_zone_id=proto.target_zone_id or None,
             owner_id=proto.owner_id or None,
         )
 

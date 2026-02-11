@@ -285,7 +285,6 @@ class TestCompactFileMetadata:
             version=1,
             zone_id="zone1",
             created_by="user1",
-            is_directory=False,
         )
 
         compact = CompactFileMetadata.from_file_metadata(original)
@@ -318,7 +317,6 @@ class TestCompactFileMetadata:
             version=2,
             zone_id="zone1",
             created_by="user1",
-            is_directory=False,
         )
 
         compact = CompactFileMetadata.from_file_metadata(original)
@@ -333,7 +331,7 @@ class TestCompactFileMetadata:
         assert restored.version == original.version
         assert restored.zone_id == original.zone_id
         assert restored.created_by == original.created_by
-        assert restored.is_directory == original.is_directory
+        assert restored.is_dir == original.is_dir
 
         # Timestamps may have slight precision differences due to float conversion
         assert restored.created_at is not None

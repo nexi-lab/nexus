@@ -17,7 +17,7 @@ from nexus.core._compact_generated import (
     clear_intern_pool,
     get_intern_pool_stats,
 )
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core._metadata_generated import DT_DIR, FileMetadata
 
 
 @pytest.fixture(autouse=True)
@@ -108,7 +108,6 @@ class TestCompactFileMetadata:
             version=1,
             zone_id="zone-1",
             created_by="user-1",
-            is_directory=False,
         )
 
         compact = CompactFileMetadata.from_file_metadata(metadata)
@@ -116,7 +115,7 @@ class TestCompactFileMetadata:
         assert compact.size == 1024
         assert compact.version == 1
         assert _resolve(compact.path_id) == "/test/file.txt"
-        assert not compact.is_directory
+        assert compact.entry_type == 0
 
     def test_to_file_metadata_roundtrip(self):
         """Test roundtrip conversion maintains data integrity."""
@@ -132,7 +131,6 @@ class TestCompactFileMetadata:
             version=5,
             zone_id="zone-1",
             created_by="user-1",
-            is_directory=False,
         )
 
         compact = CompactFileMetadata.from_file_metadata(original)
@@ -147,7 +145,7 @@ class TestCompactFileMetadata:
         assert restored.version == original.version
         assert restored.zone_id == original.zone_id
         assert restored.created_by == original.created_by
-        assert restored.is_directory == original.is_directory
+        assert restored.is_dir == original.is_dir
         # Timestamps use ISO 8601 roundtrip, so should be exact
         assert restored.created_at == original.created_at
         assert restored.modified_at == original.modified_at
@@ -166,7 +164,6 @@ class TestCompactFileMetadata:
             version=1,
             zone_id=None,
             created_by=None,
-            is_directory=False,
         )
 
         compact = CompactFileMetadata.from_file_metadata(original)
@@ -179,21 +176,21 @@ class TestCompactFileMetadata:
         assert restored.zone_id is None
         assert restored.created_by is None
 
-    def test_is_directory_flag(self):
-        """Test is_directory flag roundtrip."""
+    def test_entry_type_directory_flag(self):
+        """Test entry_type directory flag roundtrip."""
         dir_metadata = FileMetadata(
             path="/test/dir",
             backend_name="local",
             physical_path="/var/data/dir",
             size=0,
-            is_directory=True,
+            entry_type=DT_DIR,
         )
 
         compact = CompactFileMetadata.from_file_metadata(dir_metadata)
-        assert compact.is_directory is True
+        assert compact.entry_type == DT_DIR
 
         restored = compact.to_file_metadata()
-        assert restored.is_directory is True
+        assert restored.is_dir is True
 
     def test_string_interning_deduplication(self):
         """Test that same strings are deduplicated across instances."""
@@ -300,7 +297,6 @@ class TestMemoryEfficiency:
             version=1,
             zone_id="zone-abc-123-def-456",
             created_by="user-abc-123-def-456",
-            is_directory=False,
         )
 
         compact_metadata = CompactFileMetadata.from_file_metadata(file_metadata)

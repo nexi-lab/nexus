@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 
 
+# DirEntryType (from proto/nexus/core/metadata.proto)
+DT_REG = 0
+DT_DIR = 1
+DT_MOUNT = 2
+
+
 @dataclass
 class PaginatedResult:
     """Result container for paginated list operations.
@@ -77,8 +83,21 @@ class FileMetadata:
     version: int = 1
     zone_id: str | None = None
     created_by: str | None = None
-    is_directory: bool = False
     owner_id: str | None = None
+    entry_type: int = 0
+    target_zone_id: str | None = None
+
+    @property
+    def is_reg(self) -> bool:
+        return self.entry_type == 0
+
+    @property
+    def is_dir(self) -> bool:
+        return self.entry_type == 1
+
+    @property
+    def is_mount(self) -> bool:
+        return self.entry_type == 2
 
     def validate(self) -> None:
         """Validate file metadata before database operations.

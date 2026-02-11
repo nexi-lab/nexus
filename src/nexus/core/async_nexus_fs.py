@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.async_local import AsyncLocalBackend
 from nexus.core._metadata_generated import (
+    DT_DIR,
+    DT_REG,
     AsyncFileMetadataWrapper,
     FileMetadata,
 )
@@ -248,7 +250,7 @@ class AsyncNexusFS:
                 size=0,
                 created_at=now,
                 modified_at=now,
-                is_directory=True,
+                entry_type=DT_DIR,
                 backend_name="local",
                 physical_path=parent,  # Use path as physical_path for directories
             )
@@ -345,7 +347,7 @@ class AsyncNexusFS:
             etag=content_hash,
             created_at=existing_meta.created_at if existing_meta else now,
             modified_at=now,
-            is_directory=False,
+            entry_type=DT_REG,
             version=new_version,
             backend_name="local",
             physical_path=content_hash,
@@ -391,7 +393,7 @@ class AsyncNexusFS:
         if meta is None:
             raise NexusFileNotFoundError(path=path)
 
-        if meta.is_directory:
+        if meta.is_dir:
             raise NexusFileNotFoundError(path=path, message=f"Path is a directory: {path}")
 
         if meta.etag is None:
@@ -513,7 +515,7 @@ class AsyncNexusFS:
             size=0,
             created_at=now,
             modified_at=now,
-            is_directory=True,
+            entry_type=DT_DIR,
             backend_name="local",
             physical_path=path,  # Use path as physical_path for directories
         )
@@ -578,7 +580,7 @@ class AsyncNexusFS:
                 continue
 
             # Add trailing slash for directories
-            if child_meta.is_directory:
+            if child_meta.is_dir:
                 name = f"{name}/"
 
             result.append(name)
@@ -659,7 +661,7 @@ class AsyncNexusFS:
             etag=content_hash,
             created_at=existing_meta.created_at if existing_meta else now,
             modified_at=now,
-            is_directory=False,
+            entry_type=DT_REG,
             version=new_version,
             backend_name="local",
             physical_path=content_hash,

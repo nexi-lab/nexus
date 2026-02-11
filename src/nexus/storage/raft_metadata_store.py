@@ -505,7 +505,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             mime_type=metadata.mime_type,
             zone_id=metadata.zone_id,
             created_by=metadata.created_by,
-            is_directory=metadata.is_directory,
+            entry_type=metadata.entry_type,
+            target_zone_id=metadata.target_zone_id,
             owner_id=metadata.owner_id,
         )
 

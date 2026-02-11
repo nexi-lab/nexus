@@ -481,7 +481,7 @@ class CompactFileMetadata:
             version=self.version,
             zone_id=self.zone_id,
             created_by=self.created_by,
-            is_directory=self.is_directory,
+            entry_type=1 if self.is_directory else 0,
         )
 
     @classmethod
@@ -524,7 +524,7 @@ class CompactFileMetadata:
             version=metadata.version,
             zone_id=metadata.zone_id,
             created_by=metadata.created_by,
-            is_directory=metadata.is_directory,
+            is_directory=metadata.is_dir,
         )
 
 

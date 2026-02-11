@@ -39,7 +39,6 @@ def _make_metadata(
         zone_id="default",
         created_by="user-1",
         owner_id="owner-1",
-        is_directory=False,
         created_at=now,
         modified_at=now,
     )

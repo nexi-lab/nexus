@@ -62,7 +62,8 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "version": "current_version",
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
-    "is_directory": None,  # TODO(#1246): Add to FilePathModel
+    "entry_type": None,  # TODO(#1246): Add to FilePathModel
+    "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
 }
 
@@ -100,7 +101,8 @@ class MetadataMapper:
             version=metadata.version,
             zone_id=metadata.zone_id or "",
             created_by=metadata.created_by or "",
-            is_directory=metadata.is_directory,
+            entry_type=metadata.entry_type,
+            target_zone_id=metadata.target_zone_id or "",
             owner_id=metadata.owner_id or "",
         )
 
@@ -139,7 +141,8 @@ class MetadataMapper:
             version=proto.version,
             zone_id=proto.zone_id or None,
             created_by=proto.created_by or None,
-            is_directory=proto.is_directory,
+            entry_type=proto.entry_type,
+            target_zone_id=proto.target_zone_id or None,
             owner_id=proto.owner_id or None,
         )
 
@@ -163,7 +166,8 @@ class MetadataMapper:
             "version": metadata.version,
             "zone_id": metadata.zone_id,
             "created_by": metadata.created_by,
-            "is_directory": metadata.is_directory,
+            "entry_type": metadata.entry_type,
+            "target_zone_id": metadata.target_zone_id,
             "owner_id": metadata.owner_id,
         }
 
@@ -174,6 +178,12 @@ class MetadataMapper:
         Handles ISO 8601 timestamp parsing.
         """
         from nexus.core._metadata_generated import FileMetadata
+
+        # Migration: convert legacy is_directory -> entry_type
+        if "is_directory" in obj:
+            is_dir = obj.pop("is_directory")
+            if "entry_type" not in obj:
+                obj["entry_type"] = 1 if is_dir else 0
 
         if obj.get("created_at"):
             obj["created_at"] = datetime.fromisoformat(obj["created_at"])

@@ -497,12 +497,28 @@ we can introduce Multi-Raft sharding within a zone (like TiKV), but this is not 
 mount points. A parent zone's DT_MOUNT entry points to a child zone's UUID + address.
 This is a namespace-level concept, not a storage-level shard.
 
-### 6.2 Mount = Join Raft Group (DECIDED 2026-02-11)
+### 6.2 Mount = Create New Zone, All Voters (DECIDED 2026-02-11)
 
-**Core decision**: Mounting a zone means your node **joins the zone's Raft group as a Learner**.
-There is no "remote redirect" mode — every mounted zone has a local sled replica.
+**Core decision**: Mounting creates a **new independent zone** with shared data.
+All participating nodes are **equal Voters** in the new zone's Raft group.
 
-**Why not redirect + cache (NFS-style)?**
+**NFS-style UX** (familiar to everyone):
+```bash
+nexus mount /my-project bob:/my-project
+```
+- `bob` resolves via DNS-style zone discovery (§6.5) → finds Bob's node address
+- `bob:/my-project` specifies the remote path to mount
+- Initially `bob:/` if you don't know Bob's file structure (like NFS)
+- Under the hood: system creates Zone_C, migrates `/my-project` data, both nodes join as Voters
+
+**Why all-Voters in a new zone, not Learners in an existing zone?**
+- Mount creates a **new independent zone** — all participants are equal
+- Permissions (read-only vs read-write) handled by **ReBAC**, not Raft roles
+- A Voter with read-only ReBAC can replicate the Raft log but gets rejected on writes
+- Simpler model: no asymmetric Raft roles to manage for the common case
+- Future optimization: Learner role for massive fan-out (1000+ readers of a public dataset)
+
+**Why not redirect + cache (NFS-style remote reads)?**
 - Redirect requires gRPC for every read (~200ms) — unacceptable for filesystem workloads
 - Client-side cache requires cache invalidation — effectively re-inventing a weaker Raft
 - Raft already solves "multiple parties see consistent view" — use it directly
@@ -511,26 +527,18 @@ There is no "remote redirect" mode — every mounted zone has a local sled repli
 
 | Aspect | Behavior |
 |--------|----------|
-| Mount = | Node joins target zone's Raft group as **Learner** (raft-rs native) |
+| Mount = | Create new zone + all participants join as **Voters** |
 | Read latency | ~5μs (local sled, page cache) — **always local** |
 | Write latency | Raft propose → commit (~ms same region, ~200ms cross-continent) |
 | Consistency | Linearizable (Raft guarantees) — **no cache invalidation needed** |
-| Data locality | Full metadata replica in local sled |
+| Data locality | Full metadata replica in local sled (Voter has complete copy) |
 | Unmount = | Node leaves Raft group, local sled data can be cleaned up |
 
-**Raft roles**:
+**Authentication**: Reuse existing mechanisms — gRPC mutual TLS or SSH-style key exchange
+at mount time. Same as NFS mount authentication. No new auth system needed.
 
-| Role | Votes | Receives log | Local sled | Use case |
-|------|-------|-------------|-----------|----------|
-| **Voter** | Yes | Yes | Full replica | Zone's core nodes |
-| **Learner** | No | Yes | Full replica | Nodes that mount the zone |
-
-Learners don't affect quorum or elections. They receive all Raft log entries and maintain
-an up-to-date local sled. This is how Spanner works: every Spanserver that serves data
-IS a Paxos participant. No "remote read without being in the group."
-
-**No redirect-only mode**: If a zone owner doesn't want your node in their Raft group,
-they simply don't grant you mount permission. You cannot browse a zone without joining it.
+**No redirect-only mode**: Every participant has a local sled replica through Raft.
+If a zone owner doesn't want you to access their data, they don't grant mount permission.
 "贡献 storage 的一方有绝对主动权" — the zone owner controls who can join.
 
 ### 6.3 Multi-Party Sharing (Example)
@@ -538,9 +546,12 @@ they simply don't grant you mount permission. You cannot browse a zone without j
 ```
 Scenario: Alice, Bob, and Charlie want to collaborate.
 
-1. Alice creates a shared zone:
-   nexus share /my-project --with bob,charlie
-   # Implicit: system creates Zone_MyProject, splits /my-project from Zone_Alice
+1. Alice shares with NFS-style mount:
+   alice$ nexus mount /my-project bob:/my-project
+   bob$   nexus mount /collab/alice bob:/my-project    # Bob chooses his local mount point
+
+   Or implicit share (creates zone + invites in one step):
+     nexus share /my-project --with bob,charlie
 
    Explicit equivalent:
      nexus zone create my-project-zone
@@ -548,18 +559,20 @@ Scenario: Alice, Bob, and Charlie want to collaborate.
      nexus zone invite my-project-zone bob charlie
 
 2. Zone_MyProject Raft group membership:
-   Voters:   [alice-node-1, alice-node-2]     ← zone creator's core nodes
-   Learners: [bob-node, charlie-node]         ← invited participants
+   Voters: [alice-node, bob-node, charlie-node]   ← all equal participants
 
 3. All three have local sled replicas of Zone_MyProject:
-   Alice:   /my-project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
-   Bob:     /shared/alice-project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
-   Charlie: /collab/project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
+   Alice:   /my-project → DT_MOUNT → Zone_MyProject      (local sled, ~5μs reads)
+   Bob:     /collab/alice → DT_MOUNT → Zone_MyProject     (local sled, ~5μs reads)
+   Charlie: /shared/project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
 
 4. Alice writes /my-project/new.txt:
-   → Raft propose → committed by voters → replicated to all learners
+   → Raft propose → committed by majority (2/3) → replicated to all
    → Bob and Charlie see new.txt immediately (no cache invalidation needed)
 ```
+
+**Permissions**: ReBAC controls who can read vs write. A Voter with read-only
+ReBAC permission can replicate the Raft log but gets rejected when proposing writes.
 
 ### 6.4 Implicit vs Explicit Zone Management (DECIDED 2026-02-11)
 
@@ -601,9 +614,15 @@ Path resolution for /company/engineering/team1/file.txt:
   Step 2: Zone_Company → /engineering is DT_MOUNT → Zone_Eng @ us-east:2126
   Step 3: Zone_Eng → /team1/file.txt is local → return FileMetadata
 
-  But: mounting node is Learner in all zones on the path, so ALL reads are local (~5μs).
-  DNS-style resolution is only needed for initial mount, not per-read.
+  Note: once mounted, node is a Voter in each zone on the path, so ALL reads are local (~5μs).
+  DNS-style resolution is only needed for initial mount discovery, not per-read.
 ```
+
+**Root Zone** (like DNS root servers):
+- A special zone maintaining only top-level domain entries (e.g., `/google`, `/meta`)
+- NOT a global registry of all zones — only top-level entries
+- Data structure: `Map<DomainName, ZoneID/Address>`
+- MVP: manual zone address config. Future: zones register with root on startup.
 
 **Client-side PathResolver cache** (per Gemini recommendation):
 ```python
@@ -619,9 +638,12 @@ class PathResolver:
 
 **Scalability**: Supports billions of zones (same as DNS supporting billions of domains).
 Root zone only stores top-level zones. Subtree failure is isolated.
+99.9% of requests hit local cache (0-hop). Only first access or zone migration needs resolution.
 
-**Bootstrap**: MVP uses manual zone address configuration. Future: bootstrap zone
-(like DNS root servers) where zones register on startup.
+**Optional enhancement — Global Search** (not on critical path):
+For "I know the zone UUID but not the path" use case, a lightweight global registry
+(Bloom Filter or DHT) can be added as an auxiliary lookup. This is for search/admin only,
+never on the file access critical path.
 
 ### 6.6 DT_MOUNT Entry Structure
 
@@ -649,8 +671,8 @@ The existing `Metastore` (PyO3, non-Raft sled wrapper) serves dual purpose:
 
 | Use case | sled instance | Raft? | Data |
 |----------|--------------|-------|------|
-| **Own zone (authoritative)** | RaftConsensus (SC/EC) | Yes | This zone's metadata |
-| **Mounted zone (Learner)** | Metastore (local sled) | Yes (Learner) | Replicated metadata from mounted zone |
+| **Own zone** | RaftConsensus (SC/EC) | Yes (Voter) | This zone's metadata |
+| **Mounted zone** | RaftConsensus | Yes (Voter) | Shared zone's metadata |
 
 Both use sled's built-in page cache (~5μs for hot data). No separate cache layer needed.
 Raft log replication IS the cache invalidation mechanism.
@@ -660,8 +682,8 @@ Raft log replication IS the cache invalidation mechanism.
 | Component | Single-Zone (now) | Multi-Zone (federation) |
 |-----------|-------------------|------------------------|
 | `_create_metadata_store()` | 1 RaftMetadataStore | 1 per zone the node participates in |
-| Mount operation | N/A | Join target zone's Raft group as Learner |
-| Read path | Local sled | Local sled (always, Learner has replica) |
+| Mount operation | N/A | Create new zone, all participants join as Voters |
+| Read path | Local sled | Local sled (always, Voter has full replica) |
 | Write path | Raft propose | Raft propose to target zone's leader |
 | Node discovery | `NEXUS_PEERS` (static) | DNS-style resolution + bootstrap |
 | 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
@@ -705,11 +727,12 @@ A new entry type alongside `DT_DIR` and `DT_REG`:
 | `entry_type` | `DT_MOUNT` |
 | `target_zone_id` | `Zone_B_UUID` |
 
-#### Cross-Zone Read Path (Raft Learner Model)
+#### Cross-Zone Read Path (All-Voter Model)
 
-Since mounting = joining the Raft group as Learner, cross-zone reads are **always local**:
+Since mounting = creating a new zone where all participants are Voters, cross-zone reads
+are **always local**:
 
-1. Node has local sled replicas for ALL mounted zones (Raft Learner)
+1. Node has local sled replicas for ALL zones it participates in (Voter)
 2. `ls -R /company/` → Zone A sled (local) → sees DT_MOUNT → Zone B sled (also local)
 3. All reads are ~5μs — no gRPC needed for data access
 4. gRPC is only used for Raft log replication (background, async)

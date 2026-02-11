@@ -264,14 +264,6 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
-    # --- ConsistencyMigration (Issue #1180 Phase C) ---
-    from nexus.core.consistency_migration import ConsistencyMigration
-
-    consistency_migration = ConsistencyMigration(
-        session_factory=session_factory,
-        metadata_store=metadata_store,
-    )
-
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -285,7 +277,6 @@ def create_nexus_services(
         "workspace_manager": workspace_manager,
         "write_observer": write_observer,
         "version_service": version_service,
-        "consistency_migration": consistency_migration,
     }
 
     # When use_sql_metadata, provide the SqlMetadataStore so create_nexus_fs()

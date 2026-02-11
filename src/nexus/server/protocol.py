@@ -884,6 +884,20 @@ class WorkspaceDiffParams:
 
 
 @dataclass
+class OverlayFlattenParams:
+    """Parameters for workspace_flatten() method (Issue #1264)."""
+
+    workspace_path: str
+
+
+@dataclass
+class OverlayStatsParams:
+    """Parameters for workspace_overlay_stats() method (Issue #1264)."""
+
+    workspace_path: str
+
+
+@dataclass
 class GetVersionParams:
     """Parameters for get_version() method."""
 
@@ -1654,6 +1668,48 @@ class ListSyncJobsParams:
     limit: int = 50
 
 
+# Task queue parameter dataclasses (Issue #574)
+@dataclass
+class SubmitTaskParams:
+    """Parameters for submit_task() method."""
+
+    task_type: str
+    params_json: str = "{}"
+    priority: int = 2
+    max_retries: int = 3
+
+
+@dataclass
+class GetTaskParams:
+    """Parameters for get_task() method."""
+
+    task_id: int
+
+
+@dataclass
+class CancelTaskParams:
+    """Parameters for cancel_task() method."""
+
+    task_id: int
+
+
+@dataclass
+class ListQueueTasksParams:
+    """Parameters for list_queue_tasks() method."""
+
+    task_type: str | None = None
+    status: int | None = None
+    limit: int = 50
+    offset: int = 0
+
+
+@dataclass
+class GetTaskStatsParams:
+    """Parameters for get_task_stats() method."""
+
+    pass
+
+
 # Skills management parameter dataclasses
 @dataclass
 class SkillsCreateParams:
@@ -2150,6 +2206,12 @@ METHOD_PARAMS = {
     "get_sync_job": GetSyncJobParams,
     "cancel_sync_job": CancelSyncJobParams,
     "list_sync_jobs": ListSyncJobsParams,
+    # Task queue methods (Issue #574)
+    "submit_task": SubmitTaskParams,
+    "get_task": GetTaskParams,
+    "cancel_task": CancelTaskParams,
+    "list_queue_tasks": ListQueueTasksParams,
+    "get_task_stats": GetTaskStatsParams,
     # Skills management methods
     "skills_create": SkillsCreateParams,
     "skills_create_from_content": SkillsCreateFromContentParams,

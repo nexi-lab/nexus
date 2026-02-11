@@ -61,6 +61,7 @@ class WriteResponse(BaseModel):
     version: int
     size: int
     modified_at: str
+    zookie: str | None = None
 
 
 class ReadResponse(BaseModel):
@@ -174,6 +175,55 @@ def create_async_files_router(
         return get_operation_context(auth_result)
 
     # =============================================================================
+    # Consistency Helpers (Issue #923)
+    # =============================================================================
+
+    def _apply_consistency_to_context(
+        request: Request,
+        context: Any,
+        consistency_param: str | None = None,
+    ) -> Any:
+        """Apply consistency settings from headers/query params to OperationContext.
+
+        Reads X-Nexus-Consistency header (or query param) and
+        X-Nexus-Consistency-Token header, then returns a new context
+        with those fields set.
+
+        Args:
+            request: FastAPI request (for headers)
+            context: Current OperationContext
+            consistency_param: Consistency level from query parameter
+
+        Returns:
+            New OperationContext with consistency settings applied
+        """
+        from dataclasses import replace
+
+        from nexus.core.consistency import FSConsistency
+
+        # Header takes precedence over query param
+        consistency_value = request.headers.get("X-Nexus-Consistency") or consistency_param
+        min_zookie = request.headers.get("X-Nexus-Consistency-Token")
+
+        if not consistency_value and not min_zookie:
+            return context
+
+        updates: dict[str, Any] = {}
+        if consistency_value:
+            try:
+                updates["consistency"] = FSConsistency(consistency_value)
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid consistency level: {consistency_value}. "
+                    f"Valid values: eventual, close_to_open, strong",
+                ) from None
+        if min_zookie:
+            updates["min_zookie"] = min_zookie
+
+        return replace(context, **updates)
+
+    # =============================================================================
     # Write Endpoint
     # =============================================================================
 
@@ -181,7 +231,7 @@ def create_async_files_router(
     async def write_file(
         request: WriteRequest,
         context: Any = Depends(get_context),
-    ) -> WriteResponse:
+    ) -> Response:
         """
         Write content to a file.
 
@@ -208,11 +258,21 @@ def create_async_files_router(
                 context=context,
             )
 
-            return WriteResponse(
+            # Issue #923: Return zookie in both body and response header
+            response_data = WriteResponse(
                 etag=result["etag"],
                 version=result["version"],
                 size=result["size"],
                 modified_at=result["modified_at"],
+                zookie=result.get("zookie"),
+            )
+            headers: dict[str, str] = {}
+            if result.get("zookie"):
+                headers["X-Nexus-Zookie"] = result["zookie"]
+            return Response(
+                content=response_data.model_dump_json(),
+                media_type="application/json",
+                headers=headers,
             )
 
         except NexusPermissionError as e:
@@ -236,6 +296,7 @@ def create_async_files_router(
         request: Request,
         path: str = Query(..., description="Path to read"),
         include_metadata: bool = Query(False, description="Include metadata in response"),
+        consistency: str | None = Query(None, description="Consistency level: eventual, close_to_open, strong"),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -243,9 +304,16 @@ def create_async_files_router(
 
         Supports ETag-based caching via If-None-Match header.
         Returns 304 Not Modified if content hasn't changed.
+
+        Consistency can be set via X-Nexus-Consistency header or query param.
+        A zookie token from a prior write can be passed via X-Nexus-Consistency-Token header.
         """
         try:
             fs = await _get_fs()
+
+            # Issue #923: Parse consistency level and zookie token
+            context = _apply_consistency_to_context(request, context, consistency)
+
             # Check If-None-Match header for caching
             if_none_match = request.headers.get("If-None-Match")
 
@@ -356,12 +424,18 @@ def create_async_files_router(
 
     @router.get("/list", response_model=ListResponse)
     async def list_directory(
+        request: Request,
         path: str = Query(..., description="Directory path to list"),
+        consistency: str | None = Query(None, description="Consistency level: eventual, close_to_open, strong"),
         context: Any = Depends(get_context),
     ) -> ListResponse:
         """List directory contents."""
         try:
             fs = await _get_fs()
+
+            # Issue #923: Parse consistency level and zookie token
+            context = _apply_consistency_to_context(request, context, consistency)
+
             items = await fs.list_dir(path, context=context)
             return ListResponse(items=items)
 

@@ -21,11 +21,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata
+from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.core.zookie import Zookie
+from nexus.core.zookie import InvalidZookieError, Zookie
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,9 @@ if TYPE_CHECKING:
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
 
+    # Issue #923: Lock for atomic revision increment (prevents duplicate revisions)
+    _revision_lock = threading.Lock()
+
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
@@ -61,6 +65,8 @@ class NexusFSCoreMixin:
         _parser_threads_lock: threading.Lock
         _permission_enforcer: PermissionEnforcer | None
         _event_tasks: set[asyncio.Task[Any]]  # Issue #913: Tracked async event tasks
+        _overlay_resolver: Any  # Issue #1264: OverlayResolver service
+        _workspace_registry: Any  # Workspace registry for overlay config lookup
         _write_observer: Any  # Duck-typed: on_write()/on_delete()
         _audit_strict_mode: bool
 
@@ -83,6 +89,40 @@ class NexusFSCoreMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
+
+    def _get_overlay_config(self, path: str) -> Any:
+        """Get overlay config for a path, if overlay is active.
+
+        Issue #1264: Looks up the workspace containing this path and returns
+        its OverlayConfig if overlay is enabled.
+
+        Args:
+            path: File path to check
+
+        Returns:
+            OverlayConfig if overlay active for this path, None otherwise
+        """
+        registry = getattr(self, "_workspace_registry", None)
+        if registry is None:
+            return None
+
+        ws_config = registry.find_workspace_for_path(path)
+        if ws_config is None:
+            return None
+
+        # Check if workspace has overlay metadata
+        overlay_data = ws_config.metadata.get("overlay_config")
+        if overlay_data is None:
+            return None
+
+        from nexus.services.overlay_resolver import OverlayConfig
+
+        return OverlayConfig(
+            enabled=overlay_data.get("enabled", False),
+            base_manifest_hash=overlay_data.get("base_manifest_hash"),
+            workspace_path=ws_config.path,
+            agent_id=overlay_data.get("agent_id"),
+        )
 
     def _create_tracked_event_task(
         self, coro: Any, timeout: float = 30.0, name: str | None = None
@@ -214,24 +254,28 @@ class NexusFSCoreMixin:
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        try:
-            meta = self.metadata.get(rev_path)
-            new_rev = (meta.version + 1) if meta else 1
-            self.metadata.put(
-                FileMetadata(
-                    path=rev_path,
-                    backend_name="__sys__",
-                    physical_path="__sys__",
-                    size=0,
-                    version=new_rev,
-                    zone_id=zone_id,
+        # Issue #923: Lock ensures atomic read-modify-write for revision counter.
+        # Without this, concurrent writes could get the same revision number.
+        # TODO: Replace with atomic increment when Raft store supports it.
+        with self._revision_lock:
+            try:
+                meta = self.metadata.get(rev_path)
+                new_rev = (meta.version + 1) if meta else 1
+                self.metadata.put(
+                    FileMetadata(
+                        path=rev_path,
+                        backend_name="__sys__",
+                        physical_path="__sys__",
+                        size=0,
+                        version=new_rev,
+                        zone_id=zone_id,
+                    )
                 )
-            )
-            return new_rev
-        except Exception as e:
-            logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-            # Fallback: return timestamp-based pseudo-revision
-            return int(time.time() * 1000)
+                return new_rev
+            except Exception as e:
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                # Fallback: return timestamp-based pseudo-revision
+                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -328,6 +372,99 @@ class NexusFSCoreMixin:
         logger.debug(
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
+
+    # =========================================================================
+    # Zookie Result Helper - Issue #923
+    # =========================================================================
+
+    def _make_zookie_result(self, zone_id: str | None) -> dict[str, Any]:
+        """Increment revision and return zookie result dict.
+
+        Issue #923: DRY helper consolidating the zookie generation pattern
+        that was duplicated across write(), delete(), and rename().
+
+        Args:
+            zone_id: Zone ID (defaults to "default" if None)
+
+        Returns:
+            Dict with 'zookie' (encoded token) and 'revision' (raw int)
+        """
+        effective_zone = zone_id or "default"
+        revision = self._increment_and_get_revision(effective_zone)
+        return {
+            "zookie": Zookie.encode(effective_zone, revision),
+            "revision": revision,
+        }
+
+    # =========================================================================
+    # Consistency Check Helper - Issue #923
+    # =========================================================================
+
+    def _check_consistency_before_read(
+        self,
+        context: OperationContext | None,
+    ) -> None:
+        """Check consistency requirements before a read/list operation.
+
+        Issue #923: Implements close-to-open consistency checking.
+        If the context specifies a min_zookie, waits for that revision
+        to be available before proceeding with the read.
+
+        Behavior by consistency level:
+        - EVENTUAL: Skip check entirely.
+        - CLOSE_TO_OPEN: If min_zookie provided, wait for revision.
+          On timeout, fall through (best-effort).
+        - STRONG: If min_zookie provided, wait for revision.
+          On timeout, raise ConsistencyTimeoutError.
+
+        Invalid zookies are ignored for EVENTUAL/CTO, raised for STRONG.
+        Zone mismatches are silently ignored (zookie for wrong zone).
+
+        Args:
+            context: Operation context with optional consistency and min_zookie fields
+
+        Raises:
+            ConsistencyTimeoutError: If STRONG and revision wait times out
+            InvalidZookieError: If STRONG and zookie is invalid
+        """
+        if context is None:
+            return
+
+        consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
+        if consistency == FSConsistency.EVENTUAL:
+            return
+
+        min_zookie = getattr(context, "min_zookie", None)
+        if not min_zookie:
+            return
+
+        # Decode and validate zookie
+        try:
+            zookie = Zookie.decode(min_zookie)
+        except InvalidZookieError:
+            if consistency == FSConsistency.STRONG:
+                raise
+            # CTO: ignore invalid zookies gracefully
+            return
+
+        # Only check revision if zookie is for the same zone
+        zone_id, _, _ = self._get_routing_params(context)
+        effective_zone = zone_id or "default"
+        if zookie.zone_id != effective_zone:
+            # Zone mismatch — zookie is for a different zone, skip check
+            return
+
+        if not self._wait_for_revision(effective_zone, zookie.revision) and consistency == FSConsistency.STRONG:
+            from nexus.core.zookie import ConsistencyTimeoutError
+
+            raise ConsistencyTimeoutError(
+                f"Timeout waiting for revision {zookie.revision} in zone {effective_zone}",
+                zone_id=effective_zone,
+                requested_revision=zookie.revision,
+                current_revision=self._get_current_revision(effective_zone),
+                timeout_ms=5000,
+            )
+        # CTO: timeout is acceptable, fall through with best-effort
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -690,6 +827,9 @@ class NexusFSCoreMixin:
         """
         path = self._validate_path(path)
 
+        # Issue #923: Check close-to-open consistency before reading
+        self._check_consistency_before_read(context)
+
         # Phase 2 Integration: Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
 
@@ -817,7 +957,18 @@ class NexusFSCoreMixin:
 
         # Check if file exists in metadata (for regular backends)
         meta = self.metadata.get(path)
+
+        # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
+        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+            overlay_config = self._get_overlay_config(path)
+            if overlay_config:
+                meta = self._overlay_resolver.resolve_read(path, overlay_config)
+
         if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
+        # Issue #1264: Reject whiteout markers (file was deleted in overlay)
+        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
             raise NexusFileNotFoundError(path)
 
         content = route.backend.read_content(meta.etag, context=read_context).unwrap()
@@ -1907,10 +2058,8 @@ class NexusFSCoreMixin:
                 thread = threading.Thread(target=run_workflow, daemon=True)
                 thread.start()
 
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
-        zookie_token = Zookie.encode(effective_zone, revision)
+        # Issue #923: Increment revision and generate zookie (DRY helper)
+        zookie_result = self._make_zookie_result(zone_id)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -1920,7 +2069,7 @@ class NexusFSCoreMixin:
             size=len(content),
             etag=content_hash,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187: Include revision in event
+            revision=zookie_result["revision"],
         )
 
         # Return metadata for optimistic concurrency control
@@ -1929,8 +2078,7 @@ class NexusFSCoreMixin:
             "version": new_version,
             "modified_at": now,
             "size": len(content),
-            "zookie": zookie_token,  # Issue #1187: Consistency token
-            "revision": revision,  # Issue #1187: Raw revision for internal use
+            **zookie_result,
         }
 
     async def atomic_update(
@@ -2744,14 +2892,9 @@ class NexusFSCoreMixin:
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
-            # Issue #1187: Return zookie for memory paths too
+            # Issue #923: Return zookie for memory paths too (DRY helper)
             zone_id, _, _ = self._get_routing_params(context)
-            effective_zone = zone_id or "default"
-            revision = self._increment_and_get_revision(effective_zone)
-            return {
-                "zookie": Zookie.encode(effective_zone, revision),
-                "revision": revision,
-            }
+            return self._make_zookie_result(zone_id)
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -2770,6 +2913,16 @@ class NexusFSCoreMixin:
 
         # Check if file exists in metadata
         meta = self.metadata.get(path)
+
+        # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
+        if meta is None and getattr(self, "_overlay_resolver", None):
+            overlay_config = self._get_overlay_config(path)
+            if overlay_config:
+                base_meta = self._overlay_resolver.resolve_read(path, overlay_config)
+                if base_meta is not None and not self._overlay_resolver.is_whiteout(base_meta):
+                    self._overlay_resolver.create_whiteout(path, overlay_config)
+                    return {"deleted": path, "overlay_whiteout": True}
+
         if meta is None:
             raise NexusFileNotFoundError(path)
 
@@ -2870,9 +3023,8 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_delete_events, daemon=True).start()
 
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
+        # Issue #923: Increment revision and generate zookie (DRY helper)
+        zookie_result = self._make_zookie_result(zone_id)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -2882,14 +3034,10 @@ class NexusFSCoreMixin:
             size=meta.size,
             etag=meta.etag,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187
+            revision=zookie_result["revision"],
         )
 
-        # Issue #1187: Return zookie for consistency tracking
-        return {
-            "zookie": Zookie.encode(effective_zone, revision),
-            "revision": revision,
-        }
+        return zookie_result
 
     @rpc_expose(description="Rename/move file")
     def rename(
@@ -3166,9 +3314,8 @@ class NexusFSCoreMixin:
 
                 threading.Thread(target=run_rename_events, daemon=True).start()
 
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
+        # Issue #923: Increment revision and generate zookie (DRY helper)
+        zookie_result = self._make_zookie_result(zone_id)
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -3179,14 +3326,10 @@ class NexusFSCoreMixin:
             size=meta.size if meta else 0,
             etag=meta.etag if meta else None,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187
+            revision=zookie_result["revision"],
         )
 
-        # Issue #1187: Return zookie for consistency tracking
-        return {
-            "zookie": Zookie.encode(effective_zone, revision),
-            "revision": revision,
-        }
+        return zookie_result
 
     def _update_tiger_cache_on_move(
         self,

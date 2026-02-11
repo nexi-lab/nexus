@@ -3,6 +3,7 @@
 Tests the complete paging workflow with realistic data.
 """
 
+import shutil
 import tempfile
 
 import pytest
@@ -15,24 +16,37 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def session():
-    """Create in-memory test database."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
-    yield session
-    session.close()
+def engine():
+    """Create in-memory test database engine."""
+    eng = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(eng)
+    return eng
+
+
+@pytest.fixture
+def session_factory(engine):
+    """Create session factory bound to engine."""
+    return sessionmaker(bind=engine)
+
+
+@pytest.fixture
+def session(session_factory):
+    """Create a session for direct DB operations in tests."""
+    sess = session_factory()
+    yield sess
+    sess.close()
 
 
 @pytest.fixture
 def backend():
-    """Create temporary backend."""
-    return LocalBackend(tempfile.mkdtemp())
+    """Create temporary backend with cleanup."""
+    tmpdir = tempfile.mkdtemp(prefix="nexus-paging-e2e-")
+    yield LocalBackend(tmpdir)
+    shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 @pytest.fixture
-def memory(session, backend):
+def memory(session, session_factory, backend):
     """Create MemoryWithPaging instance."""
     return MemoryWithPaging(
         session=session,
@@ -43,6 +57,8 @@ def memory(session, backend):
         enable_paging=True,
         main_capacity=10,  # Small for testing
         recall_max_age_hours=1.0,
+        warm_up=False,  # Don't warm up from empty test DB
+        session_factory=session_factory,
     )
 
 
@@ -90,7 +106,7 @@ class TestMemoryPagingE2E:
         assert len(recent) <= 15
         assert all("memory_id" in m for m in recent)
 
-    def test_store_without_paging(self, session, backend):
+    def test_store_without_paging(self, session, session_factory, backend):
         """Should work without paging enabled."""
         memory_no_paging = MemoryWithPaging(
             session=session,
@@ -99,6 +115,7 @@ class TestMemoryPagingE2E:
             user_id="alice",
             agent_id="assistant",
             enable_paging=False,
+            session_factory=session_factory,
         )
 
         memory_id = memory_no_paging.store(

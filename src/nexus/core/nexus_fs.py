@@ -46,6 +46,7 @@ from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
+from nexus.core.nexus_fs_tasks import NexusFSTasksMixin
 
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
@@ -77,6 +78,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSMCPMixin,
     NexusFSLLMMixin,
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
+    NexusFSTasksMixin,  # Issue #574: Durable task queue
     NexusFilesystem,
 ):
     """
@@ -133,7 +135,7 @@ class NexusFS(  # type: ignore[misc]
         enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
         enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
         # Issue #1258: MemGPT 3-tier memory paging
-        enable_memory_paging: bool = False,  # Enable MemGPT-style 3-tier memory paging (default: False)
+        enable_memory_paging: bool = True,  # Enable MemGPT-style 3-tier memory paging (default: True)
         memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
         memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
         # Task #23: Dependency injection for services and router.
@@ -156,6 +158,8 @@ class NexusFS(  # type: ignore[misc]
         write_observer: Any | None = None,
         # Task #45: VersionService (created by factory, not kernel)
         version_service: Any | None = None,
+        # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
+        overlay_resolver: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -359,6 +363,7 @@ class NexusFS(  # type: ignore[misc]
         self.mount_manager = mount_manager
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
+        self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -906,6 +911,11 @@ class NexusFS(  # type: ignore[misc]
             if self._enable_memory_paging:
                 from nexus.core.memory_with_paging import MemoryWithPaging
 
+                # Try to get engine for VectorDatabase integration
+                engine = None
+                if self.SessionLocal is not None:
+                    engine = self.SessionLocal.kw.get("bind")
+
                 self._memory_api = MemoryWithPaging(
                     session=session,
                     backend=self.backend,
@@ -916,6 +926,8 @@ class NexusFS(  # type: ignore[misc]
                     enable_paging=True,
                     main_capacity=self._memory_main_capacity,
                     recall_max_age_hours=self._memory_recall_max_age_hours,
+                    engine=engine,
+                    session_factory=self.SessionLocal,
                 )
             else:
                 from nexus.core.memory_api import Memory
@@ -3491,29 +3503,45 @@ class NexusFS(  # type: ignore[misc]
     def list_workspaces(self, context: Any | None = None) -> list[dict]:
         """List all registered workspaces for the current user.
 
+        Requires authenticated context (raises ValueError if missing).
+
+        Filters workspaces by:
+        1. Workspaces created by the user (created_by matches user_id)
+        2. OR workspaces in the user's zone-scoped path
+
         Args:
-            context: Optional operation context (passed by RPC auto-dispatch)
+            context: Required operation context with user_id and zone_id
 
         Returns:
             List of workspace configuration dicts filtered by current user
 
+        Raises:
+            ValueError: If context is None or missing user_id/zone_id
+
         Example:
-            >>> workspaces = nx.list_workspaces()
+            >>> workspaces = nx.list_workspaces(context=ctx)
             >>> for ws in workspaces:
             ...     print(f"{ws['path']}: {ws['name']}")
         """
-        configs = self._workspace_registry.list_workspaces()
-
-        # Filter by current user if context is available
+        # Require authenticated context to prevent leaking all workspaces
+        user_id = None
+        zone_id = None
         if context is not None:
-            user_id = getattr(context, "user_id", None)
+            user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
             zone_id = getattr(context, "zone_id", None)
 
-            if user_id and zone_id:
-                # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /zone/{zone_id}/user/{user_id}/workspace/...
-                user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
-                configs = [c for c in configs if c.path.startswith(user_prefix)]
+        if not user_id or not zone_id:
+            raise ValueError(
+                "list_workspaces requires authenticated context with user_id and zone_id"
+            )
+
+        configs = self._workspace_registry.list_workspaces()
+
+        # Filter workspaces belonging to the current user by:
+        # 1. created_by matches user_id (workspaces the user registered at any path)
+        # 2. OR path follows zone/user pattern (workspaces in user's scoped directory)
+        user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
+        configs = [c for c in configs if c.created_by == user_id or c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
 

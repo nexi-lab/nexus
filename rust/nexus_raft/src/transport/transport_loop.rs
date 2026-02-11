@@ -1,61 +1,61 @@
-//! Transport loop — background task that drives the Raft event loop.
+//! Transport loop — background task that drives the Raft actor event loop.
 //!
-//! This task periodically calls `RaftNode::advance()` to process ticks,
-//! persist state, apply committed entries, and send outgoing messages
-//! to peer nodes via gRPC `StepMessage` RPC.
+//! This task owns the [`RaftNodeDriver`] exclusively and calls
+//! [`process_messages()`] + [`advance()`] sequentially to maintain the
+//! raft-rs single-owner invariant.
 //!
 //! # Architecture
 //!
 //! ```text
-//! ┌──────────────┐     advance()      ┌──────────────┐
-//! │  RaftNode    │ ──────────────────> │  Messages    │
-//! │  (raft-rs)   │                    │  to send     │
-//! └──────────────┘                    └──────┬───────┘
-//!                                            │
-//!                                            ▼
-//!                                   ┌──────────────────┐
-//!                                   │  RaftClientPool  │
-//!                                   │  .step_message() │
-//!                                   └──────────────────┘
+//! ┌──────────────────────┐  process_messages()  ┌──────────────┐
+//! │  mpsc channel msgs   │ ───────────────────> │ RaftNodeDriver│
+//! │  (step/propose/etc.) │                      │ (owns RawNode)│
+//! └──────────────────────┘                      └──────┬───────┘
+//!                                                      │ advance()
+//!                                                      ▼
+//!                                              ┌──────────────────┐
+//!                                              │  Outgoing msgs   │
+//!                                              │  → RaftClientPool│
+//!                                              └──────────────────┘
 //! ```
 
 use super::client::RaftClientPool;
 use super::NodeAddress;
-use crate::raft::{RaftNode, StateMachine};
+use crate::raft::{RaftNodeDriver, StateMachine};
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{watch, Notify};
+use tokio::sync::watch;
 
 /// Background task that drives the Raft event loop and sends messages to peers.
+///
+/// Owns the [`RaftNodeDriver`] exclusively — this is the single task that
+/// touches `RawNode`.
 pub struct TransportLoop<S: StateMachine + 'static> {
-    /// The RaftNode to drive.
-    node: Arc<RaftNode<S>>,
+    /// The RaftNodeDriver to drive (exclusive ownership).
+    driver: RaftNodeDriver<S>,
     /// Known peers (node_id → address).
     peers: Arc<HashMap<u64, NodeAddress>>,
     /// Connection pool for sending messages to peers.
     client_pool: RaftClientPool,
     /// How often to call advance() (default: 10ms).
     tick_interval: Duration,
-    /// Notifier to wake the loop immediately (from propose/step).
-    advance_notify: Arc<Notify>,
 }
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     /// Create a new transport loop.
     pub fn new(
-        node: Arc<RaftNode<S>>,
+        driver: RaftNodeDriver<S>,
         peers: HashMap<u64, NodeAddress>,
         client_pool: RaftClientPool,
     ) -> Self {
-        let advance_notify = node.advance_notify();
+        let tick_interval = driver.config().tick_interval;
         Self {
-            node,
+            driver,
             peers: Arc::new(peers),
             client_pool,
-            tick_interval: Duration::from_millis(10),
-            advance_notify,
+            tick_interval,
         }
     }
 
@@ -67,12 +67,8 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
     /// Run the transport loop until shutdown is signaled.
     ///
-    /// This drives the Raft event loop with two wake sources:
-    /// 1. **Tick interval** — periodic heartbeat/election timer (must keep running)
-    /// 2. **Notify** — immediate wake on new proposals or incoming messages
-    ///
-    /// Both paths call `advance()` and send outgoing messages to peers.
-    pub async fn run(self, mut shutdown: watch::Receiver<bool>) {
+    /// Each iteration: drain channel messages → advance raft → send outgoing.
+    pub async fn run(mut self, mut shutdown: watch::Receiver<bool>) {
         let mut interval = tokio::time::interval(self.tick_interval);
         tracing::info!(
             "Transport loop started (tick_interval={}ms, peers={})",
@@ -85,17 +81,17 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 _ = interval.tick() => {
                     // Periodic tick — drives heartbeat and election timeouts
                 }
-                _ = self.advance_notify.notified() => {
-                    // Immediate wake — new proposal or incoming message
-                }
                 _ = shutdown.changed() => {
                     tracing::info!("Transport loop shutting down");
                     break;
                 }
             }
 
-            // Both tick and notify paths advance the state machine
-            match self.node.advance().await {
+            // 1. Drain all pending channel messages (step, propose, campaign)
+            self.driver.process_messages();
+
+            // 2. Advance raft state + apply entries + get outgoing messages
+            match self.driver.advance().await {
                 Ok(messages) => {
                     for msg in messages {
                         let target_id = msg.to;
@@ -115,7 +111,6 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
     /// Serialize and send an eraftpb::Message to a peer via gRPC.
     async fn send_message(&self, target_id: u64, addr: &NodeAddress, msg: raft::eraftpb::Message) {
-        // Serialize the eraftpb::Message to protobuf v2 bytes
         let bytes = match msg.write_to_bytes() {
             Ok(b) => b,
             Err(e) => {
@@ -124,7 +119,6 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             }
         };
 
-        // Get a client from the pool and send
         match self.client_pool.get(addr).await {
             Ok(mut client) => {
                 if let Err(e) = client.step_message(bytes).await {
@@ -134,7 +128,6 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                         addr.endpoint,
                         e
                     );
-                    // Remove failed connection so pool creates a fresh one next time
                     self.client_pool.remove(target_id).await;
                 }
             }

@@ -224,9 +224,10 @@ impl RaftClient {
     ///
     /// This is the primary transport method used by the transport loop.
     /// The message bytes are an opaque serialized `eraftpb::Message` (protobuf v2).
-    pub async fn step_message(&mut self, message_bytes: Vec<u8>) -> Result<()> {
+    pub async fn step_message(&mut self, message_bytes: Vec<u8>, zone_id: String) -> Result<()> {
         let request = tonic::Request::new(StepMessageRequest {
             message: message_bytes,
+            zone_id,
         });
 
         let response = self.inner.step_message(request).await?;
@@ -291,6 +292,8 @@ pub struct RaftApiClient {
     #[allow(dead_code)]
     config: ClientConfig,
     inner: RaftClientServiceClient<Channel>,
+    /// Zone ID for multi-zone routing (included in all requests).
+    zone_id: String,
 }
 
 impl RaftApiClient {
@@ -315,7 +318,14 @@ impl RaftApiClient {
             endpoint: endpoint.to_string(),
             config,
             inner,
+            zone_id: String::new(),
         })
+    }
+
+    /// Set the zone ID for multi-zone routing.
+    pub fn with_zone_id(mut self, zone_id: String) -> Self {
+        self.zone_id = zone_id;
+        self
     }
 
     /// Get the endpoint this client is connected to.
@@ -413,6 +423,7 @@ impl RaftApiClient {
         let request = tonic::Request::new(ProposeRequest {
             command: Some(command),
             request_id: request_id.unwrap_or_default(),
+            zone_id: self.zone_id.clone(),
         });
 
         let response = self.inner.propose(request).await?;
@@ -486,6 +497,7 @@ impl RaftApiClient {
         let request = tonic::Request::new(QueryRequest {
             query: Some(query),
             read_from_leader,
+            zone_id: self.zone_id.clone(),
         });
 
         let response = self.inner.query(request).await?;
@@ -503,7 +515,9 @@ impl RaftApiClient {
 
     /// Get cluster information.
     pub async fn get_cluster_info(&mut self) -> Result<ClusterInfoResult> {
-        let request = tonic::Request::new(GetClusterInfoRequest {});
+        let request = tonic::Request::new(GetClusterInfoRequest {
+            zone_id: self.zone_id.clone(),
+        });
 
         let response = self.inner.get_cluster_info(request).await?;
         let resp = response.into_inner();

@@ -12,8 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata, PaginatedResult
-from nexus.core.consistency import StoreMode
+from nexus.core._metadata_generated import DT_DIR, FileMetadata, PaginatedResult
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -53,7 +52,6 @@ class TestSerializeMetadata:
             mime_type="text/markdown",
             version=3,
             zone_id="zone1",
-            is_directory=False,
         )
         data = _serialize_metadata(original)
         restored = _deserialize_metadata(data)
@@ -65,7 +63,7 @@ class TestSerializeMetadata:
         assert restored.mime_type == original.mime_type
         assert restored.version == original.version
         assert restored.zone_id == original.zone_id
-        assert restored.is_directory == original.is_directory
+        assert restored.is_dir == original.is_dir
 
     def test_json_roundtrip_with_timestamps(self) -> None:
         """Timestamps should survive serialization round-trip."""
@@ -116,13 +114,13 @@ class TestSerializeMetadata:
 
         original = _make_metadata(
             path="/zone1/docs/",
-            is_directory=True,
+            entry_type=DT_DIR,
             size=0,
         )
         data = _serialize_metadata(original)
         restored = _deserialize_metadata(data)
 
-        assert restored.is_directory is True
+        assert restored.is_dir is True
         assert restored.path == "/zone1/docs/"
 
     def test_deserialize_list_of_ints(self) -> None:
@@ -183,9 +181,8 @@ class TestListPaginated:
 
         # Create store via __new__ to bypass __init__
         store = object.__new__(RaftMetadataStore)
-        store._mode = StoreMode.EMBEDDED
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
         return store
 
@@ -287,9 +284,8 @@ class TestListPaginated:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         store = object.__new__(RaftMetadataStore)
-        store._mode = StoreMode.EMBEDDED
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
 
         result = store.list_paginated(prefix="/files/", limit=10)

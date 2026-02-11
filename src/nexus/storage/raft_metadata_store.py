@@ -31,7 +31,6 @@ from collections.abc import Iterator, Sequence
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
-from nexus.core.consistency import StoreMode
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +124,9 @@ class RaftMetadataStore(FileMetadataProtocol):
 
     def __init__(
         self,
-        local_raft: Any | None = None,
-        remote_client: Any | None = None,
+        engine: Any | None = None,
+        client: Any | None = None,
         zone_id: str | None = None,
-        mode: StoreMode = StoreMode.EMBEDDED,
     ):
         """Initialize RaftMetadataStore.
 
@@ -136,45 +134,29 @@ class RaftMetadataStore(FileMetadataProtocol):
         instead of calling this constructor directly.
 
         Args:
-            local_raft: Metastore or RaftConsensus instance (PyO3 FFI)
-            remote_client: RaftClient instance (gRPC)
+            engine: Metastore or RaftConsensus instance (PyO3 FFI)
+            client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
-            mode: Operational mode (Issue #1180). Set by factory methods.
         """
-        if local_raft is None and remote_client is None:
-            raise ValueError("Either local_raft or remote_client must be provided")
+        if engine is None and client is None:
+            raise ValueError("Either engine or client must be provided")
 
-        self._local = local_raft
-        self._remote = remote_client
+        self._engine = engine
+        self._client = client
         self._zone_id = zone_id
-        self._mode = mode
-
-        # Issue #1180 Phase B: EC pending write counter.
-        # Tracks writes that have been applied locally but not yet ACKed by Raft.
-        # Only initialized for EC mode to avoid overhead in other modes.
-        if mode == StoreMode.EC:
-            import threading
-
-            self._ec_pending: int = 0
-            self._ec_lock = threading.Lock()
 
     @property
-    def mode(self) -> StoreMode:
-        """Operational mode of this store (Issue #1180)."""
-        return self._mode
-
-    @property
-    def _is_local(self) -> bool:
-        """True if this store operates on a local sled backend (not remote gRPC)."""
-        return self._mode != StoreMode.REMOTE
+    def _has_engine(self) -> bool:
+        """True if this store has an embedded engine (not a gRPC client)."""
+        return self._engine is not None
 
     # =========================================================================
-    # Shared Local Helpers — DRY extraction (Issue #1180)
-    # Used by both sync and async public methods for local mode operations.
+    # Shared Engine Helpers — DRY extraction
+    # Used by both sync and async public methods for engine mode operations.
     # =========================================================================
 
-    def _get_local(self, path: str) -> FileMetadata | None:
-        """Get metadata from the local sled backend.
+    def _get_engine(self, path: str) -> FileMetadata | None:
+        """Get metadata from the embedded sled engine.
 
         Args:
             path: Virtual path
@@ -182,26 +164,22 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             FileMetadata if found, None otherwise
         """
-        data = self._local.get_metadata(path)
+        data = self._engine.get_metadata(path)
         if data is None:
             return None
         return _deserialize_metadata(data)
 
-    def _put_local(self, metadata: FileMetadata) -> None:
-        """Store metadata in the local sled backend.
+    def _put_engine(self, metadata: FileMetadata) -> None:
+        """Store metadata in the embedded sled engine.
 
         Args:
             metadata: File metadata to store
         """
         data = _serialize_metadata(metadata)
-        self._local.set_metadata(metadata.path, data)
-        # Issue #1180 Phase B: Increment EC pending counter.
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                self._ec_pending += 1
+        self._engine.set_metadata(metadata.path, data)
 
-    def _delete_local(self, path: str) -> dict[str, Any] | None:
-        """Delete metadata from the local sled backend.
+    def _delete_engine(self, path: str) -> dict[str, Any] | None:
+        """Delete metadata from the embedded sled engine.
 
         Args:
             path: Virtual path
@@ -209,12 +187,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary with deleted file info or None
         """
-        existing = self._get_local(path)
-        self._local.delete_metadata(path)
-        # Issue #1180 Phase B: Increment EC pending counter.
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                self._ec_pending += 1
+        existing = self._get_engine(path)
+        self._engine.delete_metadata(path)
         if existing:
             return {
                 "path": existing.path,
@@ -223,13 +197,13 @@ class RaftMetadataStore(FileMetadataProtocol):
             }
         return None
 
-    def _list_local(
+    def _list_engine(
         self,
         prefix: str = "",
         recursive: bool = True,
         accessible_int_ids: set[int] | None = None,
     ) -> list[FileMetadata]:
-        """List metadata entries from the local sled backend.
+        """List metadata entries from the embedded sled engine.
 
         Args:
             prefix: Path prefix to filter by
@@ -239,7 +213,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             List of file metadata
         """
-        entries = self._local.list_metadata(prefix)
+        entries = self._engine.list_metadata(prefix)
         result = []
         for path, data in entries:
             # Skip extended attribute keys (format: "meta:{path}:{key}")
@@ -257,49 +231,6 @@ class RaftMetadataStore(FileMetadataProtocol):
                     continue
             result.append(metadata)
         return result
-
-    # =========================================================================
-    # Replication Monitoring (Issue #1180)
-    # =========================================================================
-
-    def get_replication_status(self) -> dict[str, Any]:
-        """Get replication lag and status for this store.
-
-        Issue #1180: Phase B — EC mode returns pending write count.
-        TODO(rust): Replace lag estimate with actual Raft progress data
-        from replication_status() once PyO3 binding is available.
-
-        Returns:
-            Dict with mode, lag (uncommitted entries), uncommitted count.
-        """
-        if self._mode == StoreMode.EC:
-            with self._ec_lock:
-                pending = self._ec_pending
-            return {"mode": "ec", "lag": pending, "uncommitted": pending}
-        return {"mode": self._mode.value, "lag": 0, "uncommitted": 0}
-
-    def acknowledge_replication(self, count: int) -> None:
-        """Acknowledge that `count` EC writes have been replicated.
-
-        Called when Raft confirms that pending writes have been committed.
-        TODO(rust): Wire to Raft callback via PyO3 when available.
-
-        Args:
-            count: Number of writes that were successfully replicated.
-
-        Raises:
-            ValueError: If count is negative.
-            RuntimeError: If store is not in EC mode.
-        """
-        if self._mode != StoreMode.EC:
-            raise RuntimeError(
-                f"acknowledge_replication() is only valid in EC mode, "
-                f"current mode is {self._mode.value}"
-            )
-        if count < 0:
-            raise ValueError(f"count must be non-negative, got {count}")
-        with self._ec_lock:
-            self._ec_pending = max(0, self._ec_pending - count)
 
     @classmethod
     def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
@@ -324,7 +255,7 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         metastore = Metastore(db_path)
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
-        return cls(local_raft=metastore, zone_id=zone_id, mode=StoreMode.EMBEDDED)
+        return cls(engine=metastore, zone_id=zone_id)
 
     @classmethod
     def sc(
@@ -363,7 +294,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created SC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.SC)
+        return cls(engine=consensus, zone_id=zone_id)
 
     @classmethod
     def ec(
@@ -402,7 +333,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             f"Created EC RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
-        return cls(local_raft=consensus, zone_id=zone_id, mode=StoreMode.EC)
+        return cls(engine=consensus, zone_id=zone_id)
 
     @classmethod
     async def remote(
@@ -426,7 +357,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         client = RaftClient(address, zone_id=zone_id)
         await client.connect()
         logger.info(f"Created remote RaftMetadataStore connected to {address}")
-        return cls(remote_client=client, zone_id=zone_id, mode=StoreMode.REMOTE)
+        return cls(client=client, zone_id=zone_id)
 
     def get(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.
@@ -437,8 +368,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             FileMetadata if found, None otherwise
         """
-        if self._is_local:
-            return self._get_local(path)
+        if self._has_engine:
+            return self._get_engine(path)
         else:
             raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
 
@@ -448,8 +379,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Args:
             metadata: File metadata to store
         """
-        if self._is_local:
-            self._put_local(metadata)
+        if self._has_engine:
+            self._put_engine(metadata)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
 
@@ -462,8 +393,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary with deleted file info or None
         """
-        if self._is_local:
-            return self._delete_local(path)
+        if self._has_engine:
+            return self._delete_engine(path)
         else:
             raise NotImplementedError("Remote mode requires async. Use delete_async() instead.")
 
@@ -505,7 +436,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             mime_type=metadata.mime_type,
             zone_id=metadata.zone_id,
             created_by=metadata.created_by,
-            is_directory=metadata.is_directory,
+            entry_type=metadata.entry_type,
+            target_zone_id=metadata.target_zone_id,
             owner_id=metadata.owner_id,
         )
 
@@ -534,8 +466,8 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         # Check if any files exist with this prefix
         # We just need to find one file to confirm it's an implicit directory
-        if self._is_local:
-            entries = self._local.list_metadata(prefix)
+        if self._has_engine:
+            entries = self._engine.list_metadata(prefix)
             return len(entries) > 0
         else:
             raise NotImplementedError(
@@ -561,8 +493,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             List of file metadata
         """
         # Note: zone_id is ignored since RaftMetadataStore is zone-local
-        if self._is_local:
-            return self._list_local(prefix, recursive, accessible_int_ids)
+        if self._has_engine:
+            return self._list_engine(prefix, recursive, accessible_int_ids)
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
 
@@ -590,8 +522,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         accessible_int_ids: set[int] | None = kwargs.get("accessible_int_ids")
 
-        if self._is_local:
-            entries = self._local.list_metadata(prefix)
+        if self._has_engine:
+            entries = self._engine.list_metadata(prefix)
             for path, data in entries:
                 # Skip extended attribute keys (format: "meta:{path}:{key}")
                 if path.startswith("meta:"):
@@ -661,13 +593,13 @@ class RaftMetadataStore(FileMetadataProtocol):
 
     def close(self) -> None:
         """Close the metadata store and release resources."""
-        if self._is_local:
-            if hasattr(self._local, "shutdown"):
+        if self._has_engine:
+            if hasattr(self._engine, "shutdown"):
                 # RaftConsensus: gracefully stop gRPC server + transport loop
-                self._local.shutdown()
+                self._engine.shutdown()
             else:
                 # Metastore: just flush sled
-                self._local.flush()
+                self._engine.flush()
         else:
             # Remote client close is async
             # Would need to handle this differently
@@ -744,9 +676,9 @@ class RaftMetadataStore(FileMetadataProtocol):
         # Phase 2: apply all writes, tracking progress for rollback
         completed_paths: list[str] = []
         try:
-            if self._is_local:
+            if self._has_engine:
                 for path, data in serialized:
-                    self._local.set_metadata(path, data)
+                    self._engine.set_metadata(path, data)
                     completed_paths.append(path)
             else:
                 raise NotImplementedError(
@@ -758,7 +690,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             # Best-effort rollback: delete entries that were written
             for rollback_path in completed_paths:
                 try:
-                    self._local.delete_metadata(rollback_path)
+                    self._engine.delete_metadata(rollback_path)
                 except Exception:
                     logger.warning("put_batch rollback failed for path: %s", rollback_path)
             raise RuntimeError(
@@ -784,9 +716,9 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         # Phase 1: capture existing metadata for rollback
         snapshots: list[tuple[str, bytes | None]] = []
-        if self._is_local:
+        if self._has_engine:
             for path in paths:
-                existing_data = self._local.get_metadata(path)
+                existing_data = self._engine.get_metadata(path)
                 snapshots.append((path, existing_data))
         else:
             raise NotImplementedError(
@@ -797,14 +729,14 @@ class RaftMetadataStore(FileMetadataProtocol):
         completed: list[tuple[str, bytes | None]] = []
         try:
             for path, existing_data in snapshots:
-                self._local.delete_metadata(path)
+                self._engine.delete_metadata(path)
                 completed.append((path, existing_data))
         except Exception as e:
             # Best-effort rollback: restore entries that were deleted
             for rollback_path, rollback_data in completed:
                 if rollback_data is not None:
                     try:
-                        self._local.set_metadata(rollback_path, rollback_data)
+                        self._engine.set_metadata(rollback_path, rollback_data)
                     except Exception:
                         logger.warning(
                             "delete_batch rollback failed for path: %s",
@@ -847,16 +779,16 @@ class RaftMetadataStore(FileMetadataProtocol):
             key: Metadata key
             value: Metadata value (will be JSON serialized)
         """
-        if self._is_local:
+        if self._has_engine:
             # Store in a separate namespace: "meta:{path}:{key}"
             meta_key = f"meta:{path}:{key}"
             if value is None:
                 # Delete the key
-                self._local.delete_metadata(meta_key)
+                self._engine.delete_metadata(meta_key)
             else:
                 # Store as JSON bytes
                 data = json.dumps(value).encode("utf-8")
-                self._local.set_metadata(meta_key, data)
+                self._engine.set_metadata(meta_key, data)
         else:
             raise NotImplementedError(
                 "Remote mode requires async. Use set_file_metadata_async() instead."
@@ -872,9 +804,9 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Metadata value or None if not found
         """
-        if self._is_local:
+        if self._has_engine:
             meta_key = f"meta:{path}:{key}"
-            data = self._local.get_metadata(meta_key)
+            data = self._engine.get_metadata(meta_key)
             if data is None:
                 return None
             # Handle both bytes and list of ints (from PyO3)
@@ -950,8 +882,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if lock was acquired
         """
-        if self._is_local:
-            result = self._local.acquire_lock(
+        if self._has_engine:
+            result = self._engine.acquire_lock(
                 path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
             )
             return result.acquired
@@ -968,8 +900,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if holder was found and released, False if not owned
         """
-        if self._is_local:
-            return self._local.release_lock(path, holder_id)
+        if self._has_engine:
+            return self._engine.release_lock(path, holder_id)
         else:
             raise NotImplementedError("Remote locks require async")
 
@@ -984,8 +916,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if holder was found and TTL extended, False if not owned
         """
-        if self._is_local:
-            return self._local.extend_lock(path, holder_id, ttl_secs)
+        if self._has_engine:
+            return self._engine.extend_lock(path, holder_id, ttl_secs)
         else:
             raise NotImplementedError("Remote locks require async. Use extend_lock_async()")
 
@@ -999,8 +931,8 @@ class RaftMetadataStore(FileMetadataProtocol):
             Dict with lock info if lock exists and has holders, None otherwise.
             Dict keys: path, max_holders, holders (list of holder dicts)
         """
-        if self._is_local:
-            lock_info = self._local.get_lock(path)
+        if self._has_engine:
+            lock_info = self._engine.get_lock(path)
             if lock_info is None or not lock_info.holders:
                 return None
             return {
@@ -1029,8 +961,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             List of lock info dicts
         """
-        if self._is_local:
-            lock_infos = self._local.list_locks(prefix, limit)
+        if self._has_engine:
+            lock_infos = self._engine.list_locks(prefix, limit)
             return [
                 {
                     "path": lock.path,
@@ -1059,8 +991,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if a lock was found and released, False if no lock exists
         """
-        if self._is_local:
-            return self._local.force_release_lock(path)
+        if self._has_engine:
+            return self._engine.force_release_lock(path)
         else:
             raise NotImplementedError("Remote force_release requires async")
 
@@ -1077,10 +1009,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             FileMetadata if found, None otherwise
         """
-        if self._is_local:
-            return self._get_local(path)
+        if self._has_engine:
+            return self._get_engine(path)
         else:
-            return await self._remote.get_metadata(path, zone_id=self._zone_id)
+            return await self._client.get_metadata(path, zone_id=self._zone_id)
 
     async def put_async(self, metadata: FileMetadata) -> None:
         """Store or update file metadata (async).
@@ -1088,10 +1020,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Args:
             metadata: File metadata to store
         """
-        if self._is_local:
-            self._put_local(metadata)
+        if self._has_engine:
+            self._put_engine(metadata)
         else:
-            await self._remote.put_metadata(metadata, zone_id=self._zone_id)
+            await self._client.put_metadata(metadata, zone_id=self._zone_id)
 
     async def delete_async(self, path: str) -> dict[str, Any] | None:
         """Delete file metadata (async).
@@ -1102,11 +1034,11 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary with deleted file info or None
         """
-        if self._is_local:
-            return self._delete_local(path)
+        if self._has_engine:
+            return self._delete_engine(path)
         else:
             existing = await self.get_async(path)
-            await self._remote.delete_metadata(path, zone_id=self._zone_id)
+            await self._client.delete_metadata(path, zone_id=self._zone_id)
             if existing:
                 return {
                     "path": existing.path,
@@ -1143,10 +1075,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             List of file metadata
         """
-        if self._is_local:
-            return self._list_local(prefix, recursive)
+        if self._has_engine:
+            return self._list_engine(prefix, recursive)
         else:
-            return await self._remote.list_metadata(
+            return await self._client.list_metadata(
                 prefix=prefix,
                 zone_id=self._zone_id,
                 recursive=recursive,
@@ -1170,13 +1102,13 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if lock was acquired
         """
-        if self._is_local:
-            result = self._local.acquire_lock(
+        if self._has_engine:
+            result = self._engine.acquire_lock(
                 path, holder_id, max_holders, ttl_secs, f"metadata:{holder_id}"
             )
             return result.acquired
         else:
-            result = await self._remote.acquire_lock(
+            result = await self._client.acquire_lock(
                 lock_id=path,
                 holder_id=holder_id,
                 ttl_ms=ttl_secs * 1000,
@@ -1194,10 +1126,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if holder was found and released, False if not owned
         """
-        if self._is_local:
-            return self._local.release_lock(path, holder_id)
+        if self._has_engine:
+            return self._engine.release_lock(path, holder_id)
         else:
-            return await self._remote.release_lock(
+            return await self._client.release_lock(
                 lock_id=path,
                 holder_id=holder_id,
                 zone_id=self._zone_id,
@@ -1214,10 +1146,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             True if holder was found and TTL extended, False if not owned
         """
-        if self._is_local:
-            return self._local.extend_lock(path, holder_id, ttl_secs)
+        if self._has_engine:
+            return self._engine.extend_lock(path, holder_id, ttl_secs)
         else:
-            return await self._remote.extend_lock(
+            return await self._client.extend_lock(
                 lock_id=path,
                 holder_id=holder_id,
                 ttl_ms=ttl_secs * 1000,
@@ -1226,10 +1158,10 @@ class RaftMetadataStore(FileMetadataProtocol):
 
     async def close_async(self) -> None:
         """Close the metadata store and release resources (async)."""
-        if self._is_local:
-            if hasattr(self._local, "shutdown"):
-                self._local.shutdown()
+        if self._has_engine:
+            if hasattr(self._engine, "shutdown"):
+                self._engine.shutdown()
             else:
-                self._local.flush()
+                self._engine.flush()
         else:
-            await self._remote.close()
+            await self._client.close()

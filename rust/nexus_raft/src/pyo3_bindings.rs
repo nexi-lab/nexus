@@ -559,9 +559,9 @@ impl PyRaftConsensus {
         peers: Vec<String>,
         lazy: bool,
     ) -> PyResult<Self> {
-        use crate::transport::{
-            NodeAddress, RaftClientPool, RaftServer, ServerConfig, TransportLoop,
-        };
+        use crate::raft::ZoneRaftRegistry;
+        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
+        use std::sync::Arc;
 
         // Parse peer addresses
         let peer_addrs: Vec<NodeAddress> = peers
@@ -577,18 +577,6 @@ impl PyRaftConsensus {
             PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
         })?;
 
-        let config = ServerConfig {
-            bind_address: bind_socket,
-            ..Default::default()
-        };
-
-        // Create RaftServer (which creates RaftNode handle + driver)
-        let mut server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create Raft server: {}", e)))?;
-
-        let node = server.node(); // Clone of handle
-        let driver = server.take_driver(); // Driver goes to transport loop
-
         // Build Tokio runtime for background tasks
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -597,16 +585,26 @@ impl PyRaftConsensus {
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        // Shutdown signal
+        // Create zone registry and register a single zone
+        // (ZoneRaftRegistry::create_zone spawns TransportLoop + auto-campaigns for single-node)
+        let registry = Arc::new(ZoneRaftRegistry::new(
+            std::path::PathBuf::from(db_path),
+            node_id,
+        ));
+
+        let node = registry
+            .create_zone("default", peer_addrs, lazy, runtime.handle())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
+
+        // Shutdown signal for gRPC server
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background — owns the driver exclusively
-        let peer_map = peer_addrs.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
-        let shutdown_rx_transport = shutdown_rx.clone();
-        runtime.spawn(transport_loop.run(shutdown_rx_transport));
-
         // Start gRPC server in background
+        let config = ServerConfig {
+            bind_address: bind_socket,
+            ..Default::default()
+        };
+        let server = RaftGrpcServer::new(registry.clone(), config);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {
@@ -617,18 +615,6 @@ impl PyRaftConsensus {
                 tracing::error!("Raft gRPC server error: {}", e);
             }
         });
-
-        // Single-node: campaign immediately to become leader
-        if peers.is_empty() {
-            let campaign_node = node.clone();
-            runtime.spawn(async move {
-                // Give the transport loop a moment to start
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Err(e) = campaign_node.campaign().await {
-                    tracing::error!("Failed to campaign: {}", e);
-                }
-            });
-        }
 
         let mode = if lazy { "EC (lazy)" } else { "SC" };
         tracing::info!(
@@ -939,9 +925,459 @@ impl Drop for PyRaftConsensus {
     }
 }
 
+// =============================================================================
+// ZoneManager: Multi-zone Raft registry exposed to Python
+// =============================================================================
+
+/// Multi-zone Raft manager — owns the registry, runtime, and gRPC server.
+///
+/// Unlike `RaftConsensus` (single zone, backward-compatible), `ZoneManager`
+/// supports creating/removing multiple independent Raft zones that share
+/// a single gRPC port and Tokio runtime.
+///
+/// # Python Usage
+///
+/// ```python
+/// from _nexus_raft import ZoneManager
+///
+/// mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+/// handle = mgr.create_zone("alpha", ["2@peer:2126"], lazy=False)
+/// handle.set_metadata("/file.txt", b"...")
+/// handle.get_metadata("/file.txt")
+/// mgr.list_zones()  # ["alpha"]
+/// ```
+#[cfg(all(feature = "grpc", has_protos))]
+#[pyclass(name = "ZoneManager")]
+pub struct PyZoneManager {
+    registry: std::sync::Arc<crate::raft::ZoneRaftRegistry>,
+    runtime: tokio::runtime::Runtime,
+    shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    node_id: u64,
+}
+
+#[cfg(all(feature = "grpc", has_protos))]
+#[pymethods]
+impl PyZoneManager {
+    /// Create a new ZoneManager.
+    ///
+    /// Starts a Tokio runtime and gRPC server. Zones are added dynamically
+    /// with `create_zone()`.
+    ///
+    /// Args:
+    ///     node_id: This node's ID (shared across all zones).
+    ///     base_path: Base directory for zone sled databases.
+    ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
+    #[new]
+    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126"))]
+    pub fn new(node_id: u64, base_path: &str, bind_addr: &str) -> PyResult<Self> {
+        use crate::raft::ZoneRaftRegistry;
+        use crate::transport::{RaftGrpcServer, ServerConfig};
+        use std::sync::Arc;
+
+        let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
+            PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
+        })?;
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_name("nexus-zone-mgr")
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
+
+        let registry = Arc::new(ZoneRaftRegistry::new(
+            std::path::PathBuf::from(base_path),
+            node_id,
+        ));
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        let config = ServerConfig {
+            bind_address: bind_socket,
+            ..Default::default()
+        };
+        let server = RaftGrpcServer::new(registry.clone(), config);
+        let shutdown_rx_server = shutdown_rx.clone();
+        runtime.spawn(async move {
+            let shutdown = async move {
+                let mut rx = shutdown_rx_server;
+                let _ = rx.changed().await;
+            };
+            if let Err(e) = server.serve_with_shutdown(shutdown).await {
+                tracing::error!("ZoneManager gRPC server error: {}", e);
+            }
+        });
+
+        tracing::info!("ZoneManager node {} started (bind={})", node_id, bind_addr);
+
+        Ok(Self {
+            registry,
+            runtime,
+            shutdown_tx: Some(shutdown_tx),
+            node_id,
+        })
+    }
+
+    /// Create a new zone with its own Raft group.
+    ///
+    /// Args:
+    ///     zone_id: Unique zone identifier.
+    ///     peers: Peer addresses in "id@host:port" format.
+    ///     lazy: If True, metadata writes use EC mode. Default: False (SC).
+    ///
+    /// Returns:
+    ///     ZoneHandle for the new zone.
+    #[pyo3(signature = (zone_id, peers=vec![], lazy=false))]
+    pub fn create_zone(
+        &self,
+        zone_id: &str,
+        peers: Vec<String>,
+        lazy: bool,
+    ) -> PyResult<PyZoneHandle> {
+        use crate::transport::NodeAddress;
+
+        let peer_addrs: Vec<NodeAddress> = peers
+            .iter()
+            .map(|s| {
+                NodeAddress::parse(s.trim())
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let node = self
+            .registry
+            .create_zone(zone_id, peer_addrs, lazy, self.runtime.handle())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
+
+        Ok(PyZoneHandle {
+            node,
+            runtime_handle: self.runtime.handle().clone(),
+            zone_id: zone_id.to_string(),
+            lazy_consensus: lazy,
+        })
+    }
+
+    /// Get a handle for an existing zone.
+    ///
+    /// Returns:
+    ///     ZoneHandle if zone exists, None otherwise.
+    #[pyo3(signature = (zone_id, lazy=false))]
+    pub fn get_zone(&self, zone_id: &str, lazy: bool) -> Option<PyZoneHandle> {
+        self.registry.get_node(zone_id).map(|node| PyZoneHandle {
+            node,
+            runtime_handle: self.runtime.handle().clone(),
+            zone_id: zone_id.to_string(),
+            lazy_consensus: lazy,
+        })
+    }
+
+    /// Remove a zone, shutting down its transport loop.
+    pub fn remove_zone(&self, zone_id: &str) -> PyResult<()> {
+        self.registry
+            .remove_zone(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to remove zone: {}", e)))
+    }
+
+    /// List all zone IDs.
+    pub fn list_zones(&self) -> Vec<String> {
+        self.registry.list_zones()
+    }
+
+    /// Get this node's ID.
+    pub fn node_id(&self) -> u64 {
+        self.node_id
+    }
+
+    /// Gracefully shut down all zones and the gRPC server.
+    pub fn shutdown(&mut self) -> PyResult<()> {
+        self.registry.shutdown_all();
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(true);
+        }
+        tracing::info!("ZoneManager node {} shut down", self.node_id);
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "grpc", has_protos))]
+impl Drop for PyZoneManager {
+    fn drop(&mut self) {
+        self.registry.shutdown_all();
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(true);
+        }
+    }
+}
+
+// =============================================================================
+// ZoneHandle: Per-zone Raft node handle (lightweight, returned by ZoneManager)
+// =============================================================================
+
+/// Handle to a single zone's Raft node.
+///
+/// Provides the same metadata/lock operations as `RaftConsensus` but scoped
+/// to one zone. Obtained from `ZoneManager.create_zone()` or `.get_zone()`.
+#[cfg(all(feature = "grpc", has_protos))]
+#[pyclass(name = "ZoneHandle")]
+pub struct PyZoneHandle {
+    node: crate::raft::RaftNode<FullStateMachine>,
+    runtime_handle: tokio::runtime::Handle,
+    zone_id: String,
+    lazy_consensus: bool,
+}
+
+#[cfg(all(feature = "grpc", has_protos))]
+#[pymethods]
+impl PyZoneHandle {
+    /// Get this zone's ID.
+    pub fn zone_id(&self) -> &str {
+        &self.zone_id
+    }
+
+    /// Check if this zone uses lazy consensus (EC mode).
+    pub fn is_lazy(&self) -> bool {
+        self.lazy_consensus
+    }
+
+    // =========================================================================
+    // Metadata Operations
+    // =========================================================================
+
+    /// Set metadata for a path (SC: consensus, EC: local + lazy replicate).
+    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>) -> PyResult<bool> {
+        let cmd = Command::SetMetadata {
+            key: path.to_string(),
+            value,
+        };
+        if self.lazy_consensus {
+            self.lazy_propose_metadata(py, cmd)
+        } else {
+            self.propose_command(py, cmd)
+        }
+    }
+
+    /// Get metadata for a path (local read, no consensus).
+    pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
+        let node = self.node.clone();
+        let path = path.to_string();
+        py.allow_threads(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine(|sm| sm.get_metadata(&path))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
+            })
+        })
+    }
+
+    /// Delete metadata for a path (SC: consensus, EC: local + lazy replicate).
+    pub fn delete_metadata(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
+        let cmd = Command::DeleteMetadata {
+            key: path.to_string(),
+        };
+        if self.lazy_consensus {
+            self.lazy_propose_metadata(py, cmd)
+        } else {
+            self.propose_command(py, cmd)
+        }
+    }
+
+    /// List all metadata with a prefix (local read, no consensus).
+    pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
+        let node = self.node.clone();
+        let prefix = prefix.to_string();
+        py.allow_threads(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine(|sm| sm.list_metadata(&prefix))
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
+            })
+        })
+    }
+
+    // =========================================================================
+    // Lock Operations (always SC)
+    // =========================================================================
+
+    /// Acquire a distributed lock (always replicated through consensus).
+    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
+    pub fn acquire_lock(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        lock_id: &str,
+        max_holders: u32,
+        ttl_secs: u32,
+        holder_info: &str,
+    ) -> PyResult<PyLockState> {
+        let cmd = Command::AcquireLock {
+            path: path.to_string(),
+            lock_id: lock_id.to_string(),
+            max_holders,
+            ttl_secs,
+            holder_info: holder_info.to_string(),
+        };
+        let result = self.propose_command_raw(py, cmd)?;
+        match result {
+            CommandResult::LockResult(state) => Ok(state.into()),
+            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
+        }
+    }
+
+    /// Release a distributed lock (replicated through consensus).
+    pub fn release_lock(&self, py: Python<'_>, path: &str, lock_id: &str) -> PyResult<bool> {
+        let cmd = Command::ReleaseLock {
+            path: path.to_string(),
+            lock_id: lock_id.to_string(),
+        };
+        let result = self.propose_command_raw(py, cmd)?;
+        Ok(matches!(result, CommandResult::Success))
+    }
+
+    /// Extend a lock's TTL (replicated through consensus).
+    pub fn extend_lock(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        lock_id: &str,
+        new_ttl_secs: u32,
+    ) -> PyResult<bool> {
+        let cmd = Command::ExtendLock {
+            path: path.to_string(),
+            lock_id: lock_id.to_string(),
+            new_ttl_secs,
+        };
+        let result = self.propose_command_raw(py, cmd)?;
+        Ok(matches!(result, CommandResult::Success))
+    }
+
+    /// Get lock info (local read, no consensus).
+    pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
+        let node = self.node.clone();
+        let path = path.to_string();
+        py.allow_threads(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine(|sm| sm.get_lock(&path))
+                    .await
+                    .map(|opt| opt.map(|l| l.into()))
+                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))
+            })
+        })
+    }
+
+    /// List all locks matching a prefix (local read, no consensus).
+    #[pyo3(signature = (prefix="", limit=1000))]
+    pub fn list_locks(
+        &self,
+        py: Python<'_>,
+        prefix: &str,
+        limit: usize,
+    ) -> PyResult<Vec<PyLockInfo>> {
+        let node = self.node.clone();
+        let prefix = prefix.to_string();
+        py.allow_threads(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine(|sm| sm.list_locks(&prefix, limit))
+                    .await
+                    .map(|locks| locks.into_iter().map(|l| l.into()).collect())
+                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list locks: {}", e)))
+            })
+        })
+    }
+
+    // =========================================================================
+    // Cluster Status
+    // =========================================================================
+
+    /// Check if this node is the current leader (atomic read, no I/O).
+    pub fn is_leader(&self) -> bool {
+        self.node.is_leader()
+    }
+
+    /// Get the current leader ID (None if unknown).
+    pub fn leader_id(&self) -> Option<u64> {
+        self.node.leader_id()
+    }
+}
+
+#[cfg(all(feature = "grpc", has_protos))]
+impl PyZoneHandle {
+    fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
+        let result = self.propose_command_raw(py, cmd)?;
+        match result {
+            CommandResult::Success => Ok(true),
+            CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
+            CommandResult::LockResult(state) => Ok(state.acquired),
+            CommandResult::Value(_) => Ok(true),
+        }
+    }
+
+    fn propose_command_raw(&self, py: Python<'_>, cmd: Command) -> PyResult<CommandResult> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime_handle
+                .block_on(node.propose(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
+        })
+    }
+
+    fn lazy_propose_metadata(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
+        let node = self.node.clone();
+        let cmd_for_propose = cmd.clone();
+
+        py.allow_threads(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine_mut(|sm| {
+                    let index = sm.last_applied_index() + 1;
+                    sm.apply(index, &cmd)
+                })
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("Local apply failed: {}", e)))
+            })
+        })?;
+
+        let node_bg = self.node.clone();
+        self.runtime_handle.spawn(async move {
+            use std::time::Duration;
+            const MAX_ATTEMPTS: u32 = 50;
+            const BASE_DELAY_MS: u64 = 100;
+            const MAX_DELAY_MS: u64 = 10_000;
+
+            for attempt in 1..=MAX_ATTEMPTS {
+                match node_bg.propose(cmd_for_propose.clone()).await {
+                    Ok(_) => {
+                        if attempt > 1 {
+                            tracing::info!("EC propose succeeded on attempt {}", attempt);
+                        }
+                        return;
+                    }
+                    Err(e) => {
+                        let delay = Duration::from_millis(
+                            (BASE_DELAY_MS * 2u64.saturating_pow(attempt - 1)).min(MAX_DELAY_MS),
+                        );
+                        tracing::warn!(
+                            "EC propose attempt {}/{} failed: {} (retry in {:?})",
+                            attempt,
+                            MAX_ATTEMPTS,
+                            e,
+                            delay
+                        );
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
+            tracing::error!(
+                "EC propose gave up after {} attempts — write is local-only",
+                MAX_ATTEMPTS
+            );
+        });
+
+        Ok(true)
+    }
+}
+
 /// Python module initialization.
 /// Module name: _nexus_raft (consistent with _nexus_fast)
-/// Import as: from _nexus_raft import Metastore, RaftConsensus
+/// Import as: from _nexus_raft import Metastore, RaftConsensus, ZoneManager
 #[pymodule]
 fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetastore>()?;
@@ -950,5 +1386,9 @@ fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyHolderInfo>()?;
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_class::<PyRaftConsensus>()?;
+    #[cfg(all(feature = "grpc", has_protos))]
+    m.add_class::<PyZoneManager>()?;
+    #[cfg(all(feature = "grpc", has_protos))]
+    m.add_class::<PyZoneHandle>()?;
     Ok(())
 }

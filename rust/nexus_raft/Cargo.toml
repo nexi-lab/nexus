@@ -15,11 +15,6 @@ name = "_nexus_raft"
 crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps
 
 [[bin]]
-name = "nexus-raft-server"
-path = "src/bin/raft_server.rs"
-required-features = ["grpc"]
-
-[[bin]]
 name = "nexus-witness"
 path = "src/bin/witness.rs"
 required-features = ["grpc"]
@@ -59,6 +54,7 @@ prost = { version = "0.13", optional = true }
 
 # Utilities
 bytes = { version = "1", optional = true }
+dashmap = { version = "6", optional = true }
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
@@ -87,7 +83,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

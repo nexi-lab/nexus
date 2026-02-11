@@ -117,7 +117,7 @@ pub mod prelude {
 
     #[cfg(all(feature = "grpc", has_protos))]
     pub use crate::transport::{
-        ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftServer, RaftServerState,
-        ServerConfig, TransportError as GrpcError,
+        ClientConfig, NodeAddress, RaftClient, RaftClientPool, RaftGrpcServer, ServerConfig,
+        TransportError as GrpcError,
     };
 }

@@ -21,12 +21,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata
-from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency, StoreMode
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.core.zookie import InvalidZookieError, Zookie
 
 logger = logging.getLogger(__name__)
 
@@ -44,15 +42,6 @@ if TYPE_CHECKING:
 
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
-
-    # Issue #1180: Per-zone locks for atomic revision increment.
-    # Replaces global _revision_lock to eliminate cross-zone contention.
-    _revision_locks: dict[str, threading.Lock] = {}
-    _revision_locks_guard = threading.Lock()
-
-    # Issue #1180 Phase B: Condition-based revision notification.
-    # Replaces polling-based _wait_for_revision with instant wakeup.
-    _revision_notifier: Any = None  # Lazily initialized RevisionNotifier
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
@@ -481,8 +470,8 @@ class NexusFSCoreMixin:
             return
 
         # Get current revision for this zone
-        zone_id = context.zone_id or "default"
-        revision = self._get_current_revision(zone_id)
+        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
+        revision = 0  # TODO: Replace with proper Raft read-index
 
         # Record the read
         context.record_read(
@@ -494,118 +483,6 @@ class NexusFSCoreMixin:
         logger.debug(
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
-
-    # =========================================================================
-    # Zookie Result Helper - Issue #923
-    # =========================================================================
-
-    def _make_zookie_result(self, zone_id: str | None) -> dict[str, Any]:
-        """Increment revision and return zookie result dict.
-
-        Issue #923: DRY helper consolidating the zookie generation pattern
-        that was duplicated across write(), delete(), and rename().
-
-        Args:
-            zone_id: Zone ID (defaults to "default" if None)
-
-        Returns:
-            Dict with 'zookie' (encoded token) and 'revision' (raw int)
-        """
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
-        return {
-            "zookie": Zookie.encode(effective_zone, revision),
-            "revision": revision,
-        }
-
-    # =========================================================================
-    # Consistency Check Helper - Issue #923
-    # =========================================================================
-
-    def _check_consistency_before_read(
-        self,
-        context: OperationContext | None,
-    ) -> None:
-        """Check consistency requirements before a read/list operation.
-
-        Issue #923: Implements close-to-open consistency checking.
-        If the context specifies a min_zookie, waits for that revision
-        to be available before proceeding with the read.
-
-        Behavior by consistency level:
-        - EVENTUAL: Skip check entirely.
-        - CLOSE_TO_OPEN: If min_zookie provided, wait for revision.
-          On timeout, fall through (best-effort).
-        - STRONG: If min_zookie provided, wait for revision.
-          On timeout, raise ConsistencyTimeoutError.
-
-        Invalid zookies are ignored for EVENTUAL/CTO, raised for STRONG.
-        Zone mismatches are silently ignored (zookie for wrong zone).
-
-        Args:
-            context: Operation context with optional consistency and min_zookie fields
-
-        Raises:
-            ConsistencyTimeoutError: If STRONG and revision wait times out
-            InvalidZookieError: If STRONG and zookie is invalid
-        """
-        if context is None:
-            return
-
-        consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
-        if consistency == FSConsistency.EVENTUAL:
-            return
-
-        # Issue #1180: Downgrade STRONG to CLOSE_TO_OPEN on EC-mode stores.
-        # STRONG guarantees cannot be met on an EC store because writes are
-        # applied locally before being replicated. Emit a warning so operators
-        # can detect misconfigurations.
-        if (
-            consistency == FSConsistency.STRONG
-            and hasattr(self, "metadata")
-            and hasattr(self.metadata, "mode")
-            and self.metadata.mode == StoreMode.EC
-        ):
-            logger.warning(
-                "STRONG consistency requested on EC-mode zone. "
-                "Data may not be fully replicated. Treating as CLOSE_TO_OPEN."
-            )
-            consistency = FSConsistency.CLOSE_TO_OPEN
-
-        min_zookie = getattr(context, "min_zookie", None)
-        if not min_zookie:
-            return
-
-        # Decode and validate zookie
-        try:
-            zookie = Zookie.decode(min_zookie)
-        except InvalidZookieError:
-            if consistency == FSConsistency.STRONG:
-                raise
-            # CTO: ignore invalid zookies gracefully
-            return
-
-        # Only check revision if zookie is for the same zone
-        zone_id, _, _ = self._get_routing_params(context)
-        effective_zone = zone_id or "default"
-        if zookie.zone_id != effective_zone:
-            # Zone mismatch — zookie is for a different zone, skip check
-            return
-
-        if (
-            not self._wait_for_revision(effective_zone, zookie.revision)
-            and consistency == FSConsistency.STRONG
-        ):
-            from nexus.core.zookie import ConsistencyTimeoutError
-
-            raise ConsistencyTimeoutError(
-                f"Timeout waiting for revision {zookie.revision} in zone {effective_zone}",
-                zone_id=effective_zone,
-                requested_revision=zookie.revision,
-                current_revision=self._get_current_revision(effective_zone),
-                timeout_ms=5000,
-            )
-        # CTO: timeout is acceptable, fall through with best-effort
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -967,9 +844,6 @@ class NexusFSCoreMixin:
             >>> content = nx.read("/memory/by-user/alice/facts")  # Same memory!
         """
         path = self._validate_path(path)
-
-        # Issue #923: Check close-to-open consistency before reading
-        self._check_consistency_before_read(context)
 
         # Phase 2 Integration: Intercept memory paths
         from nexus.core.memory_router import MemoryViewRouter
@@ -1891,16 +1765,6 @@ class NexusFSCoreMixin:
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
 
-        # Issue #1180 Phase C: Reject writes to quiesced zones during migration.
-        # Zero-cost when no migration active (hasattr + None check + set lookup).
-        consistency_migration = getattr(self, "_consistency_migration", None)
-        if consistency_migration is not None:
-            effective_zone = zone_id or "default"
-            if consistency_migration.is_zone_quiesced(effective_zone):
-                from nexus.core.exceptions import ZoneQuiescedError
-
-                raise ZoneQuiescedError(effective_zone)
-
         route = self.router.route(
             path,
             zone_id=zone_id,
@@ -2157,9 +2021,6 @@ class NexusFSCoreMixin:
             label=f"file_write:{path}",
         )
 
-        # Issue #923: Increment revision and generate zookie (DRY helper)
-        zookie_result = self._make_zookie_result(zone_id)
-
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_write",
@@ -2168,7 +2029,6 @@ class NexusFSCoreMixin:
             size=len(content),
             etag=content_hash,
             agent_id=agent_id,
-            revision=zookie_result["revision"],
         )
 
         # Return metadata for optimistic concurrency control
@@ -2177,7 +2037,6 @@ class NexusFSCoreMixin:
             "version": new_version,
             "modified_at": now,
             "size": len(content),
-            **zookie_result,
         }
 
     async def atomic_update(
@@ -2973,9 +2832,7 @@ class NexusFSCoreMixin:
             context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
-            Dict with consistency metadata:
-                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
-                - revision: Raw revision number
+            Empty dict on success.
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -2991,9 +2848,7 @@ class NexusFSCoreMixin:
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
-            # Issue #923: Return zookie for memory paths too (DRY helper)
-            zone_id, _, _ = self._get_routing_params(context)
-            return self._make_zookie_result(zone_id)
+            return {}
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -3078,9 +2933,6 @@ class NexusFSCoreMixin:
             label=f"file_delete:{path}",
         )
 
-        # Issue #923: Increment revision and generate zookie (DRY helper)
-        zookie_result = self._make_zookie_result(zone_id)
-
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_delete",
@@ -3089,10 +2941,9 @@ class NexusFSCoreMixin:
             size=meta.size,
             etag=meta.etag,
             agent_id=agent_id,
-            revision=zookie_result["revision"],
         )
 
-        return zookie_result
+        return {}
 
     @rpc_expose(description="Rename/move file")
     def rename(
@@ -3113,9 +2964,7 @@ class NexusFSCoreMixin:
             context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
-            Dict with consistency metadata:
-                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
-                - revision: Raw revision number
+            Empty dict on success.
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist
@@ -3328,9 +3177,6 @@ class NexusFSCoreMixin:
             label=f"file_rename:{old_path}->{new_path}",
         )
 
-        # Issue #923: Increment revision and generate zookie (DRY helper)
-        zookie_result = self._make_zookie_result(zone_id)
-
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
             event_type="file_rename",
@@ -3340,10 +3186,9 @@ class NexusFSCoreMixin:
             size=meta.size if meta else 0,
             etag=meta.etag if meta else None,
             agent_id=agent_id,
-            revision=zookie_result["revision"],
         )
 
-        return zookie_result
+        return {}
 
     def _update_tiger_cache_on_move(
         self,

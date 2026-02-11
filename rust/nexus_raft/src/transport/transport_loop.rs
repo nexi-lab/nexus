@@ -41,6 +41,8 @@ pub struct TransportLoop<S: StateMachine + 'static> {
     client_pool: RaftClientPool,
     /// How often to call advance() (default: 10ms).
     tick_interval: Duration,
+    /// Zone ID for multi-zone message routing.
+    zone_id: String,
 }
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
@@ -56,7 +58,14 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             peers: Arc::new(peers),
             client_pool,
             tick_interval,
+            zone_id: String::new(),
         }
+    }
+
+    /// Set the zone ID for multi-zone message routing.
+    pub fn with_zone_id(mut self, zone_id: String) -> Self {
+        self.zone_id = zone_id;
+        self
     }
 
     /// Set the tick interval (default: 10ms).
@@ -71,7 +80,12 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     pub async fn run(mut self, mut shutdown: watch::Receiver<bool>) {
         let mut interval = tokio::time::interval(self.tick_interval);
         tracing::info!(
-            "Transport loop started (tick_interval={}ms, peers={})",
+            "Transport loop started (zone={}, tick_interval={}ms, peers={})",
+            if self.zone_id.is_empty() {
+                "<single>"
+            } else {
+                &self.zone_id
+            },
             self.tick_interval.as_millis(),
             self.peers.len()
         );
@@ -121,7 +135,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
 
         match self.client_pool.get(addr).await {
             Ok(mut client) => {
-                if let Err(e) = client.step_message(bytes).await {
+                if let Err(e) = client.step_message(bytes, self.zone_id.clone()).await {
                     tracing::warn!(
                         "Failed to send message to node {} ({}): {}",
                         target_id,

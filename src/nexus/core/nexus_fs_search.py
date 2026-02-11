@@ -365,9 +365,6 @@ class NexusFSSearchMixin:
                 process(result.items)
                 result = fs.list("/workspace/", limit=1000, cursor=result.next_cursor)
         """
-        # Issue #923: Check close-to-open consistency before listing
-        self._check_consistency_before_read(context)
-
         # Issue #937: Pagination mode - use dedicated paginated implementation
         if limit is not None:
             return self._list_paginated(
@@ -1379,7 +1376,7 @@ class NexusFSSearchMixin:
                     "created_at": meta.created_at,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,
-                    "is_directory": meta.is_directory if hasattr(meta, "is_directory") else False,
+                    "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
                 }
                 for meta in result_items
             ]

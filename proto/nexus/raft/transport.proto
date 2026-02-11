@@ -81,6 +81,8 @@ service RaftClientService {
 message ProposeRequest {
   RaftCommand command = 1;
   string request_id = 2;
+  // Zone ID for multi-zone routing. Required in multi-zone mode.
+  string zone_id = 3;
 }
 
 // ProposeResponse is the response to a Propose RPC.
@@ -96,6 +98,8 @@ message ProposeResponse {
 message QueryRequest {
   RaftQuery query = 1;
   bool read_from_leader = 2;
+  // Zone ID for multi-zone routing. Required in multi-zone mode.
+  string zone_id = 3;
 }
 
 // QueryResponse is the response to a Query RPC.
@@ -107,7 +111,10 @@ message QueryResponse {
 }
 
 // GetClusterInfoRequest requests cluster information.
-message GetClusterInfoRequest {}
+message GetClusterInfoRequest {
+  // Zone ID for multi-zone routing. Required in multi-zone mode.
+  string zone_id = 1;
+}
 
 // GetClusterInfoResponse returns cluster information.
 message GetClusterInfoResponse {
@@ -228,6 +235,8 @@ enum NodeRole {
 // The bytes are opaque to the transport layer.
 message StepMessageRequest {
   bytes message = 1;
+  // Zone ID for multi-zone routing. Required in multi-zone mode.
+  string zone_id = 2;
 }
 
 // StepMessageResponse acknowledges receipt.

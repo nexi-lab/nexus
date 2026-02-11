@@ -122,7 +122,7 @@ impl SledStore {
         let path = path.as_ref();
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| db_err(e))?;
+            std::fs::create_dir_all(parent).map_err(db_err)?;
         }
         // redb uses a single file, not a directory like sled.
         // If path is a directory, use a file inside it.
@@ -130,17 +130,17 @@ impl SledStore {
             path.join("data.redb")
         } else if path.extension().is_none() {
             // If no extension, treat as directory path for sled compat
-            std::fs::create_dir_all(path).map_err(|e| db_err(e))?;
+            std::fs::create_dir_all(path).map_err(db_err)?;
             path.join("data.redb")
         } else {
             path.to_path_buf()
         };
 
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| db_err(e))?;
+            std::fs::create_dir_all(parent).map_err(db_err)?;
         }
 
-        let db = Database::create(&db_path).map_err(|e| db_err(e))?;
+        let db = Database::create(&db_path).map_err(db_err)?;
         Ok(Self {
             db: Arc::new(db),
             path: Some(db_path),
@@ -152,9 +152,9 @@ impl SledStore {
     ///
     /// Data is lost when the store is dropped.
     pub fn open_temporary() -> Result<Self> {
-        let temp_dir = tempfile::TempDir::new().map_err(|e| db_err(e))?;
+        let temp_dir = tempfile::TempDir::new().map_err(db_err)?;
         let db_path = temp_dir.path().join("temp.redb");
-        let db = Database::create(&db_path).map_err(|e| db_err(e))?;
+        let db = Database::create(&db_path).map_err(db_err)?;
         Ok(Self {
             db: Arc::new(db),
             path: Some(db_path),
@@ -170,11 +170,11 @@ impl SledStore {
         let table_def = TableDefinition::<&[u8], &[u8]>::new(static_name);
 
         // Ensure the table exists by doing a write transaction
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let _table = write_txn.open_table(table_def).map_err(|e| db_err(e))?;
+            let _table = write_txn.open_table(table_def).map_err(db_err)?;
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
 
         Ok(SledTree {
             db: Arc::clone(&self.db),
@@ -184,12 +184,9 @@ impl SledStore {
 
     /// Get a value from the default tree.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
+        let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(DEFAULT_TABLE) {
-            Ok(table) => Ok(table
-                .get(key)
-                .map_err(|e| db_err(e))?
-                .map(|v| v.value().to_vec())),
+            Ok(table) => Ok(table.get(key).map_err(db_err)?.map(|v| v.value().to_vec())),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(e) => Err(db_err(e)),
         }
@@ -197,27 +194,27 @@ impl SledStore {
 
     /// Set a value in the default tree.
     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn.open_table(DEFAULT_TABLE).map_err(|e| db_err(e))?;
-            table.insert(key, value).map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(DEFAULT_TABLE).map_err(db_err)?;
+            table.insert(key, value).map_err(db_err)?;
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(())
     }
 
     /// Delete a key from the default tree.
     pub fn delete(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         let result;
         {
-            let mut table = write_txn.open_table(DEFAULT_TABLE).map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(DEFAULT_TABLE).map_err(db_err)?;
             result = table
                 .remove(key)
-                .map_err(|e| db_err(e))?
+                .map_err(db_err)?
                 .map(|v| v.value().to_vec());
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(result)
     }
 
@@ -240,9 +237,7 @@ impl SledStore {
     /// Get database size on disk in bytes.
     pub fn size_on_disk(&self) -> Result<u64> {
         match &self.path {
-            Some(path) => std::fs::metadata(path)
-                .map(|m| m.len())
-                .map_err(|e| db_err(e)),
+            Some(path) => std::fs::metadata(path).map(|m| m.len()).map_err(db_err),
             None => Ok(0),
         }
     }
@@ -258,13 +253,13 @@ impl SledStore {
     ///
     /// Useful for generating unique IDs without coordination.
     pub fn generate_id(&self) -> Result<u64> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         let id;
         {
-            let mut table = write_txn.open_table(ID_TABLE).map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(ID_TABLE).map_err(db_err)?;
             let current = table
                 .get(ID_KEY)
-                .map_err(|e| db_err(e))?
+                .map_err(db_err)?
                 .map(|v| {
                     let bytes = v.value();
                     if bytes.len() == 8 {
@@ -277,9 +272,9 @@ impl SledStore {
             id = current + 1;
             table
                 .insert(ID_KEY, id.to_be_bytes().as_slice())
-                .map_err(|e| db_err(e))?;
+                .map_err(db_err)?;
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(id)
     }
 
@@ -311,12 +306,9 @@ impl SledTree {
 
     /// Get a value by key.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
+        let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(self.table_def()) {
-            Ok(table) => Ok(table
-                .get(key)
-                .map_err(|e| db_err(e))?
-                .map(|v| v.value().to_vec())),
+            Ok(table) => Ok(table.get(key).map_err(db_err)?.map(|v| v.value().to_vec())),
             Err(redb::TableError::TableDoesNotExist(_)) => Ok(None),
             Err(e) => Err(db_err(e)),
         }
@@ -351,14 +343,12 @@ impl SledTree {
 
     /// Set a value by key.
     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
-            table.insert(key, value).map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
+            table.insert(key, value).map_err(db_err)?;
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(())
     }
 
@@ -381,18 +371,16 @@ impl SledTree {
 
     /// Delete a key.
     pub fn delete(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         let result;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
             result = table
                 .remove(key)
-                .map_err(|e| db_err(e))?
+                .map_err(db_err)?
                 .map(|v| v.value().to_vec());
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(result)
     }
 
@@ -420,9 +408,9 @@ impl SledTree {
 
     /// Get the first key-value pair.
     pub fn first(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-        let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
+        let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(self.table_def()) {
-            Ok(table) => match table.first().map_err(|e| db_err(e))? {
+            Ok(table) => match table.first().map_err(db_err)? {
                 Some(entry) => Ok(Some((entry.0.value().to_vec(), entry.1.value().to_vec()))),
                 None => Ok(None),
             },
@@ -433,9 +421,9 @@ impl SledTree {
 
     /// Get the last key-value pair.
     pub fn last(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-        let read_txn = self.db.begin_read().map_err(|e| db_err(e))?;
+        let read_txn = self.db.begin_read().map_err(db_err)?;
         match read_txn.open_table(self.table_def()) {
-            Ok(table) => match table.last().map_err(|e| db_err(e))? {
+            Ok(table) => match table.last().map_err(db_err)? {
                 Some(entry) => Ok(Some((entry.0.value().to_vec(), entry.1.value().to_vec()))),
                 None => Ok(None),
             },
@@ -455,15 +443,13 @@ impl SledTree {
 
     /// Clear all entries in this tree.
     pub fn clear(&self) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
             // Delete and recreate the table to clear all entries
             let _ = write_txn.delete_table(self.table_def());
-            let _table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
+            let _table = write_txn.open_table(self.table_def()).map_err(db_err)?;
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(())
     }
 
@@ -630,33 +616,28 @@ impl SledTree {
         expected: Option<&[u8]>,
         new: Option<&[u8]>,
     ) -> Result<std::result::Result<(), Option<Vec<u8>>>> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
 
-            let current = table
-                .get(key)
-                .map_err(|e| db_err(e))?
-                .map(|v| v.value().to_vec());
+            let current = table.get(key).map_err(db_err)?.map(|v| v.value().to_vec());
 
             let expected_vec = expected.map(|e| e.to_vec());
 
             if current == expected_vec {
                 match new {
                     Some(new_val) => {
-                        table.insert(key, new_val).map_err(|e| db_err(e))?;
+                        table.insert(key, new_val).map_err(db_err)?;
                     }
                     None => {
-                        table.remove(key).map_err(|e| db_err(e))?;
+                        table.remove(key).map_err(db_err)?;
                     }
                 }
             } else {
                 return Ok(Err(current));
             }
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(Ok(()))
     }
 
@@ -667,53 +648,44 @@ impl SledTree {
     where
         F: FnMut(Option<&[u8]>) -> Option<Vec<u8>>,
     {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         let old_value;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
 
-            old_value = table
-                .get(key)
-                .map_err(|e| db_err(e))?
-                .map(|v| v.value().to_vec());
+            old_value = table.get(key).map_err(db_err)?.map(|v| v.value().to_vec());
 
             let new_value = f(old_value.as_deref());
             match new_value {
                 Some(val) => {
-                    table.insert(key, val.as_slice()).map_err(|e| db_err(e))?;
+                    table.insert(key, val.as_slice()).map_err(db_err)?;
                 }
                 None => {
-                    table.remove(key).map_err(|e| db_err(e))?;
+                    table.remove(key).map_err(db_err)?;
                 }
             }
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(old_value)
     }
 
     /// Apply a batch of operations atomically.
     pub fn apply_batch(&self, batch: &SledBatch) -> Result<()> {
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn
-                .open_table(self.table_def())
-                .map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(self.table_def()).map_err(db_err)?;
             for op in &batch.operations {
                 match op {
                     BatchOp::Insert(k, v) => {
-                        table
-                            .insert(k.as_slice(), v.as_slice())
-                            .map_err(|e| db_err(e))?;
+                        table.insert(k.as_slice(), v.as_slice()).map_err(db_err)?;
                     }
                     BatchOp::Remove(k) => {
-                        table.remove(k.as_slice()).map_err(|e| db_err(e))?;
+                        table.remove(k.as_slice()).map_err(db_err)?;
                     }
                 }
             }
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(())
     }
 
@@ -785,23 +757,21 @@ impl TreeBatch {
     /// Apply all operations atomically.
     pub fn apply(self) -> Result<()> {
         let table_def = TableDefinition::<&[u8], &[u8]>::new(self.name);
-        let write_txn = self.db.begin_write().map_err(|e| db_err(e))?;
+        let write_txn = self.db.begin_write().map_err(db_err)?;
         {
-            let mut table = write_txn.open_table(table_def).map_err(|e| db_err(e))?;
+            let mut table = write_txn.open_table(table_def).map_err(db_err)?;
             for op in &self.batch.operations {
                 match op {
                     BatchOp::Insert(k, v) => {
-                        table
-                            .insert(k.as_slice(), v.as_slice())
-                            .map_err(|e| db_err(e))?;
+                        table.insert(k.as_slice(), v.as_slice()).map_err(db_err)?;
                     }
                     BatchOp::Remove(k) => {
-                        table.remove(k.as_slice()).map_err(|e| db_err(e))?;
+                        table.remove(k.as_slice()).map_err(db_err)?;
                     }
                 }
             }
         }
-        write_txn.commit().map_err(|e| db_err(e))?;
+        write_txn.commit().map_err(db_err)?;
         Ok(())
     }
 }

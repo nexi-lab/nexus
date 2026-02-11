@@ -83,9 +83,7 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
             proto.ParseFromString(data)
             return MetadataMapper.from_proto(proto)
         except Exception as proto_err:
-            logger.debug(
-                "Protobuf parse failed, trying JSON fallback: %s", proto_err
-            )
+            logger.debug("Protobuf parse failed, trying JSON fallback: %s", proto_err)
 
     # Fallback to JSON format
     try:

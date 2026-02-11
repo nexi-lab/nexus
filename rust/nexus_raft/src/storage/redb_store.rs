@@ -102,7 +102,13 @@ pub struct RedbStore {
 
 impl RedbStore {
     /// Open or create a redb database at the given path.
+    ///
+    /// Creates parent directories if they don't exist (matching sled behavior).
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(redb::StorageError::Io)?;
+        }
         let db = Database::create(path)?;
         Ok(Self {
             db: Arc::new(db),

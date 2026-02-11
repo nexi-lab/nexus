@@ -84,12 +84,12 @@ COPY rust/ ./rust/
 # Build nexus_fast
 WORKDIR /build/rust/nexus_fast
 RUN maturin build --release && \
-    pip install --no-cache-dir target/wheels/nexus_fast-*.whl
+    pip install --no-cache-dir target/wheels/nexus_fast-*-manylinux*.whl
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft
 RUN maturin build --release --features full && \
-    pip install --no-cache-dir target/wheels/nexus_raft-*.whl
+    pip install --no-cache-dir target/wheels/nexus_raft-*-manylinux*.whl
 
 WORKDIR /build
 

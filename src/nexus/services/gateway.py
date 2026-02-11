@@ -454,6 +454,7 @@ class NexusFSGateway:
                     "readonly": mount_info.readonly,
                     "backend_type": type(mount_info.backend).__name__,
                     "backend": mount_info.backend,
+                    "conflict_strategy": mount_info.conflict_strategy,
                 }
             )
         return mounts
@@ -481,5 +482,6 @@ class NexusFSGateway:
                     "backend_path": backend_path,
                     "readonly": mount.readonly,
                     "backend_name": getattr(mount.backend, "name", type(mount.backend).__name__),
+                    "conflict_strategy": mount.conflict_strategy,
                 }
         return None

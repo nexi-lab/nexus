@@ -483,6 +483,53 @@ class DecayResponse(BaseModel):
 
 
 # =============================================================================
+# Conflict Models (Issue #1130)
+# =============================================================================
+
+
+class ConflictDetailResponse(BaseModel):
+    """Full conflict record representation."""
+
+    conflict_id: str
+    path: str
+    backend_name: str
+    zone_id: str
+    strategy: str
+    outcome: str
+    nexus_content_hash: str | None = None
+    nexus_mtime: str | None = None
+    nexus_size: int | None = None
+    backend_content_hash: str | None = None
+    backend_mtime: str | None = None
+    backend_size: int | None = None
+    conflict_copy_path: str | None = None
+    status: str
+    resolved_at: str | None = None
+
+
+class ConflictListResponse(BaseModel):
+    """Response for GET /api/v2/sync/conflicts."""
+
+    conflicts: list[ConflictDetailResponse]
+    total: int
+
+
+class ConflictResolveRequest(BaseModel):
+    """Request for POST /api/v2/sync/conflicts/{id}/resolve."""
+
+    outcome: Literal["nexus_wins", "backend_wins"] = Field(
+        ..., description="Chosen resolution outcome"
+    )
+
+
+class ConflictResolveResponse(BaseModel):
+    """Response for POST /api/v2/sync/conflicts/{id}/resolve."""
+
+    conflict_id: str
+    status: str
+
+
+# =============================================================================
 # Operation Models (Issue #1197)
 # =============================================================================
 
@@ -514,3 +561,20 @@ class OperationListResponse(BaseModel):
     offset: int | None = None
     total: int | None = None
     next_cursor: str | None = None
+
+
+class AgentActivityResponse(BaseModel):
+    """Response for GET /api/v2/operations/agents/{agent_id}/activity.
+
+    Aggregated activity summary for a specific agent within a time window.
+    All fields are scoped to the since filter (default: last 24h).
+
+    Issue #1198: Add Agent Activity Summary endpoint.
+    """
+
+    agent_id: str
+    total_operations: int = 0
+    operations_by_type: dict[str, int] = Field(default_factory=dict)
+    recent_paths: list[str] = Field(default_factory=list)
+    last_active: str | None = None  # ISO-8601
+    first_seen: str | None = None  # ISO-8601

@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata
-from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
+from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency, StoreMode
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission
@@ -45,8 +45,14 @@ if TYPE_CHECKING:
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
 
-    # Issue #923: Lock for atomic revision increment (prevents duplicate revisions)
-    _revision_lock = threading.Lock()
+    # Issue #1180: Per-zone locks for atomic revision increment.
+    # Replaces global _revision_lock to eliminate cross-zone contention.
+    _revision_locks: dict[str, threading.Lock] = {}
+    _revision_locks_guard = threading.Lock()
+
+    # Issue #1180 Phase B: Condition-based revision notification.
+    # Replaces polling-based _wait_for_revision with instant wakeup.
+    _revision_notifier: Any = None  # Lazily initialized RevisionNotifier
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
@@ -296,6 +302,35 @@ class NexusFSCoreMixin:
     # Zookie Consistency Token Support - Issue #1187
     # =========================================================================
 
+    def _get_revision_notifier(self) -> Any:
+        """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
+
+        Lazily initialized to avoid import overhead for callers that don't
+        use the consistency subsystem.
+        """
+        if self._revision_notifier is None:
+            from nexus.core.revision_notifier import RevisionNotifier
+
+            NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+        return self._revision_notifier
+
+    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
+        """Get or create a per-zone lock for revision increments (Issue #1180).
+
+        Always acquires the guard lock for correctness. The overhead is
+        negligible (~50ns uncontended) since this runs once per zone.
+
+        Args:
+            zone_id: The zone to get the lock for
+
+        Returns:
+            Lock instance for this zone
+        """
+        with self._revision_locks_guard:
+            if zone_id not in self._revision_locks:
+                self._revision_locks[zone_id] = threading.Lock()
+            return self._revision_locks[zone_id]
+
     def _increment_and_get_revision(self, zone_id: str) -> int:
         """Atomically increment and return the new revision for a zone.
 
@@ -328,10 +363,9 @@ class NexusFSCoreMixin:
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        # Issue #923: Lock ensures atomic read-modify-write for revision counter.
-        # Without this, concurrent writes could get the same revision number.
-        # TODO: Replace with atomic increment when Raft store supports it.
-        with self._revision_lock:
+        # Issue #1180: Per-zone lock ensures atomic read-modify-write without
+        # cross-zone contention. TODO: Replace with sled atomic_increment (Phase B).
+        with self._get_revision_lock(zone_id):
             try:
                 meta = self.metadata.get(rev_path)
                 new_rev = (meta.version + 1) if meta else 1
@@ -345,6 +379,8 @@ class NexusFSCoreMixin:
                         zone_id=zone_id,
                     )
                 )
+                # Issue #1180 Phase B: Notify waiters of the new revision.
+                self._get_revision_notifier().notify_revision(zone_id, new_rev)
                 return new_rev
             except Exception as e:
                 logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
@@ -388,8 +424,9 @@ class NexusFSCoreMixin:
     ) -> bool:
         """Wait until zone revision >= min_revision.
 
-        Issue #1187: Implements AT_LEAST_AS_FRESH consistency mode for reads.
-        Uses exponential backoff to minimize DB polling.
+        Issue #1180 Phase B: Uses Condition-based notification for instant wakeup.
+        Falls back to a single DB check if the notifier doesn't have the revision
+        cached (e.g., after restart when writes happened before this instance existed).
 
         Args:
             zone_id: The zone to check revision for
@@ -398,21 +435,22 @@ class NexusFSCoreMixin:
 
         Returns:
             True if revision reached, False if timeout
-
-        Raises:
-            ConsistencyTimeoutError: If timeout and raise_on_timeout=True
         """
-        deadline = time.monotonic() + (timeout_ms / 1000)
-        sleep_ms = 1.0  # Start with 1ms
+        notifier = self._get_revision_notifier()
 
-        while time.monotonic() < deadline:
-            current = self._get_current_revision(zone_id)
-            if current >= min_revision:
-                return True
-            time.sleep(sleep_ms / 1000)
-            sleep_ms = min(sleep_ms * 2, 100)  # Cap at 100ms
+        # Fast path: notifier already knows the revision is met
+        if notifier.get_latest_revision(zone_id) >= min_revision:
+            return True
 
-        return False
+        # Check DB directly (handles case where notifier cache is behind)
+        current = self._get_current_revision(zone_id)
+        if current >= min_revision:
+            # Update notifier cache so future waits are faster
+            notifier.notify_revision(zone_id, current)
+            return True
+
+        # Block on Condition-based notification
+        return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
     # Read Set Tracking - Issue #1166
@@ -517,6 +555,22 @@ class NexusFSCoreMixin:
         consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
         if consistency == FSConsistency.EVENTUAL:
             return
+
+        # Issue #1180: Downgrade STRONG to CLOSE_TO_OPEN on EC-mode stores.
+        # STRONG guarantees cannot be met on an EC store because writes are
+        # applied locally before being replicated. Emit a warning so operators
+        # can detect misconfigurations.
+        if (
+            consistency == FSConsistency.STRONG
+            and hasattr(self, "metadata")
+            and hasattr(self.metadata, "mode")
+            and self.metadata.mode == StoreMode.EC
+        ):
+            logger.warning(
+                "STRONG consistency requested on EC-mode zone. "
+                "Data may not be fully replicated. Treating as CLOSE_TO_OPEN."
+            )
+            consistency = FSConsistency.CLOSE_TO_OPEN
 
         min_zookie = getattr(context, "min_zookie", None)
         if not min_zookie:
@@ -1013,12 +1067,10 @@ class NexusFSCoreMixin:
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
-        # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
         # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
-            getattr(route.backend, "user_scoped", None) is True
-            and getattr(route.backend, "token_manager", None) is not None
-        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+            route.backend.user_scoped is True and route.backend.has_token_manager is True
+        ) or route.backend.has_virtual_filesystem is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -1342,9 +1394,7 @@ class NexusFSCoreMixin:
                                 raise
             else:
                 # Try parallel I/O for LocalBackend using nexus_fast
-                from nexus.backends.local import LocalBackend
-
-                if isinstance(backend, LocalBackend) and len(paths_for_backend) > 1:
+                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
                     # Use Rust parallel mmap reads for LocalBackend
                     try:
                         from nexus_fast import read_files_bulk
@@ -1681,9 +1731,9 @@ class NexusFSCoreMixin:
         # For now, we can't easily get size without reading - set to 0 and update on next read
         # A better approach would be for write_stream to return (hash, size) tuple
         size = 0
-        if hasattr(route.backend, "get_content_size"):
-            with contextlib.suppress(Exception):
-                size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # get_content_size is an abstract method on Backend, always available
+        with contextlib.suppress(Exception):
+            size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1840,6 +1890,17 @@ class NexusFSCoreMixin:
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
+
+        # Issue #1180 Phase C: Reject writes to quiesced zones during migration.
+        # Zero-cost when no migration active (hasattr + None check + set lookup).
+        consistency_migration = getattr(self, "_consistency_migration", None)
+        if consistency_migration is not None:
+            effective_zone = zone_id or "default"
+            if consistency_migration.is_zone_quiesced(effective_zone):
+                from nexus.core.exceptions import ZoneQuiescedError
+
+                raise ZoneQuiescedError(effective_zone)
+
         route = self.router.route(
             path,
             zone_id=zone_id,
@@ -3115,11 +3176,12 @@ class NexusFSCoreMixin:
         # For connector backends, also verify the file exists in backend storage
         # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            if hasattr(new_route.backend, "rename_file"):
+            if new_route.backend.supports_rename is True:
                 # Connector backend - verify file actually exists in storage
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
                     # Check if this is a GCS connector backend (has bucket attribute)
+                    # NOTE: bucket/blob access is GCS-specific, kept as hasattr for now
                     if (
                         hasattr(new_route.backend, "bucket")
                         and hasattr(new_route.backend, "_get_blob_path")
@@ -3158,7 +3220,7 @@ class NexusFSCoreMixin:
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
-        if hasattr(old_route.backend, "rename_file"):
+        if old_route.backend.supports_rename is True:
             # Connector backend - move the file in backend storage
             try:
                 old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
@@ -3433,9 +3495,10 @@ class NexusFSCoreMixin:
         try:
             # Query all files under directory (using new path since already renamed)
             # The files have already been renamed via metadata update, so query new paths
-            files = self.metadata.list(prefix=new_prefix, recursive=True, zone_id=zone_id)
             result = []
-            for file_meta in files:
+            for file_meta in self.metadata.list_iter(
+                prefix=new_prefix, recursive=True, zone_id=zone_id
+            ):
                 new_file_path = file_meta.path
                 if new_file_path:
                     # Compute what the old path would have been

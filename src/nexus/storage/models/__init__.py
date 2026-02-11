@@ -13,11 +13,15 @@ Extracted modules:
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.zone_settings import ZoneSettings
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -1520,6 +1524,10 @@ class MountConfigModel(Base):
     )  # Zone this mount belongs to
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Per-mount conflict resolution strategy (Issue #1130)
+    # None means "use global default"; otherwise a ConflictStrategy value
+    conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
@@ -1834,6 +1842,75 @@ class SyncBacklogModel(Base):
         return (
             f"<SyncBacklogModel(path={self.path}, backend={self.backend_name}, "
             f"op={self.operation_type}, status={self.status})>"
+        )
+
+
+class ConflictLogModel(Base):
+    """Audit log for conflict resolution events (Issue #1130).
+
+    Records every conflict detected during bidirectional sync,
+    the strategy applied, and the resolution outcome. Supports
+    manual conflict resolution via REST API.
+
+    Status flow: auto_resolved | manual_pending -> manually_resolved
+    """
+
+    __tablename__ = "conflict_log"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=_generate_uuid,
+        server_default=_get_uuid_server_default(),
+    )
+
+    # File identification
+    path: Mapped[str] = mapped_column(String(4096), nullable=False)
+    backend_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+
+    # Resolution details
+    strategy: Mapped[str] = mapped_column(String(50), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Nexus-side state at conflict time
+    nexus_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    nexus_mtime: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    nexus_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # Backend-side state at conflict time
+    backend_content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    backend_mtime: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    backend_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    # RENAME_CONFLICT: path to the .sync-conflict copy
+    conflict_copy_path: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+
+    # Status tracking
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="auto_resolved")
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        # List query: filter by status, order by created_at
+        Index("idx_cl_status_created", "status", "created_at"),
+        # Per-backend filtering
+        Index("idx_cl_backend_zone", "backend_name", "zone_id"),
+        # Path lookup
+        Index("idx_cl_path", "path"),
+        # BRIN index for TTL cleanup (PostgreSQL only)
+        Index("idx_cl_created_brin", "created_at", postgresql_using="brin"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ConflictLogModel(path={self.path}, backend={self.backend_name}, "
+            f"strategy={self.strategy}, outcome={self.outcome}, status={self.status})>"
         )
 
 
@@ -2896,6 +2973,11 @@ class ZoneModel(Base):
 
     description: Mapped[str | None] = mapped_column(Text, nullable=True)  # Optional description
 
+    # Consistency mode (Issue #1180)
+    consistency_mode: Mapped[str] = mapped_column(
+        String(2), nullable=False, server_default="SC", default="SC"
+    )  # Raft replication mode: "SC" (strong) or "EC" (eventual)
+
     # Settings (extensible JSON field)
     settings: Mapped[str | None] = mapped_column(
         Text, nullable=True
@@ -2923,14 +3005,32 @@ class ZoneModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    # Indexes
+    # Indexes and constraints
     __table_args__ = (
+        CheckConstraint("consistency_mode IN ('SC', 'EC')", name="ck_zones_consistency_mode"),
         Index("idx_zones_name", "name"),
         Index("idx_zones_active", "is_active"),
     )
 
+    @property
+    def parsed_settings(self) -> "ZoneSettings":
+        """Parse settings JSON into a ZoneSettings Pydantic model.
+
+        Returns an empty ZoneSettings if settings is None.
+        Raises json.JSONDecodeError / ValueError for malformed JSON.
+        """
+        from nexus.storage.zone_settings import ZoneSettings
+
+        if self.settings is None:
+            return ZoneSettings()
+        return ZoneSettings(**json.loads(self.settings))
+
     def __repr__(self) -> str:
-        return f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
+        return (
+            f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, "
+            f"domain={self.domain}, consistency_mode={self.consistency_mode}, "
+            f"is_active={self.is_active})>"
+        )
 
 
 class ExternalUserServiceModel(Base):

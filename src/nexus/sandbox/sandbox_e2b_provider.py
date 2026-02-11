@@ -22,6 +22,9 @@ from nexus.sandbox.sandbox_provider import (
     SandboxProvider,
     UnsupportedLanguageError,
     UnsupportedOperationError,
+    validate_agent_id,
+    validate_mount_path,
+    validate_nexus_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,7 @@ class E2BSandboxProvider(SandboxProvider):
         template_id: str | None = None,
         timeout_minutes: int = 10,
         metadata: dict[str, Any] | None = None,
+        security_profile: Any | None = None,
     ) -> str:
         """Create a new E2B sandbox.
 
@@ -103,6 +107,7 @@ class E2BSandboxProvider(SandboxProvider):
             template_id: E2B template ID (uses default if not provided)
             timeout_minutes: Sandbox timeout (E2B default)
             metadata: Additional metadata (stored but not used by E2B)
+            security_profile: Ignored — E2B manages its own isolation.
 
         Returns:
             Sandbox ID
@@ -110,6 +115,11 @@ class E2BSandboxProvider(SandboxProvider):
         Raises:
             SandboxCreationError: If sandbox creation fails
         """
+        if security_profile is not None:
+            logger.debug(
+                "E2B manages its own isolation; ignoring security_profile=%s",
+                getattr(security_profile, "name", security_profile),
+            )
         try:
             # Use provided template or default
             template = template_id or self.default_template
@@ -471,6 +481,12 @@ class E2BSandboxProvider(SandboxProvider):
             SandboxNotFoundError: If sandbox doesn't exist
             RuntimeError: If mount fails
         """
+        # Validate inputs before any sandbox operations (CWE-78 prevention)
+        mount_path = validate_mount_path(mount_path)
+        nexus_url = validate_nexus_url(nexus_url)
+        if agent_id is not None:
+            agent_id = validate_agent_id(agent_id)
+
         sandbox = await self._get_sandbox(sandbox_id)
 
         logger.info(f"Mounting Nexus at {mount_path} in sandbox {sandbox_id}")
@@ -600,19 +616,28 @@ class E2BSandboxProvider(SandboxProvider):
             + (f", agent_id={agent_id}" if agent_id else "")
         )
 
+        # Write API key to temp file (never pass inline in commands — CWE-214)
+        api_key_file = "/tmp/.nexus_api_key"
+        write_key_result = await sandbox.commands.run(
+            f"printf '%s' '{api_key}' > {api_key_file} && chmod 600 {api_key_file}",
+            timeout=10,
+        )
+        if write_key_result.exit_code != 0:
+            logger.warning("Failed to write API key file, falling back to env var")
+            api_key_source = f"NEXUS_API_KEY='{api_key}' "
+        else:
+            api_key_source = f"NEXUS_API_KEY=$(cat {api_key_file}) "
+
         if rust_fuse_available:
             # Use Rust FUSE binary (fastest option - ~600ms mount time)
             logger.info("Using nexus-fuse (Rust) for fast native FUSE mount")
             mount_cmd = (
-                f"nohup sudo nexus-fuse mount "
+                f"nohup {api_key_source}sudo -E nexus-fuse mount "
                 f"--url {nexus_url} "
-                f"--api-key {api_key} "
                 f"--allow-other "
                 f"{mount_path} > /tmp/nexus-mount.log 2>&1 &"
             )
-            logger.debug(
-                f"Mount command: nexus-fuse mount --url ... --api-key *** --allow-other {mount_path}"
-            )
+            logger.debug(f"Mount command: nexus-fuse mount --url ... --allow-other {mount_path}")
             max_wait = 5  # Rust mount is fast (~600ms)
         else:
             # Fall back to Python FUSE mount
@@ -625,10 +650,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 log = logging.getLogger("nexus-mount")
 log.info("Starting direct Python mount...")
 try:
+    api_key = os.environ.get("NEXUS_API_KEY", "")
+    if not api_key:
+        log.error("NEXUS_API_KEY not set")
+        sys.exit(1)
     from nexus.remote import RemoteNexusFS
     from nexus.fuse.mount import NexusFUSE, MountMode
     log.info("Imports complete, connecting to server...")
-    nx = RemoteNexusFS("{nexus_url}", api_key="{api_key}")
+    nx = RemoteNexusFS("{nexus_url}", api_key=api_key)
     {"nx.agent_id = '" + agent_id + "'" if agent_id else ""}
     log.info("Creating FUSE mount...")
     fuse = NexusFUSE(nx, "{mount_path}", mode=MountMode.SMART)
@@ -646,7 +675,9 @@ except Exception as e:
                 f"cat > {script_path} << 'NEXUS_MOUNT_EOF'\n{mount_script}\nNEXUS_MOUNT_EOF",
                 timeout=30,
             )
-            mount_cmd = f"nohup sudo python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
+            mount_cmd = (
+                f"nohup {api_key_source}sudo -E python3 {script_path} > /tmp/nexus-mount.log 2>&1 &"
+            )
             logger.debug(f"Mount command: {mount_cmd}")
             max_wait = 10  # Python mount is slower due to imports
 

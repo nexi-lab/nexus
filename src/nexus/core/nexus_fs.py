@@ -160,6 +160,9 @@ class NexusFS(  # type: ignore[misc]
         version_service: Any | None = None,
         # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
         overlay_resolver: Any | None = None,
+        # Issue #1180 Phase C: Consistency mode migration orchestrator (duck-typed).
+        # Created by factory.py (ConsistencyMigration), injected here.
+        consistency_migration: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -229,14 +232,10 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Initialize content cache if enabled and backend supports it
-        if enable_content_cache:
-            # Import here to avoid circular import
-            from nexus.backends.local import LocalBackend
-
-            if isinstance(backend, LocalBackend):
-                # Create content cache and attach to LocalBackend
-                content_cache = ContentCache(max_size_mb=content_cache_size_mb)
-                backend.content_cache = content_cache
+        if enable_content_cache and backend.has_root_path is True:
+            # Create content cache and attach to LocalBackend
+            content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+            backend.content_cache = content_cache
 
         # Store backend
         self.backend = backend
@@ -364,6 +363,7 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
         self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
+        self._consistency_migration = consistency_migration  # Issue #1180: migration orchestrator
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -710,36 +710,22 @@ class NexusFS(  # type: ignore[misc]
             return 0
 
         try:
-            # Get all files from metadata store
-            all_files = self.metadata.list("/", recursive=True)
-            total = len(all_files)
-
-            if total == 0:
-                logger.debug("No files in metadata - nothing to sync")
-                return 0
-
-            logger.info(f"Syncing {total} files to tiger_resource_map...")
-
+            # Stream files from metadata store instead of materializing full list
             count = 0
-            batch_size = 1000
+            log_interval = 1000
 
-            for i in range(0, total, batch_size):
-                batch = all_files[i : i + batch_size]
-
-                for meta in batch:
-                    # Register resource in the map (idempotent operation)
-                    # Note: zone_id removed from resource map (Issue #xyz)
-                    resource_map.get_or_create_int_id(
-                        resource_type="file",
-                        resource_id=meta.path,
-                    )
-                    count += 1
+            for meta in self.metadata.list_iter("/", recursive=True):
+                # Register resource in the map (idempotent operation)
+                # Note: zone_id removed from resource map (Issue #xyz)
+                resource_map.get_or_create_int_id(
+                    resource_type="file",
+                    resource_id=meta.path,
+                )
+                count += 1
 
                 # Log progress for large datasets
-                if total > batch_size:
-                    logger.debug(
-                        f"Tiger resource map sync progress: {min(i + batch_size, total)}/{total}"
-                    )
+                if count % log_interval == 0:
+                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
 
             logger.info(f"Tiger resource map sync complete: {count} resources")
             return count
@@ -2488,7 +2474,7 @@ class NexusFS(  # type: ignore[misc]
 
         all_files = [
             m
-            for m in self.metadata.list(filter.path_prefix)
+            for m in self.metadata.list_iter(filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -5350,7 +5336,7 @@ class NexusFS(  # type: ignore[misc]
         had_content = False  # Track if directory had any content
 
         # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and hasattr(self.backend, "root_path"):
+        if hasattr(self, "backend") and self.backend.has_root_path is True:
             try:
                 # Convert virtual path to physical path
                 # LocalBackend stores directories under "dirs" subdirectory
@@ -5612,7 +5598,7 @@ class NexusFS(  # type: ignore[misc]
             possible_dirs.append(data_dir / "skills")
 
         # 2. Try backend data directory if available
-        if hasattr(self.backend, "data_dir") and self.backend.data_dir:
+        if self.backend.has_data_dir is True and self.backend.data_dir:
             backend_data_dir = Path(self.backend.data_dir)
             possible_dirs.append(backend_data_dir / "skills")
 
@@ -7679,6 +7665,61 @@ class NexusFS(  # type: ignore[misc]
             chunk_strategy=chunk_strategy,
             async_mode=async_mode,
         )
+
+    # =========================================================================
+    # Consistency Mode Migration (Issue #1180 Phase C)
+    # =========================================================================
+
+    def migrate_consistency_mode(
+        self,
+        zone_id: str,
+        target_mode: str,
+        timeout_s: float = 30.0,
+    ) -> dict[str, Any]:
+        """Migrate a zone's consistency mode (SC ↔ EC).
+
+        Issue #1180: Orchestrates live migration between replication modes.
+        Requires a ConsistencyMigration instance to be injected via constructor.
+
+        Args:
+            zone_id: The zone to migrate.
+            target_mode: Target mode string ("SC" or "EC").
+            timeout_s: Maximum time for the migration.
+
+        Returns:
+            Dict with migration result details.
+
+        Raises:
+            RuntimeError: If ConsistencyMigration is not available.
+            ValueError: If target_mode is invalid.
+        """
+        if self._consistency_migration is None:
+            raise RuntimeError(
+                "ConsistencyMigration not available. "
+                "Ensure record_store is provided to enable migration support."
+            )
+
+        from nexus.core.consistency import ConsistencyMode
+
+        try:
+            mode = ConsistencyMode(target_mode)
+        except ValueError as e:
+            raise ValueError(f"Invalid target mode '{target_mode}'. Must be 'SC' or 'EC'.") from e
+
+        result = self._consistency_migration.migrate(
+            zone_id=zone_id,
+            target_mode=mode,
+            timeout_s=timeout_s,
+        )
+
+        return {
+            "success": result.success,
+            "zone_id": result.zone_id,
+            "from_mode": result.from_mode.value,
+            "to_mode": result.to_mode.value,
+            "duration_ms": result.duration_ms,
+            "error": result.error,
+        }
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

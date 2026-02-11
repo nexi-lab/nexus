@@ -90,6 +90,66 @@ class NexusFSCoreMixin:
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
+    # =========================================================================
+    # Observer notification — unified error policy for RecordStore sync
+    # =========================================================================
+
+    def _notify_observer(
+        self,
+        method_name: str,
+        *,
+        _log_path: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Notify the write observer with unified audit_strict_mode handling.
+
+        Replaces scattered try/except and contextlib.suppress patterns.
+        All write paths (write, delete, rename, batch) now use this method.
+
+        Args:
+            method_name: Observer method to call (e.g. "on_write", "on_delete").
+            _log_path: Path for error messages only — NOT forwarded to observer.
+                All other kwargs are forwarded to the observer method.
+
+        When audit_strict_mode=True and observer raises:
+            Raises AuditLogError (caller sees failure, but Metastore write
+            has already committed — this is a known limitation).
+
+        When audit_strict_mode=False and observer raises:
+            Logs at CRITICAL level but returns normally.
+
+        When no observer is configured:
+            Returns immediately (no-op).
+        """
+        if not self._write_observer:
+            return
+
+        method = getattr(self._write_observer, method_name, None)
+        if method is None:
+            return
+
+        try:
+            method(**kwargs)
+        except Exception as e:
+            from nexus.core.exceptions import AuditLogError
+
+            op_desc = f"{method_name}(path={_log_path!r})" if _log_path else method_name
+            if self._audit_strict_mode:
+                logger.error(
+                    f"AUDIT LOG FAILURE: {op_desc} ABORTED. "
+                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
+                )
+                raise AuditLogError(
+                    f"Write operation aborted: audit logging failed: {e}",
+                    path=_log_path,
+                    original_error=e,
+                ) from e
+            else:
+                logger.critical(
+                    f"AUDIT LOG FAILURE: {op_desc} SUCCEEDED but audit log FAILED. "
+                    f"Error: {e}. This creates an audit trail gap!"
+                )
+
     def _get_overlay_config(self, path: str) -> Any:
         """Get overlay config for a path, if overlay is active.
 
@@ -231,6 +291,66 @@ class NexusFSCoreMixin:
                 threading.Thread(target=publish_in_thread, daemon=True).start()
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
+
+    def _fire_workflow_event(
+        self,
+        trigger_type: Any,
+        event_context: dict[str, Any],
+        label: str,
+    ) -> None:
+        """Fire a workflow event and broadcast to webhook subscriptions.
+
+        Consolidates the repeated async-or-thread pattern from write/delete/rename.
+        Does nothing if workflows are not enabled.
+
+        Args:
+            trigger_type: TriggerType enum value (FILE_WRITE, FILE_DELETE, FILE_RENAME).
+            event_context: Event payload dict.
+            label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
+        """
+        if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
+            return
+
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            self._create_tracked_event_task(
+                self.workflow_engine.fire_event(trigger_type, event_context),  # type: ignore[attr-defined]
+                name=f"workflow:{label}",
+            )
+            if self.subscription_manager:  # type: ignore[attr-defined]
+                event_type = label.split(":")[0] if ":" in label else label
+                self._create_tracked_event_task(
+                    self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                        event_type,
+                        event_context,
+                        event_context.get("zone_id", "default"),
+                    ),
+                    name=f"webhook:{label}",
+                )
+        except RuntimeError:
+            # No event loop running — run in background thread
+            import threading
+
+            def _run_in_thread() -> None:
+                try:
+                    asyncio.run(
+                        self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+                    )
+                    if self.subscription_manager:  # type: ignore[attr-defined]
+                        event_type = label.split(":")[0] if ":" in label else label
+                        asyncio.run(
+                            self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                                event_type,
+                                event_context,
+                                event_context.get("zone_id", "default"),
+                            )
+                        )
+                except Exception as e:
+                    logger.error(f"Workflow event error for {label}: {e}")
+
+            threading.Thread(target=_run_in_thread, daemon=True).start()
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -1615,6 +1735,17 @@ class NexusFSCoreMixin:
 
         self.metadata.put(new_meta)
 
+        # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
+        self._notify_observer(
+            "on_write",
+            _log_path=path,
+            metadata=new_meta,
+            is_new=(meta is None),
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
+
         return {
             "etag": content_hash,
             "version": new_version,
@@ -1964,47 +2095,25 @@ class NexusFSCoreMixin:
             self._auto_parse_file(path)
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
-        # Observer is optional — injected by factory.py, not created by kernel.
-        if self._write_observer:
-            try:
-                self._write_observer.on_write(
-                    metadata=metadata,
-                    is_new=(meta is None),
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
-            except Exception as e:
-                from nexus.core.exceptions import AuditLogError
-
-                if self._audit_strict_mode:
-                    logger.error(
-                        f"AUDIT LOG FAILURE: Write to '{path}' ABORTED. "
-                        f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                    )
-                    raise AuditLogError(
-                        f"Write operation aborted: audit logging failed: {e}",
-                        path=path,
-                        original_error=e,
-                    ) from e
-                else:
-                    logger.critical(
-                        f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
-                        f"Error: {e}. This creates an audit trail gap!"
-                    )
+        self._notify_observer(
+            "on_write",
+            _log_path=path,
+            metadata=metadata,
+            is_new=(meta is None),
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            # Determine if this is a new file or update
-            is_new_file = meta is None or meta.etag is None
-
-            event_context = {
+        is_new_file = meta is None or meta.etag is None
+        self._fire_workflow_event(
+            TriggerType.FILE_WRITE,
+            {
                 "file_path": path,
                 "size": len(content),
                 "etag": content_hash,
@@ -2014,66 +2123,9 @@ class NexusFSCoreMixin:
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
                 "timestamp": now.isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file write)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                # Try to get the running event loop and create task
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_WRITE, event_context
-                    ),
-                    name=f"workflow:file_write:{path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_write", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_write:{path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run workflow synchronously in background thread
-                # This happens in synchronous contexts (like DeepAgents)
-                import logging
-                import threading
-
-                logger = logging.getLogger(__name__)
-
-                def run_workflow() -> None:
-                    logger.debug(
-                        f"run_workflow thread started for {event_context.get('file_path')}"
-                    )
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_WRITE, event_context
-                            )
-                        )
-                        # v0.8.0: Also broadcast to webhook subscriptions
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            logger.debug(
-                                f"Broadcasting file_write for {event_context.get('file_path')}"
-                            )
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_write",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                        else:
-                            logger.debug("subscription_manager not set")
-                    except Exception as e:
-                        logger.error(
-                            f"Workflow/subscription error for {event_context.get('file_path')}: {e}"
-                        )
-
-                thread = threading.Thread(target=run_workflow, daemon=True)
-                thread.start()
+            },
+            label=f"file_write:{path}",
+        )
 
         # Issue #923: Increment revision and generate zookie (DRY helper)
         zookie_result = self._make_zookie_result(zone_id)
@@ -2632,17 +2684,17 @@ class NexusFSCoreMixin:
         self.metadata.put_batch(metadata_list)
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                items = [
-                    (metadata, existing_metadata.get(metadata.path) is None)
-                    for metadata in metadata_list
-                ]
-                self._write_observer.on_write_batch(
-                    items,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                )
+        batch_items = [
+            (metadata, existing_metadata.get(metadata.path) is None)
+            for metadata in metadata_list
+        ]
+        self._notify_observer(
+            "on_write_batch",
+            _log_path=paths[0] if paths else None,
+            items=batch_items,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
@@ -2917,15 +2969,15 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_delete(
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        self._notify_observer(
+            "on_delete",
+            _log_path=path,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -2939,13 +2991,11 @@ class NexusFSCoreMixin:
         self.metadata.delete(path)
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
-            from datetime import UTC
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            event_context = {
+        self._fire_workflow_event(
+            TriggerType.FILE_DELETE,
+            {
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
@@ -2953,51 +3003,9 @@ class NexusFSCoreMixin:
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file delete)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_DELETE, event_context
-                    ),
-                    name=f"workflow:file_delete:{path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_delete", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_delete:{path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run in background thread
-                import threading
-
-                def run_delete_events() -> None:
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_DELETE, event_context
-                            )
-                        )
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_delete",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Delete event error for {event_context.get('file_path')}: {e}"
-                        )
-
-                threading.Thread(target=run_delete_events, daemon=True).start()
+            },
+            label=f"file_delete:{path}",
+        )
 
         # Issue #923: Increment revision and generate zookie (DRY helper)
         zookie_result = self._make_zookie_result(zone_id)
@@ -3218,25 +3226,23 @@ class NexusFSCoreMixin:
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
         # Task #45: Sync to RecordStore (audit trail)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_rename(
-                    old_path=old_path,
-                    new_path=new_path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        self._notify_observer(
+            "on_rename",
+            _log_path=old_path,
+            old_path=old_path,
+            new_path=new_path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
-            from datetime import UTC
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            event_context = {
+        self._fire_workflow_event(
+            TriggerType.FILE_RENAME,
+            {
                 "old_path": old_path,
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
@@ -3245,49 +3251,9 @@ class NexusFSCoreMixin:
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file rename)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_RENAME, event_context
-                    ),
-                    name=f"workflow:file_rename:{old_path}->{new_path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_rename", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_rename:{old_path}->{new_path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run in background thread
-                import threading
-
-                def run_rename_events() -> None:
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_RENAME, event_context
-                            )
-                        )
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_rename",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                    except Exception as e:
-                        logger.error(f"Rename event error for {event_context.get('old_path')}: {e}")
-
-                threading.Thread(target=run_rename_events, daemon=True).start()
+            },
+            label=f"file_rename:{old_path}->{new_path}",
+        )
 
         # Issue #923: Increment revision and generate zookie (DRY helper)
         zookie_result = self._make_zookie_result(zone_id)

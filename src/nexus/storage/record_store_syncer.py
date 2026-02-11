@@ -93,6 +93,7 @@ class RecordStoreSyncer:
                     snapshot_hash=metadata.etag,
                     metadata_snapshot=None,
                     status="success",
+                    flush=False,  # Defer flush — commit handles it
                 )
                 recorder.record_write(metadata, is_new=is_new)
             session.commit()

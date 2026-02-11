@@ -196,9 +196,7 @@ pub enum RaftMsg {
         tx: oneshot::Sender<Result<()>>,
     },
     /// Campaign to become leader.
-    Campaign {
-        tx: oneshot::Sender<Result<()>>,
-    },
+    Campaign { tx: oneshot::Sender<Result<()>> },
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +414,11 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// Get the current leader ID (atomic read, no channel).
     pub fn leader_id(&self) -> Option<u64> {
         let leader = self.cached_leader_id.load(Ordering::Relaxed);
-        if leader == 0 { None } else { Some(leader) }
+        if leader == 0 {
+            None
+        } else {
+            Some(leader)
+        }
     }
 
     /// Get the current term (atomic read, no channel).
@@ -468,9 +470,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         let data = bincode::serialize(&command)?;
 
         // Generate proposal ID (shared atomic with driver)
-        let id = self
-            .config
-            .id; // use node id as part of context, actual id below
+        let id = self.config.id; // use node id as part of context, actual id below
         let _ = id; // suppress unused
 
         // Proposal ID comes from the driver's shared atomic
@@ -773,8 +773,11 @@ mod tests {
     use tempfile::TempDir;
 
     /// Create a test node pair (handle + driver).
-    fn create_test_node(
-    ) -> (RaftNode<WitnessStateMachine>, RaftNodeDriver<WitnessStateMachine>, TempDir) {
+    fn create_test_node() -> (
+        RaftNode<WitnessStateMachine>,
+        RaftNodeDriver<WitnessStateMachine>,
+        TempDir,
+    ) {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
         let store = SledStore::open(dir.path().join("witness")).unwrap();

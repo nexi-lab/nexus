@@ -4767,9 +4767,9 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        result = nexus_fs.delete(params.path, context=context)
+        nexus_fs.delete(params.path, context=context)
     except TypeError:
-        result = nexus_fs.delete(params.path)
+        nexus_fs.delete(params.path)
 
     response: dict[str, Any] = {"deleted": True}
     return response
@@ -4782,9 +4782,9 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        result = nexus_fs.rename(params.old_path, params.new_path, context=context)
+        nexus_fs.rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        result = nexus_fs.rename(params.old_path, params.new_path)
+        nexus_fs.rename(params.old_path, params.new_path)
 
     response: dict[str, Any] = {"renamed": True}
     return response

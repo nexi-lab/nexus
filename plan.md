@@ -1,246 +1,289 @@
-# Plan: #1256 — Implement Google A2A Protocol Endpoint
+# Plan: #1307 — Sandbox Authentication through Agent Registry
 
-## Architecture Decisions (Approved)
+## Approved Decisions
 
-| # | Decision | Choice |
-|---|----------|--------|
-| 1 | Task state storage | Dedicated `a2a_tasks` PostgreSQL table |
-| 2 | Agent Card generation | Dynamic from NexusConfig + Skills registry |
-| 3 | SSE streaming | `StreamingResponse` + `asyncio.Queue` per-task |
-| 4 | Module boundary | Top-level `src/nexus/a2a/` module |
-| 5 | JSON-RPC models | Independent Pydantic A2A models (no shared base with `protocol.py`) |
-| 6 | Authentication | Reuse `get_auth_result` via lazy imports |
-| 7 | Error handling | A2A-specific exceptions in `a2a/exceptions.py` |
-| 8 | Skill→AgentCard mapping | Agent Card builder in `a2a/agent_card.py` |
-| 9 | Agent Card caching | Build once at startup, cache pre-serialized bytes |
-| 10 | SSE lifecycle | Heartbeat + timeout + explicit cleanup on disconnect |
-| 11 | DB indexes | Targeted: `(zone_id, agent_id, state)`, `context_id`, `created_at` |
-| 12 | Active stream tracking | In-memory `dict[str, asyncio.Queue]` |
+| # | Section | Decision | Choice |
+|---|---------|----------|--------|
+| 1 | Architecture | Auth boundary | **1A**: New `SandboxAuthService` orchestration layer |
+| 2 | Architecture | Dependency wiring | **2A**: Add `AgentRegistry` to existing factory |
+| 3 | Architecture | Namespace scope | **3A**: Construct namespace, defer FUSE filtering to #1305 |
+| 4 | Architecture | Event recording | **4A**: Events emitted from `SandboxAuthService` |
+| 5 | Code Quality | DRY retry pattern | **5A**: Extract `_execute_with_retry()` helper |
+| 6 | Code Quality | Orphan containers | **6A**: Add container cleanup on DB failure |
+| 7 | Code Quality | Event storage | **7B**: New `agent_events` audit table |
+| 8 | Code Quality | agent_id typing | **8A**: Type-safe split (service=required, manager=optional) |
+| 9 | Tests | SandboxManager tests | **9A**: Add unit tests before modifying |
+| 10 | Tests | Auth service tests | **10A**: Unit + integration tests |
+| 11 | Tests | Edge cases | **11A**: All 7 failure modes tested |
+| 12 | Tests | E2E | **12A**: Add E2E test for full auth pipeline |
+| 13 | Performance | Sync/Async | **13A**: `asyncio.to_thread()` wrapper |
+| 14 | Performance | Namespace latency | **14A**: Rely on existing cache (do nothing) |
+| 15 | Performance | Budget enforcement | **15A**: Feature flag (`budget_enforcement=False` default) |
+| 16 | Performance | Event writes | **16C**: Synchronous inserts (simple) |
 
 ## File Structure
 
+### New Files
+
 ```
-src/nexus/a2a/
-├── __init__.py              # Public API: create_a2a_router()
-├── models.py                # Pydantic models: AgentCard, Task, Message, Part types,
-│                            #   TaskState enum, A2ARequest, A2AResponse,
-│                            #   PushNotificationConfig, StreamResponse
-├── exceptions.py            # A2AError base, TaskNotFoundError, TaskNotCancelableError,
-│                            #   UnsupportedOperationError, etc.
-├── agent_card.py            # build_agent_card(config, skills) → AgentCard
-│                            #   Imports SkillMetadata from nexus.skills.models
-├── task_manager.py          # TaskManager class:
-│                            #   - CRUD: create_task, get_task, list_tasks, cancel_task
-│                            #   - State machine: transition_state() with validation
-│                            #   - Active stream tracking: dict[task_id, asyncio.Queue]
-│                            #   - DB operations via SQLAlchemy async
-├── router.py                # FastAPI router with A2A JSON-RPC endpoints:
-│                            #   GET  /.well-known/agent.json
-│                            #   POST /a2a (JSON-RPC dispatch for all A2A methods)
-│                            #   - a2a.tasks.send
-│                            #   - a2a.tasks.get
-│                            #   - a2a.tasks.cancel
-│                            #   - a2a.tasks.list
-│                            #   - a2a.tasks.sendStreamingMessage (SSE)
-│                            #   - a2a.tasks.subscribeToTask (SSE)
-│                            #   - a2a.agent.getExtendedAgentCard
-│                            #   - a2a.tasks.createPushNotificationConfig
-│                            #   - a2a.tasks.getPushNotificationConfig
-│                            #   - a2a.tasks.deletePushNotificationConfig
-│                            #   Auth: reuse get_auth_result via lazy import
-└── db.py                    # SQLAlchemy model for a2a_tasks table + indexes
+src/nexus/sandbox/
+    auth_service.py             # SandboxAuthService — orchestration layer (~200 lines)
+    events.py                   # AgentEventLog — audit table writer (~80 lines)
+
+alembic/versions/
+    add_agent_events_table.py   # Migration for agent_events table (~40 lines)
+
+tests/unit/sandbox/
+    __init__.py
+    test_sandbox_manager.py     # Unit tests for SandboxManager (~250 lines)
+    test_auth_service.py        # Unit tests for SandboxAuthService (~300 lines)
+
+tests/integration/sandbox/
+    __init__.py
+    test_sandbox_auth_integration.py  # Integration test with real DB (~150 lines)
 ```
 
-## Implementation Steps
+### Modified Files
 
-### Step 1: Pydantic Models (`a2a/models.py`)
+```
+src/nexus/sandbox/sandbox_manager.py  # Extract _execute_with_retry(), add cleanup on DB failure
+src/nexus/sandbox/__init__.py         # Export SandboxAuthService
+src/nexus/storage/models.py           # Add AgentEventModel
+src/nexus/factory.py                  # Create AgentRegistry, return in services dict
+src/nexus/server/fastapi_server.py    # Wire SandboxAuthService, use for sandbox endpoints
+tests/e2e/test_agent_registry_e2e.py  # Add sandbox auth E2E test class
+```
 
-Define all A2A protocol types as Pydantic BaseModel classes:
-
-- **TaskState** (str enum): `submitted`, `working`, `input_required`, `completed`, `failed`, `canceled`, `rejected`
-- **TextPart**: `type="text"`, `text: str`, `metadata: dict | None`
-- **FilePart**: `type="file"`, `file: FileContent` (with url/bytes/name/mimeType)
-- **DataPart**: `type="data"`, `data: dict`, `metadata: dict | None`
-- **Part**: Union discriminated by `type` field
-- **Message**: `role: Literal["user", "agent"]`, `parts: list[Part]`, `metadata: dict | None`
-- **Artifact**: `artifactId: str`, `parts: list[Part]`, `metadata: dict | None`
-- **Task**: `id: str`, `contextId: str | None`, `status: TaskStatus`, `artifacts: list[Artifact]`, `metadata: dict | None`
-- **TaskStatus**: `state: TaskState`, `message: Message | None`, `timestamp: datetime`
-- **TaskStatusUpdateEvent**: `taskId: str`, `status: TaskStatus`, `final: bool`
-- **TaskArtifactUpdateEvent**: `taskId: str`, `artifact: Artifact`
-- **StreamResponse**: Union of task/message/statusUpdate/artifactUpdate
-- **AgentSkill**: `id: str`, `name: str`, `description: str`, `tags: list[str]`, `examples: list[str] | None`
-- **AgentCapabilities**: `streaming: bool`, `pushNotifications: bool`
-- **AuthScheme**: `type: str` (apiKey, httpBearer, oauth2), additional fields per type
-- **AgentCard**: `name: str`, `description: str`, `url: str`, `version: str`, `capabilities: AgentCapabilities`, `skills: list[AgentSkill]`, `authentication: list[AuthScheme]`, `defaultInputModes: list[str]`, `defaultOutputModes: list[str]`
-- **A2ARequest**: `jsonrpc: str = "2.0"`, `method: str`, `params: dict`, `id: str | int`
-- **A2AResponse**: `jsonrpc: str = "2.0"`, `result: Any | None`, `error: A2AError | None`, `id: str | int`
-- **SendParams**: `message: Message`, `configuration: dict | None`
-- **GetParams**: `taskId: str`
-- **CancelParams**: `taskId: str`
-- **PushNotificationConfig**: `url: str`, `authentication: dict | None`
-
-### Step 2: Exceptions (`a2a/exceptions.py`)
-
-- **A2AError(Exception)**: base with `code: int`, `message: str`, `data: dict | None`
-- **TaskNotFoundError(A2AError)**: code -32001
-- **TaskNotCancelableError(A2AError)**: code -32002
-- **UnsupportedOperationError(A2AError)**: code -32003
-- **ContentTypeNotSupportedError(A2AError)**: code -32004
-- **InvalidRequestError(A2AError)**: code -32600
-- **MethodNotFoundError(A2AError)**: code -32601
-- **InternalError(A2AError)**: code -32603
-
-### Step 3: Database Model (`a2a/db.py`)
-
-SQLAlchemy model for `a2a_tasks` table:
+## Data Model: `agent_events` Table
 
 ```python
-class A2ATask(Base):
-    __tablename__ = "a2a_tasks"
+class AgentEventModel(Base):
+    __tablename__ = "agent_events"
 
-    id = Column(String, primary_key=True)           # UUID
-    context_id = Column(String, nullable=True, index=True)
-    zone_id = Column(String, nullable=False, default="default")
-    agent_id = Column(String, nullable=True)
-    state = Column(String, nullable=False, default="submitted")
-    messages = Column(JSON, nullable=False, default=list)  # list[Message]
-    artifacts = Column(JSON, nullable=False, default=list) # list[Artifact]
-    metadata_ = Column("metadata", JSON, nullable=True)
-    push_notification_configs = Column(JSON, nullable=False, default=list)
+    id = Column(String, primary_key=True)          # UUID
+    agent_id = Column(String, nullable=False, index=True)
+    event_type = Column(String, nullable=False)     # "sandbox.created", "sandbox.stopped", etc.
+    zone_id = Column(String, nullable=True)
+    payload = Column(JSON, nullable=True)           # Event-specific data
     created_at = Column(DateTime, nullable=False, server_default=func.now())
-    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        Index("ix_a2a_tasks_zone_agent_state", "zone_id", "agent_id", "state"),
-        Index("ix_a2a_tasks_created_at", "created_at"),
+        Index("ix_agent_events_agent_created", "agent_id", "created_at"),
+        Index("ix_agent_events_type", "event_type"),
     )
 ```
 
-### Step 4: Task Manager (`a2a/task_manager.py`)
-
-Core business logic:
-
-- **State transition validation**: Matrix of valid (from, to) pairs
-  - submitted → working, canceled, rejected
-  - working → completed, failed, canceled, input_required
-  - input_required → working, canceled, failed
-  - completed/failed/canceled/rejected → (terminal, no transitions)
-- **create_task(message, config, zone_id, agent_id) → Task**: Create task in DB, return Task
-- **get_task(task_id, zone_id) → Task**: Fetch from DB with zone isolation
-- **list_tasks(zone_id, agent_id, state, limit, offset) → list[Task]**: Filtered query
-- **cancel_task(task_id, zone_id) → Task**: Validate cancellable state, transition to canceled
-- **update_task_state(task_id, new_state, message) → Task**: Validate transition, update DB, push to active stream
-- **add_artifact(task_id, artifact) → Task**: Append artifact, push to active stream
-- **Active stream tracking**:
-  - `register_stream(task_id) → asyncio.Queue`
-  - `unregister_stream(task_id)`
-  - `push_event(task_id, event: StreamResponse)`
-
-### Step 5: Agent Card Builder (`a2a/agent_card.py`)
-
-- **build_agent_card(config: NexusConfig, skills: list[SkillMetadata], base_url: str) → AgentCard**
-  - Map each SkillMetadata → AgentSkill (name, description, tags)
-  - Determine auth schemes from active auth provider config
-  - Set capabilities: `streaming=True`, `pushNotifications=False` (Phase 1)
-  - Return complete AgentCard
-
-- **Caching**: Module-level `_cached_card: bytes | None` — built once, returned for every request
-
-### Step 6: Router (`a2a/router.py`)
-
-FastAPI router wired into `create_app()`:
+## SandboxAuthService API
 
 ```python
-router = APIRouter(tags=["a2a"])
+class SandboxAuthService:
+    """Orchestrates sandbox creation through Agent Registry.
 
-@router.get("/.well-known/agent.json")
-async def get_agent_card() -> Response:
-    """Public endpoint — no auth required."""
-    return Response(content=_cached_card_bytes, media_type="application/json")
+    Pipeline: validate agent -> construct namespace -> check budget ->
+              create sandbox -> record events.
 
-@router.post("/a2a")
-async def a2a_jsonrpc(request: A2ARequest, auth=Depends(require_auth)):
-    """JSON-RPC dispatch for all A2A methods."""
-    # Dispatch based on request.method:
-    #   "a2a.tasks.send" → handle_send()
-    #   "a2a.tasks.get" → handle_get()
-    #   "a2a.tasks.cancel" → handle_cancel()
-    #   "a2a.tasks.list" → handle_list()
-    #   "a2a.tasks.sendStreamingMessage" → handle_send_streaming() → SSE
-    #   "a2a.tasks.subscribeToTask" → handle_subscribe() → SSE
-    #   "a2a.agent.getExtendedAgentCard" → handle_extended_card()
-    #   etc.
+    This is a platform service that USES kernel primitives (Agent Registry,
+    Namespace Manager) — the sandbox doesn't bypass the kernel.
+    """
 
-@router.post("/a2a/stream")
-async def a2a_stream(request: A2ARequest, auth=Depends(require_auth)):
-    """SSE endpoint for streaming methods."""
-    # Returns StreamingResponse with text/event-stream
-    # Uses asyncio.Queue for event delivery
-    # Heartbeat every 15 seconds
-    # Max lifetime 30 minutes (configurable)
-    # Cleanup on disconnect
+    def __init__(
+        self,
+        agent_registry: AgentRegistry,
+        sandbox_manager: SandboxManager,
+        namespace_manager: NamespaceManager | None = None,
+        nexus_pay: NexusPay | None = None,
+        event_log: AgentEventLog | None = None,
+        session_factory: sessionmaker[Session] | None = None,
+        budget_enforcement: bool = False,       # Feature flag (#15A)
+    ) -> None: ...
+
+    async def create_sandbox(
+        self,
+        agent_id: str,                          # Required (not optional) (#8A)
+        owner_id: str,
+        zone_id: str,
+        name: str,
+        ttl_minutes: int = 10,
+        provider: str | None = None,
+        template_id: str | None = None,
+    ) -> SandboxAuthResult: ...
+
+    async def stop_sandbox(
+        self,
+        sandbox_id: str,
+        agent_id: str,
+    ) -> dict[str, Any]: ...
+
+    async def connect_sandbox(
+        self,
+        sandbox_id: str,
+        agent_id: str,
+        mount_path: str = "/mnt/nexus",
+        nexus_url: str | None = None,
+        nexus_api_key: str | None = None,
+    ) -> dict[str, Any]: ...
 ```
 
-### Step 7: Wire into FastAPI Server
-
-In `fastapi_server.py` `create_app()`:
+## SandboxAuthResult
 
 ```python
-# A2A Protocol Endpoint (Issue #1256)
-try:
-    from nexus.a2a import create_a2a_router
-    a2a_router = create_a2a_router(nexus_fs=nexus_fs, config=config)
-    app.include_router(a2a_router)
-    logger.info("A2A protocol endpoint registered")
-except ImportError as e:
-    logger.warning(f"Failed to import A2A router: {e}")
+@dataclass(frozen=True)
+class SandboxAuthResult:
+    """Immutable result of authenticated sandbox creation."""
+    sandbox: dict[str, Any]          # Sandbox metadata dict
+    agent_record: AgentRecord        # Validated agent snapshot
+    mount_table: list[MountEntry]    # Constructed namespace (may be empty)
+    budget_checked: bool             # Whether budget was enforced
 ```
 
-Add feature flag to `FeaturesConfig`:
-```python
-a2a_endpoint: bool = Field(default=True, description="Enable A2A protocol endpoint")
-```
+## Implementation Steps (TDD Order)
 
-### Step 8: Tests
+### Phase 1: Safety Net (Tests for Existing Code)
 
-```
-tests/unit/a2a/
-├── __init__.py
-├── test_models.py           # ~40-60 tests: model validation, serialization,
-│                            #   Part type discrimination, TaskState enum
-├── test_task_manager.py     # ~50-60 tests: exhaustive state transition matrix,
-│                            #   CRUD operations, concurrent access, edge cases
-├── test_agent_card.py       # ~10 tests: spec conformance, skill mapping,
-│                            #   auth scheme detection, caching behavior
-└── test_exceptions.py       # ~10 tests: error codes, serialization
+**Step 1**: `tests/unit/sandbox/test_sandbox_manager.py`
+- ~20-25 tests for existing SandboxManager
+- Cover: create, pause, resume, stop, list, cleanup, name uniqueness, DB errors
+- Fixtures: in-memory SQLite + mocked providers
+- Run RED (they should pass since testing existing behavior)
 
-tests/integration/a2a/
-├── __init__.py
-├── test_a2a_endpoints.py    # ~20 tests: JSON-RPC dispatch, auth, error handling,
-│                            #   end-to-end task lifecycle via HTTP
-└── test_a2a_streaming.py    # ~15-20 tests: SSE event delivery, ordering,
-│                            #   disconnect handling, cancel mid-stream, timeout
-```
+### Phase 2: Code Quality Fixes
 
-## Implementation Order
+**Step 2**: Extract `_execute_with_retry()` in `sandbox_manager.py` (#5A)
+- Private method: `_execute_with_retry(self, stmt) -> Any`
+- Replace 5 duplicate try/except blocks
+- Run Step 1 tests: GREEN
 
-1. `a2a/models.py` + `a2a/exceptions.py` — Foundation types (no external deps)
-2. `tests/unit/a2a/test_models.py` + `test_exceptions.py` — Validate types
-3. `a2a/db.py` — Database model
-4. `a2a/task_manager.py` — Business logic
-5. `tests/unit/a2a/test_task_manager.py` — State machine tests
-6. `a2a/agent_card.py` — Agent Card builder
-7. `tests/unit/a2a/test_agent_card.py` — Spec conformance
-8. `a2a/router.py` + `a2a/__init__.py` — HTTP layer
-9. Wire into `fastapi_server.py` + add feature flag to `config.py`
-10. `tests/integration/a2a/test_a2a_endpoints.py` — End-to-end HTTP tests
-11. `tests/integration/a2a/test_a2a_streaming.py` — SSE streaming tests
+**Step 3**: Add orphan container cleanup in `create_sandbox()` (#6A)
+- If DB commit fails after container creation, call `provider_obj.destroy(sandbox_id)`
+- Add test in Step 1 file for this specific edge case
+- Run tests: GREEN
 
-## Key Design Constraints (from Agent OS Deep Research doc)
+### Phase 3: Database Schema
 
-- A2A is a **protocol surface**, not a kernel component (line 1184)
-- A2A tasks bridge to VFS IPC paths **internally** — but for Phase 1, DB-only is sufficient
-- Agent Cards populated from Agent Registry + Templar manifests (line 212) — for Phase 1, populated from NexusConfig + Skills
-- Nexus provides what A2A lacks: event backbone, shared memory, ReBAC, payments (line 212)
-- Three protocol surfaces: VFS (native), MCP (agent↔tools), A2A (agent↔agent) (line 1079)
+**Step 4**: Add `AgentEventModel` to `storage/models.py` (#7B)
+- Append-only audit table
+- Indexes: (agent_id, created_at), (event_type)
+
+**Step 5**: Alembic migration `add_agent_events_table.py`
+- Creates `agent_events` table
+
+### Phase 4: Event Log
+
+**Step 6**: `src/nexus/sandbox/events.py`
+- `AgentEventLog` class with `record(agent_id, event_type, zone_id, payload)` method
+- Uses session-per-operation pattern (same as AgentRegistry)
+- Synchronous inserts (#16C)
+- ~80 lines
+
+**Step 7**: Unit tests for `AgentEventLog`
+- Test: record event, query events, event with payload
+- ~30 lines
+
+### Phase 5: SandboxAuthService (Core)
+
+**Step 8**: `src/nexus/sandbox/auth_service.py` — write tests FIRST
+- `tests/unit/sandbox/test_auth_service.py`
+- Tests for each step of the pipeline:
+  1. Agent not found → error before container creation
+  2. Agent in wrong state → error with state info
+  3. Namespace construction (mock NamespaceManager)
+  4. Budget insufficient → error before container creation
+  5. Successful creation → agent transitions to CONNECTED
+  6. Partial failure → container cleaned up, agent not left in bad state
+  7. Concurrent creation → one wins, other fails gracefully
+  8. Ownership mismatch → error
+  9. Stop sandbox → agent transitions to IDLE, event recorded
+  10. Connect sandbox → namespace passed as metadata
+
+**Step 9**: Implement `SandboxAuthService`
+- Pipeline: validate agent → check ownership → transition CONNECTED → construct namespace
+           → check budget → delegate to SandboxManager → record event
+- Wrapped in `asyncio.to_thread()` for sync operations (#13A)
+- Budget check gated by feature flag (#15A)
+- Events recorded synchronously (#16C)
+- ~200 lines
+- Run Step 8 tests: GREEN
+
+### Phase 6: Factory & Server Wiring
+
+**Step 10**: Update `factory.py`
+- Add `AgentRegistry` creation in `create_nexus_services()`
+- Accept `session_factory` parameter
+- Return `agent_registry` in services dict
+
+**Step 11**: Update `sandbox/__init__.py`
+- Export `SandboxAuthService`, `SandboxAuthResult`, `AgentEventLog`
+
+**Step 12**: Update `fastapi_server.py`
+- Create `SandboxAuthService` with wired dependencies
+- Route sandbox creation endpoints through `SandboxAuthService`
+- Keep backward-compatible endpoints that don't require agent auth
+
+### Phase 7: Integration & E2E Tests
+
+**Step 13**: `tests/integration/sandbox/test_sandbox_auth_integration.py`
+- Real in-memory SQLite with AgentRegistry + SandboxManager + EventLog
+- Mock only sandbox providers
+- Test full pipeline: register agent → create sandbox → verify events
+- ~150 lines
+
+**Step 14**: Extend `tests/e2e/test_agent_registry_e2e.py`
+- New test class: `TestSandboxAuthE2E`
+- Real PostgreSQL + mocked Docker provider
+- Test: agent registration → sandbox creation → namespace construction → event recording
+- ~100 lines
+
+### Phase 8: Cleanup & Verification
+
+**Step 15**: Run full test suite
+- `uv run pytest tests/unit/sandbox/ tests/unit/core/test_agent_registry.py -v`
+- `uv run pytest tests/integration/sandbox/ -v`
+- Verify no regressions in existing tests
+
+**Step 16**: Update `sandbox/__init__.py` exports and verify imports
+
+## Key Design Principles
+
+1. **Sandbox is a platform service, not a kernel component**
+   - `SandboxAuthService` uses kernel primitives (AgentRegistry, NamespaceManager)
+   - `SandboxManager` stays as infrastructure-layer lifecycle manager
+   - Clean layering: API → SandboxAuthService → SandboxManager → Provider
+
+2. **Immutability**
+   - `SandboxAuthResult` is a frozen dataclass
+   - `AgentRecord` is already frozen
+   - `MountEntry` is already frozen
+
+3. **Explicit over clever**
+   - Type-safe split: service requires `agent_id: str`, manager keeps `agent_id: str | None`
+   - Feature flag for budget enforcement (explicit opt-in)
+   - Synchronous event inserts (no hidden buffering)
+
+4. **DRY**
+   - `_execute_with_retry()` replaces 5 duplicate try/except blocks
+   - Single auth path through `SandboxAuthService`
+
+5. **Edge cases handled**
+   - Orphan container cleanup on DB failure
+   - All 7 failure modes explicitly tested
+   - Concurrent creation handled via AgentRegistry's optimistic locking
+
+## Deferred to Follow-up Issues
+
+- **#1305**: FUSE filtering (namespace mount table passed but not enforced in FUSE)
+- **EventBus integration**: Generic event pub/sub (currently file-events only)
+- **Async conversion**: Full async AgentRegistry (sync + to_thread is sufficient for now)
+- **Foreign key**: `sandbox_metadata.agent_id → agent_records.agent_id` (deferred to avoid migration complexity)
+
+## Estimated Scope
+
+| Component | Lines (approx) | Tests (approx) |
+|-----------|----------------|-----------------|
+| SandboxAuthService | ~200 | ~30 unit + 7 edge cases |
+| AgentEventLog | ~80 | ~10 |
+| SandboxManager fixes | ~30 net (remove ~85, add ~30) | ~25 |
+| Models + Migration | ~40 | — |
+| Factory + Server wiring | ~40 | — |
+| Integration tests | — | ~15 |
+| E2E tests | — | ~5 |
+| **Total** | ~390 new/modified | ~92 tests |

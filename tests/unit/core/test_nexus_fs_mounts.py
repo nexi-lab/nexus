@@ -360,7 +360,9 @@ class TestListSavedMounts:
         """Test that list_saved_mounts raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-list-saved-mounts")),
+            metadata_store=RaftMetadataStore.embedded(
+                str(temp_dir / "raft-test-list-saved-mounts")
+            ),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_list_saved_mounts.db"),
             auto_parse=False,
             enforce_permissions=False,
@@ -402,7 +404,9 @@ class TestDeleteSavedMount:
         """Test that delete_saved_mount raises RuntimeError without mount manager."""
         nx = create_nexus_fs(
             backend=LocalBackend(temp_dir),
-            metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-test-delete-saved-mount")),
+            metadata_store=RaftMetadataStore.embedded(
+                str(temp_dir / "raft-test-delete-saved-mount")
+            ),
             record_store=SQLAlchemyRecordStore(db_path=temp_dir / "test_delete_saved_mount.db"),
             auto_parse=False,
             enforce_permissions=False,

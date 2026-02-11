@@ -470,7 +470,9 @@ class TestConsistencyHeadersE2E:
             # Write a file first
             client.post(
                 "/api/nfs/write",
-                json={"params": {"path": "/cto_header.txt", "content": _make_bytes_content("test")}},
+                json={
+                    "params": {"path": "/cto_header.txt", "content": _make_bytes_content("test")}
+                },
             )
 
             # Read with X-Nexus-Consistency header (all 3 levels)
@@ -707,9 +709,7 @@ class TestCTORealServer:
         resp = cto_admin_client.get("/health")
         assert resp.status_code == 200
 
-    def test_write_read_with_consistency_header(
-        self, cto_admin_client: httpx.Client
-    ) -> None:
+    def test_write_read_with_consistency_header(self, cto_admin_client: httpx.Client) -> None:
         """Admin writes, then reads with X-Nexus-Consistency + zookie."""
         path = _unique_path("cto_read.txt")
         write_resp = cto_admin_client.post(
@@ -772,9 +772,7 @@ class TestCTORealServer:
         data = read_resp.json()
         assert "result" in data, f"EVENTUAL read should succeed, got: {data}"
 
-    def test_invalid_consistency_returns_error(
-        self, cto_admin_client: httpx.Client
-    ) -> None:
+    def test_invalid_consistency_returns_error(self, cto_admin_client: httpx.Client) -> None:
         """Invalid X-Nexus-Consistency value should return an error."""
         resp = cto_admin_client.post(
             "/api/nfs/read",
@@ -786,9 +784,7 @@ class TestCTORealServer:
         assert "error" in data, f"Expected error for invalid consistency, got: {data}"
         assert "Invalid X-Nexus-Consistency" in data["error"]["message"]
 
-    def test_strong_consistency_with_valid_zookie(
-        self, cto_admin_client: httpx.Client
-    ) -> None:
+    def test_strong_consistency_with_valid_zookie(self, cto_admin_client: httpx.Client) -> None:
         """STRONG consistency with valid (satisfied) zookie should succeed."""
         path = _unique_path("strong.txt")
         write_resp = cto_admin_client.post(

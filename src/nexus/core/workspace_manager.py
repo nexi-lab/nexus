@@ -667,4 +667,5 @@ class WorkspaceManager:
         )
 
         stats = overlay_resolver.overlay_stats(overlay_config)
-        return stats.to_dict()
+        result: dict[str, Any] = stats.to_dict()
+        return result

@@ -680,6 +680,38 @@ class AgentRecordModel(Base):
         )
 
 
+class AgentEventModel(Base):
+    """Agent lifecycle events audit log (Issue #1307).
+
+    Append-only table recording agent lifecycle events such as sandbox
+    creation, connection, and termination. Used by SandboxAuthService
+    to satisfy the "sandbox lifecycle events recorded as agent events"
+    acceptance criterion.
+    """
+
+    __tablename__ = "agent_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON as string
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        Index("ix_agent_events_agent_created", "agent_id", "created_at"),
+        Index("ix_agent_events_type", "event_type"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AgentEventModel(id={self.id}, agent_id={self.agent_id}, "
+            f"event_type={self.event_type})>"
+        )
+
+
 class MemoryModel(Base):
     """Memory storage for AI agents.
 

@@ -102,10 +102,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                         if let Some(addr) = self.peers.get(&target_id) {
                             self.send_message(target_id, addr, msg).await;
                         } else {
-                            tracing::warn!(
-                                "No address for peer {} — dropping message",
-                                target_id
-                            );
+                            tracing::warn!("No address for peer {} — dropping message", target_id);
                         }
                     }
                 }

@@ -345,12 +345,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         self.advance_notify.notify_one();
 
         // Wait for commit with timeout
-        match tokio::time::timeout(
-            Duration::from_secs(PROPOSAL_TIMEOUT_SECS),
-            rx,
-        )
-        .await
-        {
+        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(RaftError::ProposalDropped),
             Err(_) => {

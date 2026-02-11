@@ -28,6 +28,7 @@ from nexus.portability.models import (
     BundleChecksums,
     ExportManifest,
     FileRecord,
+    PermissionRecord,
     ZoneExportOptions,
 )
 
@@ -325,10 +326,13 @@ class ZoneExportService:
 
     def _export_permissions(
         self,
-        zone_id: str,  # noqa: ARG002
+        zone_id: str,
         output_path: Path,
     ) -> int:
         """Export ReBAC permission tuples to JSONL.
+
+        Queries the ReBAC manager for all tuples in the zone and writes
+        them as PermissionRecord JSONL lines.
 
         Args:
             zone_id: Zone ID to export permissions for
@@ -346,15 +350,22 @@ class ZoneExportService:
             return 0
 
         try:
-            # Export permissions - implementation depends on ReBAC manager API
-            # TODO: Query ReBAC for all tuples related to this zone
-            # For now, create an empty permissions file
-            with output_path.open("w", encoding="utf-8"):
-                # Placeholder - real implementation would iterate ReBAC tuples
-                logger.info(
-                    f"Permission export: ReBAC tuple export not yet implemented "
-                    f"(rebac_manager={type(rebac_manager).__name__})"
-                )
+            # Fetch all tuples for the zone from the database
+            tuples = rebac_manager._fetch_zone_tuples_from_db(zone_id)
+
+            with output_path.open("w", encoding="utf-8") as f:
+                for t in tuples:
+                    record = PermissionRecord(
+                        object_type=t["object_type"],
+                        object_id=t["object_id"],
+                        relation=t["relation"],
+                        subject_type=t["subject_type"],
+                        subject_id=t["subject_id"],
+                    )
+                    f.write(record.to_jsonl() + "\n")
+                    perm_count += 1
+
+            logger.info(f"Exported {perm_count} permission tuples for zone {zone_id}")
 
         except Exception as e:
             logger.warning(f"Error exporting permissions: {e}")

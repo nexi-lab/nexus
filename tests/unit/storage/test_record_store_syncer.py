@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core._metadata_generated import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import Base, FilePathModel, OperationLogModel
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 
@@ -48,7 +48,7 @@ def _make_metadata(
         zone_id=zone_id,
         created_by=created_by,
         owner_id=owner_id,
-        is_directory=is_directory,
+        entry_type=DT_DIR if is_directory else DT_REG,
         created_at=created_at or now,
         modified_at=modified_at or now,
     )

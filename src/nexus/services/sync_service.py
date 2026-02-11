@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
@@ -36,413 +37,6 @@ if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Change Log Store for Delta Sync (Issue #1127)
-# =============================================================================
-
-
-@dataclass
-class ChangeLogEntry:
-    """Cached change log entry for delta sync comparison."""
-
-    path: str
-    backend_name: str
-    size_bytes: int | None = None
-    mtime: datetime | None = None
-    backend_version: str | None = None
-    content_hash: str | None = None
-    synced_at: datetime | None = None
-
-
-class ChangeLogStore:
-    """Lightweight store for change log operations (Issue #1127).
-
-    Provides CRUD operations for BackendChangeLogModel to support delta sync.
-    Uses the gateway's session factory for database access.
-    """
-
-    def __init__(self, gateway: NexusFSGateway):
-        """Initialize change log store.
-
-        Args:
-            gateway: NexusFSGateway for database session access
-        """
-        self._gw = gateway
-        self._is_postgres: bool | None = None  # Lazy dialect detection
-        self._dialect_lock = threading.Lock()
-
-    def _get_session(self) -> Any:
-        """Get a database session from the gateway."""
-        # Use gateway's session_factory property — check explicitly for None
-        if hasattr(self._gw, "session_factory") and self._gw.session_factory is not None:
-            return self._gw.session_factory()
-        return None
-
-    def _detect_dialect(self) -> bool:
-        """Detect if the database is PostgreSQL. Result is cached after first call.
-
-        Thread-safe: uses double-checked locking to avoid races.
-
-        Returns:
-            True if PostgreSQL, False for SQLite or unknown
-        """
-        if self._is_postgres is not None:
-            return self._is_postgres
-        with self._dialect_lock:
-            # Double-check after acquiring lock
-            if self._is_postgres is not None:
-                return self._is_postgres
-            session = self._get_session()
-            if session is not None:
-                try:
-                    self._is_postgres = session.bind.dialect.name == "postgresql"
-                except Exception:
-                    self._is_postgres = False
-                finally:
-                    session.close()
-            else:
-                self._is_postgres = False
-            return self._is_postgres
-
-    def get_change_log(
-        self, path: str, backend_name: str, zone_id: str = "default"
-    ) -> ChangeLogEntry | None:
-        """Get change log entry for a path.
-
-        Args:
-            path: Virtual file path
-            backend_name: Backend identifier
-            zone_id: Zone ID
-
-        Returns:
-            ChangeLogEntry if found, None otherwise
-        """
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return None
-
-        try:
-            entry = (
-                session.query(BackendChangeLogModel)
-                .filter(
-                    BackendChangeLogModel.path == path,
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
-                )
-                .first()
-            )
-
-            if entry:
-                return ChangeLogEntry(
-                    path=entry.path,
-                    backend_name=entry.backend_name,
-                    size_bytes=entry.size_bytes,
-                    mtime=entry.mtime,
-                    backend_version=entry.backend_version,
-                    content_hash=entry.content_hash,
-                    synced_at=entry.synced_at,
-                )
-            return None
-        except Exception as e:
-            logger.warning(f"Failed to get change log for {path}: {e}")
-            return None
-        finally:
-            session.close()
-
-    def upsert_change_log(
-        self,
-        path: str,
-        backend_name: str,
-        zone_id: str = "default",
-        size_bytes: int | None = None,
-        mtime: datetime | None = None,
-        backend_version: str | None = None,
-        content_hash: str | None = None,
-    ) -> bool:
-        """Insert or update change log entry.
-
-        Args:
-            path: Virtual file path
-            backend_name: Backend identifier
-            zone_id: Zone ID
-            size_bytes: File size in bytes
-            mtime: Last modification time
-            backend_version: Backend-specific version (GCS generation, S3 version ID)
-            content_hash: Content hash if computed
-
-        Returns:
-            True if successful, False otherwise
-        """
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return False
-
-        try:
-            now = datetime.now(UTC)
-            values = {
-                "path": path,
-                "backend_name": backend_name,
-                "zone_id": zone_id,
-                "size_bytes": size_bytes,
-                "mtime": mtime,
-                "backend_version": backend_version,
-                "content_hash": content_hash,
-                "synced_at": now,
-            }
-            update_set = {
-                "size_bytes": size_bytes,
-                "mtime": mtime,
-                "backend_version": backend_version,
-                "content_hash": content_hash,
-                "synced_at": now,
-            }
-
-            if self._detect_dialect():
-                # PostgreSQL ON CONFLICT DO UPDATE (named constraint)
-                stmt = pg_insert(BackendChangeLogModel).values(**values)
-                stmt = stmt.on_conflict_do_update(
-                    constraint="uq_backend_change_log",
-                    set_=update_set,
-                )
-            else:
-                # SQLite ON CONFLICT DO UPDATE (index elements)
-                stmt = sqlite_insert(BackendChangeLogModel).values(**values)  # type: ignore[assignment]
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["path", "backend_name", "zone_id"],
-                    set_=update_set,
-                )
-
-            session.execute(stmt)
-            session.commit()
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to upsert change log for {path}: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
-
-    def get_last_sync_time(self, backend_name: str, zone_id: str = "default") -> datetime | None:
-        """Get the most recent sync time for a backend.
-
-        Args:
-            backend_name: Backend identifier
-            zone_id: Zone ID
-
-        Returns:
-            Most recent synced_at timestamp, or None if no entries
-        """
-        from sqlalchemy import func
-
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return None
-
-        try:
-            result = (
-                session.query(func.max(BackendChangeLogModel.synced_at))
-                .filter(
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
-                )
-                .scalar()
-            )
-            return result  # type: ignore[no-any-return]
-        except Exception as e:
-            logger.warning(f"Failed to get last sync time for {backend_name}: {e}")
-            return None
-        finally:
-            session.close()
-
-    def get_change_logs_batch(
-        self, backend_name: str, zone_id: str, path_prefix: str
-    ) -> dict[str, ChangeLogEntry]:
-        """Fetch all change logs for a mount prefix in one query.
-
-        Used before BFS traversal to pre-load all cached entries, eliminating
-        per-file database round-trips (~100x speedup for large mounts).
-
-        Args:
-            backend_name: Backend identifier
-            zone_id: Zone ID
-            path_prefix: Mount point prefix (e.g. "/mnt/gcs")
-
-        Returns:
-            Dict mapping path to ChangeLogEntry
-        """
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return {}
-
-        try:
-            # Escape SQL LIKE wildcards in prefix to prevent unintended matching
-            escaped = path_prefix.replace("%", r"\%").replace("_", r"\_")
-            entries = (
-                session.query(BackendChangeLogModel)
-                .filter(
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
-                    BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
-                )
-                .all()
-            )
-
-            return {
-                entry.path: ChangeLogEntry(
-                    path=entry.path,
-                    backend_name=entry.backend_name,
-                    size_bytes=entry.size_bytes,
-                    mtime=entry.mtime,
-                    backend_version=entry.backend_version,
-                    content_hash=entry.content_hash,
-                    synced_at=entry.synced_at,
-                )
-                for entry in entries
-            }
-        except Exception as e:
-            logger.warning(f"Failed to batch-fetch change logs for {path_prefix}: {e}")
-            return {}
-        finally:
-            session.close()
-
-    def upsert_change_logs_batch(self, entries: list[dict]) -> bool:
-        """Bulk upsert change log entries in a single transaction.
-
-        Used after BFS traversal to flush all change log updates at once,
-        eliminating per-file commit overhead.
-
-        Args:
-            entries: List of dicts with keys matching upsert_change_log params:
-                path, backend_name, zone_id, size_bytes, mtime,
-                backend_version, content_hash
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not entries:
-            return True
-
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return False
-
-        try:
-            now = datetime.now(UTC)
-            is_pg = self._detect_dialect()
-
-            # Build all value dicts upfront
-            all_values = [
-                {
-                    "path": entry["path"],
-                    "backend_name": entry["backend_name"],
-                    "zone_id": entry["zone_id"],
-                    "size_bytes": entry.get("size_bytes"),
-                    "mtime": entry.get("mtime"),
-                    "backend_version": entry.get("backend_version"),
-                    "content_hash": entry.get("content_hash"),
-                    "synced_at": now,
-                }
-                for entry in entries
-            ]
-
-            # Use multi-row insert for true batch performance
-            # SQLite has a variable limit (~999), so chunk to be safe
-            chunk_size = 500
-            for i in range(0, len(all_values), chunk_size):
-                chunk = all_values[i : i + chunk_size]
-
-                if is_pg:
-                    stmt = pg_insert(BackendChangeLogModel).values(chunk)
-                    stmt = stmt.on_conflict_do_update(
-                        constraint="uq_backend_change_log",
-                        set_={
-                            "size_bytes": stmt.excluded.size_bytes,
-                            "mtime": stmt.excluded.mtime,
-                            "backend_version": stmt.excluded.backend_version,
-                            "content_hash": stmt.excluded.content_hash,
-                            "synced_at": stmt.excluded.synced_at,
-                        },
-                    )
-                    session.execute(stmt)
-                else:
-                    # SQLite doesn't support multi-row on_conflict_do_update
-                    # with excluded references, so use per-row upserts
-                    for row in chunk:
-                        row_stmt = sqlite_insert(BackendChangeLogModel).values(**row)
-                        row_stmt = row_stmt.on_conflict_do_update(
-                            index_elements=["path", "backend_name", "zone_id"],
-                            set_={
-                                "size_bytes": row["size_bytes"],
-                                "mtime": row["mtime"],
-                                "backend_version": row["backend_version"],
-                                "content_hash": row["content_hash"],
-                                "synced_at": now,
-                            },
-                        )
-                        session.execute(row_stmt)
-
-            session.commit()
-            logger.debug(f"[DELTA_SYNC] Batch upserted {len(entries)} change log entries")
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to batch-upsert {len(entries)} change logs: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
-
-    def delete_change_log(self, path: str, backend_name: str, zone_id: str = "default") -> bool:
-        """Delete change log entry for a path.
-
-        Used during file deletion to prevent stale entries that could
-        cause false skips when files are re-created with the same path.
-
-        Args:
-            path: Virtual file path
-            backend_name: Backend identifier
-            zone_id: Zone ID
-
-        Returns:
-            True if successful, False otherwise
-        """
-        from nexus.storage.models import BackendChangeLogModel
-
-        session = self._get_session()
-        if session is None:
-            return False
-
-        try:
-            session.query(BackendChangeLogModel).filter(
-                BackendChangeLogModel.path == path,
-                BackendChangeLogModel.backend_name == backend_name,
-                BackendChangeLogModel.zone_id == zone_id,
-            ).delete()
-            session.commit()
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to delete change log for {path}: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
 
 
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
@@ -791,7 +385,7 @@ class SyncService:
                 )
 
         # Collect change log upserts for batch flush
-        pending_upserts: list[dict] = []
+        pending_upserts: list[ChangeLogEntry] = []
 
         def flush_pending_upserts() -> None:
             """Flush accumulated change log upserts in a single transaction."""
@@ -913,7 +507,7 @@ class SyncService:
         files_found: set[str],
         paths_needing_tuples: list[str],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
-        pending_upserts: list[dict] | None = None,
+        pending_upserts: list[ChangeLogEntry] | None = None,
     ) -> None:
         """Sync a single file entry.
 
@@ -1062,7 +656,7 @@ class SyncService:
 
     def _enqueue_change_log_upsert(
         self,
-        pending_upserts: list[dict] | None,
+        pending_upserts: list[ChangeLogEntry] | None,
         path: str,
         backend_name: str,
         zone_id: str,
@@ -1080,15 +674,14 @@ class SyncService:
             zone_id: Zone ID
             file_info: File info from backend
         """
-        entry: dict[str, str | int | datetime | None] = {
-            "path": path,
-            "backend_name": backend_name,
-            "zone_id": zone_id,
-            "size_bytes": file_info.size,
-            "mtime": file_info.mtime,
-            "backend_version": file_info.backend_version,
-            "content_hash": file_info.content_hash,
-        }
+        entry = ChangeLogEntry(
+            path=path,
+            backend_name=backend_name,
+            size_bytes=file_info.size,
+            mtime=file_info.mtime,
+            backend_version=file_info.backend_version,
+            content_hash=file_info.content_hash,
+        )
         if pending_upserts is not None:
             pending_upserts.append(entry)
         else:
@@ -1445,7 +1038,7 @@ class SyncService:
         paths_needing_tuples: list[str],
         flush_fn: Callable[[], None],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
-        pending_upserts: list[dict] | None = None,
+        pending_upserts: list[ChangeLogEntry] | None = None,
     ) -> set[str]:
         """Sync a single file by delegating to _sync_file.
 

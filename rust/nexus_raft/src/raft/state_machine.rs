@@ -1044,7 +1044,7 @@ mod tests {
     /// Test that expired holders are cleaned up during acquire.
     #[test]
     fn test_lock_ttl_expiry_during_acquire() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire a lock with 1-second TTL
@@ -1087,7 +1087,7 @@ mod tests {
     /// Test that mixing mutex and semaphore max_holders is rejected.
     #[test]
     fn test_lock_type_mismatch() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire a semaphore lock (max_holders = 3)
@@ -1124,7 +1124,7 @@ mod tests {
     /// Test that snapshots include expired holders (they're cleaned on acquire, not snapshot).
     #[test]
     fn test_expired_holders_in_snapshot() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire a lock with 1-second TTL
@@ -1145,7 +1145,7 @@ mod tests {
         let snapshot_data = sm.snapshot().unwrap();
 
         // Restore to a new state machine
-        let store2 = SledStore::open_temporary().unwrap();
+        let store2 = RedbStore::open_temporary().unwrap();
         let mut sm2 = FullStateMachine::new(&store2).unwrap();
         sm2.restore_snapshot(&snapshot_data).unwrap();
 
@@ -1160,7 +1160,7 @@ mod tests {
     /// Test edge cases with max_holders boundary values.
     #[test]
     fn test_lock_max_holders_boundary() {
-        let store = SledStore::open_temporary().unwrap();
+        let store = RedbStore::open_temporary().unwrap();
         let mut sm = FullStateMachine::new(&store).unwrap();
 
         // Acquire with max_holders = u32::MAX (should work)

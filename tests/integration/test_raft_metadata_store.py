@@ -167,8 +167,8 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     """Create a RaftMetadataStore backed by a FakeLocalRaft."""
     fake = fake or FakeLocalRaft()
     store = object.__new__(RaftMetadataStore)
-    store._local = fake
-    store._remote = None
+    store._engine = fake
+    store._client = None
     store._zone_id = None
     return store
 

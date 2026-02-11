@@ -490,9 +490,9 @@ impl PyRaftConsensus {
             .collect::<PyResult<Vec<_>>>()?;
 
         // Parse bind address
-        let bind_socket: std::net::SocketAddr = bind_addr
-            .parse()
-            .map_err(|e| PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e)))?;
+        let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
+            PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
+        })?;
 
         let config = ServerConfig {
             bind_address: bind_socket,
@@ -700,7 +700,12 @@ impl PyRaftConsensus {
 
     /// List all locks matching a prefix (local read, no consensus).
     #[pyo3(signature = (prefix="", limit=1000))]
-    pub fn list_locks(&self, py: Python<'_>, prefix: &str, limit: usize) -> PyResult<Vec<PyLockInfo>> {
+    pub fn list_locks(
+        &self,
+        py: Python<'_>,
+        prefix: &str,
+        limit: usize,
+    ) -> PyResult<Vec<PyLockInfo>> {
         let node = self.node.clone();
         let prefix = prefix.to_string();
         py.allow_threads(|| {

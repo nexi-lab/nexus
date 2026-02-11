@@ -1,15 +1,18 @@
-"""Tests for Operations REST API (Event Replay).
+"""Tests for Operations REST API (Event Replay + Agent Activity Summary).
 
 Tests for issue #1197: Add Event Replay API (GET /api/v2/operations).
+Tests for issue #1198: Add Agent Activity Summary endpoint.
 
 Test categories:
 1. OperationLogger extension tests (since, until, path_pattern, count)
 2. Router integration tests (offset/cursor pagination, filters, auth, zone scoping)
+3. Agent Activity Summary tests (aggregation, zone scoping, since filter, edge cases)
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -371,3 +374,211 @@ class TestOperationsRouter:
         assert "timestamp" in op
         assert "agent_id" in op
         assert "has_more" in data
+
+
+# =============================================================================
+# Agent Activity Summary Fixtures (Issue #1198)
+# =============================================================================
+
+
+@pytest.fixture
+def seed_activity_ops(db_session: Session) -> dict[str, Any]:
+    """Seed operations for agent activity summary tests.
+
+    Creates a mix of agents, zones, statuses, and timestamps
+    for comprehensive summary testing.
+
+    agent-1 in zone-a (within 24h): 4 ops
+      - write /docs/readme.md (success, -6h)
+      - write /docs/readme.md (success, -4h)  [duplicate path]
+      - rename /src/main.py  (success, -2h)
+      - delete /tmp/old.txt  (failure, -1h)
+
+    agent-1 in zone-a (>24h old): 1 op
+      - write /archive/old.txt (success, -48h)
+
+    agent-1 in zone-b: 1 op
+      - write /other/file.py (success, -3h)
+
+    agent-2 in zone-a: 1 op
+      - mkdir /src/lib/ (success, -5h)
+    """
+    now = datetime.now(UTC)
+    ops = [
+        # agent-1, zone-a: recent (within 24h)
+        ("write", "/docs/readme.md", "zone-a", "agent-1", "success", now - timedelta(hours=6)),
+        ("write", "/docs/readme.md", "zone-a", "agent-1", "success", now - timedelta(hours=4)),
+        ("rename", "/src/main.py", "zone-a", "agent-1", "success", now - timedelta(hours=2)),
+        ("delete", "/tmp/old.txt", "zone-a", "agent-1", "failure", now - timedelta(hours=1)),
+        # agent-1, zone-a: old (>24h ago)
+        ("write", "/archive/old.txt", "zone-a", "agent-1", "success", now - timedelta(hours=48)),
+        # agent-1, zone-b: different zone
+        ("write", "/other/file.py", "zone-b", "agent-1", "success", now - timedelta(hours=3)),
+        # agent-2, zone-a: different agent
+        ("mkdir", "/src/lib/", "zone-a", "agent-2", "success", now - timedelta(hours=5)),
+    ]
+    for op_type, path, zone_id, agent_id, status, created_at in ops:
+        db_session.add(
+            OperationLogModel(
+                operation_type=op_type,
+                path=path,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                status=status,
+                created_at=created_at,
+            )
+        )
+    db_session.commit()
+    return {"now": now}
+
+
+# =============================================================================
+# Agent Activity Summary Tests (Issue #1198)
+# =============================================================================
+
+
+class TestAgentActivitySummary:
+    """Tests for GET /api/v2/operations/agents/{agent_id}/activity."""
+
+    def test_activity_summary_happy_path(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Returns correct summary with mixed operation types for agent-1 in zone-a.
+
+        Default since=24h, so the 48h-old operation is excluded.
+        Expected: 4 ops (2 write, 1 rename, 1 delete).
+        """
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["agent_id"] == "agent-1"
+        assert data["total_operations"] == 4
+        assert data["operations_by_type"] == {"write": 2, "rename": 1, "delete": 1}
+        assert isinstance(data["recent_paths"], list)
+        assert len(data["recent_paths"]) == 3  # 3 unique paths
+        assert data["last_active"] is not None
+        assert data["first_seen"] is not None
+
+    def test_activity_summary_empty_agent(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Agent with no operations returns zero counts and null timestamps."""
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/nonexistent-agent/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["agent_id"] == "nonexistent-agent"
+        assert data["total_operations"] == 0
+        assert data["operations_by_type"] == {}
+        assert data["recent_paths"] == []
+        assert data["last_active"] is None
+        assert data["first_seen"] is None
+
+    def test_activity_summary_zone_scoped(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Only counts operations in the authenticated zone.
+
+        agent-1 has ops in both zone-a (4 within 24h) and zone-b (1).
+        Authenticating as zone-b should show only the zone-b operation.
+        """
+        app = _create_test_app(db_session, zone_id="zone-b")
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["total_operations"] == 1
+        assert data["operations_by_type"] == {"write": 1}
+        assert data["recent_paths"] == ["/other/file.py"]
+
+    def test_activity_summary_since_filter(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Explicit since parameter restricts the time window.
+
+        since=3h ago should only include ops at -2h (rename) and -1h (delete).
+        """
+        now = seed_activity_ops["now"]
+        # Use Z suffix (not +00:00) to avoid URL-encoding issues with '+' in query params
+        since = (now - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get(f"/api/v2/operations/agents/agent-1/activity?since={since}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["total_operations"] == 2
+        assert data["operations_by_type"] == {"rename": 1, "delete": 1}
+        assert set(data["recent_paths"]) == {"/tmp/old.txt", "/src/main.py"}
+
+    def test_activity_summary_default_since_excludes_old(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Without since param, defaults to last 24h, excluding older operations.
+
+        agent-1 in zone-a has 5 total ops but only 4 within 24h.
+        The 48h-old write to /archive/old.txt should be excluded.
+        """
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["total_operations"] == 4
+        # /archive/old.txt should NOT appear in recent_paths
+        assert "/archive/old.txt" not in data["recent_paths"]
+
+    def test_activity_summary_includes_failures(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Both success and failure operations are counted in the summary.
+
+        agent-1 has 3 success + 1 failure in zone-a within 24h.
+        All 4 should be counted.
+        """
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # delete /tmp/old.txt is a failure — should still be counted
+        assert data["total_operations"] == 4
+        assert "delete" in data["operations_by_type"]
+        assert data["operations_by_type"]["delete"] == 1
+
+    def test_activity_summary_recent_paths_dedup_and_order(
+        self, db_session: Session, seed_activity_ops: dict[str, Any]
+    ):
+        """Duplicate paths appear once, ordered by most recent touch.
+
+        agent-1 wrote /docs/readme.md at -6h and -4h.
+        recent_paths should list it once, ordered by last touch time:
+        /tmp/old.txt (-1h), /src/main.py (-2h), /docs/readme.md (-4h).
+        """
+        app = _create_test_app(db_session)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        paths = data["recent_paths"]
+        assert len(paths) == 3
+        # Most recently touched first
+        assert paths[0] == "/tmp/old.txt"
+        assert paths[1] == "/src/main.py"
+        assert paths[2] == "/docs/readme.md"
+
+    def test_activity_summary_auth_required(self, db_session: Session):
+        """Returns 401 without authentication."""
+        app = _create_test_app(db_session, require_auth=False)
+        client = TestClient(app)
+        resp = client.get("/api/v2/operations/agents/agent-1/activity")
+        assert resp.status_code == 401

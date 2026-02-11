@@ -357,6 +357,87 @@ class OperationLogger:
             limit=limit,
         )
 
+    def agent_activity_summary(
+        self,
+        *,
+        agent_id: str,
+        zone_id: str,
+        since: datetime | None = None,
+        recent_paths_limit: int = 10,
+    ) -> dict[str, Any]:
+        """Get aggregated activity summary for an agent.
+
+        Executes two queries:
+        1. GROUP BY operation_type → operations_by_type, total, first_seen, last_active
+        2. GROUP BY path → recent_paths ordered by most recent touch
+
+        Args:
+            agent_id: Agent ID to summarize.
+            zone_id: Zone ID for multi-tenancy scoping.
+            since: Only include operations created_at >= since.
+            recent_paths_limit: Max number of recent paths to return.
+
+        Returns:
+            Dict with keys: agent_id, total_operations, operations_by_type,
+            recent_paths, first_seen, last_active.
+        """
+        # Query 1: Aggregate counts and timestamps by operation type
+        type_stmt = select(
+            OperationLogModel.operation_type,
+            func.count().label("cnt"),
+            func.min(OperationLogModel.created_at).label("min_ts"),
+            func.max(OperationLogModel.created_at).label("max_ts"),
+        ).group_by(OperationLogModel.operation_type)
+        type_stmt = self._apply_filters(
+            type_stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            since=since,
+        )
+        type_rows = self.session.execute(type_stmt).all()
+
+        operations_by_type: dict[str, int] = {}
+        total_operations = 0
+        first_seen: datetime | None = None
+        last_active: datetime | None = None
+
+        for row in type_rows:
+            op_type, cnt, min_ts, max_ts = row
+            operations_by_type[op_type] = cnt
+            total_operations += cnt
+            if first_seen is None or (min_ts is not None and min_ts < first_seen):
+                first_seen = min_ts
+            if last_active is None or (max_ts is not None and max_ts > last_active):
+                last_active = max_ts
+
+        # Query 2: Recent paths (deduplicated, ordered by most recent touch)
+        paths_stmt = (
+            select(
+                OperationLogModel.path,
+                func.max(OperationLogModel.created_at).label("last_touched"),
+            )
+            .group_by(OperationLogModel.path)
+            .order_by(desc("last_touched"))
+            .limit(recent_paths_limit)
+        )
+        paths_stmt = self._apply_filters(
+            paths_stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            since=since,
+        )
+        paths_rows = self.session.execute(paths_stmt).all()
+        recent_paths = [row[0] for row in paths_rows]
+
+        return {
+            "agent_id": agent_id,
+            "total_operations": total_operations,
+            "operations_by_type": operations_by_type,
+            "recent_paths": recent_paths,
+            "first_seen": first_seen.isoformat() if first_seen else None,
+            "last_active": last_active.isoformat() if last_active else None,
+        }
+
     def get_metadata_snapshot(self, operation: OperationLogModel) -> dict[str, Any] | None:
         """Get metadata snapshot from operation.
 

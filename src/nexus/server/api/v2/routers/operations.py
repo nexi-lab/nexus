@@ -1,32 +1,37 @@
-"""Operations REST API endpoint (Event Replay).
+"""Operations REST API endpoints (Event Replay + Agent Activity Summary).
 
-Provides a single endpoint for querying filesystem operation history:
+Provides endpoints for querying filesystem operation history:
 - GET /api/v2/operations — List operations with offset or cursor pagination
+- GET /api/v2/operations/agents/{agent_id}/activity — Agent activity summary
 
 Supports filtering by agent_id, operation_type, path_pattern, status,
 and time range (since/until). All results are scoped to the authenticated
 user's zone_id.
 
 Issue #1197: Add Event Replay API for Agent Mesh support.
+Issue #1198: Add Agent Activity Summary endpoint.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from nexus.server.api.v2.dependencies import get_operation_logger
 from nexus.server.api.v2.models import (
+    AgentActivityResponse,
     OperationListResponse,
     OperationResponse,
 )
 from nexus.storage.operation_logger import OperationLogger
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_ACTIVITY_WINDOW_HOURS = 24
 
 router = APIRouter(prefix="/api/v2/operations", tags=["operations"])
 
@@ -127,3 +132,37 @@ async def list_operations(
     except Exception as e:
         logger.error("Operations query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query operations") from e
+
+
+@router.get("/agents/{agent_id}/activity", response_model=AgentActivityResponse)
+async def get_agent_activity(
+    agent_id: str = Path(..., min_length=1, max_length=255, description="Agent ID to summarize"),
+    since: datetime | None = Query(
+        None, description="Activity since this time (ISO-8601). Default: last 24h"
+    ),
+    logger_and_zone: tuple[OperationLogger, str] = Depends(get_operation_logger),
+) -> AgentActivityResponse:
+    """Get aggregated activity summary for a specific agent.
+
+    Returns operation counts by type, recently touched paths,
+    and first/last activity timestamps within the time window.
+    """
+    op_logger, zone_id = logger_and_zone
+
+    effective_since = (
+        since
+        if since is not None
+        else datetime.now(UTC) - timedelta(hours=DEFAULT_ACTIVITY_WINDOW_HOURS)
+    )
+
+    try:
+        summary = op_logger.agent_activity_summary(
+            agent_id=agent_id,
+            zone_id=zone_id,
+            since=effective_since,
+        )
+        return AgentActivityResponse(**summary)
+
+    except Exception as e:
+        logger.error("Agent activity query error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to query agent activity") from e

@@ -249,9 +249,7 @@ impl PyMetastore {
     pub fn batch_delete_metadata(&mut self, keys: Vec<String>) -> PyResult<usize> {
         let count = keys.len();
         for key in &keys {
-            let cmd = Command::DeleteMetadata {
-                key: key.clone(),
-            };
+            let cmd = Command::DeleteMetadata { key: key.clone() };
             self.apply_command(cmd)?;
         }
         Ok(count)

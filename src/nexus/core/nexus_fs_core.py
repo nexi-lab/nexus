@@ -931,8 +931,8 @@ class NexusFSCoreMixin:
         # These connectors don't use metadata - they fetch data directly from APIs
         # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
-            route.backend.user_scoped and route.backend.has_token_manager
-        ) or route.backend.has_virtual_filesystem
+            route.backend.user_scoped is True and route.backend.has_token_manager is True
+        ) or route.backend.has_virtual_filesystem is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -1256,7 +1256,7 @@ class NexusFSCoreMixin:
                                 raise
             else:
                 # Try parallel I/O for LocalBackend using nexus_fast
-                if backend.supports_parallel_mmap_read and len(paths_for_backend) > 1:
+                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
                     # Use Rust parallel mmap reads for LocalBackend
                     try:
                         from nexus_fast import read_files_bulk
@@ -3120,7 +3120,7 @@ class NexusFSCoreMixin:
         # For connector backends, also verify the file exists in backend storage
         # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            if new_route.backend.supports_rename:
+            if new_route.backend.supports_rename is True:
                 # Connector backend - verify file actually exists in storage
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
@@ -3164,7 +3164,7 @@ class NexusFSCoreMixin:
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
-        if old_route.backend.supports_rename:
+        if old_route.backend.supports_rename is True:
             # Connector backend - move the file in backend storage
             try:
                 old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)

@@ -229,7 +229,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Initialize content cache if enabled and backend supports it
-        if enable_content_cache and backend.has_root_path:
+        if enable_content_cache and backend.has_root_path is True:
             # Create content cache and attach to LocalBackend
             content_cache = ContentCache(max_size_mb=content_cache_size_mb)
             backend.content_cache = content_cache
@@ -5332,7 +5332,7 @@ class NexusFS(  # type: ignore[misc]
         had_content = False  # Track if directory had any content
 
         # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and self.backend.has_root_path:
+        if hasattr(self, "backend") and self.backend.has_root_path is True:
             try:
                 # Convert virtual path to physical path
                 # LocalBackend stores directories under "dirs" subdirectory
@@ -5594,7 +5594,7 @@ class NexusFS(  # type: ignore[misc]
             possible_dirs.append(data_dir / "skills")
 
         # 2. Try backend data directory if available
-        if self.backend.has_data_dir and self.backend.data_dir:
+        if self.backend.has_data_dir is True and self.backend.data_dir:
             backend_data_dir = Path(self.backend.data_dir)
             possible_dirs.append(backend_data_dir / "skills")
 

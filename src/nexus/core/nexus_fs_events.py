@@ -79,7 +79,7 @@ class NexusFSEventsMixin:
         Returns:
             True if using PassthroughBackend, False otherwise
         """
-        return self.backend.is_passthrough
+        return self.backend.is_passthrough is True
 
     def _has_distributed_events(self) -> bool:
         """Check if distributed event bus is available.

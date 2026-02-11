@@ -220,7 +220,7 @@ class EgressProxyManager:
             return False
         try:
             self._proxy_container.reload()
-            return self._proxy_container.status == "running"
+            return bool(self._proxy_container.status == "running")
         except Exception:
             return False
 

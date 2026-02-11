@@ -165,12 +165,14 @@ class FakeLocalRaft:
 
 def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     """Create a RaftMetadataStore backed by a FakeLocalRaft."""
+    from nexus.core.consistency import StoreMode
+
     fake = fake or FakeLocalRaft()
     store = object.__new__(RaftMetadataStore)
     store._local = fake
     store._remote = None
     store._zone_id = None
-    store._is_local = True
+    store._mode = StoreMode.EMBEDDED
     return store
 
 

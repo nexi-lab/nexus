@@ -70,14 +70,17 @@ def encode_bytes(data: bytes) -> dict:
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
+
 def main():
     print("=" * 70)
     print("E2E: WriteBuffer + PostgreSQL + FastAPI + Database Auth")
     print("=" * 70)
 
     # Drop and recreate the database for clean state
-    admin_engine = create_engine("postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test",
-                                 isolation_level="AUTOCOMMIT")
+    admin_engine = create_engine(
+        "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test",
+        isolation_level="AUTOCOMMIT",
+    )
     with admin_engine.connect() as conn:
         conn.execute(text("DROP DATABASE IF EXISTS nexus_e2e_wb"))
         conn.execute(text("CREATE DATABASE nexus_e2e_wb"))
@@ -86,6 +89,7 @@ def main():
 
     # Start server
     import tempfile
+
     tmp_path = Path(tempfile.mkdtemp(prefix="nexus_e2e_wb_"))
     storage_path = tmp_path / "storage"
     storage_path.mkdir()
@@ -104,7 +108,8 @@ def main():
     print(f"[..] Starting server on port {port} with PostgreSQL + WriteBuffer...")
     process = subprocess.Popen(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             (
                 "from nexus.cli import main; "
                 f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
@@ -123,7 +128,9 @@ def main():
         if not wait_for_server(base_url, timeout=45.0):
             process.terminate()
             stdout, stderr = process.communicate(timeout=10)
-            print(f"FAIL: Server failed to start.\nstdout: {stdout.decode()[:2000]}\nstderr: {stderr.decode()[:2000]}")
+            print(
+                f"FAIL: Server failed to start.\nstdout: {stdout.decode()[:2000]}\nstderr: {stderr.decode()[:2000]}"
+            )
             sys.exit(1)
 
         print(f"[OK] Server running on {base_url}")
@@ -158,10 +165,15 @@ def main():
             passed += 1
 
             # Test 2: Write file
-            result = rpc(client, "write", {
-                "path": "/e2e/test_file.txt",
-                "content": encode_bytes(b"Hello from WriteBuffer E2E on PostgreSQL!"),
-            }, headers=auth_headers)
+            result = rpc(
+                client,
+                "write",
+                {
+                    "path": "/e2e/test_file.txt",
+                    "content": encode_bytes(b"Hello from WriteBuffer E2E on PostgreSQL!"),
+                },
+                headers=auth_headers,
+            )
             assert "error" not in result or result.get("error") is None, f"Write failed: {result}"
             print("[PASS] Write file")
             passed += 1
@@ -179,20 +191,31 @@ def main():
             # Test 4: Write multiple files (burst)
             t0 = time.perf_counter()
             for i in range(20):
-                result = rpc(client, "write", {
-                    "path": f"/e2e/burst/file_{i:03d}.txt",
-                    "content": encode_bytes(f"Content {i}".encode()),
-                }, headers=auth_headers)
-                assert "error" not in result or result.get("error") is None, f"Burst write {i} failed: {result}"
+                result = rpc(
+                    client,
+                    "write",
+                    {
+                        "path": f"/e2e/burst/file_{i:03d}.txt",
+                        "content": encode_bytes(f"Content {i}".encode()),
+                    },
+                    headers=auth_headers,
+                )
+                assert "error" not in result or result.get("error") is None, (
+                    f"Burst write {i} failed: {result}"
+                )
             burst_time = time.perf_counter() - t0
-            print(f"[PASS] Burst write 20 files in {burst_time:.3f}s ({burst_time/20*1000:.1f}ms/write)")
+            print(
+                f"[PASS] Burst write 20 files in {burst_time:.3f}s ({burst_time / 20 * 1000:.1f}ms/write)"
+            )
             passed += 1
 
             # Test 5: List files
             result = rpc(client, "list", {"path": "/e2e/burst/"}, headers=auth_headers)
             if result.get("error"):
                 # int_id issue is pre-existing in Raft metadata store, not WriteBuffer related
-                print(f"[SKIP] List files (pre-existing Raft issue: {result['error'].get('message', '')[:60]})")
+                print(
+                    f"[SKIP] List files (pre-existing Raft issue: {result['error'].get('message', '')[:60]})"
+                )
                 passed += 1
             else:
                 files = result.get("result", [])
@@ -216,26 +239,36 @@ def main():
             passed += 1
 
             # Test 8: Register user + permission enforcement
-            resp = client.post("/api/auth/register", json={
-                "username": "testuser",
-                "email": "testuser@example.com",
-                "password": "password123",
-            })
+            resp = client.post(
+                "/api/auth/register",
+                json={
+                    "username": "testuser",
+                    "email": "testuser@example.com",
+                    "password": "password123",
+                },
+            )
             if resp.status_code == 200:
                 user_token = resp.json().get("access_token") or resp.json().get("token")
                 user_headers = {"Authorization": f"Bearer {user_token}"}
 
                 # Regular user should NOT be able to write to admin workspace
-                result = rpc(client, "write", {
-                    "path": "/admin/secret.txt",
-                    "content": encode_bytes(b"Should fail"),
-                }, headers=user_headers)
+                result = rpc(
+                    client,
+                    "write",
+                    {
+                        "path": "/admin/secret.txt",
+                        "content": encode_bytes(b"Should fail"),
+                    },
+                    headers=user_headers,
+                )
                 # Either error or permission denied
                 if result.get("error"):
                     print("[PASS] Permission enforcement: user blocked from admin path")
                     passed += 1
                 else:
-                    print("[WARN] User was able to write to admin path (permissions may not be strict)")
+                    print(
+                        "[WARN] User was able to write to admin path (permissions may not be strict)"
+                    )
                     passed += 1  # Not a failure of WriteBuffer itself
             else:
                 print(f"[SKIP] User registration not available: {resp.status_code}")
@@ -253,7 +286,9 @@ def main():
             vh_count = conn.execute(text("SELECT count(*) FROM version_history")).scalar()
         pg_engine.dispose()
 
-        print(f"\n[DB] PostgreSQL rows: file_paths={fp_count}, operation_log={op_count}, version_history={vh_count}")
+        print(
+            f"\n[DB] PostgreSQL rows: file_paths={fp_count}, operation_log={op_count}, version_history={vh_count}"
+        )
 
         if op_count > 0:
             print("[PASS] WriteBuffer flushed operations to PostgreSQL")

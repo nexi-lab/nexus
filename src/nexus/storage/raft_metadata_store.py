@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
@@ -84,9 +83,7 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
             proto.ParseFromString(data)
             return MetadataMapper.from_proto(proto)
         except Exception as proto_err:
-            logger.debug(
-                "Protobuf parse failed, trying JSON fallback: %s", proto_err
-            )
+            logger.debug("Protobuf parse failed, trying JSON fallback: %s", proto_err)
 
     # Fallback to JSON format
     try:

@@ -296,7 +296,9 @@ def create_async_files_router(
         request: Request,
         path: str = Query(..., description="Path to read"),
         include_metadata: bool = Query(False, description="Include metadata in response"),
-        consistency: str | None = Query(None, description="Consistency level: eventual, close_to_open, strong"),
+        consistency: str | None = Query(
+            None, description="Consistency level: eventual, close_to_open, strong"
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -426,7 +428,9 @@ def create_async_files_router(
     async def list_directory(
         request: Request,
         path: str = Query(..., description="Directory path to list"),
-        consistency: str | None = Query(None, description="Consistency level: eventual, close_to_open, strong"),
+        consistency: str | None = Query(
+            None, description="Consistency level: eventual, close_to_open, strong"
+        ),
         context: Any = Depends(get_context),
     ) -> ListResponse:
         """List directory contents."""

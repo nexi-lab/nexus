@@ -454,7 +454,10 @@ class NexusFSCoreMixin:
             # Zone mismatch — zookie is for a different zone, skip check
             return
 
-        if not self._wait_for_revision(effective_zone, zookie.revision) and consistency == FSConsistency.STRONG:
+        if (
+            not self._wait_for_revision(effective_zone, zookie.revision)
+            and consistency == FSConsistency.STRONG
+        ):
             from nexus.core.zookie import ConsistencyTimeoutError
 
             raise ConsistencyTimeoutError(

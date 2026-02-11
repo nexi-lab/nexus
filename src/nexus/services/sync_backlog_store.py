@@ -15,6 +15,7 @@ from nexus.services.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
+    from nexus.storage.models import SyncBacklogModel
 
 logger = logging.getLogger(__name__)
 
@@ -381,21 +382,21 @@ class SyncBacklogStore(SyncStoreBase):
             session.close()
 
     @staticmethod
-    def _to_entry(row: object) -> SyncBacklogEntry:
+    def _to_entry(row: SyncBacklogModel) -> SyncBacklogEntry:
         """Convert SQLAlchemy model to frozen dataclass."""
         return SyncBacklogEntry(
-            id=row.id,  # type: ignore[attr-defined]
-            path=row.path,  # type: ignore[attr-defined]
-            backend_name=row.backend_name,  # type: ignore[attr-defined]
-            zone_id=row.zone_id,  # type: ignore[attr-defined]
-            operation_type=row.operation_type,  # type: ignore[attr-defined]
-            content_hash=row.content_hash,  # type: ignore[attr-defined]
-            new_path=row.new_path,  # type: ignore[attr-defined]
-            status=row.status,  # type: ignore[attr-defined]
-            retry_count=row.retry_count,  # type: ignore[attr-defined]
-            max_retries=row.max_retries,  # type: ignore[attr-defined]
-            created_at=row.created_at,  # type: ignore[attr-defined]
-            updated_at=row.updated_at,  # type: ignore[attr-defined]
-            last_attempted_at=row.last_attempted_at,  # type: ignore[attr-defined]
-            error_message=row.error_message,  # type: ignore[attr-defined]
+            id=row.id,
+            path=row.path,
+            backend_name=row.backend_name,
+            zone_id=row.zone_id,
+            operation_type=row.operation_type,
+            content_hash=row.content_hash,
+            new_path=row.new_path,
+            status=row.status,
+            retry_count=row.retry_count,
+            max_retries=row.max_retries,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            last_attempted_at=row.last_attempted_at,
+            error_message=row.error_message,
         )

@@ -33,7 +33,6 @@ from nexus.server.auth.zone_routes import (
 from nexus.storage.models import ZoneModel
 from nexus.storage.models._base import Base
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -213,28 +212,25 @@ class TestPatchEndpointIntegration:
         from nexus.server.auth.auth_routes import (
             get_auth_provider,
             get_authenticated_user,
-            get_nexus_instance,
         )
-        from nexus.server.auth.user_helpers import user_belongs_to_zone
 
         app.dependency_overrides[get_authenticated_user] = lambda: ("user-1", "user@test.com")
         app.dependency_overrides[get_auth_provider] = lambda: mock_auth
 
         # Patch get_nexus_instance
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx
-        ):
+        with patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx):
             yield app, mock_nx
 
     def test_patch_sc_to_ec(self, app) -> None:
         """PATCH /api/zones/{zone_id}/consistency-mode with SC→EC."""
         test_app, mock_nx = app
 
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx
-        ), patch(
-            "nexus.server.auth.zone_routes.get_user_by_id",
-            return_value=MagicMock(is_global_admin=1),
+        with (
+            patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx),
+            patch(
+                "nexus.server.auth.zone_routes.get_user_by_id",
+                return_value=MagicMock(is_global_admin=1),
+            ),
         ):
             client = TestClient(test_app)
             resp = client.patch(
@@ -263,11 +259,12 @@ class TestPatchEndpointIntegration:
         app.dependency_overrides[get_authenticated_user] = lambda: ("user-1", "user@test.com")
         app.dependency_overrides[get_auth_provider] = lambda: mock_auth
 
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx
-        ), patch(
-            "nexus.server.auth.zone_routes.get_user_by_id",
-            return_value=MagicMock(is_global_admin=1),
+        with (
+            patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx),
+            patch(
+                "nexus.server.auth.zone_routes.get_user_by_id",
+                return_value=MagicMock(is_global_admin=1),
+            ),
         ):
             client = TestClient(app)
             resp = client.patch(
@@ -281,11 +278,12 @@ class TestPatchEndpointIntegration:
         """PATCH with invalid target_mode returns 422."""
         test_app, mock_nx = app
 
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx
-        ), patch(
-            "nexus.server.auth.zone_routes.get_user_by_id",
-            return_value=MagicMock(is_global_admin=1),
+        with (
+            patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx),
+            patch(
+                "nexus.server.auth.zone_routes.get_user_by_id",
+                return_value=MagicMock(is_global_admin=1),
+            ),
         ):
             client = TestClient(test_app)
             resp = client.patch(
@@ -320,11 +318,12 @@ class TestPatchEndpointIntegration:
         app.dependency_overrides[get_authenticated_user] = lambda: ("user-1", "user@test.com")
         app.dependency_overrides[get_auth_provider] = lambda: mock_auth
 
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx
-        ), patch(
-            "nexus.server.auth.zone_routes.get_user_by_id",
-            return_value=MagicMock(is_global_admin=1),
+        with (
+            patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=mock_nx),
+            patch(
+                "nexus.server.auth.zone_routes.get_user_by_id",
+                return_value=MagicMock(is_global_admin=1),
+            ),
         ):
             client = TestClient(app)
             resp = client.patch(
@@ -350,11 +349,12 @@ class TestPatchEndpointIntegration:
         app.dependency_overrides[get_authenticated_user] = lambda: ("user-1", "user@test.com")
         app.dependency_overrides[get_auth_provider] = lambda: mock_auth
 
-        with patch(
-            "nexus.server.auth.zone_routes.get_nexus_instance", return_value=None
-        ), patch(
-            "nexus.server.auth.zone_routes.get_user_by_id",
-            return_value=MagicMock(is_global_admin=1),
+        with (
+            patch("nexus.server.auth.zone_routes.get_nexus_instance", return_value=None),
+            patch(
+                "nexus.server.auth.zone_routes.get_user_by_id",
+                return_value=MagicMock(is_global_admin=1),
+            ),
         ):
             client = TestClient(app)
             resp = client.patch(

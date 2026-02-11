@@ -234,8 +234,7 @@ class ConsistencyMigration:
         except NotImplementedError:
             # Expected: Raft mode switching not yet available via PyO3
             logger.info(
-                f"Raft mode switch for zone {zone_id} deferred "
-                f"(TODO(rust): set_lazy binding)"
+                f"Raft mode switch for zone {zone_id} deferred (TODO(rust): set_lazy binding)"
             )
         except Exception as e:
             # Rollback DB change
@@ -280,7 +279,7 @@ class ConsistencyMigration:
                 return None
             return ConsistencyMode(zone.consistency_mode)
 
-    def _drain_writes(self, zone_id: str, timeout_s: float) -> None:
+    def _drain_writes(self, zone_id: str, timeout_s: float) -> None:  # noqa: ARG002
         """Wait for in-flight writes to complete.
 
         Currently a short sleep to allow pending operations to finish.
@@ -312,15 +311,12 @@ class ConsistencyMigration:
             zone.consistency_mode = target_mode.value
             session.commit()
 
-    def _switch_raft_mode(
-        self, zone_id: str, target_mode: ConsistencyMode
-    ) -> None:
+    def _switch_raft_mode(self, zone_id: str, target_mode: ConsistencyMode) -> None:
         """Switch the Raft consensus mode for a zone.
 
         TODO(rust): Requires set_lazy(bool) binding on PyRaftConsensus.
         Currently raises NotImplementedError.
         """
         raise NotImplementedError(
-            "Raft mode switching requires set_lazy() PyO3 binding. "
-            "See Issue #1180 Phase D."
+            "Raft mode switching requires set_lazy() PyO3 binding. See Issue #1180 Phase D."
         )

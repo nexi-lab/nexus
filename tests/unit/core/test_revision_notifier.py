@@ -20,7 +20,6 @@ import pytest
 
 from nexus.core.revision_notifier import RevisionNotifier, RevisionUpdate
 
-
 # ---------------------------------------------------------------------------
 # 1. Immediate return
 # ---------------------------------------------------------------------------

@@ -23,7 +23,6 @@ Usage:
 from __future__ import annotations
 
 import os
-import re
 import signal
 import socket
 import subprocess
@@ -199,7 +198,9 @@ def admin_user(server: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def admin_client(server: dict[str, Any], admin_user: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def admin_client(
+    server: dict[str, Any], admin_user: dict[str, Any]
+) -> Generator[httpx.Client, None, None]:
     """HTTP client with admin JWT credentials."""
     client = httpx.Client(
         base_url=server["base_url"],
@@ -227,7 +228,9 @@ def normal_user(server: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def user_client(server: dict[str, Any], normal_user: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def user_client(
+    server: dict[str, Any], normal_user: dict[str, Any]
+) -> Generator[httpx.Client, None, None]:
     """HTTP client with normal user credentials."""
     client = httpx.Client(
         base_url=server["base_url"],
@@ -252,7 +255,9 @@ def outsider_user(server: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def outsider_client(server: dict[str, Any], outsider_user: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def outsider_client(
+    server: dict[str, Any], outsider_user: dict[str, Any]
+) -> Generator[httpx.Client, None, None]:
     """HTTP client with outsider user credentials."""
     client = httpx.Client(
         base_url=server["base_url"],
@@ -422,9 +427,7 @@ class TestUnauthenticatedDenied:
 
     def test_no_auth_denied(self, server: dict[str, Any], test_zone: str) -> None:
         """Request without auth token is rejected."""
-        client = httpx.Client(
-            base_url=server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=server["base_url"], timeout=10.0, trust_env=False)
         try:
             resp = client.patch(
                 f"/api/zones/{test_zone}/consistency-mode",

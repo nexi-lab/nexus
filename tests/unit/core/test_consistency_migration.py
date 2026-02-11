@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +33,6 @@ from nexus.core.consistency import ConsistencyMode, MigrationState
 from nexus.core.consistency_migration import ConsistencyMigration, MigrationResult
 from nexus.storage.models import ZoneModel
 from nexus.storage.models._base import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

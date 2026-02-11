@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_zone_consistency_mode"
-down_revision: Union[str, Sequence[str], None] = "add_agent_records_table"
+down_revision: Union[str, Sequence[str], None] = "add_agent_events_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

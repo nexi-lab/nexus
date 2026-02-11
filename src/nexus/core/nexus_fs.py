@@ -7722,9 +7722,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             mode = ConsistencyMode(target_mode)
         except ValueError as e:
-            raise ValueError(
-                f"Invalid target mode '{target_mode}'. Must be 'SC' or 'EC'."
-            ) from e
+            raise ValueError(f"Invalid target mode '{target_mode}'. Must be 'SC' or 'EC'.") from e
 
         result = self._consistency_migration.migrate(
             zone_id=zone_id,

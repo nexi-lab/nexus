@@ -25,8 +25,8 @@ use super::proto::nexus::raft::{
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftConfig, RaftError, RaftNode, RaftStorage,
-    StateMachine, WitnessStateMachine,
+    Command, CommandResult, FullStateMachine, RaftConfig, RaftError, RaftNode, RaftNodeDriver,
+    RaftStorage, StateMachine, WitnessStateMachine,
 };
 use crate::storage::SledStore;
 use prost::Message;
@@ -57,10 +57,10 @@ impl Default for ServerConfig {
     }
 }
 
-/// Shared state for the Raft server, backed by `RaftNode`.
+/// Shared state for the Raft server, backed by `RaftNode` (handle).
 pub struct RaftServerState {
-    /// The RaftNode that drives consensus.
-    pub node: Arc<RaftNode<FullStateMachine>>,
+    /// The RaftNode handle (Clone + Send + Sync).
+    pub node: RaftNode<FullStateMachine>,
     /// This node's ID.
     pub node_id: u64,
     /// Known peers in the cluster (node_id → address).
@@ -69,10 +69,13 @@ pub struct RaftServerState {
 
 impl RaftServerState {
     /// Create a new server state with the given storage path and peers.
-    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
-        // Use separate sub-paths to avoid sled lock conflicts:
-        // - db_path/sm  → state machine (metadata + locks)
-        // - db_path/raft → raft log storage
+    ///
+    /// Returns `(state, driver)` — the driver must be passed to the transport loop.
+    pub fn new(
+        node_id: u64,
+        db_path: &str,
+        peers: Vec<NodeAddress>,
+    ) -> Result<(Self, RaftNodeDriver<FullStateMachine>)> {
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
 
@@ -94,23 +97,28 @@ impl RaftServerState {
             ..Default::default()
         };
 
-        let node = RaftNode::new(config, raft_storage, state_machine)
+        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine)
             .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 
-        Ok(Self {
-            node,
-            node_id,
-            peers: peer_map,
-        })
+        Ok((
+            Self {
+                node: handle,
+                node_id,
+                peers: peer_map,
+            },
+            driver,
+        ))
     }
 }
 
-/// A gRPC server for Raft transport, backed by `RaftNode`.
+/// A gRPC server for Raft transport, backed by `RaftNode` (handle).
 pub struct RaftServer {
     config: ServerConfig,
     state: Arc<RaftServerState>,
+    /// The driver, held temporarily until passed to the transport loop.
+    driver: Option<RaftNodeDriver<FullStateMachine>>,
 }
 
 impl RaftServer {
@@ -126,10 +134,11 @@ impl RaftServer {
         config: ServerConfig,
         peers: Vec<NodeAddress>,
     ) -> Result<Self> {
-        let state = RaftServerState::new(node_id, db_path, peers)?;
+        let (state, driver) = RaftServerState::new(node_id, db_path, peers)?;
         Ok(Self {
             config,
             state: Arc::new(state),
+            driver: Some(driver),
         })
     }
 
@@ -138,9 +147,15 @@ impl RaftServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode (for transport loop integration).
-    pub fn node(&self) -> Arc<RaftNode<FullStateMachine>> {
+    /// Get the RaftNode handle (Clone, for sharing with other components).
+    pub fn node(&self) -> RaftNode<FullStateMachine> {
         self.state.node.clone()
+    }
+
+    /// Take the driver out (must be passed to the transport loop).
+    /// Panics if called more than once.
+    pub fn take_driver(&mut self) -> RaftNodeDriver<FullStateMachine> {
+        self.driver.take().expect("driver already taken")
     }
 
     /// Get the server state.
@@ -272,18 +287,13 @@ impl RaftService for RaftServiceImpl {
         msg.index = req.last_log_index;
         msg.log_term = req.last_log_term;
 
-        if let Err(e) = self.state.node.step(msg).await {
+        if let Err(e) = self.state.node.step(msg) {
             tracing::warn!("Failed to step vote request: {}", e);
         }
 
-        // After step, advance to process the message and get response
-        if let Err(e) = self.state.node.advance().await {
-            tracing::warn!("Failed to advance after vote: {}", e);
-        }
-
-        // Return current node state — the actual vote response was sent
-        // via the transport loop's outgoing messages
-        let term = self.state.node.term().await;
+        // The driver will process this message in its next advance() cycle.
+        // Return current cached state.
+        let term = self.state.node.term();
 
         Ok(Response::new(VoteResponse {
             term,
@@ -326,15 +336,12 @@ impl RaftService for RaftServiceImpl {
             });
         }
 
-        if let Err(e) = self.state.node.step(msg).await {
+        if let Err(e) = self.state.node.step(msg) {
             tracing::warn!("Failed to step append entries: {}", e);
         }
 
-        if let Err(e) = self.state.node.advance().await {
-            tracing::warn!("Failed to advance after append: {}", e);
-        }
-
-        let term = self.state.node.term().await;
+        // The driver will process this in its next advance() cycle.
+        let term = self.state.node.term();
 
         Ok(Response::new(AppendEntriesResponse {
             term,
@@ -365,7 +372,7 @@ impl RaftService for RaftServiceImpl {
             .with_state_machine_mut(|sm| sm.restore_snapshot(&snapshot_data))
             .await;
 
-        let term = self.state.node.term().await;
+        let term = self.state.node.term();
 
         match result {
             Ok(_) => {
@@ -392,7 +399,7 @@ impl RaftService for RaftServiceImpl {
     ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
         let req = request.into_inner();
 
-        if !self.state.node.is_leader().await {
+        if !self.state.node.is_leader() {
             return Ok(Response::new(TransferLeaderResponse {
                 success: false,
                 error: "Not the leader".to_string(),
@@ -438,8 +445,8 @@ impl RaftService for RaftServiceImpl {
             msg.term,
         );
 
-        // Step the message into the raft node
-        if let Err(e) = self.state.node.step(msg).await {
+        // Send to driver via channel — no .await needed
+        if let Err(e) = self.state.node.step(msg) {
             return Ok(Response::new(StepMessageResponse {
                 success: false,
                 error: Some(format!("Failed to step message: {}", e)),
@@ -545,12 +552,11 @@ impl RaftClientService for RaftClientServiceImpl {
         );
 
         // Check if linearizable read is requested
-        if req.read_from_leader && !self.state.node.is_leader().await {
+        if req.read_from_leader && !self.state.node.is_leader() {
             let leader_addr = self
                 .state
                 .node
                 .leader_id()
-                .await
                 .and_then(|id| self.state.peers.get(&id))
                 .map(|a| a.endpoint.clone());
             return Ok(Response::new(QueryResponse {
@@ -706,9 +712,9 @@ impl RaftClientService for RaftClientServiceImpl {
         &self,
         _request: Request<GetClusterInfoRequest>,
     ) -> std::result::Result<Response<GetClusterInfoResponse>, Status> {
-        let is_leader = self.state.node.is_leader().await;
-        let leader_id = self.state.node.leader_id().await.unwrap_or(0);
-        let term = self.state.node.term().await;
+        let is_leader = self.state.node.is_leader();
+        let leader_id = self.state.node.leader_id().unwrap_or(0);
+        let term = self.state.node.term();
 
         let leader_addr = self.state.peers.get(&leader_id).map(|a| a.endpoint.clone());
 
@@ -785,10 +791,10 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 // Witness Server (lightweight, vote-only)
 // =============================================================================
 
-/// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>`.
+/// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>` handle.
 pub struct WitnessServerState {
-    /// The RaftNode that handles consensus (voting only).
-    pub node: Arc<RaftNode<WitnessStateMachine>>,
+    /// The RaftNode handle (Clone + Send + Sync).
+    pub node: RaftNode<WitnessStateMachine>,
     /// This node's ID.
     pub node_id: u64,
     /// Known peers.
@@ -797,7 +803,13 @@ pub struct WitnessServerState {
 
 impl WitnessServerState {
     /// Create a new witness server state.
-    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
+    ///
+    /// Returns `(state, driver)` — the driver must be passed to the transport loop.
+    pub fn new(
+        node_id: u64,
+        db_path: &str,
+        peers: Vec<NodeAddress>,
+    ) -> Result<(Self, RaftNodeDriver<WitnessStateMachine>)> {
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
 
@@ -813,23 +825,22 @@ impl WitnessServerState {
         })?;
 
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let config = RaftConfig {
-            id: node_id,
-            peers: peer_ids,
-            ..Default::default()
-        };
+        let config = RaftConfig::witness(node_id, peer_ids);
 
-        let node = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
+        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
         })?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 
-        Ok(Self {
-            node,
-            node_id,
-            peers: peer_map,
-        })
+        Ok((
+            Self {
+                node: handle,
+                node_id,
+                peers: peer_map,
+            },
+            driver,
+        ))
     }
 }
 
@@ -837,6 +848,8 @@ impl WitnessServerState {
 pub struct RaftWitnessServer {
     config: ServerConfig,
     state: Arc<WitnessServerState>,
+    /// The driver, held temporarily until passed to the transport loop.
+    driver: Option<RaftNodeDriver<WitnessStateMachine>>,
 }
 
 impl RaftWitnessServer {
@@ -852,10 +865,11 @@ impl RaftWitnessServer {
         config: ServerConfig,
         peers: Vec<NodeAddress>,
     ) -> Result<Self> {
-        let state = WitnessServerState::new(node_id, db_path, peers)?;
+        let (state, driver) = WitnessServerState::new(node_id, db_path, peers)?;
         Ok(Self {
             config,
             state: Arc::new(state),
+            driver: Some(driver),
         })
     }
 
@@ -864,9 +878,14 @@ impl RaftWitnessServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode (for transport loop integration).
-    pub fn node(&self) -> Arc<RaftNode<WitnessStateMachine>> {
+    /// Get the RaftNode handle (Clone, for sharing with other components).
+    pub fn node(&self) -> RaftNode<WitnessStateMachine> {
         self.state.node.clone()
+    }
+
+    /// Take the driver out (must be passed to the transport loop).
+    pub fn take_driver(&mut self) -> RaftNodeDriver<WitnessStateMachine> {
+        self.driver.take().expect("driver already taken")
     }
 
     /// Start the gRPC server.
@@ -939,15 +958,11 @@ impl RaftService for WitnessServiceImpl {
         msg.index = req.last_log_index;
         msg.log_term = req.last_log_term;
 
-        if let Err(e) = self.state.node.step(msg).await {
+        if let Err(e) = self.state.node.step(msg) {
             tracing::warn!("[Witness] Failed to step vote request: {}", e);
         }
 
-        if let Err(e) = self.state.node.advance().await {
-            tracing::warn!("[Witness] Failed to advance after vote: {}", e);
-        }
-
-        let term = self.state.node.term().await;
+        let term = self.state.node.term();
 
         Ok(Response::new(VoteResponse {
             term,
@@ -985,15 +1000,11 @@ impl RaftService for WitnessServiceImpl {
             });
         }
 
-        if let Err(e) = self.state.node.step(msg).await {
+        if let Err(e) = self.state.node.step(msg) {
             tracing::warn!("[Witness] Failed to step append entries: {}", e);
         }
 
-        if let Err(e) = self.state.node.advance().await {
-            tracing::warn!("[Witness] Failed to advance after append: {}", e);
-        }
-
-        let term = self.state.node.term().await;
+        let term = self.state.node.term();
 
         Ok(Response::new(AppendEntriesResponse {
             term,
@@ -1007,7 +1018,7 @@ impl RaftService for WitnessServiceImpl {
         &self,
         _request: Request<Streaming<SnapshotChunk>>,
     ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        let term = self.state.node.term().await;
+        let term = self.state.node.term();
         tracing::info!("[Witness] Ignoring snapshot installation request");
 
         Ok(Response::new(InstallSnapshotResponse {
@@ -1051,7 +1062,7 @@ impl RaftService for WitnessServiceImpl {
             msg.term,
         );
 
-        if let Err(e) = self.state.node.step(msg).await {
+        if let Err(e) = self.state.node.step(msg) {
             return Ok(Response::new(StepMessageResponse {
                 success: false,
                 error: Some(format!("Failed to step message: {}", e)),

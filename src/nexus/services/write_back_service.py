@@ -312,7 +312,7 @@ class WriteBackService:
             )
 
             if is_conflict:
-                # Resolve per-mount strategy → global default → KEEP_NEWER
+                # Resolve per-mount strategy -> global default -> KEEP_NEWER
                 strategy = self._resolve_strategy(mount_info)
 
                 ctx = ConflictContext(
@@ -435,7 +435,7 @@ class WriteBackService:
     def _resolve_strategy(self, mount_info: dict[str, Any]) -> ConflictStrategy:
         """Resolve the conflict strategy for a mount.
 
-        Resolution chain: mount.conflict_strategy → global default → KEEP_NEWER
+        Resolution chain: mount.conflict_strategy -> global default -> KEEP_NEWER
         """
         mount_strategy = mount_info.get("conflict_strategy")
         if mount_strategy is not None:

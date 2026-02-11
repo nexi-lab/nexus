@@ -54,7 +54,7 @@ pub use state_machine::{
 };
 
 #[cfg(feature = "consensus")]
-pub use node::{NodeRole, RaftConfig, RaftNode};
+pub use node::{NodeRole, RaftConfig, RaftMsg, RaftNode, RaftNodeDriver};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
 

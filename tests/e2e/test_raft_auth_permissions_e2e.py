@@ -61,7 +61,9 @@ def _encode_bytes(data: bytes) -> dict[str, str]:
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
 
 
-def _rpc(client: httpx.Client, method: str, params: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
+def _rpc(
+    client: httpx.Client, method: str, params: dict[str, Any], headers: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Call an NFS RPC method and return the parsed response body."""
     resp = client.post(
         f"/api/nfs/{method}",
@@ -83,7 +85,9 @@ def _rpc(client: httpx.Client, method: str, params: dict[str, Any], headers: dic
 
 
 @pytest.fixture(scope="module")
-def db_auth_server(tmp_path_factory: pytest.TempPathFactory) -> Generator[dict[str, Any], None, None]:
+def db_auth_server(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[dict[str, Any], None, None]:
     """Start a Nexus server with --auth-type database --init.
 
     Yields a dict with server info and the admin API key.
@@ -187,7 +191,9 @@ def admin_headers(db_auth_server: dict[str, Any]) -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def admin_client(db_auth_server: dict[str, Any], admin_headers: dict[str, str]) -> Generator[httpx.Client, None, None]:
+def admin_client(
+    db_auth_server: dict[str, Any], admin_headers: dict[str, str]
+) -> Generator[httpx.Client, None, None]:
     """HTTP client with admin credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],
@@ -250,7 +256,9 @@ def registered_user(db_auth_server: dict[str, Any], admin_client: httpx.Client) 
 
 
 @pytest.fixture(scope="module")
-def user_client(db_auth_server: dict[str, Any], registered_user: dict[str, Any]) -> Generator[httpx.Client, None, None]:
+def user_client(
+    db_auth_server: dict[str, Any], registered_user: dict[str, Any]
+) -> Generator[httpx.Client, None, None]:
     """HTTP client with regular user credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],
@@ -284,16 +292,13 @@ class TestServerHealth:
 
     def test_unauthenticated_rpc_rejected(self, db_auth_server: dict[str, Any]) -> None:
         """RPC calls without auth should be rejected (401)."""
-        client = httpx.Client(
-            base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
         try:
             result = _rpc(client, "list", {"path": "/"})
             # Server returns {"detail": "Invalid or missing API key"} for 401
-            assert (
-                result.get("error") is not None
-                or result.get("detail") is not None
-            ), f"Expected auth rejection, got: {result}"
+            assert result.get("error") is not None or result.get("detail") is not None, (
+                f"Expected auth rejection, got: {result}"
+            )
         finally:
             client.close()
 
@@ -308,10 +313,14 @@ class TestAdminFileOperations:
 
     def test_admin_write_file(self, admin_client: httpx.Client) -> None:
         """Admin writes a file via RPC."""
-        result = _rpc(admin_client, "write", {
-            "path": "/workspace/admin_test.txt",
-            "content": _encode_bytes(b"Hello from admin!"),
-        })
+        result = _rpc(
+            admin_client,
+            "write",
+            {
+                "path": "/workspace/admin_test.txt",
+                "content": _encode_bytes(b"Hello from admin!"),
+            },
+        )
         # Should succeed (no error key, or result present)
         assert result.get("error") is None, f"Write failed: {result}"
 
@@ -339,10 +348,14 @@ class TestAdminFileOperations:
     def test_admin_delete_file(self, admin_client: httpx.Client) -> None:
         """Admin deletes a file."""
         # Create a throwaway file
-        _rpc(admin_client, "write", {
-            "path": "/workspace/to_delete.txt",
-            "content": _encode_bytes(b"delete me"),
-        })
+        _rpc(
+            admin_client,
+            "write",
+            {
+                "path": "/workspace/to_delete.txt",
+                "content": _encode_bytes(b"delete me"),
+            },
+        )
 
         result = _rpc(admin_client, "delete", {"path": "/workspace/to_delete.txt"})
         assert result.get("error") is None, f"Delete failed: {result}"
@@ -367,10 +380,14 @@ class TestPermissionEnforcement:
 
     def test_user_cannot_write_to_admin_workspace(self, user_client: httpx.Client) -> None:
         """Regular user should not be able to write to /workspace without grant."""
-        result = _rpc(user_client, "write", {
-            "path": "/workspace/unauthorized.txt",
-            "content": _encode_bytes(b"Unauthorized write"),
-        })
+        result = _rpc(
+            user_client,
+            "write",
+            {
+                "path": "/workspace/unauthorized.txt",
+                "content": _encode_bytes(b"Unauthorized write"),
+            },
+        )
         error = result.get("error")
         # Should get a permission error (or the file system may reject it)
         # Accept either RPC error or empty result
@@ -384,13 +401,19 @@ class TestPermissionEnforcement:
                 or error.get("code") in (-32603, -32001, -32002)  # internal/permission error codes
             ), f"Expected permission error, got: {error}"
 
-    def test_user_cannot_read_admin_file(self, admin_client: httpx.Client, user_client: httpx.Client) -> None:
+    def test_user_cannot_read_admin_file(
+        self, admin_client: httpx.Client, user_client: httpx.Client
+    ) -> None:
         """Regular user should not read admin-only files without grant."""
         # Admin writes a file
-        _rpc(admin_client, "write", {
-            "path": "/workspace/secret.txt",
-            "content": _encode_bytes(b"Admin secret"),
-        })
+        _rpc(
+            admin_client,
+            "write",
+            {
+                "path": "/workspace/secret.txt",
+                "content": _encode_bytes(b"Admin secret"),
+            },
+        )
 
         # User tries to read it
         result = _rpc(user_client, "read", {"path": "/workspace/secret.txt"})
@@ -414,10 +437,14 @@ class TestPermissionEnforcement:
     ) -> None:
         """After admin grants access, user should be able to read."""
         # Admin writes a file
-        _rpc(admin_client, "write", {
-            "path": "/workspace/shared.txt",
-            "content": _encode_bytes(b"Shared content"),
-        })
+        _rpc(
+            admin_client,
+            "write",
+            {
+                "path": "/workspace/shared.txt",
+                "content": _encode_bytes(b"Shared content"),
+            },
+        )
 
         # Grant the user read access via ReBAC tuple in database
         from sqlalchemy import create_engine, text
@@ -458,9 +485,7 @@ class TestAuthFlow:
 
     def test_register_new_user(self, db_auth_server: dict[str, Any]) -> None:
         """Register a brand new user via the /auth/register endpoint."""
-        client = httpx.Client(
-            base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
         try:
             email = f"bob_{uuid.uuid4().hex[:6]}@test.com"
             resp = client.post(
@@ -486,9 +511,7 @@ class TestAuthFlow:
 
     def test_login_existing_user(self, db_auth_server: dict[str, Any]) -> None:
         """Register then login with credentials."""
-        client = httpx.Client(
-            base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
         try:
             email = f"carol_{uuid.uuid4().hex[:6]}@test.com"
             password = "TestPassword456!"
@@ -515,9 +538,7 @@ class TestAuthFlow:
 
     def test_login_wrong_password_fails(self, db_auth_server: dict[str, Any]) -> None:
         """Login with wrong password should fail."""
-        client = httpx.Client(
-            base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
         try:
             email = f"dave_{uuid.uuid4().hex[:6]}@test.com"
 
@@ -555,10 +576,14 @@ class TestAdminLifecycle:
         original_content = f"Content written at {time.time()}"
 
         # Write
-        result = _rpc(admin_client, "write", {
-            "path": path,
-            "content": _encode_bytes(original_content.encode()),
-        })
+        result = _rpc(
+            admin_client,
+            "write",
+            {
+                "path": path,
+                "content": _encode_bytes(original_content.encode()),
+            },
+        )
         assert result.get("error") is None, f"Write failed: {result}"
 
         # Read back
@@ -601,10 +626,14 @@ class TestAdminLifecycle:
 
         # Write files inside
         for i in range(3):
-            _rpc(admin_client, "write", {
-                "path": f"{dir_path}/file{i}.txt",
-                "content": _encode_bytes(f"File {i}".encode()),
-            })
+            _rpc(
+                admin_client,
+                "write",
+                {
+                    "path": f"{dir_path}/file{i}.txt",
+                    "content": _encode_bytes(f"File {i}".encode()),
+                },
+            )
 
         # List directory
         result = _rpc(admin_client, "list", {"path": dir_path})
@@ -649,9 +678,7 @@ class TestLockApiAuth:
 
     def test_unauthenticated_lock_rejected(self, db_auth_server: dict[str, Any]) -> None:
         """Lock operations without auth should be rejected."""
-        client = httpx.Client(
-            base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False
-        )
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
         try:
             resp = client.post(
                 "/api/locks",

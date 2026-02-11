@@ -527,3 +527,37 @@ class ConflictResolveResponse(BaseModel):
 
     conflict_id: str
     status: str
+
+
+# =============================================================================
+# Operation Models (Issue #1197)
+# =============================================================================
+
+
+class OperationResponse(BaseModel):
+    """Single operation entry."""
+
+    id: str
+    agent_id: str | None = None
+    operation_type: str
+    path: str
+    new_path: str | None = None
+    status: str
+    timestamp: str  # ISO-8601
+    metadata: dict[str, Any] | None = None
+
+
+class OperationListResponse(BaseModel):
+    """Response for GET /api/v2/operations.
+
+    In offset mode: offset, has_more are always set. total is only
+    populated when include_total=true (opt-in to avoid COUNT query).
+    In cursor mode: next_cursor is populated (offset/total are None).
+    """
+
+    operations: list[OperationResponse]
+    limit: int
+    has_more: bool = False
+    offset: int | None = None
+    total: int | None = None
+    next_cursor: str | None = None

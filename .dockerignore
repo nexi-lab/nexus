@@ -148,8 +148,8 @@ tests/
 test_*.py
 *_test.py
 
-# Build artifacts
-target/
+# Build artifacts (** matches nested dirs like rust/nexus_fast/target/)
+**/target/
 # Cargo.lock - needed for reproducible builds
 .ruff_cache/
 .mypy_cache/

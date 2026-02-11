@@ -38,6 +38,7 @@ Example (RaftClient - remote):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -114,10 +115,8 @@ except ImportError:
 
 # RaftConsensus: Full Raft consensus for SC mode (requires --features full)
 RaftConsensus = None
-try:
+with contextlib.suppress(ImportError):
     from _nexus_raft import RaftConsensus
-except ImportError:
-    pass  # Not available without grpc feature
 
 
 def require_metastore() -> None:

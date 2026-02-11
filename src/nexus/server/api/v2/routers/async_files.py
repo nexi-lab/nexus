@@ -501,7 +501,7 @@ def create_async_files_router(
                 size=meta.size,
                 etag=meta.etag,
                 version=meta.version,
-                is_directory=meta.is_directory,
+                is_directory=meta.is_dir,
                 created_at=meta.created_at.isoformat() if meta.created_at else None,
                 modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
             )

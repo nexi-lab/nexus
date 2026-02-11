@@ -32,7 +32,8 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "version": "current_version",
     "zone_id": "zone_id",
     "created_by": None,  # TODO(#1246): Add to FilePathModel
-    "is_directory": None,  # TODO(#1246): Add to FilePathModel
+    "entry_type": None,  # TODO(#1246): Add to FilePathModel
+    "target_zone_id": None,  # DT_MOUNT target, not in SQL
     "owner_id": "posix_uid",
 }
 
@@ -138,7 +139,6 @@ class TestRoundtripConsistency:
             version=3,
             zone_id="zone1",
             created_by="agent-1",
-            is_directory=False,
             owner_id="user-42",
         )
 
@@ -178,15 +178,15 @@ class TestRoundtripConsistency:
         assert values["posix_uid"] is None
 
     def test_fields_not_yet_in_sql_are_documented(self) -> None:
-        """created_by and is_directory are in proto but not yet in SQL.
+        """created_by and entry_type are in proto but not yet in SQL.
 
         This test documents the gap and will fail when we add the columns,
         reminding us to update the mapping.
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
         # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"created_by", "is_directory"}, (
-            f"Expected only created_by and is_directory to be unmapped, "
+        assert none_mapped == {"created_by", "entry_type", "target_zone_id"}, (
+            f"Expected only created_by, entry_type, and target_zone_id to be unmapped, "
             f"but got: {none_mapped}. "
             f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
         )

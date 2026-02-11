@@ -80,7 +80,7 @@ class FakeMetadata:
         self.version = 1
         self.zone_id = "bench"
         self.created_by = None
-        self.is_directory = False
+        self.entry_type = 0
         self.owner_id = None
 
 

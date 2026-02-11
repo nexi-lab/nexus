@@ -507,7 +507,7 @@ class SyncService:
         files_found: set[str],
         paths_needing_tuples: list[str],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
-        pending_upserts: list[dict] | None = None,
+        pending_upserts: list[ChangeLogEntry] | None = None,
     ) -> None:
         """Sync a single file entry.
 
@@ -1038,7 +1038,7 @@ class SyncService:
         paths_needing_tuples: list[str],
         flush_fn: Callable[[], None],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
-        pending_upserts: list[dict] | None = None,
+        pending_upserts: list[ChangeLogEntry] | None = None,
     ) -> set[str]:
         """Sync a single file by delegating to _sync_file.
 

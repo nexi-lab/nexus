@@ -10,6 +10,7 @@ Reference: https://arxiv.org/abs/2310.08560 (MemGPT paper)
 
 from nexus.core.memory_paging.archival_store import ArchivalStore
 from nexus.core.memory_paging.context_manager import ContextManager
+from nexus.core.memory_paging.namespace_util import strip_tier_prefix
 from nexus.core.memory_paging.pager import MemoryPager
 from nexus.core.memory_paging.recall_store import RecallStore
 
@@ -18,4 +19,5 @@ __all__ = [
     "RecallStore",
     "ArchivalStore",
     "MemoryPager",
+    "strip_tier_prefix",
 ]

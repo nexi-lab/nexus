@@ -73,6 +73,7 @@ class MemoryQueryRequest(BaseModel):
     namespace_prefix: str | None = Field(None, description="Filter by namespace prefix")
     state: str | None = Field("active", description="Filter by state (active, inactive, all)")
     limit: int | None = Field(None, ge=1, le=1000, description="Maximum results")
+    offset: int = Field(0, ge=0, description="Number of results to skip (for pagination)")
     # Temporal filters
     after: str | None = Field(None, description="Filter by created after (ISO-8601)")
     before: str | None = Field(None, description="Filter by created before (ISO-8601)")
@@ -119,6 +120,13 @@ class MemoryResponse(BaseModel):
     temporal_refs: list[dict[str, Any]] | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class MemoryGetResponse(BaseModel):
+    """Response for GET /api/v2/memories/{id}."""
+
+    memory: dict[str, Any]
+    versions: list[dict[str, Any]] | None = None
 
 
 class MemoryStoreResponse(BaseModel):
@@ -189,6 +197,7 @@ class TrajectoryQueryParams(BaseModel):
     task_type: str | None = Field(None, description="Filter by task type")
     status: str | None = Field(None, description="Filter by status")
     limit: int = Field(50, ge=1, le=100, description="Maximum results")
+    offset: int = Field(0, ge=0, description="Number of results to skip (for pagination)")
     path: str | None = Field(None, description="Filter by path")
 
 
@@ -205,6 +214,12 @@ class TrajectoryResponse(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     trace: list[dict[str, Any]] | None = None
+
+
+class TrajectoryGetResponse(BaseModel):
+    """Response for GET /api/v2/trajectories/{id}."""
+
+    trajectory: dict[str, Any]
 
 
 class TrajectoryStartResponse(BaseModel):
@@ -259,6 +274,14 @@ class FeedbackResponse(BaseModel):
     source: str | None = None
     message: str | None = None
     created_at: str | None = None
+
+
+class TrajectoryFeedbackListResponse(BaseModel):
+    """Response for GET /api/v2/feedback/{trajectory_id}."""
+
+    trajectory_id: str
+    feedbacks: list[dict[str, Any]]
+    total: int
 
 
 class FeedbackAddResponse(BaseModel):
@@ -322,6 +345,12 @@ class PlaybookResponse(BaseModel):
     strategies: list[dict[str, Any]] | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class PlaybookGetResponse(BaseModel):
+    """Response for GET /api/v2/playbooks/{id}."""
+
+    playbook: dict[str, Any]
 
 
 class PlaybookCreateResponse(BaseModel):
@@ -394,7 +423,15 @@ class ConsolidateRequest(BaseModel):
     importance_max: float = Field(0.5, ge=0.0, le=1.0, description="Max importance for candidates")
     memory_type: str | None = Field(None, description="Filter by memory type")
     namespace: str | None = Field(None, description="Filter by namespace")
-    limit: int = Field(100, ge=1, le=1000, description="Max memories to process")
+    limit: int = Field(
+        100,
+        ge=1,
+        le=1000,
+        description=(
+            "Max memories to process. WARNING: consolidation is O(n^2) on this value; "
+            "values > 200 may cause significant latency."
+        ),
+    )
 
 
 class HierarchyBuildRequest(BaseModel):
@@ -443,3 +480,37 @@ class DecayResponse(BaseModel):
     skipped: int
     processed: int
     error: str | None = None
+
+
+# =============================================================================
+# Operation Models (Issue #1197)
+# =============================================================================
+
+
+class OperationResponse(BaseModel):
+    """Single operation entry."""
+
+    id: str
+    agent_id: str | None = None
+    operation_type: str
+    path: str
+    new_path: str | None = None
+    status: str
+    timestamp: str  # ISO-8601
+    metadata: dict[str, Any] | None = None
+
+
+class OperationListResponse(BaseModel):
+    """Response for GET /api/v2/operations.
+
+    In offset mode: offset, has_more are always set. total is only
+    populated when include_total=true (opt-in to avoid COUNT query).
+    In cursor mode: next_cursor is populated (offset/total are None).
+    """
+
+    operations: list[OperationResponse]
+    limit: int
+    has_more: bool = False
+    offset: int | None = None
+    total: int | None = None
+    next_cursor: str | None = None

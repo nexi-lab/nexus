@@ -25,7 +25,10 @@ path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
-# Embedded KV storage (general-purpose, reusable)
+# Embedded KV storage — redb 2.x (1.0 stable since June 2023).
+# Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
+# sled kept for backward compat (migration).
+# See: docs/rfcs/adr-raft-sled-strategy.md
 sled = "0.34"
 redb = "2"
 tempfile = "3"
@@ -64,20 +67,29 @@ pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 tonic-build = { version = "0.12", optional = true }
 
 [dev-dependencies]
-tempfile = "3"  # For testing with temporary directories
 tokio-test = "0.4"
 
 [features]
 default = []
+
 # Enable async support (Tokio runtime)
 async = ["tokio"]
-# Enable gRPC transport (tonic + protobuf)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
-# Enable Raft consensus (tikv/raft-rs)
-consensus = ["raft", "protobuf", "slog", "async"]
-# Enable Python bindings (PyO3 FFI)
+
+# Enable Python bindings (PyO3 FFI) — production path.
+# Provides LocalRaft for ~5μs metadata/lock operations.
 python = ["pyo3"]
-# Enable everything
+
+# Enable Raft consensus (tikv/raft-rs) — EXPERIMENTAL, default OFF.
+# Not used in production. Preserved for future multi-node support.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 2)
+consensus = ["raft", "protobuf", "slog", "async"]
+
+# Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
+# Requires `consensus` feature. Not used in production.
+# See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
+
+# Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]
 
 [profile.release]

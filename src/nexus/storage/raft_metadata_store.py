@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import datetime
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
@@ -52,41 +51,16 @@ def _serialize_metadata(metadata: FileMetadata) -> bytes:
     """Serialize FileMetadata to bytes for Raft storage.
 
     Uses protobuf when available, falls back to JSON otherwise.
+    Delegates field mapping to MetadataMapper (Issue #1246).
     """
+    from nexus.storage.metadata_mapper import MetadataMapper
+
     if _HAS_PROTOBUF:
-        proto = metadata_pb2.FileMetadata(
-            path=metadata.path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path or "",
-            size=metadata.size,
-            etag=metadata.etag or "",
-            mime_type=metadata.mime_type or "",
-            created_at=metadata.created_at.isoformat() if metadata.created_at else "",
-            modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
-            version=metadata.version,
-            zone_id=metadata.zone_id or "",
-            created_by=metadata.created_by or "",
-            is_directory=metadata.is_directory,
-            owner_id=metadata.owner_id or "",
-        )
+        proto = MetadataMapper.to_proto(metadata)
         return proto.SerializeToString()
     else:
         # Fallback to JSON serialization
-        obj = {
-            "path": metadata.path,
-            "backend_name": metadata.backend_name,
-            "physical_path": metadata.physical_path,
-            "size": metadata.size,
-            "etag": metadata.etag,
-            "mime_type": metadata.mime_type,
-            "created_at": metadata.created_at.isoformat() if metadata.created_at else None,
-            "modified_at": metadata.modified_at.isoformat() if metadata.modified_at else None,
-            "version": metadata.version,
-            "zone_id": metadata.zone_id,
-            "created_by": metadata.created_by,
-            "is_directory": metadata.is_directory,
-            "owner_id": metadata.owner_id,
-        }
+        obj = MetadataMapper.to_json(metadata)
         return json.dumps(obj).encode("utf-8")
 
 
@@ -94,7 +68,10 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
     """Deserialize bytes to FileMetadata.
 
     Supports both protobuf (new) and JSON (fallback) formats.
+    Delegates field mapping to MetadataMapper (Issue #1246).
     """
+    from nexus.storage.metadata_mapper import MetadataMapper
+
     # Handle both bytes and list of ints (from PyO3)
     if isinstance(data, list):
         data = bytes(data)
@@ -104,45 +81,14 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
         try:
             proto = metadata_pb2.FileMetadata()
             proto.ParseFromString(data)
-            # Convert protobuf to dataclass
-            created_at = None
-            modified_at = None
-            if proto.created_at:
-                try:
-                    created_at = datetime.fromisoformat(proto.created_at)
-                except ValueError:
-                    pass
-            if proto.modified_at:
-                try:
-                    modified_at = datetime.fromisoformat(proto.modified_at)
-                except ValueError:
-                    pass
-            return FileMetadata(
-                path=proto.path,
-                backend_name=proto.backend_name,
-                physical_path=proto.physical_path or None,
-                size=proto.size,
-                etag=proto.etag or None,
-                mime_type=proto.mime_type or None,
-                created_at=created_at,
-                modified_at=modified_at,
-                version=proto.version,
-                zone_id=proto.zone_id or None,
-                created_by=proto.created_by or None,
-                is_directory=proto.is_directory,
-                owner_id=proto.owner_id or None,
-            )
-        except Exception:
-            pass
+            return MetadataMapper.from_proto(proto)
+        except Exception as proto_err:
+            logger.debug("Protobuf parse failed, trying JSON fallback: %s", proto_err)
 
     # Fallback to JSON format
     try:
         obj = json.loads(data.decode("utf-8"))
-        if obj.get("created_at"):
-            obj["created_at"] = datetime.fromisoformat(obj["created_at"])
-        if obj.get("modified_at"):
-            obj["modified_at"] = datetime.fromisoformat(obj["modified_at"])
-        return FileMetadata(**obj)
+        return MetadataMapper.from_json(obj)
     except Exception as e:
         raise ValueError(f"Failed to deserialize metadata: {e}") from e
 

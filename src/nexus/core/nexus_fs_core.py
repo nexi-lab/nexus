@@ -90,66 +90,6 @@ class NexusFSCoreMixin:
         ) -> str | None: ...
         async def parse(self, path: str, store_result: bool = True) -> Any: ...
 
-    # =========================================================================
-    # Observer notification — unified error policy for RecordStore sync
-    # =========================================================================
-
-    def _notify_observer(
-        self,
-        method_name: str,
-        *,
-        _log_path: str | None = None,
-        **kwargs: Any,
-    ) -> None:
-        """Notify the write observer with unified audit_strict_mode handling.
-
-        Replaces scattered try/except and contextlib.suppress patterns.
-        All write paths (write, delete, rename, batch) now use this method.
-
-        Args:
-            method_name: Observer method to call (e.g. "on_write", "on_delete").
-            _log_path: Path for error messages only — NOT forwarded to observer.
-                All other kwargs are forwarded to the observer method.
-
-        When audit_strict_mode=True and observer raises:
-            Raises AuditLogError (caller sees failure, but Metastore write
-            has already committed — this is a known limitation).
-
-        When audit_strict_mode=False and observer raises:
-            Logs at CRITICAL level but returns normally.
-
-        When no observer is configured:
-            Returns immediately (no-op).
-        """
-        if not self._write_observer:
-            return
-
-        method = getattr(self._write_observer, method_name, None)
-        if method is None:
-            return
-
-        try:
-            method(**kwargs)
-        except Exception as e:
-            from nexus.core.exceptions import AuditLogError
-
-            op_desc = f"{method_name}(path={_log_path!r})" if _log_path else method_name
-            if self._audit_strict_mode:
-                logger.error(
-                    f"AUDIT LOG FAILURE: {op_desc} ABORTED. "
-                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                )
-                raise AuditLogError(
-                    f"Write operation aborted: audit logging failed: {e}",
-                    path=_log_path,
-                    original_error=e,
-                ) from e
-            else:
-                logger.critical(
-                    f"AUDIT LOG FAILURE: {op_desc} SUCCEEDED but audit log FAILED. "
-                    f"Error: {e}. This creates an audit trail gap!"
-                )
-
     def _get_overlay_config(self, path: str) -> Any:
         """Get overlay config for a path, if overlay is active.
 
@@ -388,6 +328,9 @@ class NexusFSCoreMixin:
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
+        # Issue #923: Lock ensures atomic read-modify-write for revision counter.
+        # Without this, concurrent writes could get the same revision number.
+        # TODO: Replace with atomic increment when Raft store supports it.
         with self._revision_lock:
             try:
                 meta = self.metadata.get(rev_path)
@@ -405,6 +348,7 @@ class NexusFSCoreMixin:
                 return new_rev
             except Exception as e:
                 logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                # Fallback: return timestamp-based pseudo-revision
                 return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
@@ -1760,8 +1704,8 @@ class NexusFSCoreMixin:
 
         # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
         self._notify_observer(
-            "on_write",
-            _log_path=path,
+            "write",
+            path,
             metadata=new_meta,
             is_new=(meta is None),
             path=path,
@@ -2118,9 +2062,11 @@ class NexusFSCoreMixin:
             self._auto_parse_file(path)
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
+        # Observer is optional — injected by factory.py, not created by kernel.
+        # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
-            "on_write",
-            _log_path=path,
+            "write",
+            path,
             metadata=metadata,
             is_new=(meta is None),
             path=path,
@@ -2707,13 +2653,14 @@ class NexusFSCoreMixin:
         self.metadata.put_batch(metadata_list)
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
-        batch_items = [
+        # Issue #1246: Unified error handling — no longer silently suppressed.
+        items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
         self._notify_observer(
-            "on_write_batch",
-            _log_path=paths[0] if paths else None,
-            items=batch_items,
+            "write_batch",
+            f"batch({len(metadata_list)} files)",
+            items=items,
             zone_id=zone_id,
             agent_id=agent_id,
         )
@@ -2832,6 +2779,46 @@ class NexusFSCoreMixin:
                 self._auto_parse_file(path)
 
         return results
+
+    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
+        """Notify the write observer of a mutation, with unified error policy.
+
+        Replaces the inconsistent error handling where single writes used
+        audit_strict_mode but batch/delete/rename silently suppressed errors.
+
+        Issue #1246: All observer calls now follow the same policy:
+        - audit_strict_mode=True: raise AuditLogError on failure
+        - audit_strict_mode=False: log critical warning, continue
+
+        Args:
+            operation: One of 'write', 'write_batch', 'delete', 'rename'.
+            op_path: Primary path affected (for error messages only).
+            **kwargs: Passed directly to the observer method.
+        """
+        if not self._write_observer:
+            return
+
+        try:
+            method = getattr(self._write_observer, f"on_{operation}")
+            method(**kwargs)
+        except Exception as e:
+            from nexus.core.exceptions import AuditLogError
+
+            if self._audit_strict_mode:
+                logger.error(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
+                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
+                )
+                raise AuditLogError(
+                    f"Operation aborted: audit logging failed for {operation}: {e}",
+                    path=op_path,
+                    original_error=e,
+                ) from e
+            else:
+                logger.critical(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
+                    f"Error: {e}. This creates an audit trail gap!"
+                )
 
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
@@ -2991,9 +2978,10 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
+        # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
-            "on_delete",
-            _log_path=path,
+            "delete",
+            path,
             path=path,
             zone_id=zone_id,
             agent_id=agent_id,
@@ -3248,9 +3236,10 @@ class NexusFSCoreMixin:
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
         # Task #45: Sync to RecordStore (audit trail)
+        # Issue #1246: Unified error handling via _notify_observer.
         self._notify_observer(
-            "on_rename",
-            _log_path=old_path,
+            "rename",
+            old_path,
             old_path=old_path,
             new_path=new_path,
             zone_id=zone_id,

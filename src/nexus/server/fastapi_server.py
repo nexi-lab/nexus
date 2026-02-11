@@ -405,6 +405,16 @@ class AppState:
         self.websocket_manager: Any = None
         # Reactive Subscription Manager for O(1) event matching (Issue #1167)
         self.reactive_subscription_manager: Any = None
+        # Agent Registry for agent lifecycle (Issue #1240)
+        self.agent_registry: Any = None
+        # Agent Event Log for sandbox lifecycle events (Issue #1307)
+        self.agent_event_log: Any = None
+        # SandboxAuthService for authenticated sandbox creation (Issue #1307)
+        self.sandbox_auth_service: Any = None
+        # WriteBack Service for bidirectional sync (Issue #1129)
+        self.write_back_service: Any = None
+        # Task Queue Runner (Issue #574)
+        self.task_runner: Any = None
 
 
 # Global state (set during app creation)
@@ -793,22 +803,27 @@ async def lifespan(_app: FastAPI) -> Any:
                     if sync_rebac:
                         from nexus.core.namespace_manager import NamespaceManager
 
+                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
+                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
                         namespace_manager = NamespaceManager(
                             rebac_manager=sync_rebac,
                             cache_maxsize=10_000,
-                            cache_ttl=300,
-                            revision_window=10,
+                            cache_ttl=ns_cache_ttl,
+                            revision_window=ns_revision_window,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            "(using sync rebac_manager for mount table queries)"
+                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
+                            "using sync rebac_manager for mount table queries)"
                         )
 
                 # Create permission enforcer with async ReBAC
+                # Note: agent_registry may not be initialized yet (it's set later
+                # in the lifespan), so use getattr with None default.
                 permission_enforcer = AsyncPermissionEnforcer(
                     rebac_manager=_app_state.async_rebac_manager,
                     namespace_manager=namespace_manager,
-                    agent_registry=_app_state.agent_registry,
+                    agent_registry=getattr(_app_state, "agent_registry", None),
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
@@ -876,6 +891,26 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize reactive subscription manager: {e}")
 
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+
+    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
+    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    try:
+        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+
+        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
+        logger.info("Reactive subscription manager initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
     try:
@@ -894,6 +929,37 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
+
+    # Issue #1129: WriteBack Service for bidirectional sync (Nexus -> Backend)
+    # Enable with NEXUS_WRITE_BACK=true (default: disabled)
+    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
+    if write_back_enabled and _app_state.nexus_fs:
+        try:
+            from nexus.services.change_log_store import ChangeLogStore
+            from nexus.services.gateway import NexusFSGateway
+            from nexus.services.sync_backlog_store import SyncBacklogStore
+            from nexus.services.write_back_service import WriteBackService
+
+            gw = NexusFSGateway(_app_state.nexus_fs)
+            wb_event_bus = None
+            if hasattr(_app_state.nexus_fs, "_event_bus"):
+                wb_event_bus = _app_state.nexus_fs._event_bus
+            if wb_event_bus:
+                backlog_store = SyncBacklogStore(gw)
+                change_log_store = ChangeLogStore(gw)
+                _app_state.write_back_service = WriteBackService(
+                    gateway=gw,
+                    event_bus=wb_event_bus,
+                    backlog_store=backlog_store,
+                    change_log_store=change_log_store,
+                    conflict_policy=os.getenv("NEXUS_CONFLICT_POLICY", "lww"),  # type: ignore[arg-type]
+                )
+                await _app_state.write_back_service.start()
+                logger.info("WriteBack service started for bidirectional sync")
+            else:
+                logger.debug("WriteBack service skipped: no event bus available")
+        except Exception as e:
+            logger.warning(f"Failed to start WriteBack service: {e}")
 
     # Connect Lock Manager coordination client (Issue #1186)
     # Required for distributed lock REST API endpoints
@@ -1132,6 +1198,66 @@ async def lifespan(_app: FastAPI) -> Any:
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
+    # Issue #1307: Initialize SandboxAuthService for authenticated sandbox creation
+    if _app_state.nexus_fs and not _app_state.agent_registry:
+        logger.info(
+            "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
+        )
+    if _app_state.nexus_fs and _app_state.agent_registry:
+        try:
+            from nexus.sandbox.auth_service import SandboxAuthService
+            from nexus.sandbox.events import AgentEventLog
+            from nexus.sandbox.sandbox_manager import SandboxManager
+
+            session_factory = getattr(_app_state.nexus_fs, "SessionLocal", None)
+            if session_factory and callable(session_factory):
+                # Create AgentEventLog for sandbox lifecycle audit
+                _app_state.agent_event_log = AgentEventLog(session_factory=session_factory)
+
+                # Create SandboxManager for SandboxAuthService
+                # (separate from NexusFS's lazy sandbox manager — different layers)
+                sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
+                sandbox_mgr = SandboxManager(
+                    db_session=session_factory(),
+                    e2b_api_key=os.getenv("E2B_API_KEY"),
+                    e2b_team_id=os.getenv("E2B_TEAM_ID"),
+                    e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
+                    config=sandbox_config,
+                )
+
+                # Get NamespaceManager if available (best-effort)
+                namespace_manager = None
+                sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                if sync_rebac:
+                    try:
+                        from nexus.core.namespace_manager import NamespaceManager
+
+                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
+                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
+                        namespace_manager = NamespaceManager(
+                            rebac_manager=sync_rebac,
+                            cache_maxsize=10_000,
+                            cache_ttl=ns_cache_ttl,
+                            revision_window=ns_revision_window,
+                        )
+                    except Exception as e:
+                        logger.info(
+                            "[SANDBOX-AUTH] NamespaceManager not available (%s), "
+                            "sandbox mount tables will be empty",
+                            e,
+                        )
+
+                _app_state.sandbox_auth_service = SandboxAuthService(
+                    agent_registry=_app_state.agent_registry,
+                    sandbox_manager=sandbox_mgr,
+                    namespace_manager=namespace_manager,
+                    event_log=_app_state.agent_event_log,
+                    budget_enforcement=False,
+                )
+                logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
+        except Exception as e:
+            logger.warning(f"[SANDBOX-AUTH] Failed to initialize SandboxAuthService: {e}")
+
     # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
     _scheduler_pool = None
     if _app_state.database_url and "postgresql" in _app_state.database_url:
@@ -1188,10 +1314,44 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
+    # Issue #574: Task Queue Engine - Start background worker
+    task_runner_task: asyncio.Task[Any] | None = None
+    if _app_state.nexus_fs:
+        try:
+            from nexus.tasks import is_available
+
+            if is_available():
+                service = _app_state.nexus_fs.task_queue_service
+                engine = service.get_engine()
+
+                from nexus.tasks.runner import AsyncTaskRunner
+
+                runner = AsyncTaskRunner(engine=engine, max_workers=4)
+                service.set_runner(runner)
+                _app_state.task_runner = runner
+                task_runner_task = asyncio.create_task(runner.run())
+                logger.info("Task Queue runner started (4 workers)")
+            else:
+                logger.debug("Task Queue: nexus_tasks Rust extension not available")
+        except Exception as e:
+            logger.warning(f"Task Queue runner not started: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #574: Stop Task Queue runner
+    if task_runner_task:
+        try:
+            if _app_state.task_runner:
+                await _app_state.task_runner.shutdown()
+            task_runner_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task_runner_task
+            logger.info("Task Queue runner stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down Task Queue runner: {e}")
 
     # Issue #1212: Shutdown scheduler pool
     if _scheduler_pool:
@@ -1217,6 +1377,14 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
 
+    # Issue #1129: Stop WriteBack Service
+    if _app_state.write_back_service:
+        try:
+            await _app_state.write_back_service.stop()
+            logger.info("WriteBack service stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down WriteBack service: {e}")
+
     # Stop DirectoryGrantExpander worker
     if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:
         try:
@@ -1237,6 +1405,16 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Issue #1307: Close SandboxAuthService database session
+    if _app_state.sandbox_auth_service:
+        try:
+            sandbox_mgr = _app_state.sandbox_auth_service._sandbox_manager
+            if hasattr(sandbox_mgr, "db") and sandbox_mgr.db:
+                sandbox_mgr.db.close()
+            logger.info("[SANDBOX-AUTH] SandboxAuthService session closed")
+        except Exception as e:
+            logger.warning(f"[SANDBOX-AUTH] Error closing session: {e}")
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1922,11 +2100,13 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.server.api.v2.routers import (
             consolidation,
+            curate,
             feedback,
             memories,
             mobile_search,
+            operations,
             playbooks,
-            reflection,
+            reflect,
             trajectories,
         )
 
@@ -1934,10 +2114,12 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(trajectories.router)
         app.include_router(feedback.router)
         app.include_router(playbooks.router)
-        app.include_router(reflection.router)
+        app.include_router(reflect.router)
+        app.include_router(curate.router)
         app.include_router(consolidation.router)
         app.include_router(mobile_search.router)
-        logger.info("API v2 routes registered (32 endpoints)")
+        app.include_router(operations.router)
+        logger.info("API v2 routes registered (38 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
@@ -4194,9 +4376,12 @@ def _register_routes(app: FastAPI) -> None:
                                         f"Zookie zone mismatch: request={zone_id}, "
                                         f"zookie={zookie.zone_id}"
                                     )
-                                if not _app_state.nexus_fs._wait_for_revision(
-                                    zookie.zone_id, zookie.revision, timeout_ms=5000
-                                ) and consistency == FSConsistency.STRONG:
+                                if (
+                                    not _app_state.nexus_fs._wait_for_revision(
+                                        zookie.zone_id, zookie.revision, timeout_ms=5000
+                                    )
+                                    and consistency == FSConsistency.STRONG
+                                ):
                                     raise ConsistencyTimeoutError(
                                         f"Timeout waiting for revision {zookie.revision}",
                                         zone_id=zookie.zone_id,
@@ -4211,7 +4396,10 @@ def _register_routes(app: FastAPI) -> None:
                     except InvalidZookieError as e:
                         from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
 
-                        if getattr(context, "consistency", DEFAULT_CONSISTENCY) == FSConsistency.STRONG:
+                        if (
+                            getattr(context, "consistency", DEFAULT_CONSISTENCY)
+                            == FSConsistency.STRONG
+                        ):
                             return _error_response(
                                 rpc_request.id,
                                 RPCErrorCode.INVALID_PARAMS,

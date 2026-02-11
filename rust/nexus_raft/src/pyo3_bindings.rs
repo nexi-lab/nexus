@@ -220,6 +220,56 @@ impl PyMetastore {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
     }
 
+    /// Set multiple metadata entries in a single batch operation.
+    ///
+    /// Args:
+    ///     items: List of (path, value_bytes) tuples to set.
+    ///
+    /// Returns:
+    ///     Number of entries set.
+    pub fn batch_set_metadata(&mut self, items: Vec<(String, Vec<u8>)>) -> PyResult<usize> {
+        let count = items.len();
+        for (path, value) in &items {
+            let cmd = Command::SetMetadata {
+                key: path.clone(),
+                value: value.clone(),
+            };
+            self.apply_command(cmd)?;
+        }
+        Ok(count)
+    }
+
+    /// Delete multiple metadata entries in a single batch operation.
+    ///
+    /// Args:
+    ///     keys: List of paths to delete.
+    ///
+    /// Returns:
+    ///     Number of entries deleted.
+    pub fn batch_delete_metadata(&mut self, keys: Vec<String>) -> PyResult<usize> {
+        let count = keys.len();
+        for key in &keys {
+            let cmd = Command::DeleteMetadata { key: key.clone() };
+            self.apply_command(cmd)?;
+        }
+        Ok(count)
+    }
+
+    /// Count metadata entries matching a prefix.
+    ///
+    /// Args:
+    ///     prefix: Path prefix to count by.
+    ///
+    /// Returns:
+    ///     Number of matching entries.
+    pub fn count_metadata(&self, prefix: &str) -> PyResult<usize> {
+        let entries = self
+            .sm
+            .list_metadata(prefix)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to count metadata: {}", e)))?;
+        Ok(entries.len())
+    }
+
     // =========================================================================
     // Lock Operations
     // =========================================================================
@@ -467,8 +517,8 @@ impl PyMetastore {
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "RaftConsensus")]
 pub struct PyRaftConsensus {
-    /// Shared RaftNode (also used by gRPC server and TransportLoop).
-    node: std::sync::Arc<crate::raft::RaftNode<FullStateMachine>>,
+    /// RaftNode handle (Clone + Send + Sync). The driver is owned by TransportLoop.
+    node: crate::raft::RaftNode<FullStateMachine>,
     /// Background Tokio runtime (owns the gRPC server + transport loop threads).
     runtime: tokio::runtime::Runtime,
     /// Shutdown signal sender.
@@ -532,11 +582,12 @@ impl PyRaftConsensus {
             ..Default::default()
         };
 
-        // Create RaftServer (which creates RaftNode + storage)
-        let server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
+        // Create RaftServer (which creates RaftNode handle + driver)
+        let mut server = RaftServer::with_config(node_id, db_path, config, peer_addrs.clone())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create Raft server: {}", e)))?;
 
-        let node = server.node();
+        let node = server.node(); // Clone of handle
+        let driver = server.take_driver(); // Driver goes to transport loop
 
         // Build Tokio runtime for background tasks
         let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -549,9 +600,9 @@ impl PyRaftConsensus {
         // Shutdown signal
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start transport loop in background
+        // Start transport loop in background — owns the driver exclusively
         let peer_map = peer_addrs.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(node.clone(), peer_map, RaftClientPool::new());
+        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
         let shutdown_rx_transport = shutdown_rx.clone();
         runtime.spawn(transport_loop.run(shutdown_rx_transport));
 
@@ -755,16 +806,14 @@ impl PyRaftConsensus {
     // Cluster Status
     // =========================================================================
 
-    /// Check if this node is the current leader.
-    pub fn is_leader(&self, py: Python<'_>) -> PyResult<bool> {
-        let node = self.node.clone();
-        Ok(py.allow_threads(|| self.runtime.block_on(node.is_leader())))
+    /// Check if this node is the current leader (atomic read, no I/O).
+    pub fn is_leader(&self) -> bool {
+        self.node.is_leader()
     }
 
-    /// Get the current leader ID (None if unknown).
-    pub fn leader_id(&self, py: Python<'_>) -> PyResult<Option<u64>> {
-        let node = self.node.clone();
-        Ok(py.allow_threads(|| self.runtime.block_on(node.leader_id())))
+    /// Get the current leader ID (None if unknown, atomic read).
+    pub fn leader_id(&self) -> Option<u64> {
+        self.node.leader_id()
     }
 
     /// Get this node's ID.

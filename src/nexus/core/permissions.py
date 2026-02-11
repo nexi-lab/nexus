@@ -1122,13 +1122,11 @@ class PermissionEnforcer:
         ):
             return paths
 
-        # Issue #1239: Namespace pre-filter — only include paths visible to subject
-        # This runs before Tiger cache / ReBAC bulk checks for efficiency
+        # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.
+        # filter_visible() acquires locks once for all paths (not per-path).
         if self.namespace_manager is not None:
             subject = context.get_subject()
-            paths = [
-                p for p in paths if self.namespace_manager.is_visible(subject, p, context.zone_id)
-            ]
+            paths = self.namespace_manager.filter_visible(subject, paths, context.zone_id)
             if not paths:
                 return []
 

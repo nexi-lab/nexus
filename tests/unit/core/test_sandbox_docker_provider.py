@@ -25,14 +25,24 @@ if "docker" not in sys.modules:
     sys.modules["docker.errors"] = docker_errors_mock
     sys.modules["docker"].errors = docker_errors_mock
 
-from nexus.sandbox.sandbox_docker_provider import DockerSandboxProvider
-from nexus.sandbox.sandbox_provider import (
+import nexus.sandbox.sandbox_docker_provider as _docker_provider_mod  # noqa: E402
+from nexus.sandbox.sandbox_docker_provider import DockerSandboxProvider  # noqa: E402
+from nexus.sandbox.sandbox_provider import (  # noqa: E402
     CodeExecutionResult,
     ExecutionTimeoutError,
     SandboxInfo,
     SandboxNotFoundError,
     UnsupportedLanguageError,
 )
+
+# Ensure DOCKER_AVAILABLE is True and NotFound is available for tests —
+# these may be missing if another test module triggered the import chain
+# before the docker mock was set up (e.g., security_profile tests →
+# __init__.py → sandbox_manager → sandbox_docker_provider → import docker
+# fails → DOCKER_AVAILABLE=False, NotFound never imported).
+_docker_provider_mod.DOCKER_AVAILABLE = True
+if not hasattr(_docker_provider_mod, "NotFound"):
+    _docker_provider_mod.NotFound = sys.modules["docker.errors"].NotFound
 
 
 @pytest.fixture
@@ -360,6 +370,7 @@ class TestDockerSandboxProvider:
         mkdir_result = MagicMock(exit_code=0)
         fuse_conf_result = MagicMock(exit_code=0)  # FUSE config step
         which_result = MagicMock(exit_code=0)  # nexus already installed
+        write_key_result = MagicMock(exit_code=0)  # API key file write
         mount_result = MagicMock(exit_code=0)
         prewarm_result = MagicMock(exit_code=0)  # test -d succeeds
         ls_result = MagicMock(
@@ -372,6 +383,7 @@ class TestDockerSandboxProvider:
             mkdir_result,
             fuse_conf_result,
             which_result,
+            write_key_result,
             mount_result,
             prewarm_result,
             ls_result,
@@ -391,7 +403,9 @@ class TestDockerSandboxProvider:
 
         # Verify host.docker.internal transformation
         calls = mock_container.exec_run.call_args_list
-        mount_call = str(calls[3])  # Fourth call is mount command (after mkdir, fuse_conf, which)
+        mount_call = str(
+            calls[4]
+        )  # Fifth call is mount command (after mkdir, fuse_conf, which, write_key)
         assert "host.docker.internal" in mount_call
 
     @pytest.mark.asyncio
@@ -408,6 +422,7 @@ class TestDockerSandboxProvider:
         fuse_conf_result = MagicMock(exit_code=0)  # FUSE config step
         which_result = MagicMock(exit_code=1)  # nexus not found
         install_result = MagicMock(exit_code=0)
+        write_key_result = MagicMock(exit_code=0)  # API key file write
         mount_result = MagicMock(exit_code=0)
         prewarm_result = MagicMock(exit_code=0)  # test -d succeeds
         ls_result = MagicMock(exit_code=0, output=b"total 8\n")
@@ -418,6 +433,7 @@ class TestDockerSandboxProvider:
             fuse_conf_result,
             which_result,
             install_result,
+            write_key_result,
             mount_result,
             prewarm_result,
             ls_result,

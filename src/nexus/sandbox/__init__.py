@@ -10,6 +10,7 @@ from nexus.sandbox.sandbox_provider import (
     SandboxNotFoundError,
     SandboxProvider,
 )
+from nexus.sandbox.security_profile import SandboxSecurityProfile
 
 __all__ = [
     "CodeExecutionResult",
@@ -17,4 +18,5 @@ __all__ = [
     "SandboxManager",
     "SandboxNotFoundError",
     "SandboxProvider",
+    "SandboxSecurityProfile",
 ]

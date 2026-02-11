@@ -75,9 +75,6 @@ class SyncBacklogStore(SyncStoreBase):
         Returns:
             True if successful, False otherwise
         """
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
         from nexus.storage.models import SyncBacklogModel
 
         session = self._get_session()
@@ -106,20 +103,14 @@ class SyncBacklogStore(SyncStoreBase):
                 "updated_at": now,
             }
 
-            if self._detect_dialect():
-                stmt = pg_insert(SyncBacklogModel).values(**values)
-                stmt = stmt.on_conflict_do_update(
-                    constraint="uq_sync_backlog_pending",
-                    set_=update_set,
-                )
-            else:
-                stmt = sqlite_insert(SyncBacklogModel).values(**values)  # type: ignore[assignment]
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["path", "backend_name", "zone_id", "status"],
-                    set_=update_set,
-                )
-
-            session.execute(stmt)
+            self._dialect_upsert(
+                session,
+                SyncBacklogModel,
+                values,
+                pg_constraint="uq_sync_backlog_pending",
+                sqlite_index_elements=["path", "backend_name", "zone_id", "status"],
+                update_set=update_set,
+            )
             session.commit()
             return True
         except Exception as e:

@@ -254,7 +254,7 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = _get_operation_context(auth_result)
-    session = nexus_fs.memory.session
+    session = nexus_fs.SessionLocal()
     zone_id = context.zone_id or "default"
 
     return OperationLogger(session=session), zone_id

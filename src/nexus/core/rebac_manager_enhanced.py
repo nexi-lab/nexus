@@ -1133,6 +1133,20 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         namespace_configs = self._get_namespace_configs_for_rust()
         self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
 
+    def get_zone_tuples(self, zone_id: str) -> list[dict[str, Any]]:
+        """Fetch all permission tuples for a zone (for export/portability).
+
+        Returns raw tuples without graph traversal. Used by portability module
+        for bulk export/import operations.
+
+        Args:
+            zone_id: Zone ID
+
+        Returns:
+            List of tuple dictionaries
+        """
+        return self._fetch_zone_tuples_from_db(zone_id)
+
     def _fetch_zone_tuples_from_db(self, zone_id: str) -> list[dict[str, Any]]:
         """Fetch all tuples for a zone from database.
 

@@ -519,7 +519,7 @@ class NexusFSReBACMixin:
             if hasattr(self._rebac_manager, "_get_cached_zone_tuples"):
                 tuples = self._require_rebac._get_cached_zone_tuples(effective_zone)
                 if tuples is None:
-                    tuples = self._require_rebac._fetch_zone_tuples_from_db(effective_zone)
+                    tuples = self._require_rebac.get_zone_tuples(effective_zone)
             else:
                 tuples = []
 

@@ -25,6 +25,7 @@ from nexus.portability.models import (
     ContentMode,
     FileRecord,
     ImportResult,
+    PermissionRecord,
     ZoneImportOptions,
 )
 
@@ -440,6 +441,67 @@ class ZoneImportService:
         except Exception as e:
             logger.warning(f"Failed to update timestamps for {path}: {e}")
 
+    @staticmethod
+    def validate_permission_graph(
+        records: list[PermissionRecord],
+    ) -> list[str]:
+        """Validate permission graph integrity before import.
+
+        Checks for:
+        - Empty or missing required fields
+        - Invalid object/subject types
+        - Self-referential tuples (subject == object with same relation)
+
+        Args:
+            records: List of permission records to validate
+
+        Returns:
+            List of validation error messages (empty if valid)
+        """
+        errors: list[str] = []
+        valid_types = {"file", "directory", "user", "group", "zone", "agent", "memory"}
+        seen: set[tuple[str, str, str, str, str]] = set()
+
+        for i, rec in enumerate(records):
+            # Check required fields
+            if not rec.subject_type or not rec.subject_id:
+                errors.append(f"Record {i}: missing subject_type or subject_id")
+            if not rec.object_type or not rec.object_id:
+                errors.append(f"Record {i}: missing object_type or object_id")
+            if not rec.relation:
+                errors.append(f"Record {i}: missing relation")
+
+            # Check known types (warn, don't fail — extensible)
+            if rec.subject_type and rec.subject_type not in valid_types:
+                errors.append(f"Record {i}: unknown subject_type '{rec.subject_type}'")
+            if rec.object_type and rec.object_type not in valid_types:
+                errors.append(f"Record {i}: unknown object_type '{rec.object_type}'")
+
+            # Check for self-referential tuples
+            if rec.subject_type == rec.object_type and rec.subject_id == rec.object_id:
+                errors.append(
+                    f"Record {i}: self-referential tuple "
+                    f"({rec.subject_type}:{rec.subject_id} {rec.relation})"
+                )
+
+            # Check for duplicates
+            key = (
+                rec.subject_type,
+                rec.subject_id,
+                rec.relation,
+                rec.object_type,
+                rec.object_id,
+            )
+            if key in seen:
+                errors.append(
+                    f"Record {i}: duplicate tuple "
+                    f"({rec.subject_type}:{rec.subject_id} "
+                    f"{rec.relation} {rec.object_type}:{rec.object_id})"
+                )
+            seen.add(key)
+
+        return errors
+
     def _import_permissions(
         self,
         reader: BundleReader,
@@ -448,6 +510,8 @@ class ZoneImportService:
         progress_callback: ProgressCallback | None,
     ) -> None:
         """Import ReBAC permissions from bundle.
+
+        Validates graph integrity first, then writes tuples to ReBAC.
 
         Args:
             reader: Open bundle reader
@@ -461,8 +525,18 @@ class ZoneImportService:
             logger.info("No ReBAC manager available, skipping permission import")
             return
 
+        # Collect all records for validation
+        records = list(reader.iter_permission_records())
+
+        # Validate graph integrity
+        validation_errors = self.validate_permission_graph(records)
+        if validation_errors:
+            for err in validation_errors:
+                result.add_warning(f"Permission validation: {err}")
+            logger.warning(f"Permission graph validation found {len(validation_errors)} issues")
+
         idx = 0
-        for perm_record in reader.iter_permission_records():
+        for perm_record in records:
             idx += 1
 
             try:
@@ -480,12 +554,20 @@ class ZoneImportService:
                 if object_id.startswith("/"):
                     object_id = options.remap_path(object_id)
 
-                # TODO: Actually write to ReBAC when API is available
-                # For now, just count the permissions
+                # Determine target zone
+                target_zone = options.target_zone_id or "default"
+
+                # Write tuple to ReBAC
+                rebac_manager.rebac_write(
+                    subject=(perm_record.subject_type, subject_id),
+                    relation=perm_record.relation,
+                    object=(perm_record.object_type, object_id),
+                    zone_id=target_zone,
+                )
                 result.permissions_imported += 1
 
                 logger.debug(
-                    f"Would import permission: {perm_record.subject_type}:{subject_id} "
+                    f"Imported permission: {perm_record.subject_type}:{subject_id} "
                     f"{perm_record.relation} {perm_record.object_type}:{object_id}"
                 )
 

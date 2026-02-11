@@ -326,8 +326,103 @@ class TestReplicationStatus:
                 "uncommitted": 0,
             }
 
-    def test_replication_status_ec_raises(self) -> None:
-        """EC mode raises NotImplementedError (requires async lag tracking)."""
+    def test_replication_status_ec_returns_pending(self) -> None:
+        """EC mode returns a dict with pending write count (Issue #1180 Phase B)."""
         store = _build_store(StoreMode.EC)
-        with pytest.raises(NotImplementedError):
-            store.get_replication_status()
+        status = store.get_replication_status()
+        assert status == {"mode": "ec", "lag": 0, "uncommitted": 0}
+
+
+# ---------------------------------------------------------------------------
+# 19-24: EC pending write counter (Issue #1180 Phase B)
+# ---------------------------------------------------------------------------
+
+
+class TestECPendingCounter:
+    """Tests for EC mode pending write counter and acknowledge_replication."""
+
+    def test_ec_put_increments_pending(self) -> None:
+        """_put_local in EC mode increments the pending counter."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.EC, sled=sled)
+
+        meta = _make_metadata(path="/data/file.txt", size=100)
+        store._put_local(meta)
+
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 1
+
+    def test_ec_delete_increments_pending(self) -> None:
+        """_delete_local in EC mode increments the pending counter."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.EC, sled=sled)
+
+        from nexus.storage.raft_metadata_store import _serialize_metadata
+
+        meta = _make_metadata(path="/data/file.txt", size=100)
+        sled.set_metadata("/data/file.txt", _serialize_metadata(meta))
+
+        store._delete_local("/data/file.txt")
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 1
+
+    def test_ec_multiple_puts_accumulate(self) -> None:
+        """Multiple puts in EC mode accumulate the pending counter."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.EC, sled=sled)
+
+        for i in range(5):
+            meta = _make_metadata(path=f"/data/file_{i}.txt", size=i * 100)
+            store._put_local(meta)
+
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 5
+
+    def test_acknowledge_replication_decrements(self) -> None:
+        """acknowledge_replication reduces the pending counter."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.EC, sled=sled)
+
+        for i in range(5):
+            meta = _make_metadata(path=f"/data/file_{i}.txt", size=100)
+            store._put_local(meta)
+
+        store.acknowledge_replication(3)
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 2
+
+    def test_acknowledge_replication_clamps_to_zero(self) -> None:
+        """acknowledge_replication does not go below zero."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.EC, sled=sled)
+
+        meta = _make_metadata(path="/data/file.txt", size=100)
+        store._put_local(meta)
+
+        store.acknowledge_replication(10)  # more than pending
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 0
+
+    def test_acknowledge_replication_non_ec_raises(self) -> None:
+        """acknowledge_replication on non-EC mode raises RuntimeError."""
+        store = _build_store(StoreMode.SC)
+        with pytest.raises(RuntimeError, match="EC mode"):
+            store.acknowledge_replication(1)
+
+    def test_acknowledge_replication_negative_raises(self) -> None:
+        """acknowledge_replication with negative count raises ValueError."""
+        store = _build_store(StoreMode.EC)
+        with pytest.raises(ValueError, match="non-negative"):
+            store.acknowledge_replication(-1)
+
+    def test_non_ec_put_no_pending(self) -> None:
+        """_put_local in non-EC mode does not have _ec_pending attribute."""
+        sled = FakeSledStore()
+        store = _build_store(StoreMode.SC, sled=sled)
+
+        meta = _make_metadata(path="/data/file.txt", size=100)
+        store._put_local(meta)
+
+        # SC mode: get_replication_status returns 0
+        status = store.get_replication_status()
+        assert status["uncommitted"] == 0

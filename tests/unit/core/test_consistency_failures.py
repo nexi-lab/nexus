@@ -173,33 +173,33 @@ class TestWaitForRevision:
         assert result is True
         assert arrived.is_set()
 
-    def test_poll_cap_is_10ms(self) -> None:
-        """Verify the exponential backoff caps at 10ms (Issue #1180 change).
+    def test_notification_wakeup_latency(self) -> None:
+        """Verify Condition-based notification wakes waiter within ~10ms (Issue #1180 Phase B).
 
-        The current implementation caps at 100ms. After Issue #1180, the cap
-        should be reduced to 10ms for faster convergence.
+        After Phase B, _wait_for_revision uses RevisionNotifier (threading.Condition)
+        instead of polling. A writer thread notifies and the waiter wakes up quickly.
         """
         fs = StubFS()
         fs._increment_and_get_revision("z1")  # rev 1
 
-        sleep_values: list[float] = []
-        original_sleep = time.sleep
+        def writer() -> None:
+            time.sleep(0.02)  # 20ms delay to let waiter block
+            fs._increment_and_get_revision("z1")  # rev 2
+            fs._increment_and_get_revision("z1")  # rev 3
 
-        def capture_sleep(seconds: float) -> None:
-            sleep_values.append(seconds)
-            original_sleep(min(seconds, 0.001))  # Actually sleep only 1ms to keep test fast
+        t = threading.Thread(target=writer, daemon=True)
+        start = time.monotonic()
+        t.start()
 
-        with patch("time.sleep", side_effect=capture_sleep):
-            # Use a very short timeout so we get several poll iterations
-            fs._wait_for_revision("z1", min_revision=999, timeout_ms=100)
+        result = fs._wait_for_revision("z1", min_revision=3, timeout_ms=2000)
+        elapsed_ms = (time.monotonic() - start) * 1000
+        t.join(timeout=3)
 
-        # All sleep values should be <= 10ms (0.01s) after Issue #1180
-        assert len(sleep_values) > 0, "Expected at least one sleep call"
-        for val in sleep_values:
-            assert val <= 0.010, (
-                f"Poll sleep {val * 1000:.1f}ms exceeds 10ms cap. "
-                f"All sleeps: {[f'{v * 1000:.1f}ms' for v in sleep_values]}"
-            )
+        assert result is True
+        # Should wake up shortly after the writer notifies (~20-30ms total)
+        assert elapsed_ms < 200, (
+            f"Wakeup took {elapsed_ms:.1f}ms, expected < 200ms with Condition notification"
+        )
 
 
 # ---------------------------------------------------------------------------

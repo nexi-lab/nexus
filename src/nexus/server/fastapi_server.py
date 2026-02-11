@@ -1567,6 +1567,16 @@ def create_app(
     # Register routes
     _register_routes(app)
 
+    # Register NexusFS instance for zone routes, migration, and user provisioning.
+    # This must happen unconditionally (not only when OAuth is configured).
+    try:
+        from nexus.server.auth.auth_routes import set_nexus_instance
+
+        set_nexus_instance(nexus_fs)
+        logger.info("NexusFS instance registered for zone management")
+    except Exception as e:
+        logger.warning(f"Failed to register NexusFS instance: {e}")
+
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
 
@@ -1645,14 +1655,8 @@ def _initialize_oauth_provider(
             f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available."
         )
 
-    # Set NexusFS instance for user provisioning in OAuth flow
-    try:
-        from nexus.server.auth.auth_routes import set_nexus_instance
-
-        set_nexus_instance(_app_state.nexus_fs)
-        logger.info("NexusFS instance registered for OAuth provisioning")
-    except Exception as e:
-        logger.warning(f"Failed to register NexusFS instance: {e}")
+    # NexusFS instance is now registered unconditionally in create_app()
+    # (moved from here to avoid being gated on OAuth credentials)
 
 
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:

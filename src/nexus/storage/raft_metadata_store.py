@@ -149,6 +149,15 @@ class RaftMetadataStore(FileMetadataProtocol):
         self._zone_id = zone_id
         self._mode = mode
 
+        # Issue #1180 Phase B: EC pending write counter.
+        # Tracks writes that have been applied locally but not yet ACKed by Raft.
+        # Only initialized for EC mode to avoid overhead in other modes.
+        if mode == StoreMode.EC:
+            import threading
+
+            self._ec_pending: int = 0
+            self._ec_lock = threading.Lock()
+
     @property
     def mode(self) -> StoreMode:
         """Operational mode of this store (Issue #1180)."""
@@ -186,6 +195,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         data = _serialize_metadata(metadata)
         self._local.set_metadata(metadata.path, data)
+        # Issue #1180 Phase B: Increment EC pending counter.
+        if self._mode == StoreMode.EC:
+            with self._ec_lock:
+                self._ec_pending += 1
 
     def _delete_local(self, path: str) -> dict[str, Any] | None:
         """Delete metadata from the local sled backend.
@@ -198,6 +211,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         existing = self._get_local(path)
         self._local.delete_metadata(path)
+        # Issue #1180 Phase B: Increment EC pending counter.
+        if self._mode == StoreMode.EC:
+            with self._ec_lock:
+                self._ec_pending += 1
         if existing:
             return {
                 "path": existing.path,
@@ -248,19 +265,41 @@ class RaftMetadataStore(FileMetadataProtocol):
     def get_replication_status(self) -> dict[str, Any]:
         """Get replication lag and status for this store.
 
-        Issue #1180: Phase A defines the API. Phase B implements EC monitoring.
+        Issue #1180: Phase B — EC mode returns pending write count.
+        TODO(rust): Replace lag estimate with actual Raft progress data
+        from replication_status() once PyO3 binding is available.
 
         Returns:
             Dict with mode, lag (uncommitted entries), uncommitted count.
-
-        Raises:
-            NotImplementedError: For EC mode (requires Phase B implementation).
         """
         if self._mode == StoreMode.EC:
-            raise NotImplementedError(
-                "EC replication monitoring not yet implemented. See Issue #1180 Phase B."
-            )
+            with self._ec_lock:
+                pending = self._ec_pending
+            return {"mode": "ec", "lag": pending, "uncommitted": pending}
         return {"mode": self._mode.value, "lag": 0, "uncommitted": 0}
+
+    def acknowledge_replication(self, count: int) -> None:
+        """Acknowledge that `count` EC writes have been replicated.
+
+        Called when Raft confirms that pending writes have been committed.
+        TODO(rust): Wire to Raft callback via PyO3 when available.
+
+        Args:
+            count: Number of writes that were successfully replicated.
+
+        Raises:
+            ValueError: If count is negative.
+            RuntimeError: If store is not in EC mode.
+        """
+        if self._mode != StoreMode.EC:
+            raise RuntimeError(
+                f"acknowledge_replication() is only valid in EC mode, "
+                f"current mode is {self._mode.value}"
+            )
+        if count < 0:
+            raise ValueError(f"count must be non-negative, got {count}")
+        with self._ec_lock:
+            self._ec_pending = max(0, self._ec_pending - count)
 
     @classmethod
     def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:

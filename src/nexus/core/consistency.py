@@ -135,6 +135,61 @@ class StoreMode(StrEnum):
     """gRPC thin client (~200μs). Delegates to remote Raft node."""
 
 
+class MigrationState(StrEnum):
+    """State machine for zone consistency mode migration (Issue #1180 Phase C).
+
+    Lifecycle: IDLE → DRAINING → QUIESCED → SWITCHING → VALIDATING → IDLE
+    On failure at any step: → FAILED (rollback to previous mode).
+    """
+
+    IDLE = "idle"
+    """No migration in progress."""
+
+    DRAINING = "draining"
+    """Waiting for in-flight writes to complete."""
+
+    QUIESCED = "quiesced"
+    """All writes paused; zone is quiescent."""
+
+    SWITCHING = "switching"
+    """Changing the consistency mode in DB and Raft."""
+
+    VALIDATING = "validating"
+    """Verifying the new mode is operational."""
+
+    FAILED = "failed"
+    """Migration failed; rolled back to previous mode."""
+
+
+# Valid migration transitions: (from_mode, to_mode) → migration strategy name
+VALID_MIGRATIONS: dict[tuple[ConsistencyMode, ConsistencyMode], str] = {
+    (ConsistencyMode.SC, ConsistencyMode.EC): "sc_to_ec",
+    (ConsistencyMode.EC, ConsistencyMode.SC): "ec_to_sc",
+}
+
+
+def validate_migration(
+    current: ConsistencyMode, target: ConsistencyMode
+) -> tuple[bool, str | None]:
+    """Check whether a migration from `current` to `target` is allowed.
+
+    Args:
+        current: The current zone consistency mode.
+        target: The desired target consistency mode.
+
+    Returns:
+        (True, None) if valid, (False, error_message) if invalid.
+    """
+    if current == target:
+        return False, f"Zone is already in {current.value} mode"
+    if (current, target) not in VALID_MIGRATIONS:
+        return False, (
+            f"Migration from {current.value} to {target.value} is not supported. "
+            f"Valid migrations: {', '.join(f'{a.value}→{b.value}' for a, b in VALID_MIGRATIONS)}"
+        )
+    return True, None
+
+
 # Compatibility matrix: (ConsistencyMode, FSConsistency) → behavior
 # Defines how per-zone replication mode interacts with per-operation read consistency.
 #

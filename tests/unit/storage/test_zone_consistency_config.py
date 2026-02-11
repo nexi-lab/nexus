@@ -25,9 +25,12 @@ from nexus.core.consistency import (
     COMPATIBILITY_MATRIX,
     DEFAULT_CONSISTENCY,
     DEFAULT_CONSISTENCY_MODE,
+    VALID_MIGRATIONS,
     ConsistencyMode,
     FSConsistency,
+    MigrationState,
     StoreMode,
+    validate_migration,
 )
 from nexus.storage.models import ZoneModel
 from nexus.storage.models._base import Base
@@ -356,3 +359,65 @@ class TestOrthogonalityAndDefaults:
 
         # Different base purpose (verify they are distinct types)
         assert FSConsistency is not ConsistencyMode
+
+
+# ===========================================================================
+# MigrationState enum tests (Issue #1180 Phase C)
+# ===========================================================================
+
+
+class TestMigrationStateEnum:
+    """Tests for the MigrationState StrEnum."""
+
+    def test_migration_state_has_6_members(self):
+        """MigrationState has exactly 6 members."""
+        assert len(MigrationState) == 6
+
+    def test_migration_state_values(self):
+        """MigrationState members have correct string values."""
+        assert str(MigrationState.IDLE) == "idle"
+        assert str(MigrationState.DRAINING) == "draining"
+        assert str(MigrationState.QUIESCED) == "quiesced"
+        assert str(MigrationState.SWITCHING) == "switching"
+        assert str(MigrationState.VALIDATING) == "validating"
+        assert str(MigrationState.FAILED) == "failed"
+
+
+# ===========================================================================
+# VALID_MIGRATIONS tests
+# ===========================================================================
+
+
+class TestValidMigrations:
+    """Tests for VALID_MIGRATIONS and validate_migration()."""
+
+    def test_valid_migrations_has_two_entries(self):
+        """VALID_MIGRATIONS has exactly SC→EC and EC→SC."""
+        assert len(VALID_MIGRATIONS) == 2
+        assert (ConsistencyMode.SC, ConsistencyMode.EC) in VALID_MIGRATIONS
+        assert (ConsistencyMode.EC, ConsistencyMode.SC) in VALID_MIGRATIONS
+
+    def test_validate_migration_sc_to_ec(self):
+        """SC → EC is a valid migration."""
+        valid, error = validate_migration(ConsistencyMode.SC, ConsistencyMode.EC)
+        assert valid is True
+        assert error is None
+
+    def test_validate_migration_ec_to_sc(self):
+        """EC → SC is a valid migration."""
+        valid, error = validate_migration(ConsistencyMode.EC, ConsistencyMode.SC)
+        assert valid is True
+        assert error is None
+
+    def test_validate_migration_same_mode_rejected(self):
+        """Migrating to the same mode is rejected."""
+        valid, error = validate_migration(ConsistencyMode.SC, ConsistencyMode.SC)
+        assert valid is False
+        assert error is not None
+        assert "already" in error.lower()
+
+    def test_validate_migration_returns_error_message(self):
+        """Same-mode rejection includes mode name in error."""
+        valid, error = validate_migration(ConsistencyMode.EC, ConsistencyMode.EC)
+        assert valid is False
+        assert "EC" in error

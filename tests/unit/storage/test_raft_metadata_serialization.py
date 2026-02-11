@@ -181,8 +181,8 @@ class TestListPaginated:
 
         # Create store via __new__ to bypass __init__
         store = object.__new__(RaftMetadataStore)
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
         return store
 
@@ -284,8 +284,8 @@ class TestListPaginated:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         store = object.__new__(RaftMetadataStore)
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
 
         result = store.list_paginated(prefix="/files/", limit=10)

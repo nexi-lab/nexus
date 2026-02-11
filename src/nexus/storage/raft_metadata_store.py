@@ -501,6 +501,50 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
 
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        **kwargs: Any,
+    ) -> Iterator[FileMetadata]:
+        """Iterate over file metadata matching prefix.
+
+        Memory-efficient alternative to list(). Yields results one at a time
+        instead of materializing the full result list.
+
+        The underlying sled store returns all matching entries at once, but this
+        generator lets callers avoid accumulating all results into a second list.
+
+        Args:
+            prefix: Path prefix to filter by
+            recursive: If True, include all nested files
+            **kwargs: Accepts zone_id (ignored) and accessible_int_ids for filtering
+
+        Yields:
+            FileMetadata entries matching the prefix
+        """
+        accessible_int_ids: set[int] | None = kwargs.get("accessible_int_ids")
+
+        if self._is_local:
+            entries = self._local.list_metadata(prefix)
+            for path, data in entries:
+                # Skip extended attribute keys (format: "meta:{path}:{key}")
+                if path.startswith("meta:"):
+                    continue
+                metadata = _deserialize_metadata(data)
+                if not recursive:
+                    # Filter to direct children only
+                    rel_path = path[len(prefix) :].lstrip("/")
+                    if "/" in rel_path:
+                        continue
+                # Filter by accessible_int_ids if provided
+                if accessible_int_ids is not None:
+                    if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
+                        continue
+                yield metadata
+        else:
+            raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
+
     def list_paginated(
         self,
         prefix: str = "",

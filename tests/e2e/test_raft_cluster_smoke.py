@@ -76,7 +76,11 @@ def _create_admin_key(node: str = "nexus-node-1") -> str:
     """Create an admin API key via docker exec."""
     result = subprocess.run(
         [
-            "docker", "exec", node, "bash", "-c",
+            "docker",
+            "exec",
+            node,
+            "bash",
+            "-c",
             "python3 /app/scripts/create_admin_key.py "
             "postgresql://postgres:nexus@postgres:5432/nexus admin",
         ],
@@ -148,7 +152,8 @@ class TestRaftWriteRead:
         content = "hello raft cluster"
 
         result = _jsonrpc(
-            cluster["node1"], "write",
+            cluster["node1"],
+            "write",
             {"path": path, "content": content},
             api_key=api_key,
         )
@@ -166,7 +171,8 @@ class TestRaftWriteRead:
 
         # Write
         w = _jsonrpc(
-            cluster["node1"], "write",
+            cluster["node1"],
+            "write",
             {"path": path, "content": content},
             api_key=api_key,
         )
@@ -174,7 +180,8 @@ class TestRaftWriteRead:
 
         # Read
         r = _jsonrpc(
-            cluster["node1"], "read",
+            cluster["node1"],
+            "read",
             {"path": path},
             api_key=api_key,
         )
@@ -191,7 +198,8 @@ class TestRaftMetadataReplication:
 
         # Write on node 1 (leader)
         w = _jsonrpc(
-            cluster["node1"], "write",
+            cluster["node1"],
+            "write",
             {"path": path, "content": "replication test"},
             api_key=api_key,
         )
@@ -202,7 +210,8 @@ class TestRaftMetadataReplication:
 
         # List on node 2 (follower) — should see the file
         r = _jsonrpc(
-            cluster["node2"], "list",
+            cluster["node2"],
+            "list",
             {"path": "/"},
             api_key=api_key,
         )
@@ -219,7 +228,8 @@ class TestRaftLeaderElection:
         path = f"/test-follower-write-{uuid.uuid4().hex[:8]}.txt"
 
         result = _jsonrpc(
-            cluster["node2"], "write",
+            cluster["node2"],
+            "write",
             {"path": path, "content": "should fail"},
             api_key=api_key,
         )
@@ -229,9 +239,7 @@ class TestRaftLeaderElection:
             err_msg = result["error"]["message"]
             assert "not leader" in err_msg.lower(), f"Unexpected error: {err_msg}"
             # Leader hint should be a valid node (1 or 2, NOT 3/witness)
-            assert "leader hint: Some(3)" not in err_msg, (
-                "Witness (node 3) should never be leader!"
-            )
+            assert "leader hint: Some(3)" not in err_msg, "Witness (node 3) should never be leader!"
 
     def test_witness_not_leader(self, cluster, api_key):
         """Verify that when writes fail with leader hint, witness is never the leader."""
@@ -239,7 +247,8 @@ class TestRaftLeaderElection:
         for _ in range(3):
             path = f"/test-witness-check-{uuid.uuid4().hex[:8]}.txt"
             r = _jsonrpc(
-                cluster["node2"], "write",
+                cluster["node2"],
+                "write",
                 {"path": path, "content": "witness check"},
                 api_key=api_key,
             )

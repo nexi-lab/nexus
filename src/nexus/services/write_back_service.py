@@ -1,4 +1,4 @@
-"""Write-Back Service for bidirectional sync (Issue #1129).
+"""Write-Back Service for bidirectional sync (Issue #1129, #1130).
 
 Subscribes to file events on mounted paths and writes changes back
 to source backends. Handles conflict detection/resolution, retry,
@@ -8,7 +8,7 @@ Architecture:
 - Event-driven: subscribes to EventBus for file write/delete/rename events
 - Polling fallback: periodic sweep of pending backlog entries
 - Rate-limited: per-backend asyncio.Semaphore
-- Conflict-aware: LWW or fork policy via conflict_resolution module
+- Conflict-aware: 6 configurable strategies via ConflictStrategy (Issue #1130)
 """
 
 from __future__ import annotations
@@ -16,14 +16,25 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+import posixpath
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.services.conflict_resolution import detect_conflict, resolve_conflict
+from nexus.services.conflict_resolution import (
+    ConflictAbortError,
+    ConflictContext,
+    ConflictRecord,
+    ConflictStrategy,
+    ResolutionOutcome,
+    detect_conflict,
+    resolve_conflict,
+)
 
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusBase
     from nexus.services.change_log_store import ChangeLogStore
+    from nexus.services.conflict_log_store import ConflictLogStore
     from nexus.services.gateway import NexusFSGateway
     from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 
@@ -58,7 +69,8 @@ class WriteBackService:
         event_bus: EventBusBase,
         backlog_store: SyncBacklogStore,
         change_log_store: ChangeLogStore,
-        conflict_policy: Literal["lww", "fork"] = "lww",
+        default_strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
+        conflict_log_store: ConflictLogStore | None = None,
         max_concurrent_per_backend: int = 10,
         poll_interval_seconds: float = 30.0,
     ) -> None:
@@ -69,7 +81,8 @@ class WriteBackService:
             event_bus: Event bus for subscribing to file events
             backlog_store: SyncBacklogStore for pending operations
             change_log_store: ChangeLogStore for conflict detection
-            conflict_policy: "lww" (last writer wins) or "fork"
+            default_strategy: Global default conflict strategy
+            conflict_log_store: Optional store for conflict audit logging
             max_concurrent_per_backend: Max concurrent write-backs per backend
             poll_interval_seconds: Interval between polling sweeps
         """
@@ -77,7 +90,8 @@ class WriteBackService:
         self._event_bus = event_bus
         self._backlog_store = backlog_store
         self._change_log_store = change_log_store
-        self._conflict_policy = conflict_policy
+        self._default_strategy = default_strategy
+        self._conflict_log_store = conflict_log_store
         self._max_concurrent = max_concurrent_per_backend
         self._poll_interval = poll_interval_seconds
 
@@ -209,6 +223,16 @@ class WriteBackService:
                         zone_id=entry.zone_id,
                     )
                 )
+            except ConflictAbortError as e:
+                logger.warning(f"[WRITE_BACK] Conflict ABORT on {entry.path}: {e}")
+                self._backlog_store.mark_failed(entry.id, str(e))
+                await self._event_bus.publish(
+                    FileEvent(
+                        type=FileEventType.SYNC_TO_BACKEND_FAILED,
+                        path=entry.path,
+                        zone_id=entry.zone_id,
+                    )
+                )
             except Exception as e:
                 logger.warning(f"[WRITE_BACK] Failed to write-back {entry.path}: {e}")
                 self._backlog_store.mark_failed(entry.id, str(e))
@@ -226,7 +250,7 @@ class WriteBackService:
         Steps:
         1. Resolve mount and backend for path
         2. Check for conflict (compare Nexus vs backend state)
-        3. If conflict: resolve per policy
+        3. If conflict: resolve per strategy
         4. Execute backend operation
         5. Update change log with new state
 
@@ -235,6 +259,7 @@ class WriteBackService:
 
         Raises:
             RuntimeError: If mount not found or backend operation fails
+            ConflictAbortError: If ABORT strategy is active
         """
         mount_info = self._gw.get_mount_for_path(entry.path)
         if mount_info is None:
@@ -245,7 +270,7 @@ class WriteBackService:
 
         # Check for conflict before writing
         if entry.operation_type == "write":
-            await self._handle_write(entry, backend, backend_path)
+            await self._handle_write(entry, backend, backend_path, mount_info)
         elif entry.operation_type == "delete":
             await self._handle_delete(backend, backend_path)
         elif entry.operation_type == "mkdir":
@@ -258,6 +283,7 @@ class WriteBackService:
         entry: SyncBacklogEntry,
         backend: Any,
         backend_path: str,
+        mount_info: dict[str, Any],
     ) -> None:
         """Handle write-back of a file to the backend."""
         # Step 1: Check for conflict
@@ -275,6 +301,7 @@ class WriteBackService:
             # Get Nexus file info for comparison
             nexus_meta = self._gw.metadata_get(entry.path)
             nexus_mtime = getattr(nexus_meta, "mtime", None) if nexus_meta else None
+            nexus_size = getattr(nexus_meta, "size", None) if nexus_meta else None
             nexus_hash = entry.content_hash
 
             is_conflict = detect_conflict(
@@ -285,34 +312,24 @@ class WriteBackService:
             )
 
             if is_conflict:
-                resolution = resolve_conflict(
+                # Resolve per-mount strategy → global default → KEEP_NEWER
+                strategy = self._resolve_strategy(mount_info)
+
+                ctx = ConflictContext(
                     nexus_mtime=nexus_mtime,
+                    nexus_size=nexus_size,
+                    nexus_content_hash=nexus_hash,
                     backend_mtime=backend_file_info.mtime,
-                    policy=self._conflict_policy,
+                    backend_size=getattr(backend_file_info, "size", None),
+                    backend_content_hash=getattr(backend_file_info, "content_hash", None),
+                    path=entry.path,
+                    backend_name=entry.backend_name,
+                    zone_id=entry.zone_id,
                 )
 
-                # Publish conflict event
-                await self._event_bus.publish(
-                    FileEvent(
-                        type=FileEventType.CONFLICT_DETECTED,
-                        path=entry.path,
-                        zone_id=entry.zone_id,
-                    )
-                )
-
-                if resolution == "backend_wins":
-                    logger.info(
-                        f"[WRITE_BACK] Conflict on {entry.path}: backend wins, skipping write-back"
-                    )
-                    return  # Skip write-back, backend version is newer
-
-                if resolution == "fork":
-                    logger.info(
-                        f"[WRITE_BACK] Conflict on {entry.path}: fork — both versions preserved"
-                    )
-                    # For fork, we still write Nexus version but backend
-                    # version remains. A future enhancement could create
-                    # a .conflict copy.
+                should_proceed = await self._resolve_and_act_on_conflict(entry, ctx, strategy)
+                if not should_proceed:
+                    return
 
         # Step 2: Read content from NexusFS and write to backend
         content = self._read_nexus_content(entry.path)
@@ -331,6 +348,135 @@ class WriteBackService:
             zone_id=entry.zone_id,
             content_hash=new_hash,
         )
+
+    async def _resolve_and_act_on_conflict(
+        self,
+        entry: SyncBacklogEntry,
+        ctx: ConflictContext,
+        strategy: ConflictStrategy,
+    ) -> bool:
+        """Resolve conflict and return True if write should proceed.
+
+        Args:
+            entry: The backlog entry being processed
+            ctx: ConflictContext with all metadata
+            strategy: Which resolution strategy to apply
+
+        Returns:
+            True if the write-back should proceed, False to skip
+
+        Raises:
+            ConflictAbortError: If ABORT strategy is applied
+        """
+        outcome = resolve_conflict(ctx, strategy)
+
+        # Publish conflict event
+        await self._event_bus.publish(
+            FileEvent(
+                type=FileEventType.CONFLICT_DETECTED,
+                path=entry.path,
+                zone_id=entry.zone_id,
+            )
+        )
+
+        # Build and log conflict record
+        conflict_copy_path: str | None = None
+        if outcome == ResolutionOutcome.RENAME_CONFLICT:
+            conflict_copy_path = self._generate_conflict_copy_path(entry.path, entry.backend_name)
+
+        record = ConflictRecord(
+            id=self._make_conflict_id(),
+            path=ctx.path,
+            backend_name=ctx.backend_name,
+            zone_id=ctx.zone_id,
+            strategy=strategy,
+            outcome=outcome,
+            nexus_content_hash=ctx.nexus_content_hash,
+            nexus_mtime=ctx.nexus_mtime,
+            nexus_size=ctx.nexus_size,
+            backend_content_hash=ctx.backend_content_hash,
+            backend_mtime=ctx.backend_mtime,
+            backend_size=ctx.backend_size,
+            conflict_copy_path=conflict_copy_path,
+            status="auto_resolved",
+            resolved_at=datetime.now(UTC),
+        )
+
+        if self._conflict_log_store is not None:
+            try:
+                self._conflict_log_store.log_conflict(record)
+            except Exception as e:
+                logger.warning(f"[WRITE_BACK] Failed to log conflict: {e}")
+
+        # Act on outcome
+        match outcome:
+            case ResolutionOutcome.ABORT:
+                raise ConflictAbortError(
+                    f"Conflict on {entry.path}: ABORT strategy — write-back halted"
+                )
+            case ResolutionOutcome.BACKEND_WINS:
+                logger.info(
+                    f"[WRITE_BACK] Conflict on {entry.path}: backend wins, skipping write-back"
+                )
+                return False
+            case ResolutionOutcome.NEXUS_WINS:
+                logger.info(
+                    f"[WRITE_BACK] Conflict on {entry.path}: nexus wins, proceeding with write-back"
+                )
+                return True
+            case ResolutionOutcome.RENAME_CONFLICT:
+                logger.info(
+                    f"[WRITE_BACK] Conflict on {entry.path}: creating conflict "
+                    f"copy at {conflict_copy_path}"
+                )
+                self._create_conflict_copy(entry.path, conflict_copy_path)  # type: ignore[arg-type]
+                return True
+
+    def _resolve_strategy(self, mount_info: dict[str, Any]) -> ConflictStrategy:
+        """Resolve the conflict strategy for a mount.
+
+        Resolution chain: mount.conflict_strategy → global default → KEEP_NEWER
+        """
+        mount_strategy = mount_info.get("conflict_strategy")
+        if mount_strategy is not None:
+            try:
+                return ConflictStrategy(mount_strategy)
+            except ValueError:
+                pass
+        return self._default_strategy
+
+    def _create_conflict_copy(self, original_path: str, conflict_path: str) -> None:
+        """Create a NexusFS-side conflict copy of the file.
+
+        Reads the current content and writes it to the conflict copy path.
+        NexusFS-side only (CAS), near-free — following the Syncthing model.
+        """
+        try:
+            content = self._read_nexus_content(original_path)
+            if content is not None:
+                self._gw.write(conflict_path, content)
+        except Exception as e:
+            logger.warning(f"[WRITE_BACK] Failed to create conflict copy: {e}")
+
+    @staticmethod
+    def _generate_conflict_copy_path(path: str, backend_name: str) -> str:
+        """Generate a .sync-conflict copy path.
+
+        Format: {dir}/{stem}.sync-conflict-{ISO timestamp}-{backend_name}{ext}
+        """
+        dir_part = posixpath.dirname(path)
+        base = posixpath.basename(path)
+        stem, ext = posixpath.splitext(base)
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        conflict_name = f"{stem}.sync-conflict-{timestamp}-{backend_name}{ext}"
+        return posixpath.join(dir_part, conflict_name)
+
+    @staticmethod
+    def _make_conflict_id() -> str:
+        """Generate a UUID for a conflict record."""
+        import uuid
+
+        return str(uuid.uuid4())
 
     async def _handle_delete(self, backend: Any, backend_path: str) -> None:
         """Handle deletion of a file on the backend."""
@@ -380,7 +526,7 @@ class WriteBackService:
         """Get write-back service statistics."""
         return {
             "running": self._running,
-            "conflict_policy": self._conflict_policy,
+            "default_strategy": str(self._default_strategy),
             "max_concurrent_per_backend": self._max_concurrent,
             "poll_interval_seconds": self._poll_interval,
             "backlog_stats": self._backlog_store.get_stats(),

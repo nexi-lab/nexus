@@ -924,29 +924,50 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
 
-    # Issue #1129: WriteBack Service for bidirectional sync (Nexus -> Backend)
+    # Issue #1129/#1130: WriteBack Service for bidirectional sync (Nexus -> Backend)
     # Enable with NEXUS_WRITE_BACK=true (default: disabled)
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
     if write_back_enabled and _app_state.nexus_fs:
         try:
             from nexus.services.change_log_store import ChangeLogStore
+            from nexus.services.conflict_log_store import ConflictLogStore
+            from nexus.services.conflict_resolution import ConflictStrategy
             from nexus.services.gateway import NexusFSGateway
             from nexus.services.sync_backlog_store import SyncBacklogStore
             from nexus.services.write_back_service import WriteBackService
 
             gw = NexusFSGateway(_app_state.nexus_fs)
+
+            # ConflictLogStore is always available for the REST API,
+            # even if the full write-back pipeline can't start (no event bus).
+            conflict_log_store = ConflictLogStore(gw)
+            _app_state.conflict_log_store = conflict_log_store
+
             wb_event_bus = None
             if hasattr(_app_state.nexus_fs, "_event_bus"):
                 wb_event_bus = _app_state.nexus_fs._event_bus
             if wb_event_bus:
                 backlog_store = SyncBacklogStore(gw)
                 change_log_store = ChangeLogStore(gw)
+
+                # Map env var to ConflictStrategy (backward compat)
+                _policy_map = {
+                    "lww": ConflictStrategy.KEEP_NEWER,
+                    "fork": ConflictStrategy.RENAME_CONFLICT,
+                }
+                raw_policy = os.getenv("NEXUS_CONFLICT_POLICY", "keep_newer")
+                try:
+                    default_strategy = ConflictStrategy(raw_policy)
+                except ValueError:
+                    default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
+
                 _app_state.write_back_service = WriteBackService(
                     gateway=gw,
                     event_bus=wb_event_bus,
                     backlog_store=backlog_store,
                     change_log_store=change_log_store,
-                    conflict_policy=os.getenv("NEXUS_CONFLICT_POLICY", "lww"),  # type: ignore[arg-type]
+                    default_strategy=default_strategy,
+                    conflict_log_store=conflict_log_store,
                 )
                 await _app_state.write_back_service.start()
                 logger.info("WriteBack service started for bidirectional sync")
@@ -2023,6 +2044,7 @@ def _register_routes(app: FastAPI) -> None:
     # API v2 routes - Memory & ACE endpoints (Issue #1193)
     try:
         from nexus.server.api.v2.routers import (
+            conflicts,
             consolidation,
             curate,
             feedback,
@@ -2041,7 +2063,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(curate.router)
         app.include_router(consolidation.router)
         app.include_router(mobile_search.router)
-        logger.info("API v2 routes registered (37 endpoints)")
+        app.include_router(conflicts.router)
+        logger.info("API v2 routes registered (40 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
@@ -4298,9 +4321,12 @@ def _register_routes(app: FastAPI) -> None:
                                         f"Zookie zone mismatch: request={zone_id}, "
                                         f"zookie={zookie.zone_id}"
                                     )
-                                if not _app_state.nexus_fs._wait_for_revision(
-                                    zookie.zone_id, zookie.revision, timeout_ms=5000
-                                ) and consistency == FSConsistency.STRONG:
+                                if (
+                                    not _app_state.nexus_fs._wait_for_revision(
+                                        zookie.zone_id, zookie.revision, timeout_ms=5000
+                                    )
+                                    and consistency == FSConsistency.STRONG
+                                ):
                                     raise ConsistencyTimeoutError(
                                         f"Timeout waiting for revision {zookie.revision}",
                                         zone_id=zookie.zone_id,
@@ -4315,7 +4341,10 @@ def _register_routes(app: FastAPI) -> None:
                     except InvalidZookieError as e:
                         from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
 
-                        if getattr(context, "consistency", DEFAULT_CONSISTENCY) == FSConsistency.STRONG:
+                        if (
+                            getattr(context, "consistency", DEFAULT_CONSISTENCY)
+                            == FSConsistency.STRONG
+                        ):
                             return _error_response(
                                 rpc_request.id,
                                 RPCErrorCode.INVALID_PARAMS,

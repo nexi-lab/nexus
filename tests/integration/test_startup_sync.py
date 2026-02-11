@@ -483,7 +483,7 @@ asyncio.run(sync_and_verify())
             assert f"/shared/file{i}.txt" in paths, f"Missing /shared/file{i}.txt"
 
     @pytest.mark.asyncio
-    async def test_bidirectional_sync(
+    async def test_cross_node_startup_reconciliation(
         self, db_session_factory, clean_db, linux_container_available
     ):
         """Test bidirectional sync: Windows and Linux both create and sync operations.

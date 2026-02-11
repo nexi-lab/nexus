@@ -82,10 +82,12 @@ class SyncStoreBase:
             Dialect-appropriate insert statement (pg_insert or sqlite_insert)
         """
         if self._detect_dialect():
-            from sqlalchemy.dialects.postgresql import insert as dialect_insert
-        else:
-            from sqlalchemy.dialects.sqlite import insert as dialect_insert
-        return dialect_insert(model)
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+            return pg_insert(model)
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        return sqlite_insert(model)
 
     def _dialect_upsert(
         self,

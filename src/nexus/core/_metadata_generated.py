@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -171,6 +171,30 @@ class FileMetadataProtocol(ABC):
         """List all files with given path prefix."""
         pass
 
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        **kwargs: Any,
+    ) -> Iterator[FileMetadata]:
+        """Iterate over file metadata matching prefix.
+
+        Memory-efficient alternative to list(). Yields results one at a time
+        instead of materializing the full list in memory.
+
+        Subclasses may override for true streaming from the underlying store.
+        The default implementation delegates to list() for backward compatibility.
+
+        Args:
+            prefix: Path prefix to match
+            recursive: If True, include nested paths
+            **kwargs: Additional backend-specific filters
+
+        Yields:
+            FileMetadata entries matching the prefix
+        """
+        yield from self.list(prefix, recursive, **kwargs)
+
     def list_paginated(
         self,
         prefix: str = "",
@@ -248,6 +272,19 @@ class AsyncFileMetadataWrapper:
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
     ) -> list[FileMetadata]:
         return await asyncio.to_thread(self._store.list, prefix, recursive, **kwargs)
+
+    async def alist_iter(
+        self, prefix: str = "", recursive: bool = True, **kwargs: Any
+    ) -> list[FileMetadata]:
+        """Async list_iter - returns list since async generators need different patterns.
+
+        Delegates to list_iter() in a thread to avoid blocking the event loop.
+        Returns a list because async iteration across thread boundaries is complex;
+        callers should use alist() or alist_iter() based on their needs.
+        """
+        return await asyncio.to_thread(
+            lambda: list(self._store.list_iter(prefix, recursive, **kwargs))
+        )
 
     async def alist_paginated(
         self,

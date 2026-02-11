@@ -1,7 +1,7 @@
 """Rate limiting utilities for Nexus API (Issue #780).
 
 This module provides additional rate limiting utilities and documentation.
-The core rate limiting is implemented in fastapi_server.py.
+The core rate limiting is implemented in rate_limiting.py.
 
 Rate Limit Tiers (when enabled):
     - Anonymous: 60 requests/minute (NEXUS_RATE_LIMIT_ANONYMOUS)
@@ -35,17 +35,17 @@ Example Rate Limit Headers in Response:
 
 from __future__ import annotations
 
-# Re-export key functions from fastapi_server for convenience
-from nexus.server.fastapi_server import (
+# Re-export key functions from rate_limiting module for convenience
+from nexus.server.rate_limiting import (
     RATE_LIMIT_ANONYMOUS,
     RATE_LIMIT_AUTHENTICATED,
     RATE_LIMIT_PREMIUM,
     limiter,
 )
-from nexus.server.fastapi_server import (
+from nexus.server.rate_limiting import (
     _get_rate_limit_key as get_rate_limit_key,
 )
-from nexus.server.fastapi_server import (
+from nexus.server.rate_limiting import (
     _rate_limit_exceeded_handler as rate_limit_exceeded_handler,
 )
 

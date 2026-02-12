@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from nexus.core.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
+from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 
 # ---------------------------------------------------------------------------
 # AgentInfo frozen dataclass tests

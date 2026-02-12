@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from nexus.core.protocols.event_log import EventId, EventLogProtocol, KernelEvent
+from nexus.services.protocols.event_log import EventId, EventLogProtocol, KernelEvent
 
 # ---------------------------------------------------------------------------
 # EventId frozen dataclass tests

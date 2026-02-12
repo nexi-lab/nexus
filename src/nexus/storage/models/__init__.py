@@ -101,6 +101,9 @@ from nexus.storage.models.permissions import TigerCacheModel as TigerCacheModel
 from nexus.storage.models.permissions import TigerCacheQueueModel as TigerCacheQueueModel
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TigerDirectoryGrantsModel
 from nexus.storage.models.permissions import TigerResourceMapModel as TigerResourceMapModel
+from nexus.storage.models.persistent_namespace_view import (
+    PersistentNamespaceViewModel as PersistentNamespaceViewModel,
+)
 
 # Domain: Sharing
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel

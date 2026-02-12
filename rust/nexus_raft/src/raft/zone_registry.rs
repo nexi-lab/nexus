@@ -16,7 +16,7 @@
 //!   └── ...
 //! ```
 
-use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage};
+use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage, ReplicationLog};
 use crate::storage::RedbStore;
 use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap, TransportError, TransportLoop};
 use dashmap::DashMap;
@@ -154,9 +154,21 @@ impl ZoneRaftRegistry {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
 
+        // Create EC replication log (non-witness nodes only)
+        let replication_log = if !config.is_witness {
+            let log = ReplicationLog::new(&store, config.id).map_err(|e| {
+                TransportError::Connection(format!("Failed to create ReplicationLog: {}", e))
+            })?;
+            Some(Arc::new(log))
+        } else {
+            None
+        };
+
         // Create RaftNode handle + driver
-        let (handle, mut driver) = RaftNode::new(config, raft_storage, state_machine)
-            .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
+        let (handle, mut driver) =
+            RaftNode::new(config, raft_storage, state_machine, replication_log).map_err(|e| {
+                TransportError::Connection(format!("Failed to create RaftNode: {}", e))
+            })?;
 
         // Peer map — shared between ZoneEntry, TransportLoop, and RaftNodeDriver.
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();

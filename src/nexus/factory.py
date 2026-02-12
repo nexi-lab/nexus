@@ -62,6 +62,71 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 
+def _create_wallet_provisioner() -> Any:
+    """Create a sync wallet provisioner for NexusFS agent registration.
+
+    Returns a callable ``(agent_id: str, zone_id: str) -> None`` that creates
+    a TigerBeetle wallet account. Returns None if tigerbeetle is not installed.
+
+    Uses the sync TigerBeetle client (``tb.Client``) since NexusFS methods are
+    synchronous. The client is lazily created on first call and reused.
+    Account creation is idempotent (safe to call multiple times).
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+
+    tb_address = os.environ.get("TIGERBEETLE_ADDRESS", "127.0.0.1:3000")
+    tb_cluster = int(os.environ.get("TIGERBEETLE_CLUSTER_ID", "0"))
+    pay_enabled = os.environ.get("NEXUS_PAY_ENABLED", "").lower() in ("true", "1", "yes")
+
+    if not pay_enabled:
+        logger.debug("[WALLET] NEXUS_PAY_ENABLED not set, wallet provisioner disabled")
+        return None
+
+    try:
+        import tigerbeetle as _tb  # noqa: F401 — verify availability
+    except ImportError:
+        logger.debug("[WALLET] tigerbeetle package not installed, wallet provisioner disabled")
+        return None
+
+    # Shared state for the closure (lazy client)
+    _state: dict[str, Any] = {"client": None}
+
+    def _provision_wallet(agent_id: str, zone_id: str = "default") -> None:
+        """Create TigerBeetle account for agent. Idempotent."""
+        import tigerbeetle as tb
+
+        from nexus.pay.constants import (
+            ACCOUNT_CODE_WALLET,
+            LEDGER_CREDITS,
+            make_tb_account_id,
+        )
+
+        if _state["client"] is None:
+            _state["client"] = tb.ClientSync(
+                cluster_id=tb_cluster,
+                replica_addresses=tb_address,
+            )
+
+        tb_id = make_tb_account_id(zone_id, agent_id)
+        account = tb.Account(
+            id=tb_id,
+            ledger=LEDGER_CREDITS,
+            code=ACCOUNT_CODE_WALLET,
+            flags=tb.AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS,
+        )
+
+        errors = _state["client"].create_accounts([account])
+        # Ignore EXISTS (21) — idempotent operation
+        if errors and errors[0].result not in (0, 21):
+            raise RuntimeError(f"TigerBeetle account creation failed: {errors[0].result}")
+
+    logger.info("[WALLET] Wallet provisioner enabled (TigerBeetle @ %s)", tb_address)
+    return _provision_wallet
+
+
 def create_nexus_services(
     record_store: RecordStoreABC,
     metadata_store: FileMetadataProtocol,
@@ -246,6 +311,22 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
+    # --- Observability Subsystem (Issue #1301) ---
+    from nexus.core.config import ObservabilityConfig
+    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+
+    observability_config = ObservabilityConfig()
+    observability_subsystem = ObservabilitySubsystem(
+        config=observability_config,
+        engines=[engine],
+    )
+
+    # --- Wallet Provisioner (Issue #1210) ---
+    # Creates TigerBeetle wallet accounts on agent registration.
+    # Uses sync TigerBeetle client since NexusFS methods are sync.
+    # Gracefully no-ops if tigerbeetle package is not installed.
+    wallet_provisioner = _create_wallet_provisioner()
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -259,6 +340,8 @@ def create_nexus_services(
         "workspace_manager": workspace_manager,
         "write_observer": write_observer,
         "version_service": version_service,
+        "observability_subsystem": observability_subsystem,
+        "wallet_provisioner": wallet_provisioner,
     }
 
     return result
@@ -352,7 +435,11 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
         )
 
-    return NexusFS(
+    # ObservabilitySubsystem is not a NexusFS constructor param — pop it
+    # and attach after construction for lifecycle access (health_check, cleanup).
+    observability_subsystem = services.pop("observability_subsystem", None)
+
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -383,3 +470,8 @@ def create_nexus_fs(
         enable_distributed_locks=enable_distributed_locks,
         **services,
     )
+
+    if observability_subsystem is not None:
+        nx._observability_subsystem = observability_subsystem  # type: ignore[attr-defined]
+
+    return nx

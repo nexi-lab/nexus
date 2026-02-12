@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -306,6 +307,10 @@ class AppState:
         self.write_back_service: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Event Log WAL for durable event persistence (Issue #1397)
+        self.event_log: Any = None
+        # Issue #1355: Agent identity KeyService
+        self.key_service: Any = None
 
 
 # Global state (set during app creation)
@@ -370,25 +375,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Issue #1239: Create namespace manager for per-subject visibility
-                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 if enforce_permissions and hasattr(_app_state, "nexus_fs"):
                     sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
-                            "using sync rebac_manager for mount table queries)"
+                            "(using sync rebac_manager, L3=%s)",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -455,15 +457,54 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    # Event Log WAL for durable event persistence (Issue #1397)
+    # Rust WAL preferred; falls back to PG if extension not available
+    _app_state.event_log = None
     try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+        from nexus.core.event_log_factory import create_event_log
+        from nexus.core.protocols.event_log import EventLogConfig
 
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
+        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+        sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
+
+        event_log_config = EventLogConfig(
+            wal_dir=Path(wal_dir),
+            segment_size_bytes=segment_size,
+            sync_mode=sync_mode,  # type: ignore[arg-type]
+        )
+        _app_state.event_log = create_event_log(
+            event_log_config,
+            session_factory=getattr(_app_state, "session_factory", None),
+        )
+        logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+        logger.warning(f"Failed to initialize event log: {e}")
+
+    # Issue #1397: Start event bus and wire event log for WAL-first persistence
+    if _app_state.nexus_fs:
+        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+        if event_bus_ref is not None:
+            # Connect the underlying DragonflyClient (async init required)
+            redis_client = getattr(event_bus_ref, "_redis", None)
+            if redis_client and hasattr(redis_client, "connect"):
+                try:
+                    await redis_client.connect()
+                except Exception as e:
+                    logger.warning(f"Failed to connect event bus Redis client: {e}")
+
+            # Start the event bus (sets _started=True, enables publish())
+            if hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
+                try:
+                    await event_bus_ref.start()
+                    logger.info("Event bus started for event publishing")
+                except Exception as e:
+                    logger.warning(f"Failed to start event bus: {e}")
+
+            # Note: WAL append is handled inline in _dispatch_method (Issue #1397)
+            # for <5μs durable writes without thread-per-event overhead.
+            # The event_bus handles Redis fan-out only; WAL is not wired into it.
+
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -756,6 +797,39 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app_state.agent_registry = None
 
+    # Issue #1355: Initialize KeyService for agent identity
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.identity.crypto import IdentityCrypto
+            from nexus.identity.key_service import KeyService
+            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
+            from nexus.server.auth.oauth_crypto import OAuthCrypto
+
+            # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
+            # after SQLAlchemyRecordStore.create_all already ran)
+            _nx_engine = getattr(_app_state.nexus_fs, "_sql_engine", None)
+            if _nx_engine is not None:
+                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
+
+            # Reuse OAuthCrypto for Fernet encryption of private keys
+            _db_url = _app_state.database_url or "sqlite:///nexus.db"
+            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
+
+            _app_state.key_service = KeyService(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                crypto=_identity_crypto,
+            )
+            # Inject into NexusFS for register_agent integration
+            _app_state.nexus_fs._key_service = _app_state.key_service
+
+            logger.info("[KYA] KeyService initialized and wired")
+        except Exception as e:
+            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            _app_state.key_service = None
+    else:
+        _app_state.key_service = None
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -801,19 +875,17 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Get NamespaceManager if available (best-effort)
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(
@@ -980,6 +1052,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Issue #1397: Close Event Log WAL
+    if _app_state.event_log:
+        try:
+            await _app_state.event_log.close()
+            logger.info("Event log closed")
+        except Exception as e:
+            logger.warning(f"Error closing event log: {e}")
 
     # SandboxManager now uses session-per-operation — no persistent session to close
     if _app_state.sandbox_auth_service:
@@ -1676,74 +1756,29 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
-    # API v2 routes - Memory & ACE endpoints (Issue #1193)
+    # API v2 routes — centralized registration via versioning module (#995)
+    from nexus.server.api.v2.versioning import (
+        DeprecationMiddleware,
+        VersionHeaderMiddleware,
+        build_v2_registry,
+        register_v2_routers,
+    )
+
+    v2_registry = build_v2_registry(
+        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
+    )
+    register_v2_routers(app, v2_registry)
+    app.add_middleware(VersionHeaderMiddleware)
+    app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Exchange Protocol error handler (Issue #1361)
     try:
-        from nexus.server.api.v2.routers import (
-            audit,
-            conflicts,
-            consolidation,
-            curate,
-            feedback,
-            memories,
-            mobile_search,
-            operations,
-            playbooks,
-            reflect,
-            trajectories,
-        )
+        from nexus.server.api.v2.error_handler import register_exchange_error_handler
 
-        app.include_router(memories.router)
-        app.include_router(trajectories.router)
-        app.include_router(feedback.router)
-        app.include_router(playbooks.router)
-        app.include_router(reflect.router)
-        app.include_router(curate.router)
-        app.include_router(consolidation.router)
-        app.include_router(mobile_search.router)
-        app.include_router(conflicts.router)
-        app.include_router(operations.router)
-        app.include_router(audit.router)
-        logger.info("API v2 routes registered (48 endpoints)")
+        register_exchange_error_handler(app)
+        logger.info("Exchange protocol error handler registered")
     except ImportError as e:
-        logger.warning(
-            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
-        )
-
-    # Nexus Pay API routes (Issue #1209)
-    try:
-        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        app.include_router(pay_router)
-        _register_pay_exception_handlers(app)
-        logger.info("Nexus Pay API routes registered (8 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
-        )
-
-    # Scheduler REST API routes (Issue #1212)
-    try:
-        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
-
-        app.include_router(scheduler_router)
-        logger.info("Scheduler API routes registered (3 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
-        )
-
-    # Issue #940: Register async files router (lazy initialization via lifespan)
-    try:
-        from nexus.server.api.v2.routers.async_files import create_async_files_router
-
-        async_files_router = create_async_files_router(
-            get_fs=lambda: _app_state.async_nexus_fs,
-        )
-        app.include_router(async_files_router, prefix="/api/v2/files")
-        logger.info("Async files router registered (9 endpoints)")
-    except ImportError as e:
-        logger.warning(f"Failed to import async files router: {e}")
+        logger.warning(f"Failed to register Exchange error handler: {e}.")
 
     # A2A Protocol Endpoint (Issue #1256)
     try:
@@ -3314,6 +3349,99 @@ def _register_routes(app: FastAPI) -> None:
         )
 
     # ========================================================================
+    # Agent Identity Endpoints (Issue #1355)
+    # ========================================================================
+
+    @app.get("/api/agents/{agent_id}/identity", tags=["identity"])
+    async def get_agent_identity(
+        agent_id: str,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Get an agent's public identity (DID, public key, key_id).
+
+        Returns the agent's active signing key information for verification.
+        """
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+        if not keys:
+            raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
+
+        newest = keys[0]
+        return {
+            "agent_id": agent_id,
+            "key_id": newest.key_id,
+            "did": newest.did,
+            "algorithm": newest.algorithm,
+            "public_key_hex": newest.public_key_bytes.hex(),
+            "created_at": newest.created_at.isoformat() if newest.created_at else None,
+            "expires_at": newest.expires_at.isoformat() if newest.expires_at else None,
+        }
+
+    @app.post("/api/agents/{agent_id}/verify", tags=["identity"])
+    async def verify_agent_signature(
+        agent_id: str,
+        request: Request,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Verify a signature produced by an agent's signing key.
+
+        Request body:
+            {
+                "message": "<base64-encoded message>",
+                "signature": "<base64-encoded signature>",
+                "key_id": "<optional key_id, uses newest active key if omitted>"
+            }
+        """
+        import base64
+
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        body = await request.json()
+        message_b64 = body.get("message")
+        signature_b64 = body.get("signature")
+        key_id = body.get("key_id")
+
+        if not message_b64 or not signature_b64:
+            raise HTTPException(
+                status_code=400, detail="'message' and 'signature' are required (base64)"
+            )
+
+        try:
+            message = base64.b64decode(message_b64)
+            signature = base64.b64decode(signature_b64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding") from exc
+
+        # Resolve public key
+        resolved_key_id = key_id
+        if key_id:
+            record = await asyncio.to_thread(_app_state.key_service.get_public_key, key_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Key not found or not active")
+            if record.agent_id != agent_id:
+                raise HTTPException(status_code=403, detail="Key does not belong to this agent")
+            from nexus.identity.crypto import IdentityCrypto
+
+            public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
+        else:
+            keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+            if not keys:
+                raise HTTPException(
+                    status_code=404, detail=f"No active keys for agent '{agent_id}'"
+                )
+            resolved_key_id = keys[0].key_id
+            from nexus.identity.crypto import IdentityCrypto
+
+            public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
+
+        valid = _app_state.key_service._crypto.verify(message, signature, public_key)
+
+        return {"valid": valid, "agent_id": agent_id, "key_id": resolved_key_id}
+
+    # ========================================================================
     # WebSocket Endpoint for Real-Time Events (Issue #1116)
     # ========================================================================
 
@@ -4034,7 +4162,7 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, max-age=60"
 
     # Write/delete operations - no cache
-    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write", "edit"):
         headers["Cache-Control"] = "no-store"
 
     # Delta read - cache like regular read
@@ -4067,6 +4195,47 @@ def _error_response(
     if data:
         error_dict["error"]["data"] = data
     return JSONResponse(content=error_dict)
+
+
+# Issue #1397: Inline WAL append — runs in FastAPI event loop, <5μs per write.
+# Avoids the thread-per-event overhead of the NexusFS _publish_file_event path.
+async def _wal_append(
+    event_type: str,
+    path: str,
+    context: Any,
+    old_path: str | None = None,
+    size: int | None = None,
+) -> None:
+    """Append a file event to the WAL inline (durable before response)."""
+    event_log = _app_state.event_log
+    if event_log is None:
+        return
+
+    try:
+        from nexus.core.event_bus import FileEvent, FileEventType
+
+        type_map = {
+            "file_write": FileEventType.FILE_WRITE,
+            "file_delete": FileEventType.FILE_DELETE,
+            "file_rename": FileEventType.FILE_RENAME,
+            "dir_create": FileEventType.DIR_CREATE,
+            "dir_delete": FileEventType.DIR_DELETE,
+        }
+
+        zone_id = getattr(context, "zone_id", None) or "default"
+        agent_id = getattr(context, "agent_id", None)
+
+        event = FileEvent(
+            type=type_map.get(event_type, event_type),
+            path=path,
+            zone_id=zone_id,
+            old_path=old_path,
+            size=size,
+            agent_id=agent_id,
+        )
+        await event_log.append(event)
+    except Exception as e:
+        logger.warning(f"WAL append failed for {event_type} {path}: {e}")
 
 
 # Issue #1115: Event firing helper for RPC handlers
@@ -4149,6 +4318,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await _handle_read_async(params, context)
     elif method == "write":
         result = await to_thread_with_timeout(_handle_write, params, context)
+        await _wal_append("file_write", params.path, context, size=result.get("bytes_written"))
         await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
         return result
     elif method == "exists":
@@ -4157,20 +4327,24 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
         result = await to_thread_with_timeout(_handle_delete, params, context)
+        await _wal_append("file_delete", params.path, context)
         await _fire_rpc_event("file_delete", params.path, context)
         return result
     elif method == "rename":
         result = await to_thread_with_timeout(_handle_rename, params, context)
+        await _wal_append("file_rename", params.new_path, context, old_path=params.old_path)
         await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
         return result
     elif method == "copy":
         return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
         result = await to_thread_with_timeout(_handle_mkdir, params, context)
+        await _wal_append("dir_create", params.path, context)
         await _fire_rpc_event("dir_create", params.path, context)
         return result
     elif method == "rmdir":
         result = await to_thread_with_timeout(_handle_rmdir, params, context)
+        await _wal_append("dir_delete", params.path, context)
         await _fire_rpc_event("dir_delete", params.path, context)
         return result
     elif method == "get_metadata":

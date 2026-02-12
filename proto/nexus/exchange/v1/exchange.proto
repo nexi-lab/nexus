@@ -1,0 +1,43 @@
+// Nexus Agent Exchange service definition.
+//
+// Top-level service combining identity, payment, and audit operations.
+// REST-only for Phase 1; Connect-RPC transport planned for Phase 2/3.
+//
+// Protocol version: 2026.1
+
+syntax = "proto3";
+
+package nexus.exchange.v1;
+
+import "nexus/exchange/v1/identity.proto";
+import "nexus/exchange/v1/payment.proto";
+import "nexus/exchange/v1/audit.proto";
+
+// ExchangeService provides the full Agent Exchange API surface.
+//
+// All endpoints require authentication via API key or Bearer JWT.
+// The Nexus-Protocol-Version header should be set to "2026.1".
+service ExchangeService {
+  // --- Identity ---
+  rpc VerifyIdentity(VerifyIdentityRequest) returns (VerifyIdentityResponse);
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+  rpc RevokeKey(RevokeKeyRequest) returns (RevokeKeyResponse);
+
+  // --- Payment ---
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
+  rpc Transfer(TransferRequest) returns (TransferResponse);
+  rpc BatchTransfer(BatchTransferRequest) returns (BatchTransferResponse);
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  rpc CommitReservation(CommitReservationRequest) returns (CommitReservationResponse);
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+  rpc Meter(MeterRequest) returns (MeterResponse);
+  rpc CanAfford(CanAffordRequest) returns (CanAffordResponse);
+
+  // --- Audit ---
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse);
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse);
+  rpc GetAggregations(GetAggregationsRequest) returns (GetAggregationsResponse);
+  rpc VerifyIntegrity(VerifyIntegrityRequest) returns (VerifyIntegrityResponse);
+  rpc ExportTransactions(ExportTransactionsRequest) returns (ExportTransactionsResponse);
+}

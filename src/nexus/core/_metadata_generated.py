@@ -181,7 +181,7 @@ class FileMetadataProtocol(ABC):
         """
         pass
 
-    def is_committed(self, token: int) -> str | None:
+    def is_committed(self, token: int) -> str | None:  # noqa: ARG002
         """Check if an EC write token has been replicated to a majority.
 
         Args:

@@ -130,8 +130,7 @@ impl ReplicationLog {
         self.log_tree.set(&key, &value)?;
 
         // Persist next_seq so we don't reuse sequence numbers after restart
-        self.meta_tree
-            .set(KEY_NEXT_SEQ, &(seq + 1).to_be_bytes())?;
+        self.meta_tree.set(KEY_NEXT_SEQ, &(seq + 1).to_be_bytes())?;
 
         tracing::trace!(seq, "EC write appended to replication log");
         Ok(seq)

@@ -685,9 +685,7 @@ impl FullStateMachine {
 impl StateMachine for FullStateMachine {
     fn apply_local(&mut self, command: &Command) -> Result<CommandResult> {
         match command {
-            Command::SetMetadata { .. } | Command::DeleteMetadata { .. } => {
-                self.execute(command)
-            }
+            Command::SetMetadata { .. } | Command::DeleteMetadata { .. } => self.execute(command),
             _ => Err(super::RaftError::InvalidState(
                 "Only metadata operations (set/delete) support EC local writes".into(),
             )),

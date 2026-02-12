@@ -61,6 +61,15 @@ def mock_nx_basic():
     nx.is_directory = Mock(return_value=False)
     nx.mkdir = Mock()
     nx.rmdir = Mock()
+    nx.edit = Mock(
+        return_value={
+            "success": True,
+            "diff": "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new",
+            "applied_count": 1,
+            "matches": [{"edit_index": 0, "match_type": "exact", "similarity": 1.0}],
+            "errors": [],
+        }
+    )
     return nx
 
 
@@ -378,6 +387,158 @@ class TestFileOperationTools:
 
         info = json.loads(result)
         assert info["is_directory"] is True
+
+
+# ============================================================================
+# EDIT FILE TOOL TESTS
+# ============================================================================
+
+
+class TestEditFileTool:
+    """Test suite for nexus_edit_file tool."""
+
+    def test_edit_file_success(self, mock_nx_basic):
+        """Test successful file edit returns JSON with diff."""
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        result = edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+        )
+
+        response = json.loads(result)
+        assert response["success"] is True
+        assert "diff" in response
+        assert response["applied_count"] == 1
+        mock_nx_basic.edit.assert_called_once_with(
+            "/test.py",
+            [{"old_str": "old", "new_str": "new"}],
+            fuzzy_threshold=0.85,
+            preview=False,
+            if_match=None,
+        )
+
+    def test_edit_file_failure(self, mock_nx_basic):
+        """Test failed edit returns error details."""
+        mock_nx_basic.edit.return_value = {
+            "success": False,
+            "diff": "",
+            "applied_count": 0,
+            "matches": [{"edit_index": 0, "match_type": "failed", "similarity": 0.5}],
+            "errors": ["No match found for edit 0"],
+        }
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        result = edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "nonexistent", "new_str": "new"}],
+        )
+
+        response = json.loads(result)
+        assert response["success"] is False
+        assert "No match found" in response["errors"][0]
+
+    def test_edit_file_with_preview(self, mock_nx_basic):
+        """Test preview mode passes through correctly."""
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+            preview=True,
+        )
+
+        mock_nx_basic.edit.assert_called_once_with(
+            "/test.py",
+            [{"old_str": "old", "new_str": "new"}],
+            fuzzy_threshold=0.85,
+            preview=True,
+            if_match=None,
+        )
+
+    def test_edit_file_with_if_match(self, mock_nx_basic):
+        """Test if_match etag passes through correctly."""
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+            if_match="abc123",
+        )
+
+        mock_nx_basic.edit.assert_called_once_with(
+            "/test.py",
+            [{"old_str": "old", "new_str": "new"}],
+            fuzzy_threshold=0.85,
+            preview=False,
+            if_match="abc123",
+        )
+
+    def test_edit_file_custom_fuzzy_threshold(self, mock_nx_basic):
+        """Test custom fuzzy_threshold passes through."""
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+            fuzzy_threshold=0.7,
+        )
+
+        mock_nx_basic.edit.assert_called_once_with(
+            "/test.py",
+            [{"old_str": "old", "new_str": "new"}],
+            fuzzy_threshold=0.7,
+            preview=False,
+            if_match=None,
+        )
+
+    def test_edit_file_not_found(self, mock_nx_basic):
+        """Test FileNotFoundError handling."""
+        mock_nx_basic.edit.side_effect = FileNotFoundError("File not found")
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        result = edit_tool.fn(
+            path="/missing.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+        )
+
+        assert "Error" in result
+        assert "not found" in result.lower()
+        assert "/missing.py" in result
+
+    def test_edit_file_permission_denied(self, mock_nx_basic):
+        """Test PermissionError handling."""
+        mock_nx_basic.edit.side_effect = PermissionError("Permission denied")
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        result = edit_tool.fn(
+            path="/readonly.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+        )
+
+        assert "Error" in result
+        assert "permission" in result.lower() or "denied" in result.lower()
+
+    def test_edit_file_generic_error(self, mock_nx_basic):
+        """Test generic exception handling."""
+        mock_nx_basic.edit.side_effect = RuntimeError("Connection refused")
+        server = create_mcp_server(nx=mock_nx_basic)
+
+        edit_tool = get_tool(server, "nexus_edit_file")
+        result = edit_tool.fn(
+            path="/test.py",
+            edits=[{"old_str": "old", "new_str": "new"}],
+        )
+
+        assert "Error editing file" in result
+        assert "Connection refused" in result
 
 
 # ============================================================================
@@ -1197,7 +1358,7 @@ class TestServerCreation:
         # glob, grep, semantic_search, store_memory, query_memory,
         # list_workflows, execute_workflow
         # = 14 tools minimum
-        assert len(server._tool_manager._tools) >= 14
+        assert len(server._tool_manager._tools) >= 15
 
     def test_server_tool_count_with_all_features(self, mock_nx_full):
         """Test server has correct tool count with all features."""

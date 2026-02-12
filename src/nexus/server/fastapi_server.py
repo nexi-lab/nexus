@@ -379,15 +379,15 @@ async def lifespan(_app: FastAPI) -> Any:
                     if sync_rebac:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
                             "(using sync rebac_manager, L3=%s)",
-                            "enabled" if rebac_engine else "disabled",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -840,10 +840,10 @@ async def lifespan(_app: FastAPI) -> Any:
                     try:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(

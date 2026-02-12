@@ -6,6 +6,8 @@ in-memory mount table (L2) and full ReBAC rebuild.
 
 Inspired by Twizzler OS's persistent FOT views (ATC 2020).
 
+Storage Affinity: **RecordStore** — relational upsert keyed on subject+zone.
+
 Architecture:
     Request → dcache L1 (O(1)) → mount table L2 (O(log m)) → L3 persistent (1-3ms)
     → ReBAC rebuild (5-50ms)

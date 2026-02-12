@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -20,17 +21,23 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database with persistent_namespace_views table."""
-    eng = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Create an in-memory SQLite RecordStore with all tables."""
+    rs = SQLAlchemyRecordStore(db_url="sqlite:///:memory:")
+    yield rs
+    rs.close()
 
 
 @pytest.fixture
-def store(engine):
-    """Create a PostgresPersistentViewStore backed by SQLite."""
-    return PostgresPersistentViewStore(engine)
+def engine(record_store):
+    """Expose the engine from RecordStore (used by reconnection tests)."""
+    return record_store.engine
+
+
+@pytest.fixture
+def store(record_store):
+    """Create a PostgresPersistentViewStore routed through RecordStore."""
+    return PostgresPersistentViewStore(record_store)
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +326,8 @@ class TestConcurrentSave:
         3. The final view has valid data
         In production (PostgreSQL), all writes succeed via ON CONFLICT.
         """
+        from types import SimpleNamespace
+
         from sqlalchemy.pool import StaticPool
 
         # Use StaticPool to share a single connection across threads
@@ -328,7 +337,9 @@ class TestConcurrentSave:
             poolclass=StaticPool,
         )
         Base.metadata.create_all(shared_engine)
-        shared_store = PostgresPersistentViewStore(shared_engine)
+        # Minimal adapter satisfying RecordStoreABC.engine for this test
+        shared_rs = SimpleNamespace(engine=shared_engine)
+        shared_store = PostgresPersistentViewStore(shared_rs)
 
         successes = []
 

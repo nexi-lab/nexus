@@ -74,6 +74,9 @@ class ZoneManager:
     ) -> RaftMetadataStore:
         """Create a new zone and return its RaftMetadataStore.
 
+        Creates the zone's root "/" entry with i_links_count=1,
+        following POSIX i_nlink semantics: creat() sets nlink=1.
+
         Args:
             zone_id: Unique zone identifier.
             peers: Peer addresses in "id@host:port" format.
@@ -87,8 +90,20 @@ class ZoneManager:
         store = RaftMetadataStore(engine=handle, zone_id=zone_id)
         self._stores[zone_id] = store
 
+        # Create root "/" entry with i_links_count=1 (POSIX: creat() → nlink=1)
+        root_entry = FileMetadata(
+            path="/",
+            backend_name="virtual",
+            physical_path="",
+            size=0,
+            entry_type=DT_DIR,
+            zone_id=zone_id,
+            i_links_count=1,
+        )
+        store.put(root_entry)
+
         logger.info(
-            "Zone '%s' created (peers=%d)",
+            "Zone '%s' created (peers=%d, i_links_count=1)",
             zone_id,
             len(peers or []),
         )
@@ -145,8 +160,31 @@ class ZoneManager:
         self._stores[zone_id] = store
         return store
 
-    def remove_zone(self, zone_id: str) -> None:
-        """Remove a zone, shutting down its Raft group."""
+    def remove_zone(self, zone_id: str, *, force: bool = False) -> None:
+        """Remove a zone, shutting down its Raft group.
+
+        Follows POSIX semantics: a zone can only be destroyed when
+        i_links_count == 0 (no remaining references). Use force=True
+        to bypass this check.
+
+        Args:
+            zone_id: Zone to remove.
+            force: If True, skip i_links_count check.
+
+        Raises:
+            ValueError: If zone still has references (i_links_count > 0).
+        """
+        if not force:
+            store = self.get_store(zone_id)
+            if store is not None:
+                root = store.get("/")
+                if root is not None and root.i_links_count > 0:
+                    raise ValueError(
+                        f"Zone '{zone_id}' still has {root.i_links_count} reference(s) "
+                        f"(i_links_count > 0). Unmount all references first, "
+                        f"or use force=True."
+                    )
+
         self._py_mgr.remove_zone(zone_id)
         self._stores.pop(zone_id, None)
         logger.info("Zone '%s' removed", zone_id)
@@ -167,7 +205,8 @@ class ZoneManager:
     ) -> None:
         """Mount a zone at a path in another zone.
 
-        Creates a DT_MOUNT entry in parent_zone's metadata.
+        Creates a DT_MOUNT entry in parent_zone's metadata and increments
+        the target zone's i_links_count (POSIX: link() → nlink++).
         The mount path must not already exist (NFS-style, no shadow).
 
         Args:
@@ -177,11 +216,15 @@ class ZoneManager:
 
         Raises:
             ValueError: If mount_path already exists (no shadow).
-            RuntimeError: If parent zone doesn't exist.
+            RuntimeError: If parent or target zone doesn't exist.
         """
         parent_store = self.get_store(parent_zone_id)
         if parent_store is None:
             raise RuntimeError(f"Parent zone '{parent_zone_id}' not found")
+
+        target_store = self.get_store(target_zone_id)
+        if target_store is None:
+            raise RuntimeError(f"Target zone '{target_zone_id}' not found")
 
         # Reject if path already exists (NFS-style: no shadow)
         existing = parent_store.get(mount_path)
@@ -216,6 +259,9 @@ class ZoneManager:
             )
             parent_store.put(dir_entry)
 
+        # Increment target zone's i_links_count (POSIX: link() → nlink++)
+        self._increment_links(target_store, target_zone_id)
+
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",
             target_zone_id,
@@ -225,6 +271,9 @@ class ZoneManager:
 
     def unmount(self, parent_zone_id: str, mount_path: str) -> None:
         """Remove a mount point.
+
+        Deletes the DT_MOUNT entry and decrements the target zone's
+        i_links_count (POSIX: unlink() → nlink--).
 
         Args:
             parent_zone_id: Zone containing the mount point.
@@ -241,12 +290,81 @@ class ZoneManager:
         if existing is None or not existing.is_mount:
             raise ValueError(f"'{mount_path}' is not a mount point in zone '{parent_zone_id}'")
 
+        target_zone_id = existing.target_zone_id
         parent_store.delete(mount_path)
+
+        # Decrement target zone's i_links_count (POSIX: unlink() → nlink--)
+        if target_zone_id:
+            target_store = self.get_store(target_zone_id)
+            if target_store is not None:
+                self._decrement_links(target_store)
+
         logger.info(
-            "Unmounted '%s' from zone '%s'",
+            "Unmounted '%s' from zone '%s' (target=%s)",
             mount_path,
             parent_zone_id,
+            target_zone_id,
         )
+
+    # =========================================================================
+    # i_links_count helpers (POSIX i_nlink semantics)
+    # =========================================================================
+
+    @staticmethod
+    def _increment_links(store: RaftMetadataStore, zone_id: str) -> int:
+        """Increment a zone's i_links_count on its root "/" entry.
+
+        Returns the new count.
+        """
+        from dataclasses import replace
+
+        root = store.get("/")
+        if root is None:
+            # Zone has no root entry yet — create one
+            root = FileMetadata(
+                path="/",
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id=zone_id,
+                i_links_count=1,
+            )
+            store.put(root)
+            return 1
+
+        new_count = root.i_links_count + 1
+        store.put(replace(root, i_links_count=new_count))
+        return new_count
+
+    @staticmethod
+    def _decrement_links(store: RaftMetadataStore) -> int:
+        """Decrement a zone's i_links_count on its root "/" entry.
+
+        Returns the new count. Never goes below 0.
+        """
+        from dataclasses import replace
+
+        root = store.get("/")
+        if root is None:
+            return 0
+
+        new_count = max(0, root.i_links_count - 1)
+        store.put(replace(root, i_links_count=new_count))
+        return new_count
+
+    def get_links_count(self, zone_id: str) -> int:
+        """Get a zone's current i_links_count.
+
+        Returns 0 if zone or root entry doesn't exist.
+        """
+        store = self.get_store(zone_id)
+        if store is None:
+            return 0
+        root = store.get("/")
+        if root is None:
+            return 0
+        return root.i_links_count
 
     def shutdown(self) -> None:
         """Shut down all zones and the gRPC server."""

@@ -41,11 +41,13 @@ from nexus.cli.commands import (
     search,
     server,
     skills,
-    zone as zone_mod,  # zone.py (federation + portability CLI commands)
     versions,
     work,
     workflows,
     workspace,
+)
+from nexus.cli.commands import (
+    zone as zone_mod,  # zone.py (federation + portability CLI commands)
 )
 
 
@@ -101,7 +103,6 @@ __all__ = [
     "search",
     "rebac",
     "skills",
-    "zone_mod",  # zone.py (federation + portability CLI)
     "versions",
     "workspace",
     "metadata",
@@ -110,4 +111,5 @@ __all__ = [
     "plugins",
     "operations",
     "workflows",
+    "zone_mod",  # zone.py (federation + portability CLI)
 ]

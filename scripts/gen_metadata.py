@@ -75,6 +75,7 @@ NULLABLE_STRING_FIELDS: set[str] = {
 FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
     "entry_type": "0",
+    "i_links_count": "0",
 }
 
 # String fields that get interned in CompactFileMetadata
@@ -108,6 +109,7 @@ DIRECT_COMPACT_FIELDS: dict[str, str] = {
     "size": "int",
     "version": "int",
     "entry_type": "int",
+    "i_links_count": "int",
 }
 
 
@@ -318,7 +320,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -457,6 +459,22 @@ class FileMetadataProtocol(ABC):
     def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         """List all files with given path prefix."""
         pass
+
+    def list_iter(
+        self,
+        prefix: str = "",
+        recursive: bool = True,
+        **kwargs: Any,
+    ) -> Iterator[FileMetadata]:
+        """Iterate over file metadata matching prefix.
+
+        Memory-efficient alternative to list(). Yields results one at a time
+        instead of materializing the full list in memory.
+
+        Subclasses may override for true streaming from the underlying store.
+        The default implementation delegates to list() for backward compatibility.
+        """
+        yield from self.list(prefix, recursive, **kwargs)
 
     def list_paginated(
         self,

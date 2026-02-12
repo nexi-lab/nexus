@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
+    from nexus.core.persistent_view_store import PersistentViewStore
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
@@ -176,9 +177,11 @@ class NamespaceManager:
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
+        persistent_store: PersistentViewStore | None = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window
+        self._persistent_store = persistent_store
 
         # --- Mount table cache (Layer 2) ---
         self._lock = threading.Lock()
@@ -208,6 +211,7 @@ class NamespaceManager:
         self._hits = 0
         self._misses = 0
         self._rebuilds = 0
+        self._l3_hits = 0
         self._dcache_hits = 0
         self._dcache_misses = 0
         self._dcache_negative_hits = 0
@@ -450,6 +454,7 @@ class NamespaceManager:
             "mount_table_rebuilds": self._rebuilds,
             "mount_table_size": len(self._cache),
             "mount_table_maxsize": self._cache.maxsize,
+            "l3_hits": self._l3_hits,
             "dcache_hits": self._dcache_hits,
             "dcache_misses": self._dcache_misses,
             "dcache_negative_hits": self._dcache_negative_hits,
@@ -528,6 +533,45 @@ class NamespaceManager:
             if cached_zone == zone_id and self._is_cache_fresh(cached_revision, zone_id):
                 self._hits += 1
                 return mount_entries, mount_paths
+
+        # L3: Try persistent view store before full ReBAC rebuild
+        if self._persistent_store is not None:
+            try:
+                view = self._persistent_store.load_view(subject[0], subject[1], zone_id)
+                if view is not None:
+                    # Read actual revision (not synthetic) — avoids TOCTOU race
+                    try:
+                        current_revision = self._rebac_manager._get_zone_revision(zone_id)
+                    except Exception:
+                        current_revision = 0
+                    current_bucket = current_revision // self._revision_window
+                    if view.revision_bucket == current_bucket:
+                        # Restore from L3 into L2
+                        restored_entries = [MountEntry(p) for p in view.mount_paths]
+                        restored_paths = list(view.mount_paths)
+                        with self._lock:
+                            self._cache[subject] = (
+                                restored_entries,
+                                restored_paths,
+                                current_revision,
+                                zone_id,
+                                view.grants_hash,
+                            )
+                        self._l3_hits += 1
+                        logger.debug(
+                            "[NAMESPACE] L3 hit for %s:%s — restored %d mounts",
+                            subject[0],
+                            subject[1],
+                            len(restored_entries),
+                        )
+                        return restored_entries, restored_paths
+            except Exception:
+                logger.warning(
+                    "[NAMESPACE] L3 persistent view load failed for %s:%s, "
+                    "falling through to ReBAC rebuild",
+                    subject[0],
+                    subject[1],
+                )
 
         return self._rebuild_mount_table(subject, zone_id)
 
@@ -617,6 +661,25 @@ class NamespaceManager:
                 zone_id,
                 grants_hash,
             )
+
+        # L3: Persist view for future reconnections (best-effort)
+        if self._persistent_store is not None:
+            try:
+                revision_bucket = current_revision // self._revision_window
+                self._persistent_store.save_view(
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    zone_id=zone_id,
+                    mount_paths=mount_paths,
+                    grants_hash=grants_hash,
+                    revision_bucket=revision_bucket,
+                )
+            except Exception:
+                logger.warning(
+                    "[NAMESPACE] L3 persistent view save failed for %s:%s",
+                    subject_type,
+                    subject_id,
+                )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.debug(

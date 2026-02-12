@@ -13,28 +13,27 @@ from __future__ import annotations
 import time
 
 import pytest
-from sqlalchemy import create_engine
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.core.namespace_manager import NamespaceManager
-from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database for benchmarking."""
-    eng = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Create an in-memory SQLite RecordStore for benchmarking."""
+    rs = SQLAlchemyRecordStore(db_url="sqlite:///:memory:")
+    yield rs
+    rs.close()
 
 
 @pytest.fixture
-def rebac_manager(engine):
+def rebac_manager(record_store):
     """Create an EnhancedReBACManager with 100 grants."""
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
-        engine=engine,
+        engine=record_store.engine,
         cache_ttl_seconds=300,
         max_depth=10,
     )
@@ -55,7 +54,7 @@ def rebac_manager(engine):
 class TestL3Benchmark:
     """Micro-benchmark comparing L3 restore vs cold ReBAC rebuild."""
 
-    def test_l3_restore_faster_than_cold_rebuild(self, engine, rebac_manager):
+    def test_l3_restore_faster_than_cold_rebuild(self, record_store, rebac_manager):
         """L3 restore should be faster than full ReBAC rebuild.
 
         This test:
@@ -66,7 +65,7 @@ class TestL3Benchmark:
         5. Measures L3 restore time (no L2, valid L3)
         6. Asserts L3 restore < cold rebuild
         """
-        store = PostgresPersistentViewStore(engine)
+        store = PostgresPersistentViewStore(record_store)
 
         # --- Cold rebuild (no L2, no L3) ---
         ns_cold = NamespaceManager(

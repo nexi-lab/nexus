@@ -43,14 +43,18 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         self,
         resolver: ZonePathResolver,
         root_store: RaftMetadataStore,
+        *,
+        zone_manager: Any | None = None,
     ):
         """
         Args:
             resolver: ZonePathResolver for cross-zone path resolution.
             root_store: The root zone's store (used for close() and fallback).
+            zone_manager: Optional ZoneManager ref for clean shutdown.
         """
         self._resolver = resolver
         self._root_store = root_store
+        self._zone_manager = zone_manager
 
     @classmethod
     def from_zone_manager(
@@ -73,7 +77,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         root_store = zone_manager.get_store(root_zone_id)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone_id}' not found in ZoneManager")
-        return cls(resolver, root_store)
+        return cls(resolver, root_store, zone_manager=zone_manager)
 
     # =========================================================================
     # Path remapping helpers
@@ -177,6 +181,8 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
 
     def close(self) -> None:
         self._root_store.close()
+        if self._zone_manager is not None:
+            self._zone_manager.shutdown()
 
     # =========================================================================
     # Batch operations — group by zone for efficiency

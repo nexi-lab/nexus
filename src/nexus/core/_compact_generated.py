@@ -82,6 +82,7 @@ class CompactFileMetadata:
     owner_id_intern: int
     entry_type: int
     target_zone_id_intern: int
+    i_links_count: int
 
     @classmethod
     def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
@@ -101,6 +102,7 @@ class CompactFileMetadata:
             owner_id_intern=_intern(m.owner_id),
             entry_type=m.entry_type,
             target_zone_id_intern=_intern(m.target_zone_id),
+            i_links_count=m.i_links_count,
         )
 
     def to_file_metadata(self) -> FileMetadata:
@@ -122,6 +124,7 @@ class CompactFileMetadata:
             owner_id=_resolve(self.owner_id_intern),
             entry_type=self.entry_type,
             target_zone_id=_resolve(self.target_zone_id_intern),
+            i_links_count=self.i_links_count,
         )
 
 

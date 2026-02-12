@@ -1,13 +1,10 @@
 #![allow(clippy::result_large_err)]
-//! Embedded key-value storage using redb.
+//! Embedded key-value storage using redb 2.x.
 //!
-//! Drop-in replacement for SledStore, providing the same API surface.
-//! redb is a stable (1.0+) pure-Rust embedded database with typed tables,
-//! ACID transactions, and a reliable on-disk format.
+//! Pure Rust embedded database with typed tables, ACID transactions,
+//! and a reliable on-disk format. Sole Metastore KV driver for Nexus.
 //!
-//! # Why redb over sled?
-//!
-//! - Stable: redb 2.x has a committed on-disk format (sled is pre-1.0 beta)
+//! - Stable: redb 2.x has a committed on-disk format
 //! - ACID: Full MVCC transactions with crash safety
 //! - Pure Rust: No C++ dependencies
 //! - Typed: Compile-time type safety for table definitions

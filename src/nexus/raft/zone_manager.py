@@ -71,29 +71,25 @@ class ZoneManager:
         self,
         zone_id: str,
         peers: list[str] | None = None,
-        lazy: bool = False,
     ) -> RaftMetadataStore:
         """Create a new zone and return its RaftMetadataStore.
 
         Args:
             zone_id: Unique zone identifier.
             peers: Peer addresses in "id@host:port" format.
-            lazy: If True, use EC mode (lazy consensus).
 
         Returns:
             RaftMetadataStore wrapping the zone's ZoneHandle.
         """
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-        handle = self._py_mgr.create_zone(zone_id, peers or [], lazy)
+        handle = self._py_mgr.create_zone(zone_id, peers or [])
         store = RaftMetadataStore(engine=handle, zone_id=zone_id)
         self._stores[zone_id] = store
 
-        mode = "EC" if lazy else "SC"
         logger.info(
-            "Zone '%s' created (mode=%s, peers=%d)",
+            "Zone '%s' created (peers=%d)",
             zone_id,
-            mode,
             len(peers or []),
         )
         return store

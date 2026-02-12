@@ -18,9 +18,9 @@ Subcommands:
 from __future__ import annotations
 
 import sys
-from typing import Any
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.progress import Progress, SpinnerColumn, TextColumn

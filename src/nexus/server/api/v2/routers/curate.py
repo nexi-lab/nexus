@@ -7,21 +7,19 @@ Provides 2 endpoints for curation:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from nexus.server.api.v2.dependencies import get_curator
+from nexus.server.api.v2.error_handling import api_error_handler
 from nexus.server.api.v2.models import (
     CurateBulkRequest,
     CurateRequest,
     CurationResponse,
 )
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(tags=["curation"])
+router = APIRouter(prefix="/api/v2/curate", tags=["curation"])
 
 
 # =============================================================================
@@ -29,7 +27,8 @@ router = APIRouter(tags=["curation"])
 # =============================================================================
 
 
-@router.post("/api/v2/curate", response_model=CurationResponse)
+@router.post("", response_model=CurationResponse)
+@api_error_handler(context="curate memories")
 async def curate_memories(
     request: CurateRequest,
     curator: Any = Depends(get_curator),
@@ -39,28 +38,22 @@ async def curate_memories(
     Takes reflection memories and extracts strategies to add to
     or merge with existing strategies in the target playbook.
     """
-    try:
-        result = curator.curate_playbook(
-            playbook_id=request.playbook_id,
-            reflection_memory_ids=request.reflection_memory_ids,
-            merge_threshold=request.merge_threshold,
-        )
+    result = curator.curate_playbook(
+        playbook_id=request.playbook_id,
+        reflection_memory_ids=request.reflection_memory_ids,
+        merge_threshold=request.merge_threshold,
+    )
 
-        return CurationResponse(
-            playbook_id=result.get("playbook_id", request.playbook_id),
-            strategies_added=result.get("strategies_added", 0),
-            strategies_merged=result.get("strategies_merged", 0),
-            strategies_total=result.get("strategies_total", 0),
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except Exception as e:
-        logger.error(f"Curation error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to curate memories") from e
+    return CurationResponse(
+        playbook_id=result.get("playbook_id", request.playbook_id),
+        strategies_added=result.get("strategies_added", 0),
+        strategies_merged=result.get("strategies_merged", 0),
+        strategies_total=result.get("strategies_total", 0),
+    )
 
 
-@router.post("/api/v2/curate/bulk")
+@router.post("/bulk")
+@api_error_handler(context="bulk curate")
 async def curate_bulk(
     request: CurateBulkRequest,
     curator: Any = Depends(get_curator),
@@ -73,40 +66,35 @@ async def curate_bulk(
     Note: trajectories are processed sequentially because the underlying
     SQLAlchemy session is not thread-safe for concurrent writes.
     """
-    try:
-        results = []
-        errors = []
+    results = []
+    errors = []
 
-        # Sequential iteration — SQLAlchemy session is not thread-safe
-        for trajectory_id in request.trajectory_ids:
-            try:
-                result = curator.curate_from_trajectory(
-                    playbook_id=request.playbook_id,
-                    trajectory_id=trajectory_id,
-                )
-                if result:
-                    results.append(
-                        {
-                            "trajectory_id": trajectory_id,
-                            **result,
-                        }
-                    )
-            except Exception as e:
-                errors.append(
+    # Sequential iteration — SQLAlchemy session is not thread-safe
+    for trajectory_id in request.trajectory_ids:
+        try:
+            result = curator.curate_from_trajectory(
+                playbook_id=request.playbook_id,
+                trajectory_id=trajectory_id,
+            )
+            if result:
+                results.append(
                     {
                         "trajectory_id": trajectory_id,
-                        "error": str(e),
+                        **result,
                     }
                 )
+        except Exception as e:
+            errors.append(
+                {
+                    "trajectory_id": trajectory_id,
+                    "error": str(e),
+                }
+            )
 
-        return {
-            "playbook_id": request.playbook_id,
-            "processed": len(results),
-            "failed": len(errors),
-            "results": results,
-            "errors": errors if errors else None,
-        }
-
-    except Exception as e:
-        logger.error(f"Bulk curation error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to bulk curate") from e
+    return {
+        "playbook_id": request.playbook_id,
+        "processed": len(results),
+        "failed": len(errors),
+        "results": results,
+        "errors": errors if errors else None,
+    }

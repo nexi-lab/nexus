@@ -1700,74 +1700,20 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
-    # API v2 routes - Memory & ACE endpoints (Issue #1193)
-    try:
-        from nexus.server.api.v2.routers import (
-            audit,
-            conflicts,
-            consolidation,
-            curate,
-            feedback,
-            memories,
-            mobile_search,
-            operations,
-            playbooks,
-            reflect,
-            trajectories,
-        )
+    # API v2 routes — centralized registration via versioning module (#995)
+    from nexus.server.api.v2.versioning import (
+        DeprecationMiddleware,
+        VersionHeaderMiddleware,
+        build_v2_registry,
+        register_v2_routers,
+    )
 
-        app.include_router(memories.router)
-        app.include_router(trajectories.router)
-        app.include_router(feedback.router)
-        app.include_router(playbooks.router)
-        app.include_router(reflect.router)
-        app.include_router(curate.router)
-        app.include_router(consolidation.router)
-        app.include_router(mobile_search.router)
-        app.include_router(conflicts.router)
-        app.include_router(operations.router)
-        app.include_router(audit.router)
-        logger.info("API v2 routes registered (48 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
-        )
-
-    # Nexus Pay API routes (Issue #1209)
-    try:
-        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        app.include_router(pay_router)
-        _register_pay_exception_handlers(app)
-        logger.info("Nexus Pay API routes registered (8 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
-        )
-
-    # Scheduler REST API routes (Issue #1212)
-    try:
-        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
-
-        app.include_router(scheduler_router)
-        logger.info("Scheduler API routes registered (3 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
-        )
-
-    # Issue #940: Register async files router (lazy initialization via lifespan)
-    try:
-        from nexus.server.api.v2.routers.async_files import create_async_files_router
-
-        async_files_router = create_async_files_router(
-            get_fs=lambda: _app_state.async_nexus_fs,
-        )
-        app.include_router(async_files_router, prefix="/api/v2/files")
-        logger.info("Async files router registered (9 endpoints)")
-    except ImportError as e:
-        logger.warning(f"Failed to import async files router: {e}")
+    v2_registry = build_v2_registry(
+        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
+    )
+    register_v2_routers(app, v2_registry)
+    app.add_middleware(VersionHeaderMiddleware)
+    app.add_middleware(DeprecationMiddleware, registry=v2_registry)
 
     # A2A Protocol Endpoint (Issue #1256)
     try:

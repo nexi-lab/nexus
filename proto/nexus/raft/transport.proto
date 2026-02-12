@@ -73,6 +73,12 @@ service RaftClientService {
 
   // GetClusterInfo returns information about the Raft cluster.
   rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse);
+
+  // JoinZone requests that this node add a new node to a zone's Raft group.
+  // Must be sent to the leader; followers return a redirect with leader_address.
+  // This is a one-time setup operation — after joining, the new node receives
+  // a snapshot from the leader and becomes an equal Voter with a local sled replica.
+  rpc JoinZone(JoinZoneRequest) returns (JoinZoneResponse);
 }
 
 // === Client Messages ===
@@ -124,6 +130,27 @@ message GetClusterInfoResponse {
   ClusterConfig config = 4;
   bool is_leader = 5;
   optional string leader_address = 6;
+}
+
+// JoinZoneRequest is sent by a new node to an existing zone member.
+// The leader will propose a ConfChange(AddVoter) for the joining node.
+message JoinZoneRequest {
+  // Zone to join.
+  string zone_id = 1;
+  // The joining node's Raft ID.
+  uint64 node_id = 2;
+  // The joining node's gRPC address (e.g., "http://10.0.0.3:2126").
+  string node_address = 3;
+}
+
+// JoinZoneResponse is returned after the ConfChange is committed.
+message JoinZoneResponse {
+  bool success = 1;
+  optional string error = 2;
+  // If not leader, redirect to leader.
+  optional string leader_address = 3;
+  // Current cluster config so the joiner knows all peers.
+  optional ClusterConfig config = 4;
 }
 
 // === Raft Protocol Messages ===

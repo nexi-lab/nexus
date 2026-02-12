@@ -117,8 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Start transport loop in background — owns the driver exclusively
         let driver = server.take_driver();
-        let peer_map = peers.into_iter().map(|p| (p.id, p)).collect();
-        let transport_loop = TransportLoop::new(driver, peer_map, RaftClientPool::new());
+        let peer_map: std::collections::HashMap<u64, NodeAddress> =
+            peers.into_iter().map(|p| (p.id, p)).collect();
+        let shared_peers = std::sync::Arc::new(std::sync::RwLock::new(peer_map));
+        let transport_loop = TransportLoop::new(driver, shared_peers, RaftClientPool::new());
         tokio::spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!("Witness server starting on {}", bind_addr);

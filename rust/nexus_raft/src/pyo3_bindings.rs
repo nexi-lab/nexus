@@ -1057,6 +1057,43 @@ impl PyZoneManager {
         })
     }
 
+    /// Join an existing zone as a new Voter.
+    ///
+    /// Creates a local RaftNode for this zone without bootstrapping ConfState.
+    /// After calling this, send a JoinZone RPC to the leader — the leader will
+    /// propose ConfChange(AddNode) and auto-send a snapshot.
+    ///
+    /// Args:
+    ///     zone_id: Zone to join.
+    ///     peers: Existing peer addresses in "id@host:port" format.
+    ///
+    /// Returns:
+    ///     ZoneHandle for the joined zone.
+    #[pyo3(signature = (zone_id, peers=vec![]))]
+    pub fn join_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
+        use crate::transport::NodeAddress;
+
+        let peer_addrs: Vec<NodeAddress> = peers
+            .iter()
+            .map(|s| {
+                NodeAddress::parse(s.trim())
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let node = self
+            .registry
+            .join_zone(zone_id, peer_addrs, self.runtime.handle())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
+
+        Ok(PyZoneHandle {
+            node,
+            runtime_handle: self.runtime.handle().clone(),
+            zone_id: zone_id.to_string(),
+            lazy_consensus: false,
+        })
+    }
+
     /// Get a handle for an existing zone.
     ///
     /// Returns:

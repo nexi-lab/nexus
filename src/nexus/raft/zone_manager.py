@@ -98,6 +98,37 @@ class ZoneManager:
         )
         return store
 
+    def join_zone(
+        self,
+        zone_id: str,
+        peers: list[str] | None = None,
+    ) -> RaftMetadataStore:
+        """Join an existing zone as a new Voter.
+
+        Creates a local RaftNode without bootstrapping ConfState.
+        After calling this, the leader must be notified via JoinZone RPC
+        to propose ConfChange(AddNode) — the leader will auto-send a snapshot.
+
+        Args:
+            zone_id: Zone to join.
+            peers: Existing peer addresses in "id@host:port" format.
+
+        Returns:
+            RaftMetadataStore wrapping the zone's ZoneHandle.
+        """
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+        handle = self._py_mgr.join_zone(zone_id, peers or [])
+        store = RaftMetadataStore(engine=handle, zone_id=zone_id)
+        self._stores[zone_id] = store
+
+        logger.info(
+            "Zone '%s' joined (peers=%d)",
+            zone_id,
+            len(peers or []),
+        )
+        return store
+
     def get_store(self, zone_id: str) -> RaftMetadataStore | None:
         """Get the RaftMetadataStore for a zone.
 

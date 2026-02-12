@@ -20,11 +20,9 @@
 //! ```
 
 use super::client::RaftClientPool;
-use super::NodeAddress;
+use super::{NodeAddress, SharedPeerMap};
 use crate::raft::{RaftNodeDriver, StateMachine};
 use protobuf::Message as ProtobufV2Message;
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -35,8 +33,8 @@ use tokio::sync::watch;
 pub struct TransportLoop<S: StateMachine + 'static> {
     /// The RaftNodeDriver to drive (exclusive ownership).
     driver: RaftNodeDriver<S>,
-    /// Known peers (node_id → address).
-    peers: Arc<HashMap<u64, NodeAddress>>,
+    /// Known peers (node_id → address). Shared so ConfChange can add peers at runtime.
+    peers: SharedPeerMap,
     /// Connection pool for sending messages to peers.
     client_pool: RaftClientPool,
     /// How often to call advance() (default: 10ms).
@@ -47,15 +45,18 @@ pub struct TransportLoop<S: StateMachine + 'static> {
 
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     /// Create a new transport loop.
+    ///
+    /// `peers` is a `SharedPeerMap` shared with the `RaftNodeDriver` and `ZoneRaftRegistry`,
+    /// so ConfChange can insert new peers visible to the transport loop at runtime.
     pub fn new(
         driver: RaftNodeDriver<S>,
-        peers: HashMap<u64, NodeAddress>,
+        peers: SharedPeerMap,
         client_pool: RaftClientPool,
     ) -> Self {
         let tick_interval = driver.config().tick_interval;
         Self {
             driver,
-            peers: Arc::new(peers),
+            peers,
             client_pool,
             tick_interval,
             zone_id: String::new(),
@@ -87,7 +88,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 &self.zone_id
             },
             self.tick_interval.as_millis(),
-            self.peers.len()
+            self.peers.read().unwrap().len()
         );
 
         loop {
@@ -109,8 +110,11 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 Ok(messages) => {
                     for msg in messages {
                         let target_id = msg.to;
-                        if let Some(addr) = self.peers.get(&target_id) {
-                            self.send_message(target_id, addr, msg).await;
+                        // Clone address under read lock, then release before async send
+                        // (std::sync lock must not be held across .await)
+                        let addr = self.peers.read().unwrap().get(&target_id).cloned();
+                        if let Some(addr) = addr {
+                            self.send_message(target_id, &addr, msg).await;
                         } else {
                             tracing::warn!("No address for peer {} — dropping message", target_id);
                         }

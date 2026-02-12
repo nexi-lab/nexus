@@ -18,9 +18,9 @@ class TestEventLogProtocol:
 
     def test_wal_event_log_satisfies_protocol(self) -> None:
         """WALEventLog must be a structural subtype of EventLogProtocol."""
-        try:
-            from nexus.core.event_log_wal import WALEventLog
-        except ImportError:
+        from nexus.core.event_log_wal import WALEventLog, is_available
+
+        if not is_available():
             pytest.skip("_nexus_wal extension not available")
 
         config = EventLogConfig()

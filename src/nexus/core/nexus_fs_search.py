@@ -394,12 +394,10 @@ class NexusFSSearchMixin:
                     check_write=False,
                 )
                 # Check if backend is a dynamic API-backed connector or virtual filesystem
-                # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
                 # Also check has_virtual_filesystem for connectors like HN that have virtual directories
                 is_dynamic_connector = (
-                    getattr(route.backend, "user_scoped", None) is True
-                    and getattr(route.backend, "token_manager", None) is not None
-                ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+                    route.backend.user_scoped and route.backend.has_token_manager
+                ) or route.backend.has_virtual_filesystem
 
                 if is_dynamic_connector:
                     # Check permission on the mount path BEFORE listing
@@ -1378,7 +1376,7 @@ class NexusFSSearchMixin:
                     "created_at": meta.created_at,
                     "etag": meta.etag,
                     "mime_type": meta.mime_type,
-                    "is_directory": meta.is_directory if hasattr(meta, "is_directory") else False,
+                    "is_directory": meta.is_dir if hasattr(meta, "is_dir") else False,
                 }
                 for meta in result_items
             ]

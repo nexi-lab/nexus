@@ -208,7 +208,7 @@ class WorkspaceManager:
 
         # Get all files in workspace
         with self.metadata_session_factory() as session:
-            files = self.metadata.list(prefix=workspace_prefix)
+            files = self.metadata.list_iter(prefix=workspace_prefix)
 
             # Collect file metadata for manifest
             file_entries: list[tuple[str, str, int, str | None]] = []
@@ -667,4 +667,5 @@ class WorkspaceManager:
         )
 
         stats = overlay_resolver.overlay_stats(overlay_config)
-        return stats.to_dict()
+        result: dict[str, Any] = stats.to_dict()
+        return result

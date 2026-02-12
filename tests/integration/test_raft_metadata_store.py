@@ -68,9 +68,7 @@ class FakeLocalRaft:
         return self._metadata.pop(path, None) is not None
 
     def list_metadata(self, prefix: str) -> list[tuple[str, bytes]]:
-        return sorted(
-            [(k, v) for k, v in self._metadata.items() if k.startswith(prefix)]
-        )
+        return sorted([(k, v) for k, v in self._metadata.items() if k.startswith(prefix)])
 
     def batch_set_metadata(self, items: list[tuple[str, bytes]]) -> int:
         for path, value in items:
@@ -99,9 +97,7 @@ class FakeLocalRaft:
         expires_at = now + ttl_secs
 
         if path not in self._locks:
-            self._locks[path] = FakeLockInfo(
-                path=path, max_holders=max_holders, holders=[]
-            )
+            self._locks[path] = FakeLockInfo(path=path, max_holders=max_holders, holders=[])
 
         lock = self._locks[path]
         # Expire old holders
@@ -171,10 +167,9 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     """Create a RaftMetadataStore backed by a FakeLocalRaft."""
     fake = fake or FakeLocalRaft()
     store = object.__new__(RaftMetadataStore)
-    store._local = fake
-    store._remote = None
+    store._engine = fake
+    store._client = None
     store._zone_id = None
-    store._is_local = True
     return store
 
 
@@ -332,7 +327,7 @@ class TestListOperations:
 
     def test_list_paginated_basic(self) -> None:
         store = _make_store()
-        self._populate(store, [f"/p/{chr(97+i)}.txt" for i in range(5)])
+        self._populate(store, [f"/p/{chr(97 + i)}.txt" for i in range(5)])
 
         result = store.list_paginated(prefix="/p/", limit=3)
         assert isinstance(result, PaginatedResult)
@@ -342,7 +337,7 @@ class TestListOperations:
 
     def test_list_paginated_cursor(self) -> None:
         store = _make_store()
-        self._populate(store, [f"/p/{chr(97+i)}.txt" for i in range(5)])
+        self._populate(store, [f"/p/{chr(97 + i)}.txt" for i in range(5)])
 
         page1 = store.list_paginated(prefix="/p/", limit=2)
         assert len(page1.items) == 2

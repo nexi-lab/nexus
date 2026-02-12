@@ -43,10 +43,20 @@ pub enum RaftError {
     /// Invalid state transition.
     #[error("invalid state: {0}")]
     InvalidState(String),
+
+    /// The actor channel was closed (driver dropped).
+    #[error("raft actor channel closed")]
+    ChannelClosed,
 }
 
 impl From<crate::storage::StorageError> for RaftError {
     fn from(e: crate::storage::StorageError) -> Self {
+        RaftError::Storage(e.to_string())
+    }
+}
+
+impl From<crate::storage::RedbStorageError> for RaftError {
+    fn from(e: crate::storage::RedbStorageError) -> Self {
         RaftError::Storage(e.to_string())
     }
 }

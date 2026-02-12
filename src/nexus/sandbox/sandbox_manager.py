@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
@@ -38,6 +39,8 @@ except ImportError:
     DOCKER_PROVIDER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class SandboxManager:
@@ -152,39 +155,30 @@ class SandboxManager:
 
         # Check name uniqueness for active sandboxes only
         # Allow reusing name if existing sandbox is stopped/paused
-        try:
-            existing = self.db.execute(
+        def _check_name() -> SandboxMetadataModel | None:
+            result = self.db.execute(
                 select(SandboxMetadataModel).where(
                     SandboxMetadataModel.user_id == user_id,
                     SandboxMetadataModel.name == name,
                     SandboxMetadataModel.status == "active",
                 )
             )
-            if existing.scalar_one_or_none():
-                raise ValueError(
-                    f"Active sandbox with name '{name}' already exists for user {user_id}. "
-                    f"Use sandbox_get_or_create() to reuse it or choose a different name."
-                )
-        except (PendingRollbackError, SQLAlchemyError) as e:
-            logger.warning(f"Database error during name uniqueness check, rolling back: {e}")
-            self.db.rollback()
-            try:
-                existing = self.db.execute(
-                    select(SandboxMetadataModel).where(
-                        SandboxMetadataModel.user_id == user_id,
-                        SandboxMetadataModel.name == name,
-                        SandboxMetadataModel.status == "active",
-                    )
-                )
-                if existing.scalar_one_or_none():
-                    raise ValueError(
-                        f"Active sandbox with name '{name}' already exists for user {user_id}. "
-                        f"Use sandbox_get_or_create() to reuse it or choose a different name."
-                    )
-            except SQLAlchemyError as retry_error:
-                logger.error(f"Database error persisted after rollback: {retry_error}")
-                self.db.rollback()
-                raise
+            return result.scalar_one_or_none()
+
+        if self._execute_with_retry(_check_name, context="name uniqueness check"):
+            raise ValueError(
+                f"Active sandbox with name '{name}' already exists for user {user_id}. "
+                f"Use sandbox_get_or_create() to reuse it or choose a different name."
+            )
+
+        # Resolve agent trust tier to security profile
+        from nexus.sandbox.security_profile import SandboxSecurityProfile
+
+        agent_name = agent_id.split(",", 1)[1] if agent_id and "," in agent_id else None
+        security_profile = SandboxSecurityProfile.from_trust_tier(agent_name)
+        logger.info(
+            f"Using '{security_profile.name}' security profile for sandbox (agent={agent_id})"
+        )
 
         # Create sandbox via provider (async call)
         provider_obj = self.providers[provider]
@@ -192,6 +186,7 @@ class SandboxManager:
             template_id=template_id,
             timeout_minutes=ttl_minutes,
             metadata={"name": name},
+            security_profile=security_profile,
         )
 
         # OPTIMIZATION: Start pre-warming Python imports in background
@@ -231,6 +226,12 @@ class SandboxManager:
         except SQLAlchemyError as e:
             logger.error(f"Failed to commit new sandbox metadata: {e}")
             self.db.rollback()
+            # Cleanup orphaned container to prevent resource leak (#1307)
+            try:
+                await provider_obj.destroy(sandbox_id)
+                logger.info(f"Cleaned up orphaned container {sandbox_id} after DB failure")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to cleanup orphaned container {sandbox_id}: {cleanup_err}")
             raise
 
         logger.info(
@@ -424,20 +425,10 @@ class SandboxManager:
         if status:
             query = query.where(SandboxMetadataModel.status == status)
 
-        try:
-            result = self.db.execute(query)
-            sandboxes = result.scalars().all()
-        except (PendingRollbackError, SQLAlchemyError) as e:
-            # Rollback invalid transaction and retry once
-            logger.warning(f"Database error during sandbox list query, rolling back: {e}")
-            self.db.rollback()
-            try:
-                result = self.db.execute(query)
-                sandboxes = result.scalars().all()
-            except SQLAlchemyError as retry_error:
-                logger.error(f"Database error persisted after rollback: {retry_error}")
-                self.db.rollback()
-                raise
+        def _list_query() -> list[SandboxMetadataModel]:
+            return list(self.db.execute(query).scalars().all())
+
+        sandboxes = self._execute_with_retry(_list_query, context="sandbox list")
 
         # Convert to dicts
         sandbox_dicts = [self._metadata_to_dict(sb) for sb in sandboxes]
@@ -560,9 +551,10 @@ class SandboxManager:
             ValueError: If provider not available
             SandboxCreationError: If sandbox creation fails
         """
+
         # OPTIMIZATION: Query directly for exact name match instead of listing all
         # This avoids verifying unrelated sandboxes (saves ~18s)
-        try:
+        def _find_active() -> SandboxMetadataModel | None:
             result = self.db.execute(
                 select(SandboxMetadataModel).where(
                     SandboxMetadataModel.user_id == user_id,
@@ -570,24 +562,9 @@ class SandboxManager:
                     SandboxMetadataModel.status == "active",
                 )
             )
-            existing = result.scalar_one_or_none()
-        except (PendingRollbackError, SQLAlchemyError) as e:
-            # Rollback invalid transaction and retry once
-            logger.warning(f"Database error during sandbox query, rolling back: {e}")
-            self.db.rollback()
-            try:
-                result = self.db.execute(
-                    select(SandboxMetadataModel).where(
-                        SandboxMetadataModel.user_id == user_id,
-                        SandboxMetadataModel.name == name,
-                        SandboxMetadataModel.status == "active",
-                    )
-                )
-                existing = result.scalar_one_or_none()
-            except SQLAlchemyError as retry_error:
-                logger.error(f"Database error persisted after rollback: {retry_error}")
-                self.db.rollback()
-                raise
+            return result.scalar_one_or_none()
+
+        existing = self._execute_with_retry(_find_active, context="sandbox lookup")
 
         if existing:
             sandbox_dict = self._metadata_to_dict(existing)
@@ -874,30 +851,19 @@ class SandboxManager:
         now = datetime.now(UTC)
 
         # Find expired sandboxes
-        try:
+        def _find_expired() -> list[SandboxMetadataModel]:
             result = self.db.execute(
                 select(SandboxMetadataModel).where(
                     SandboxMetadataModel.status == "active",
                     SandboxMetadataModel.expires_at < now,
                 )
             )
-            expired = result.scalars().all()
-        except (PendingRollbackError, SQLAlchemyError) as e:
-            logger.warning(f"Database error during expired sandbox query, rolling back: {e}")
-            self.db.rollback()
-            try:
-                result = self.db.execute(
-                    select(SandboxMetadataModel).where(
-                        SandboxMetadataModel.status == "active",
-                        SandboxMetadataModel.expires_at < now,
-                    )
-                )
-                expired = result.scalars().all()
-            except SQLAlchemyError as retry_error:
-                logger.error(f"Database error persisted after rollback: {retry_error}")
-                self.db.rollback()
-                # Return empty list on persistent error to avoid breaking cleanup
-                return 0
+            return list(result.scalars().all())
+
+        try:
+            expired = self._execute_with_retry(_find_expired, context="expired sandbox query")
+        except SQLAlchemyError:
+            return 0
 
         count = 0
         for metadata in expired:
@@ -912,6 +878,35 @@ class SandboxManager:
 
         return count
 
+    def _execute_with_retry(self, operation: Callable[[], _T], context: str = "query") -> _T:
+        """Execute a database operation with one retry on PendingRollbackError.
+
+        Pattern: try operation → on DB error, rollback and retry once → on
+        second failure, rollback and raise.  Eliminates 5 duplicate try/except
+        blocks across SandboxManager methods (Issue #1307 DRY fix).
+
+        Args:
+            operation: Zero-arg callable that performs the DB work and returns a value.
+            context: Human-readable label for log messages.
+
+        Returns:
+            Whatever ``operation`` returns.
+
+        Raises:
+            SQLAlchemyError: If the retry also fails.
+        """
+        try:
+            return operation()
+        except (PendingRollbackError, SQLAlchemyError) as exc:
+            logger.warning("Database error during %s, rolling back: %s", context, exc)
+            self.db.rollback()
+            try:
+                return operation()
+            except SQLAlchemyError as retry_exc:
+                logger.error("Database error persisted after rollback: %s", retry_exc)
+                self.db.rollback()
+                raise
+
     def _get_metadata(self, sandbox_id: str) -> SandboxMetadataModel:
         """Get sandbox metadata from database.
 
@@ -924,25 +919,14 @@ class SandboxManager:
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        try:
+
+        def _query() -> SandboxMetadataModel | None:
             result = self.db.execute(
                 select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
             )
-            metadata = result.scalar_one_or_none()
-        except (PendingRollbackError, SQLAlchemyError) as e:
-            logger.warning(f"Database error during metadata lookup, rolling back: {e}")
-            self.db.rollback()
-            try:
-                result = self.db.execute(
-                    select(SandboxMetadataModel).where(
-                        SandboxMetadataModel.sandbox_id == sandbox_id
-                    )
-                )
-                metadata = result.scalar_one_or_none()
-            except SQLAlchemyError as retry_error:
-                logger.error(f"Database error persisted after rollback: {retry_error}")
-                self.db.rollback()
-                raise
+            return result.scalar_one_or_none()
+
+        metadata = self._execute_with_retry(_query, context="metadata lookup")
 
         if not metadata:
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")

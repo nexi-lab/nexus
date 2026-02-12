@@ -181,7 +181,7 @@ def create_async_files_router(
     async def write_file(
         request: WriteRequest,
         context: Any = Depends(get_context),
-    ) -> WriteResponse:
+    ) -> Response:
         """
         Write content to a file.
 
@@ -208,11 +208,15 @@ def create_async_files_router(
                 context=context,
             )
 
-            return WriteResponse(
+            response_data = WriteResponse(
                 etag=result["etag"],
                 version=result["version"],
                 size=result["size"],
                 modified_at=result["modified_at"],
+            )
+            return Response(
+                content=response_data.model_dump_json(),
+                media_type="application/json",
             )
 
         except NexusPermissionError as e:
@@ -246,6 +250,7 @@ def create_async_files_router(
         """
         try:
             fs = await _get_fs()
+
             # Check If-None-Match header for caching
             if_none_match = request.headers.get("If-None-Match")
 
@@ -362,6 +367,7 @@ def create_async_files_router(
         """List directory contents."""
         try:
             fs = await _get_fs()
+
             items = await fs.list_dir(path, context=context)
             return ListResponse(items=items)
 
@@ -423,7 +429,7 @@ def create_async_files_router(
                 size=meta.size,
                 etag=meta.etag,
                 version=meta.version,
-                is_directory=meta.is_directory,
+                is_directory=meta.is_dir,
                 created_at=meta.created_at.isoformat() if meta.created_at else None,
                 modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
             )

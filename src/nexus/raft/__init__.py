@@ -38,6 +38,7 @@ Example (RaftClient - remote):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -114,10 +115,17 @@ except ImportError:
 
 # RaftConsensus: Full Raft consensus for SC mode (requires --features full)
 RaftConsensus = None
-try:
+with contextlib.suppress(ImportError):
     from _nexus_raft import RaftConsensus
-except ImportError:
-    pass  # Not available without grpc feature
+
+# ZoneHandle: Per-zone Raft node handle (requires --features full)
+ZoneHandle = None
+with contextlib.suppress(ImportError):
+    from _nexus_raft import ZoneHandle
+
+# Python wrappers for multi-zone federation
+from nexus.raft.zone_manager import ZoneManager
+from nexus.raft.zone_path_resolver import ZonePathResolver
 
 
 def require_metastore() -> None:
@@ -150,6 +158,10 @@ __all__ = [
     "Metastore",
     # PyO3 FFI: Raft consensus driver (SC mode)
     "RaftConsensus",
+    # Multi-zone federation
+    "ZoneManager",
+    "ZonePathResolver",
+    "ZoneHandle",
     # Lock types
     "LockState",
     "LockInfo",

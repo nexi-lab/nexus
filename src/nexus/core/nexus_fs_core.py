@@ -25,7 +25,6 @@ from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFound
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
-from nexus.core.zookie import Zookie
 
 logger = logging.getLogger(__name__)
 
@@ -228,18 +227,112 @@ class NexusFSCoreMixin:
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
 
+    def _fire_workflow_event(
+        self,
+        trigger_type: Any,
+        event_context: dict[str, Any],
+        label: str,
+    ) -> None:
+        """Fire a workflow event and broadcast to webhook subscriptions.
+
+        Consolidates the repeated async-or-thread pattern from write/delete/rename.
+        Does nothing if workflows are not enabled.
+
+        Args:
+            trigger_type: TriggerType enum value (FILE_WRITE, FILE_DELETE, FILE_RENAME).
+            event_context: Event payload dict.
+            label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
+        """
+        if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
+            return
+
+        import asyncio
+
+        try:
+            asyncio.get_running_loop()
+            self._create_tracked_event_task(
+                self.workflow_engine.fire_event(trigger_type, event_context),  # type: ignore[attr-defined]
+                name=f"workflow:{label}",
+            )
+            if self.subscription_manager:  # type: ignore[attr-defined]
+                event_type = label.split(":")[0] if ":" in label else label
+                self._create_tracked_event_task(
+                    self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                        event_type,
+                        event_context,
+                        event_context.get("zone_id", "default"),
+                    ),
+                    name=f"webhook:{label}",
+                )
+        except RuntimeError:
+            # No event loop running — run in background thread
+            import threading
+
+            def _run_in_thread() -> None:
+                try:
+                    asyncio.run(
+                        self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+                    )
+                    if self.subscription_manager:  # type: ignore[attr-defined]
+                        event_type = label.split(":")[0] if ":" in label else label
+                        asyncio.run(
+                            self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                                event_type,
+                                event_context,
+                                event_context.get("zone_id", "default"),
+                            )
+                        )
+                except Exception as e:
+                    logger.error(f"Workflow event error for {label}: {e}")
+
+            threading.Thread(target=_run_in_thread, daemon=True).start()
+
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
     # =========================================================================
 
+    def _get_revision_notifier(self) -> Any:
+        """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
+
+        Lazily initialized to avoid import overhead for callers that don't
+        use the consistency subsystem.
+        """
+        if self._revision_notifier is None:
+            from nexus.core.revision_notifier import RevisionNotifier
+
+            NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+        return self._revision_notifier
+
+    def _get_revision_lock(self, zone_id: str) -> threading.Lock:
+        """Get or create a per-zone lock for revision increments (Issue #1180).
+
+        Always acquires the guard lock for correctness. The overhead is
+        negligible (~50ns uncontended) since this runs once per zone.
+
+        Args:
+            zone_id: The zone to get the lock for
+
+        Returns:
+            Lock instance for this zone
+        """
+        with self._revision_locks_guard:
+            if zone_id not in self._revision_locks:
+                self._revision_locks[zone_id] = threading.Lock()
+            return self._revision_locks[zone_id]
+
     def _increment_and_get_revision(self, zone_id: str) -> int:
         """Atomically increment and return the new revision for a zone.
 
-        Issue #1187: This provides monotonic revision counters for filesystem
+        Issue #1187: Provides monotonic revision counters for filesystem
         consistency tokens (zookies). Each write operation increments the counter
         and includes the new revision in the returned zookie.
 
-        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+        Issue #1330 Phase 4.2: Uses native redb REVISIONS_TABLE via
+        metadata.increment_revision(). redb's single-writer transaction
+        provides atomicity — no Python _revision_lock needed.
+
+        Falls back to FileMetadata-based counter if increment_revision()
+        is not available on the metadata store.
 
         Args:
             zone_id: The zone to increment revision for
@@ -247,32 +340,47 @@ class NexusFSCoreMixin:
         Returns:
             The new revision number after incrementing
         """
+        # Fast path: native redb counter (no lock, atomic via redb txn)
+        if hasattr(self.metadata, "increment_revision"):
+            try:
+                return self.metadata.increment_revision(zone_id)
+            except Exception as e:
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                return int(time.time() * 1000)
+
+        # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
-        try:
-            meta = self.metadata.get(rev_path)
-            new_rev = (meta.version + 1) if meta else 1
-            self.metadata.put(
-                FileMetadata(
-                    path=rev_path,
-                    backend_name="__sys__",
-                    physical_path="__sys__",
-                    size=0,
-                    version=new_rev,
-                    zone_id=zone_id,
+        # Issue #1180: Per-zone lock ensures atomic read-modify-write without
+        # cross-zone contention. TODO: Replace with sled atomic_increment (Phase B).
+        with self._get_revision_lock(zone_id):
+            try:
+                meta = self.metadata.get(rev_path)
+                new_rev = (meta.version + 1) if meta else 1
+                self.metadata.put(
+                    FileMetadata(
+                        path=rev_path,
+                        backend_name="__sys__",
+                        physical_path="__sys__",
+                        size=0,
+                        version=new_rev,
+                        zone_id=zone_id,
+                    )
                 )
-            )
-            return new_rev
-        except Exception as e:
-            logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-            # Fallback: return timestamp-based pseudo-revision
-            return int(time.time() * 1000)
+                # Issue #1180 Phase B: Notify waiters of the new revision.
+                self._get_revision_notifier().notify_revision(zone_id, new_rev)
+                return new_rev
+            except Exception as e:
+                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
+                # Fallback: return timestamp-based pseudo-revision
+                return int(time.time() * 1000)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
 
-        Uses MetastoreABC (sled KV) — kernel operation, no RecordStore dependency.
+        Issue #1330 Phase 4.2: Uses native redb get_revision() when available.
+        Falls back to FileMetadata-based lookup.
 
         Args:
             zone_id: The zone to get revision for
@@ -280,6 +388,15 @@ class NexusFSCoreMixin:
         Returns:
             The current revision number (0 if not found)
         """
+        # Fast path: native redb counter
+        if hasattr(self.metadata, "get_revision"):
+            try:
+                return self.metadata.get_revision(zone_id)
+            except Exception as e:
+                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
+                return 0
+
+        # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         try:
             meta = self.metadata.get(rev_path)
@@ -296,8 +413,9 @@ class NexusFSCoreMixin:
     ) -> bool:
         """Wait until zone revision >= min_revision.
 
-        Issue #1187: Implements AT_LEAST_AS_FRESH consistency mode for reads.
-        Uses exponential backoff to minimize DB polling.
+        Issue #1180 Phase B: Uses Condition-based notification for instant wakeup.
+        Falls back to a single DB check if the notifier doesn't have the revision
+        cached (e.g., after restart when writes happened before this instance existed).
 
         Args:
             zone_id: The zone to check revision for
@@ -306,21 +424,22 @@ class NexusFSCoreMixin:
 
         Returns:
             True if revision reached, False if timeout
-
-        Raises:
-            ConsistencyTimeoutError: If timeout and raise_on_timeout=True
         """
-        deadline = time.monotonic() + (timeout_ms / 1000)
-        sleep_ms = 1.0  # Start with 1ms
+        notifier = self._get_revision_notifier()
 
-        while time.monotonic() < deadline:
-            current = self._get_current_revision(zone_id)
-            if current >= min_revision:
-                return True
-            time.sleep(sleep_ms / 1000)
-            sleep_ms = min(sleep_ms * 2, 100)  # Cap at 100ms
+        # Fast path: notifier already knows the revision is met
+        if notifier.get_latest_revision(zone_id) >= min_revision:
+            return True
 
-        return False
+        # Check DB directly (handles case where notifier cache is behind)
+        current = self._get_current_revision(zone_id)
+        if current >= min_revision:
+            # Update notifier cache so future waits are faster
+            notifier.notify_revision(zone_id, current)
+            return True
+
+        # Block on Condition-based notification
+        return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
     # Read Set Tracking - Issue #1166
@@ -351,8 +470,8 @@ class NexusFSCoreMixin:
             return
 
         # Get current revision for this zone
-        zone_id = context.zone_id or "default"
-        revision = self._get_current_revision(zone_id)
+        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
+        revision = 0  # TODO: Replace with proper Raft read-index
 
         # Record the read
         context.record_read(
@@ -822,12 +941,10 @@ class NexusFSCoreMixin:
 
         # Check if backend is a dynamic API-backed connector (e.g., x_connector) or virtual filesystem
         # These connectors don't use metadata - they fetch data directly from APIs
-        # We check for user_scoped=True explicitly (not just truthy) to avoid Mock objects
         # Also check has_virtual_filesystem for connectors like HN that have virtual directories
         is_dynamic_connector = (
-            getattr(route.backend, "user_scoped", None) is True
-            and getattr(route.backend, "token_manager", None) is not None
-        ) or getattr(route.backend, "has_virtual_filesystem", None) is True
+            route.backend.user_scoped is True and route.backend.has_token_manager is True
+        ) or route.backend.has_virtual_filesystem is True
 
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
@@ -1151,9 +1268,7 @@ class NexusFSCoreMixin:
                                 raise
             else:
                 # Try parallel I/O for LocalBackend using nexus_fast
-                from nexus.backends.local import LocalBackend
-
-                if isinstance(backend, LocalBackend) and len(paths_for_backend) > 1:
+                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
                     # Use Rust parallel mmap reads for LocalBackend
                     try:
                         from nexus_fast import read_files_bulk
@@ -1490,9 +1605,9 @@ class NexusFSCoreMixin:
         # For now, we can't easily get size without reading - set to 0 and update on next read
         # A better approach would be for write_stream to return (hash, size) tuple
         size = 0
-        if hasattr(route.backend, "get_content_size"):
-            with contextlib.suppress(Exception):
-                size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # get_content_size is an abstract method on Backend, always available
+        with contextlib.suppress(Exception):
+            size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1510,6 +1625,17 @@ class NexusFSCoreMixin:
         )
 
         self.metadata.put(new_meta)
+
+        # Sync to RecordStore via write_observer (closes gap: write_stream was missing this)
+        self._notify_observer(
+            "write",
+            path,
+            metadata=new_meta,
+            is_new=(meta is None),
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
         return {
             "etag": content_hash,
@@ -1638,6 +1764,7 @@ class NexusFSCoreMixin:
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
         zone_id, agent_id, is_admin = self._get_routing_params(context)
+
         route = self.router.route(
             path,
             zone_id=zone_id,
@@ -1861,46 +1988,26 @@ class NexusFSCoreMixin:
 
         # Task #45: Sync to RecordStore via write_observer (audit trail + version history)
         # Observer is optional — injected by factory.py, not created by kernel.
-        if self._write_observer:
-            try:
-                self._write_observer.on_write(
-                    metadata=metadata,
-                    is_new=(meta is None),
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
-            except Exception as e:
-                from nexus.core.exceptions import AuditLogError
-
-                if self._audit_strict_mode:
-                    logger.error(
-                        f"AUDIT LOG FAILURE: Write to '{path}' ABORTED. "
-                        f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
-                    )
-                    raise AuditLogError(
-                        f"Write operation aborted: audit logging failed: {e}",
-                        path=path,
-                        original_error=e,
-                    ) from e
-                else:
-                    logger.critical(
-                        f"AUDIT LOG FAILURE: Write to '{path}' SUCCEEDED but audit log FAILED. "
-                        f"Error: {e}. This creates an audit trail gap!"
-                    )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "write",
+            path,
+            metadata=metadata,
+            is_new=(meta is None),
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            # Determine if this is a new file or update
-            is_new_file = meta is None or meta.etag is None
-
-            event_context = {
+        is_new_file = meta is None or meta.etag is None
+        self._fire_workflow_event(
+            TriggerType.FILE_WRITE,
+            {
                 "file_path": path,
                 "size": len(content),
                 "etag": content_hash,
@@ -1910,71 +2017,9 @@ class NexusFSCoreMixin:
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
                 "timestamp": now.isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file write)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                # Try to get the running event loop and create task
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_WRITE, event_context
-                    ),
-                    name=f"workflow:file_write:{path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_write", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_write:{path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run workflow synchronously in background thread
-                # This happens in synchronous contexts (like DeepAgents)
-                import logging
-                import threading
-
-                logger = logging.getLogger(__name__)
-
-                def run_workflow() -> None:
-                    logger.debug(
-                        f"run_workflow thread started for {event_context.get('file_path')}"
-                    )
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_WRITE, event_context
-                            )
-                        )
-                        # v0.8.0: Also broadcast to webhook subscriptions
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            logger.debug(
-                                f"Broadcasting file_write for {event_context.get('file_path')}"
-                            )
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_write",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                        else:
-                            logger.debug("subscription_manager not set")
-                    except Exception as e:
-                        logger.error(
-                            f"Workflow/subscription error for {event_context.get('file_path')}: {e}"
-                        )
-
-                thread = threading.Thread(target=run_workflow, daemon=True)
-                thread.start()
-
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
-        zookie_token = Zookie.encode(effective_zone, revision)
+            },
+            label=f"file_write:{path}",
+        )
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -1984,7 +2029,6 @@ class NexusFSCoreMixin:
             size=len(content),
             etag=content_hash,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187: Include revision in event
         )
 
         # Return metadata for optimistic concurrency control
@@ -1993,8 +2037,6 @@ class NexusFSCoreMixin:
             "version": new_version,
             "modified_at": now,
             "size": len(content),
-            "zookie": zookie_token,  # Issue #1187: Consistency token
-            "revision": revision,  # Issue #1187: Raw revision for internal use
         }
 
     async def atomic_update(
@@ -2531,17 +2573,17 @@ class NexusFSCoreMixin:
         self.metadata.put_batch(metadata_list)
 
         # Task #45: Sync batch to RecordStore (audit trail + version history)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                items = [
-                    (metadata, existing_metadata.get(metadata.path) is None)
-                    for metadata in metadata_list
-                ]
-                self._write_observer.on_write_batch(
-                    items,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                )
+        # Issue #1246: Unified error handling — no longer silently suppressed.
+        items = [
+            (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
+        ]
+        self._notify_observer(
+            "write_batch",
+            f"batch({len(metadata_list)} files)",
+            items=items,
+            zone_id=zone_id,
+            agent_id=agent_id,
+        )
 
         # Issue #548: Create parent tuples and grant direct_owner for new files
         # This ensures agents can read files they create (via user inheritance)
@@ -2658,6 +2700,46 @@ class NexusFSCoreMixin:
 
         return results
 
+    def _notify_observer(self, operation: str, op_path: str, **kwargs: Any) -> None:
+        """Notify the write observer of a mutation, with unified error policy.
+
+        Replaces the inconsistent error handling where single writes used
+        audit_strict_mode but batch/delete/rename silently suppressed errors.
+
+        Issue #1246: All observer calls now follow the same policy:
+        - audit_strict_mode=True: raise AuditLogError on failure
+        - audit_strict_mode=False: log critical warning, continue
+
+        Args:
+            operation: One of 'write', 'write_batch', 'delete', 'rename'.
+            op_path: Primary path affected (for error messages only).
+            **kwargs: Passed directly to the observer method.
+        """
+        if not self._write_observer:
+            return
+
+        try:
+            method = getattr(self._write_observer, f"on_{operation}")
+            method(**kwargs)
+        except Exception as e:
+            from nexus.core.exceptions import AuditLogError
+
+            if self._audit_strict_mode:
+                logger.error(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' ABORTED. "
+                    f"Error: {e}. Set audit_strict_mode=False to allow writes without audit logs."
+                )
+                raise AuditLogError(
+                    f"Operation aborted: audit logging failed for {operation}: {e}",
+                    path=op_path,
+                    original_error=e,
+                ) from e
+            else:
+                logger.critical(
+                    f"AUDIT LOG FAILURE: {operation} on '{op_path}' SUCCEEDED but audit log FAILED. "
+                    f"Error: {e}. This creates an audit trail gap!"
+                )
+
     def _auto_parse_file(self, path: str) -> None:
         """Auto-parse a file in the background (fire-and-forget).
 
@@ -2750,9 +2832,7 @@ class NexusFSCoreMixin:
             context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
-            Dict with consistency metadata:
-                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
-                - revision: Raw revision number
+            Empty dict on success.
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist
@@ -2768,14 +2848,7 @@ class NexusFSCoreMixin:
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
-            # Issue #1187: Return zookie for memory paths too
-            zone_id, _, _ = self._get_routing_params(context)
-            effective_zone = zone_id or "default"
-            revision = self._increment_and_get_revision(effective_zone)
-            return {
-                "zookie": Zookie.encode(effective_zone, revision),
-                "revision": revision,
-            }
+            return {}
 
         # Route to backend with write access check FIRST (to check zone/agent isolation)
         # This must happen before permission check so AccessDeniedError is raised before PermissionError
@@ -2821,15 +2894,16 @@ class NexusFSCoreMixin:
         self._check_permission(path, Permission.WRITE, context)
 
         # Task #45: Sync to RecordStore BEFORE deleting CAS content
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_delete(
-                    path=path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "delete",
+            path,
+            path=path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # Delete from routed backend CAS (decrements ref count)
         # Content is only physically deleted when ref_count reaches 0
@@ -2843,13 +2917,11 @@ class NexusFSCoreMixin:
         self.metadata.delete(path)
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
-            from datetime import UTC
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            event_context = {
+        self._fire_workflow_event(
+            TriggerType.FILE_DELETE,
+            {
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
@@ -2857,55 +2929,9 @@ class NexusFSCoreMixin:
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file delete)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_DELETE, event_context
-                    ),
-                    name=f"workflow:file_delete:{path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_delete", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_delete:{path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run in background thread
-                import threading
-
-                def run_delete_events() -> None:
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_DELETE, event_context
-                            )
-                        )
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_delete",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                    except Exception as e:
-                        logger.error(
-                            f"Delete event error for {event_context.get('file_path')}: {e}"
-                        )
-
-                threading.Thread(target=run_delete_events, daemon=True).start()
-
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
+            },
+            label=f"file_delete:{path}",
+        )
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -2915,14 +2941,9 @@ class NexusFSCoreMixin:
             size=meta.size,
             etag=meta.etag,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187
         )
 
-        # Issue #1187: Return zookie for consistency tracking
-        return {
-            "zookie": Zookie.encode(effective_zone, revision),
-            "revision": revision,
-        }
+        return {}
 
     @rpc_expose(description="Rename/move file")
     def rename(
@@ -2943,9 +2964,7 @@ class NexusFSCoreMixin:
             context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
-            Dict with consistency metadata:
-                - zookie: Consistency token for read-after-write guarantees (Issue #1187)
-                - revision: Raw revision number
+            Empty dict on success.
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist
@@ -3006,11 +3025,12 @@ class NexusFSCoreMixin:
         # For connector backends, also verify the file exists in backend storage
         # (metadata might be stale if previous operations failed)
         if self.metadata.exists(new_path):
-            if hasattr(new_route.backend, "rename_file"):
+            if new_route.backend.supports_rename is True:
                 # Connector backend - verify file actually exists in storage
                 # If metadata says it exists but storage doesn't, clean up stale metadata
                 try:
                     # Check if this is a GCS connector backend (has bucket attribute)
+                    # NOTE: bucket/blob access is GCS-specific, kept as hasattr for now
                     if (
                         hasattr(new_route.backend, "bucket")
                         and hasattr(new_route.backend, "_get_blob_path")
@@ -3049,7 +3069,7 @@ class NexusFSCoreMixin:
 
         # For path-based connector backends, we need to move the actual file
         # in the backend storage (not just metadata)
-        if hasattr(old_route.backend, "rename_file"):
+        if old_route.backend.supports_rename is True:
             # Connector backend - move the file in backend storage
             try:
                 old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
@@ -3127,25 +3147,24 @@ class NexusFSCoreMixin:
                 logger.warning(f"[LEOPARD] Failed to update Tiger Cache on move: {e}")
 
         # Task #45: Sync to RecordStore (audit trail)
-        if self._write_observer:
-            with contextlib.suppress(Exception):
-                self._write_observer.on_rename(
-                    old_path=old_path,
-                    new_path=new_path,
-                    zone_id=zone_id,
-                    agent_id=agent_id,
-                    snapshot_hash=snapshot_hash,
-                    metadata_snapshot=metadata_snapshot,
-                )
+        # Issue #1246: Unified error handling via _notify_observer.
+        self._notify_observer(
+            "rename",
+            old_path,
+            old_path=old_path,
+            new_path=new_path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            snapshot_hash=snapshot_hash,
+            metadata_snapshot=metadata_snapshot,
+        )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        if self.enable_workflows and self.workflow_engine:  # type: ignore[attr-defined]
-            import asyncio
-            from datetime import UTC
+        from nexus.workflows.types import TriggerType
 
-            from nexus.workflows.types import TriggerType
-
-            event_context = {
+        self._fire_workflow_event(
+            TriggerType.FILE_RENAME,
+            {
                 "old_path": old_path,
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
@@ -3154,53 +3173,9 @@ class NexusFSCoreMixin:
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
-            }
-
-            # Fire event asynchronously (don't block file rename)
-            # Issue #913: Use tracked tasks to prevent memory leaks
-            try:
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                        TriggerType.FILE_RENAME, event_context
-                    ),
-                    name=f"workflow:file_rename:{old_path}->{new_path}",
-                )
-                # v0.8.0: Also broadcast to webhook subscriptions
-                if self.subscription_manager:  # type: ignore[attr-defined]
-                    self._create_tracked_event_task(
-                        self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                            "file_rename", event_context, event_context.get("zone_id", "default")
-                        ),
-                        name=f"webhook:file_rename:{old_path}->{new_path}",
-                    )
-            except RuntimeError:
-                # No event loop running - run in background thread
-                import threading
-
-                def run_rename_events() -> None:
-                    try:
-                        asyncio.run(
-                            self.workflow_engine.fire_event(  # type: ignore[attr-defined]
-                                TriggerType.FILE_RENAME, event_context
-                            )
-                        )
-                        if self.subscription_manager:  # type: ignore[attr-defined]
-                            asyncio.run(
-                                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                    "file_rename",
-                                    event_context,
-                                    event_context.get("zone_id", "default"),
-                                )
-                            )
-                    except Exception as e:
-                        logger.error(f"Rename event error for {event_context.get('old_path')}: {e}")
-
-                threading.Thread(target=run_rename_events, daemon=True).start()
-
-        # Issue #1187: Increment revision BEFORE publishing event
-        effective_zone = zone_id or "default"
-        revision = self._increment_and_get_revision(effective_zone)
+            },
+            label=f"file_rename:{old_path}->{new_path}",
+        )
 
         # Issue #1106 Block 2: Publish event to distributed event bus
         self._publish_file_event(
@@ -3211,14 +3186,9 @@ class NexusFSCoreMixin:
             size=meta.size if meta else 0,
             etag=meta.etag if meta else None,
             agent_id=agent_id,
-            revision=revision,  # Issue #1187
         )
 
-        # Issue #1187: Return zookie for consistency tracking
-        return {
-            "zookie": Zookie.encode(effective_zone, revision),
-            "revision": revision,
-        }
+        return {}
 
     def _update_tiger_cache_on_move(
         self,
@@ -3370,9 +3340,10 @@ class NexusFSCoreMixin:
         try:
             # Query all files under directory (using new path since already renamed)
             # The files have already been renamed via metadata update, so query new paths
-            files = self.metadata.list(prefix=new_prefix, recursive=True, zone_id=zone_id)
             result = []
-            for file_meta in files:
+            for file_meta in self.metadata.list_iter(
+                prefix=new_prefix, recursive=True, zone_id=zone_id
+            ):
                 new_file_path = file_meta.path
                 if new_file_path:
                     # Compute what the old path would have been

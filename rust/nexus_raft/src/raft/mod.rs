@@ -46,6 +46,8 @@ mod state_machine;
 mod node;
 #[cfg(feature = "consensus")]
 mod storage;
+#[cfg(all(feature = "grpc", has_protos))]
+mod zone_registry;
 
 pub use error::{RaftError, Result};
 pub use state_machine::{
@@ -54,9 +56,11 @@ pub use state_machine::{
 };
 
 #[cfg(feature = "consensus")]
-pub use node::{NodeRole, RaftConfig, RaftNode};
+pub use node::{NodeRole, RaftConfig, RaftMsg, RaftNode, RaftNodeDriver};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
+#[cfg(all(feature = "grpc", has_protos))]
+pub use zone_registry::ZoneRaftRegistry;
 
 /// A proposal to be replicated through Raft.
 #[derive(Debug)]

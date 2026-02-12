@@ -77,6 +77,8 @@ def create_nexus_services(
     deferred_flush_interval: float = 0.05,
     zone_id: str | None = None,
     agent_id: str | None = None,
+    use_sql_metadata: bool = False,
+    enable_write_buffer: bool | None = None,
 ) -> dict[str, Any]:
     """Create default services for NexusFS dependency injection.
 
@@ -98,6 +100,12 @@ def create_nexus_services(
         deferred_flush_interval: Flush interval in seconds (default: 0.05).
         zone_id: Default zone ID (for WorkspaceManager, embedded mode only).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode only).
+        use_sql_metadata: When True, wraps metadata_store in SqlMetadataStore
+            so PostgreSQL becomes SSOT for file metadata (Issue #1246).
+            The original metadata_store is kept as raft_store for locks
+            and extended metadata. RecordStoreSyncer is skipped since
+            SqlMetadataStore handles version/operation recording directly.
+        enable_write_buffer: Use async WriteBuffer for PG sync (Issue #1246).
 
     Returns:
         Dict of keyword arguments ready to spread into ``NexusFS()``::
@@ -205,12 +213,43 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
-    # --- RecordStore Syncer (Task #45) ---
-    # Bundles OperationLogger + VersionRecorder into one write observer.
-    # Kernel calls on_write()/on_delete() without knowing the concrete class.
-    from nexus.storage.record_store_syncer import RecordStoreSyncer
+    # --- RecordStore Syncer / SqlMetadataStore (Issue #1246) ---
+    # When use_sql_metadata=True, SqlMetadataStore handles version recording
+    # and operation logging directly — no separate write observer needed.
+    # When use_sql_metadata=False (default), RecordStoreSyncer bridges the gap.
+    # NOTE: RecordStoreSyncer is deprecated; migrate to use_sql_metadata=True.
+    # Decision 13A: WriteBuffer auto-enabled for PostgreSQL when not using SqlMetadataStore.
+    write_observer: Any = None
+    if use_sql_metadata:
+        from nexus.storage.sql_metadata_store import SqlMetadataStore
 
-    write_observer = RecordStoreSyncer(session_factory)
+        metadata_store = SqlMetadataStore(
+            session_factory,
+            raft_store=metadata_store,  # original store for locks + extended metadata
+        )
+    else:
+        import os
+
+        db_url = getattr(record_store, "database_url", "")
+        use_buffer = enable_write_buffer
+        if use_buffer is None:
+            env_val = os.environ.get("NEXUS_ENABLE_WRITE_BUFFER", "").lower()
+            if env_val in ("true", "1", "yes"):
+                use_buffer = True
+            elif env_val in ("false", "0", "no"):
+                use_buffer = False
+            else:
+                use_buffer = db_url.startswith(("postgres", "postgresql"))
+
+        if use_buffer:
+            from nexus.storage.record_store_syncer import BufferedRecordStoreSyncer
+
+            write_observer = BufferedRecordStoreSyncer(session_factory)
+            write_observer.start()
+        else:
+            from nexus.storage.record_store_syncer import RecordStoreSyncer
+
+            write_observer = RecordStoreSyncer(session_factory)
 
     # --- VersionService (Task #45) ---
     # Version history queries go through RecordStore (VersionHistoryModel),
@@ -225,7 +264,7 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
-    return {
+    result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
         "audit_store": audit_store,
@@ -239,6 +278,13 @@ def create_nexus_services(
         "write_observer": write_observer,
         "version_service": version_service,
     }
+
+    # When use_sql_metadata, provide the SqlMetadataStore so create_nexus_fs()
+    # can use it as the NexusFS metadata_store (SQL becomes SSOT).
+    if use_sql_metadata:
+        result["metadata_store_override"] = metadata_store
+
+    return result
 
 
 def create_nexus_fs(
@@ -277,6 +323,8 @@ def create_nexus_fs(
     enable_tiger_cache: bool = True,
     enable_deferred_permissions: bool = True,
     deferred_flush_interval: float = 0.05,
+    use_sql_metadata: bool = False,
+    enable_write_buffer: bool | None = None,
 ) -> NexusFS:
     """Create NexusFS with default services — the recommended entry point.
 
@@ -325,11 +373,18 @@ def create_nexus_fs(
             deferred_flush_interval=deferred_flush_interval,
             zone_id=zone_id,
             agent_id=agent_id,
+            use_sql_metadata=use_sql_metadata,
+            enable_write_buffer=enable_write_buffer,
         )
+
+    # When use_sql_metadata is True, create_nexus_services returns a
+    # SqlMetadataStore in services["metadata_store_override"]. Use it
+    # as the NexusFS metadata_store so SQL is the SSOT.
+    effective_metadata_store = services.pop("metadata_store_override", metadata_store)
 
     return NexusFS(
         backend=backend,
-        metadata_store=metadata_store,
+        metadata_store=effective_metadata_store,
         record_store=record_store,
         cache_store=cache_store,
         is_admin=is_admin,

@@ -1,6 +1,7 @@
 """Memory REST API endpoints.
 
-Provides 13 endpoints for memory CRUD, search, and version operations:
+Provides 14 endpoints for memory CRUD, search, and version operations:
+- GET    /api/v2/memories/stats                 - Paging statistics (#1258)
 - POST   /api/v2/memories                      - Store memory
 - GET    /api/v2/memories/{id}                 - Get memory by ID
 - PUT    /api/v2/memories/{id}                 - Update memory
@@ -8,6 +9,7 @@ Provides 13 endpoints for memory CRUD, search, and version operations:
 - POST   /api/v2/memories/{id}/invalidate      - Invalidate memory (#1183)
 - POST   /api/v2/memories/{id}/revalidate      - Revalidate memory (#1183)
 - POST   /api/v2/memories/search               - Semantic search
+- POST   /api/v2/memories/query                - Point-in-time query (#1185)
 - POST   /api/v2/memories/batch                - Batch store
 - GET    /api/v2/memories/{id}/history         - Version history (#1184)
 - GET    /api/v2/memories/{id}/versions/{ver}  - Get specific version (#1184)
@@ -23,9 +25,15 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from nexus.server.api.v2.dependencies import (
+    _get_operation_context,
+    _get_require_auth,
+    get_memory_api,
+)
 from nexus.server.api.v2.models import (
     MemoryBatchStoreRequest,
     MemoryBatchStoreResponse,
+    MemoryGetResponse,
     MemoryQueryRequest,
     MemorySearchRequest,
     MemoryStoreRequest,
@@ -39,101 +47,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2/memories", tags=["memories"])
 
 
-# Issue #1258: Memory paging stats endpoint
+# =============================================================================
+# Endpoints
+# =============================================================================
+
+
 @router.get("/stats")
 async def get_memory_paging_stats(
-    _auth_result: dict[str, Any] = Depends(lambda: _get_require_auth()),
+    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
     """Get memory paging statistics (Issue #1258).
 
     Returns distribution of memories across tiers if paging is enabled.
-
-    Returns:
-        Statistics dict with tier counts and utilization
-
-    Raises:
-        503: NexusFS not initialized
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
     try:
-        # Check if memory API has paging support
-        memory_api = app_state.nexus_fs.memory
         if hasattr(memory_api, "get_paging_stats"):
             stats: dict[str, Any] = memory_api.get_paging_stats()
             return stats
-        else:
-            return {
-                "paging_enabled": False,
-                "message": "Memory paging not enabled on this server",
-            }
+        return {
+            "paging_enabled": False,
+            "message": "Memory paging not enabled on this server",
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}") from e
-
-
-def _get_require_auth() -> Any:
-    """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import require_auth
-
-    return require_auth
-
-
-def _get_app_state() -> Any:
-    """Lazy import to avoid circular imports."""
-    from nexus.server.fastapi_server import _app_state
-
-    return _app_state
-
-
-def _get_operation_context(auth_result: dict[str, Any]) -> Any:
-    """Get operation context from auth result."""
-    from nexus.server.fastapi_server import get_operation_context
-
-    return get_operation_context(auth_result)
-
-
-# =============================================================================
-# Endpoints
-# =============================================================================
+        logger.error(f"Memory paging stats error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve paging statistics") from e
 
 
 @router.post("", response_model=MemoryStoreResponse, status_code=status.HTTP_201_CREATED)
 async def store_memory(
     request: MemoryStoreRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> MemoryStoreResponse:
-    """Store a new memory with full options.
-
-    Creates a new memory entry with content, scope, type, importance,
-    and optional entity/temporal extraction.
-
-    Args:
-        request: Memory storage request with content and metadata
-
-    Returns:
-        Memory ID and status
-
-    Raises:
-        503: NexusFS not initialized
-        500: Storage error
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Store a new memory with full options."""
     try:
         context = _get_operation_context(auth_result)
 
-        # Convert content to string if dict
         content = request.content
         if isinstance(content, dict):
             import json
 
             content = json.dumps(content)
 
-        memory_id = app_state.nexus_fs.memory.store(
+        memory_id = memory_api.store(
             content=content,
             scope=request.scope,
             memory_type=request.memory_type,
@@ -145,7 +102,7 @@ async def store_memory(
             extract_temporal=request.extract_temporal,
             extract_relationships=request.extract_relationships,
             store_to_graph=request.store_to_graph,
-            valid_at=request.valid_at,  # #1183: Bi-temporal validity
+            valid_at=request.valid_at,
             _metadata=request.metadata,
             context=context,
         )
@@ -154,42 +111,32 @@ async def store_memory(
 
     except Exception as e:
         logger.error(f"Memory store error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to store memory") from e
 
 
-@router.get("/{memory_id}", response_model=dict[str, Any])
+@router.get("/{memory_id}", response_model=MemoryGetResponse)
 async def get_memory(
     memory_id: str,
     include_history: bool = Query(False, description="Include version history"),
     track_access: bool = Query(True, description="Track access for importance decay"),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Get a memory by ID with optional version history.
-
-    Retrieves memory content, metadata, and optionally its version history.
-    Access tracking updates importance decay calculations.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Get a memory by ID with optional version history."""
     try:
         context = _get_operation_context(auth_result)
-        result = app_state.nexus_fs.memory.get(
-            memory_id, track_access=track_access, context=context
-        )
+        result = memory_api.get(memory_id, track_access=track_access, context=context)
 
         if result is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
         response = {"memory": result}
 
-        # Add version history if requested
         if include_history:
             try:
                 from nexus.storage.models import VersionHistoryModel
 
-                session = app_state.nexus_fs.memory.session
+                session = memory_api.session
                 versions = (
                     session.query(VersionHistoryModel)
                     .filter(
@@ -218,7 +165,7 @@ async def get_memory(
         raise
     except Exception as e:
         logger.error(f"Memory get error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory get error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory") from e
 
 
 @router.put("/{memory_id}", response_model=MemoryStoreResponse)
@@ -226,46 +173,26 @@ async def update_memory(
     memory_id: str,
     request: MemoryUpdateRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> MemoryStoreResponse:
-    """Update an existing memory.
-
-    Updates memory content and/or metadata. Creates a new version
-    in the version history.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Update an existing memory."""
     try:
         context = _get_operation_context(auth_result)
 
-        # First verify the memory exists
-        existing = app_state.nexus_fs.memory.get(memory_id, track_access=False, context=context)
+        existing = memory_api.get(memory_id, track_access=False, context=context)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Build update kwargs
         content = request.content
         if content is not None and isinstance(content, dict):
             import json
 
             content = json.dumps(content)
 
-        # #1188: Use existing memory's path_key for proper append-only upsert.
-        # The upsert mechanism finds existing memories by path_key, so we must
-        # use the original's path_key. If it has none, assign memory_id as path_key
-        # so the upsert lookup can find and supersede it.
-        upsert_path_key = existing.get("path_key")
-        if not upsert_path_key:
-            memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(memory_id)
-            if memory_model:
-                memory_model.path_key = memory_id
-                app_state.nexus_fs.memory.memory_router.session.commit()
-            upsert_path_key = memory_id
+        # #1188: Use ensure_upsert_key to handle path_key assignment
+        upsert_path_key = memory_api.ensure_upsert_key(memory_id, existing)
 
-        # Use store with path_key for upsert behavior (#1188: append-only)
-        # This creates a new row and supersedes the old one
-        new_memory_id = app_state.nexus_fs.memory.store(
+        new_memory_id = memory_api.store(
             content=content if content is not None else existing.get("content"),
             scope=existing.get("scope", "user"),
             memory_type=existing.get("memory_type"),
@@ -275,7 +202,7 @@ async def update_memory(
             namespace=request.namespace
             if request.namespace is not None
             else existing.get("namespace"),
-            path_key=upsert_path_key,  # #1188: Use original's path_key for chain
+            path_key=upsert_path_key,
             state=request.state if request.state is not None else existing.get("state", "active"),
             _metadata=request.metadata,
             context=context,
@@ -287,7 +214,7 @@ async def update_memory(
         raise
     except Exception as e:
         logger.error(f"Memory update error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory update error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to update memory") from e
 
 
 @router.delete("/{memory_id}")
@@ -295,23 +222,12 @@ async def delete_memory(
     memory_id: str,
     soft: bool = Query(True, description="Soft delete (set state=deleted, preserves row)"),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Delete a memory (#1188: non-destructive by default).
-
-    By default performs soft delete (state='deleted', invalid_at set).
-    The memory row is preserved for audit trails and point-in-time queries.
-    Hard delete (soft=false) also uses soft-delete to maintain data integrity.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Delete a memory (#1188: non-destructive by default)."""
     try:
         context = _get_operation_context(auth_result)
-
-        # #1188: Both soft and hard delete use soft-delete pattern
-        # (sets state='deleted' + invalid_at, preserves row for audit)
-        deleted = app_state.nexus_fs.memory.delete(memory_id, context=context)
+        deleted = memory_api.delete(memory_id, context=context)
 
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
@@ -322,7 +238,7 @@ async def delete_memory(
         raise
     except Exception as e:
         logger.error(f"Memory delete error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory delete error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to delete memory") from e
 
 
 @router.post("/{memory_id}/invalidate")
@@ -332,22 +248,11 @@ async def invalidate_memory(
         None, description="When fact became invalid (ISO-8601, default: now)"
     ),
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Invalidate a memory (mark as no longer valid) (#1183).
-
-    This is a temporal soft-delete that marks when a fact became false.
-    The memory remains queryable for historical analysis but is excluded
-    from "current facts" queries (include_invalid=False).
-
-    Unlike DELETE, invalidate() preserves the memory for audit trails
-    and point-in-time queries.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Invalidate a memory (mark as no longer valid) (#1183)."""
     try:
-        result = app_state.nexus_fs.memory.invalidate(memory_id, invalid_at=invalid_at)
+        result = memory_api.invalidate(memory_id, invalid_at=invalid_at)
         if not result:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
@@ -357,24 +262,18 @@ async def invalidate_memory(
         raise
     except Exception as e:
         logger.error(f"Memory invalidate error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory invalidate error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to invalidate memory") from e
 
 
 @router.post("/{memory_id}/revalidate")
 async def revalidate_memory(
     memory_id: str,
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Revalidate a memory (clear invalid_at timestamp) (#1183).
-
-    Use when a previously invalidated fact becomes true again.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Revalidate a memory (clear invalid_at timestamp) (#1183)."""
     try:
-        result = app_state.nexus_fs.memory.revalidate(memory_id)
+        result = memory_api.revalidate(memory_id)
         if not result:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
@@ -384,25 +283,18 @@ async def revalidate_memory(
         raise
     except Exception as e:
         logger.error(f"Memory revalidate error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory revalidate error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to revalidate memory") from e
 
 
 @router.post("/search", response_model=dict[str, Any])
 async def search_memories(
     request: MemorySearchRequest,
     _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Search memories with semantic/keyword/hybrid search.
-
-    Performs semantic search using embeddings, keyword search,
-    or hybrid search combining both approaches.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Search memories with semantic/keyword/hybrid search."""
     try:
-        results = app_state.nexus_fs.memory.search(
+        results = memory_api.search(
             query=request.query,
             scope=request.scope,
             memory_type=request.memory_type,
@@ -422,34 +314,20 @@ async def search_memories(
 
     except Exception as e:
         logger.error(f"Memory search error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory search error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to search memories") from e
 
 
 @router.post("/query", response_model=dict[str, Any])
 async def query_memories(
     request: MemoryQueryRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Query memories with point-in-time temporal filters (#1185).
-
-    Supports bi-temporal queries:
-    - as_of_event: "What was TRUE at time X?" - Filters by valid_at/invalid_at
-    - as_of_system: "What did SYSTEM KNOW at time X?" - Filters by created_at,
-      returns historical content for memories updated after that time
-
-    Use cases:
-    - Compliance audits: Reconstruct system state at a specific timestamp
-    - Agent debugging: Understand what facts were available during a decision
-    - Historical queries: Answer "What did we believe at time X?"
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Query memories with point-in-time temporal filters (#1185)."""
     try:
         context = _get_operation_context(auth_result)
 
-        results = app_state.nexus_fs.memory.query(
+        results = memory_api.query(
             scope=request.scope,
             memory_type=request.memory_type,
             namespace=request.namespace,
@@ -463,15 +341,15 @@ async def query_memories(
             event_after=request.event_after,
             event_before=request.event_before,
             include_invalid=request.include_invalid,
-            include_superseded=request.include_superseded,  # #1188
+            include_superseded=request.include_superseded,
             as_of_event=request.as_of_event,
             as_of_system=request.as_of_system,
             limit=request.limit,
+            offset=request.offset,
             context=context,
         )
 
-        # Build response with filter metadata
-        response = {
+        return {
             "results": results,
             "total": len(results),
             "filters": {
@@ -487,32 +365,28 @@ async def query_memories(
             },
         }
 
-        return response
-
     except Exception as e:
         logger.error(f"Memory query error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory query error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to query memories") from e
 
 
 @router.post("/batch", response_model=MemoryBatchStoreResponse, status_code=status.HTTP_201_CREATED)
 async def batch_store_memories(
     request: MemoryBatchStoreRequest,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> MemoryBatchStoreResponse:
     """Batch store multiple memories.
 
-    Stores multiple memories in a single request. Returns counts
-    of successful and failed stores.
+    Note: memories are stored sequentially because the underlying
+    SQLAlchemy session is not thread-safe for concurrent writes.
     """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
     try:
         context = _get_operation_context(auth_result)
         memory_ids: list[str] = []
         errors: list[dict[str, Any]] = []
 
+        # Sequential iteration — SQLAlchemy session is not thread-safe
         for i, mem_request in enumerate(request.memories):
             try:
                 content = mem_request.content
@@ -521,7 +395,7 @@ async def batch_store_memories(
 
                     content = json.dumps(content)
 
-                memory_id = app_state.nexus_fs.memory.store(
+                memory_id = memory_api.store(
                     content=content,
                     scope=mem_request.scope,
                     memory_type=mem_request.memory_type,
@@ -549,40 +423,31 @@ async def batch_store_memories(
 
     except Exception as e:
         logger.error(f"Batch store error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch store error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to batch store memories") from e
 
 
 @router.get("/{memory_id}/history", response_model=MemoryVersionHistoryResponse)
 async def get_memory_history(
     memory_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> MemoryVersionHistoryResponse:
-    """Get version history for a memory (#1184).
-
-    Returns all versions of a memory with their content hashes,
-    timestamps, and change tracking metadata.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Get version history for a memory (#1184)."""
     try:
         context = _get_operation_context(auth_result)
 
         # #1188: Resolve to current version (follows superseded chain)
-        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        current_model = memory_api.resolve_to_current(memory_id)
         if current_model is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
         resolved_id = current_model.memory_id
 
-        # Verify read permission on the current memory
-        memory = app_state.nexus_fs.memory.get(resolved_id, track_access=False, context=context)
+        memory = memory_api.get(resolved_id, track_access=False, context=context)
         if memory is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Use the new list_versions API (#1184) - works with any ID in the chain
-        versions = app_state.nexus_fs.memory.list_versions(memory_id)
+        versions = memory_api.list_versions(memory_id)
 
         return MemoryVersionHistoryResponse(
             memory_id=memory_id,
@@ -594,7 +459,7 @@ async def get_memory_history(
         raise
     except Exception as e:
         logger.error(f"Memory history error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory history error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory history") from e
 
 
 @router.get("/{memory_id}/versions/{version}", response_model=dict[str, Any])
@@ -602,19 +467,12 @@ async def get_memory_version(
     memory_id: str,
     version: int,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Get a specific version of a memory (#1184).
-
-    Retrieves the content and metadata for a specific historical version
-    of a memory using CAS storage.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Get a specific version of a memory (#1184)."""
     try:
         context = _get_operation_context(auth_result)
-        result = app_state.nexus_fs.memory.get_version(memory_id, version, context=context)
+        result = memory_api.get_version(memory_id, version, context=context)
 
         if result is None:
             raise HTTPException(
@@ -628,7 +486,7 @@ async def get_memory_version(
         raise
     except Exception as e:
         logger.error(f"Memory get version error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory get version error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory version") from e
 
 
 @router.post("/{memory_id}/rollback", response_model=dict[str, Any])
@@ -636,29 +494,20 @@ async def rollback_memory(
     memory_id: str,
     version: int = Query(..., description="Version number to rollback to"),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Rollback a memory to a previous version (#1184).
-
-    Restores the memory content to a specific historical version.
-    Creates a new version entry with source_type='rollback' to maintain
-    audit trail.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Rollback a memory to a previous version (#1184)."""
     try:
         context = _get_operation_context(auth_result)
 
         # #1188: Resolve to current version for rollback
-        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        current_model = memory_api.resolve_to_current(memory_id)
         resolved_id = current_model.memory_id if current_model else memory_id
 
-        app_state.nexus_fs.memory.rollback(resolved_id, version, context=context)
+        memory_api.rollback(resolved_id, version, context=context)
 
-        # Get the updated memory to return current state
-        memory = app_state.nexus_fs.memory.get(resolved_id, track_access=False, context=context)
-        memory_model = app_state.nexus_fs.memory.memory_router.get_memory_by_id(resolved_id)
+        memory = memory_api.get(resolved_id, track_access=False, context=context)
+        memory_model = memory_api.memory_router.get_memory_by_id(resolved_id)
 
         return {
             "rolled_back": True,
@@ -674,7 +523,7 @@ async def rollback_memory(
         raise
     except Exception as e:
         logger.error(f"Memory rollback error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory rollback error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to rollback memory") from e
 
 
 @router.get("/{memory_id}/diff", response_model=dict[str, Any])
@@ -684,36 +533,17 @@ async def diff_memory_versions(
     v2: int = Query(..., description="Second version number"),
     mode: str = Query("metadata", description="Diff mode: 'metadata' or 'content'"),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Compare two versions of a memory (#1184).
-
-    Args:
-        v1: First version number
-        v2: Second version number
-        mode: Diff mode - "metadata" returns size/hash comparison,
-              "content" returns unified diff format
-
-    Returns:
-        For mode="metadata": Dict with version comparison info
-        For mode="content": Dict with unified diff string
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Compare two versions of a memory (#1184)."""
     try:
         context = _get_operation_context(auth_result)
         diff_mode = "metadata" if mode == "metadata" else "content"
-        result = app_state.nexus_fs.memory.diff_versions(
-            memory_id, v1, v2, mode=diff_mode, context=context
-        )
+        result = memory_api.diff_versions(memory_id, v1, v2, mode=diff_mode, context=context)
 
         if isinstance(result, str):
-            # Content diff mode returns string
             return {"diff": result, "mode": "content", "v1": v1, "v2": v2}
-        else:
-            # Metadata diff mode returns dict
-            return dict(result)
+        return dict(result)
 
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -721,41 +551,28 @@ async def diff_memory_versions(
         raise
     except Exception as e:
         logger.error(f"Memory diff error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory diff error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to diff memory versions") from e
 
 
 @router.get("/{memory_id}/lineage", response_model=dict[str, Any])
 async def get_memory_lineage(
     memory_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    memory_api: Any = Depends(get_memory_api),
 ) -> dict[str, Any]:
-    """Get the append-only lineage chain for a memory (#1188).
-
-    Returns all versions in the supersedes chain, from oldest to newest,
-    with their content. Unlike /history (which returns VersionHistoryModel entries),
-    this returns the actual MemoryModel rows in the chain.
-    """
-    app_state = _get_app_state()
-    if not app_state.nexus_fs:
-        raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
+    """Get the append-only lineage chain for a memory (#1188)."""
     try:
         context = _get_operation_context(auth_result)
 
-        # Verify the memory exists (any ID in the chain works)
-        current_model = app_state.nexus_fs.memory._resolve_to_current(memory_id)
+        current_model = memory_api.resolve_to_current(memory_id)
         if current_model is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Verify read permission
-        memory = app_state.nexus_fs.memory.get(
-            current_model.memory_id, track_access=False, context=context
-        )
+        memory = memory_api.get(current_model.memory_id, track_access=False, context=context)
         if memory is None:
             raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
 
-        # Get the full lineage chain
-        lineage = app_state.nexus_fs.memory.get_history(memory_id)
+        lineage = memory_api.get_history(memory_id)
 
         return {
             "memory_id": memory_id,
@@ -768,4 +585,4 @@ async def get_memory_lineage(
         raise
     except Exception as e:
         logger.error(f"Memory lineage error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Memory lineage error: {e}") from e
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory lineage") from e

@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import OperationLogModel
@@ -24,6 +24,56 @@ class OperationLogger:
         """
         self.session = session
 
+    @staticmethod
+    def _apply_filters(
+        stmt: Any,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        operation_type: str | None = None,
+        path: str | None = None,
+        status: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        path_pattern: str | None = None,
+    ) -> Any:
+        """Apply shared WHERE clauses to a query.
+
+        Args:
+            stmt: Base SELECT statement.
+            zone_id: Filter by zone ID.
+            agent_id: Filter by agent ID.
+            operation_type: Filter by operation type.
+            path: Filter by path (exact match).
+            status: Filter by status (success/failure).
+            since: Filter created_at >= since.
+            until: Filter created_at <= until.
+            path_pattern: Wildcard path filter (* → SQL LIKE %).
+
+        Returns:
+            Statement with filters applied.
+        """
+        if zone_id is not None:
+            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
+        if agent_id is not None:
+            stmt = stmt.where(OperationLogModel.agent_id == agent_id)
+        if operation_type is not None:
+            stmt = stmt.where(OperationLogModel.operation_type == operation_type)
+        if path is not None:
+            stmt = stmt.where(OperationLogModel.path == path)
+        if status is not None:
+            stmt = stmt.where(OperationLogModel.status == status)
+        if since is not None:
+            stmt = stmt.where(OperationLogModel.created_at >= since)
+        if until is not None:
+            stmt = stmt.where(OperationLogModel.created_at <= until)
+        if path_pattern is not None:
+            # Escape SQL LIKE special chars in user input, then convert * → %
+            escaped = path_pattern.replace("%", r"\%").replace("_", r"\_")
+            like_pattern = escaped.replace("*", "%")
+            stmt = stmt.where(OperationLogModel.path.like(like_pattern, escape="\\"))
+        return stmt
+
     def log_operation(
         self,
         operation_type: str,
@@ -36,6 +86,7 @@ class OperationLogger:
         metadata_snapshot: dict[str, Any] | None = None,
         status: str = "success",
         error_message: str | None = None,
+        flush: bool = True,
     ) -> str:
         """Log a filesystem operation.
 
@@ -49,6 +100,8 @@ class OperationLogger:
             metadata_snapshot: Previous file metadata (owner, group, mode, etc.)
             status: Operation status (success/failure)
             error_message: Error message if operation failed
+            flush: Whether to flush the session immediately (default True).
+                Set to False in batch operations to defer the flush until commit.
 
         Returns:
             operation_id: UUID of logged operation
@@ -68,7 +121,8 @@ class OperationLogger:
 
         operation.validate()
         self.session.add(operation)
-        self.session.flush()  # Get the operation_id
+        if flush:
+            self.session.flush()  # Get the operation_id
 
         return operation.operation_id
 
@@ -92,6 +146,9 @@ class OperationLogger:
         operation_type: str | None = None,
         path: str | None = None,
         status: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        path_pattern: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[OperationLogModel]:
@@ -103,6 +160,9 @@ class OperationLogger:
             operation_type: Filter by operation type
             path: Filter by path (exact match)
             status: Filter by status (success/failure)
+            since: Filter created_at >= since
+            until: Filter created_at <= until
+            path_pattern: Wildcard path filter (* → SQL LIKE %)
             limit: Maximum number of results
             offset: Offset for pagination
 
@@ -110,19 +170,17 @@ class OperationLogger:
             List of operation log entries, most recent first
         """
         stmt = select(OperationLogModel).order_by(desc(OperationLogModel.created_at))
-
-        # Apply filters
-        if zone_id is not None:
-            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
-        if agent_id is not None:
-            stmt = stmt.where(OperationLogModel.agent_id == agent_id)
-        if operation_type is not None:
-            stmt = stmt.where(OperationLogModel.operation_type == operation_type)
-        if path is not None:
-            stmt = stmt.where(OperationLogModel.path == path)
-        if status is not None:
-            stmt = stmt.where(OperationLogModel.status == status)
-
+        stmt = self._apply_filters(
+            stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path=path,
+            status=status,
+            since=since,
+            until=until,
+            path_pattern=path_pattern,
+        )
         stmt = stmt.limit(limit).offset(offset)
 
         return list(self.session.execute(stmt).scalars())
@@ -135,6 +193,9 @@ class OperationLogger:
         operation_type: str | None = None,
         path: str | None = None,
         status: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        path_pattern: str | None = None,
         limit: int = 100,
         cursor: str | None = None,
     ) -> tuple[list[OperationLogModel], str | None]:
@@ -150,6 +211,9 @@ class OperationLogger:
             operation_type: Filter by operation type
             path: Filter by path (exact match)
             status: Filter by status (success/failure)
+            since: Filter created_at >= since
+            until: Filter created_at <= until
+            path_pattern: Wildcard path filter (* → SQL LIKE %)
             limit: Maximum number of results
             cursor: Cursor from previous response (operation_id of last item)
 
@@ -177,17 +241,17 @@ class OperationLogger:
                     )
                 )
 
-        # Apply filters
-        if zone_id is not None:
-            stmt = stmt.where(OperationLogModel.zone_id == zone_id)
-        if agent_id is not None:
-            stmt = stmt.where(OperationLogModel.agent_id == agent_id)
-        if operation_type is not None:
-            stmt = stmt.where(OperationLogModel.operation_type == operation_type)
-        if path is not None:
-            stmt = stmt.where(OperationLogModel.path == path)
-        if status is not None:
-            stmt = stmt.where(OperationLogModel.status == status)
+        stmt = self._apply_filters(
+            stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path=path,
+            status=status,
+            since=since,
+            until=until,
+            path_pattern=path_pattern,
+        )
 
         # Fetch one extra to detect if there are more results
         stmt = stmt.limit(limit + 1)
@@ -203,6 +267,48 @@ class OperationLogger:
             next_cursor = None
 
         return results, next_cursor
+
+    def count_operations(
+        self,
+        *,
+        zone_id: str | None = None,
+        agent_id: str | None = None,
+        operation_type: str | None = None,
+        path: str | None = None,
+        status: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        path_pattern: str | None = None,
+    ) -> int:
+        """Count operations matching filters.
+
+        Args:
+            zone_id: Filter by zone ID
+            agent_id: Filter by agent ID
+            operation_type: Filter by operation type
+            path: Filter by path (exact match)
+            status: Filter by status (success/failure)
+            since: Filter created_at >= since
+            until: Filter created_at <= until
+            path_pattern: Wildcard path filter (* → SQL LIKE %)
+
+        Returns:
+            Total count of matching operations.
+        """
+        stmt = select(func.count()).select_from(OperationLogModel)
+        stmt = self._apply_filters(
+            stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            operation_type=operation_type,
+            path=path,
+            status=status,
+            since=since,
+            until=until,
+            path_pattern=path_pattern,
+        )
+        result: int = self.session.execute(stmt).scalar_one()
+        return result
 
     def get_last_operation(
         self,
@@ -254,6 +360,87 @@ class OperationLogger:
             zone_id=zone_id,
             limit=limit,
         )
+
+    def agent_activity_summary(
+        self,
+        *,
+        agent_id: str,
+        zone_id: str,
+        since: datetime | None = None,
+        recent_paths_limit: int = 10,
+    ) -> dict[str, Any]:
+        """Get aggregated activity summary for an agent.
+
+        Executes two queries:
+        1. GROUP BY operation_type → operations_by_type, total, first_seen, last_active
+        2. GROUP BY path → recent_paths ordered by most recent touch
+
+        Args:
+            agent_id: Agent ID to summarize.
+            zone_id: Zone ID for multi-tenancy scoping.
+            since: Only include operations created_at >= since.
+            recent_paths_limit: Max number of recent paths to return.
+
+        Returns:
+            Dict with keys: agent_id, total_operations, operations_by_type,
+            recent_paths, first_seen, last_active.
+        """
+        # Query 1: Aggregate counts and timestamps by operation type
+        type_stmt = select(
+            OperationLogModel.operation_type,
+            func.count().label("cnt"),
+            func.min(OperationLogModel.created_at).label("min_ts"),
+            func.max(OperationLogModel.created_at).label("max_ts"),
+        ).group_by(OperationLogModel.operation_type)
+        type_stmt = self._apply_filters(
+            type_stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            since=since,
+        )
+        type_rows = self.session.execute(type_stmt).all()
+
+        operations_by_type: dict[str, int] = {}
+        total_operations = 0
+        first_seen: datetime | None = None
+        last_active: datetime | None = None
+
+        for row in type_rows:
+            op_type, cnt, min_ts, max_ts = row
+            operations_by_type[op_type] = cnt
+            total_operations += cnt
+            if first_seen is None or (min_ts is not None and min_ts < first_seen):
+                first_seen = min_ts
+            if last_active is None or (max_ts is not None and max_ts > last_active):
+                last_active = max_ts
+
+        # Query 2: Recent paths (deduplicated, ordered by most recent touch)
+        paths_stmt = (
+            select(
+                OperationLogModel.path,
+                func.max(OperationLogModel.created_at).label("last_touched"),
+            )
+            .group_by(OperationLogModel.path)
+            .order_by(desc("last_touched"))
+            .limit(recent_paths_limit)
+        )
+        paths_stmt = self._apply_filters(
+            paths_stmt,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            since=since,
+        )
+        paths_rows = self.session.execute(paths_stmt).all()
+        recent_paths = [row[0] for row in paths_rows]
+
+        return {
+            "agent_id": agent_id,
+            "total_operations": total_operations,
+            "operations_by_type": operations_by_type,
+            "recent_paths": recent_paths,
+            "first_seen": first_seen.isoformat() if first_seen else None,
+            "last_active": last_active.isoformat() if last_active else None,
+        }
 
     def get_metadata_snapshot(self, operation: OperationLogModel) -> dict[str, Any] | None:
         """Get metadata snapshot from operation.

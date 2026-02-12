@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.services.change_log_store import ChangeLogEntry
 from nexus.services.sync_service import (
-    ChangeLogEntry,
     SyncContext,
     SyncResult,
     SyncService,
@@ -272,6 +272,82 @@ class TestFileUnchanged:
         # Cannot determine - assume changed to be safe
         assert sync_service._file_unchanged(file_info, cached) is False
 
+    def test_size_match_no_mtime(self, sync_service):
+        """Test same size but no mtime available — cannot confirm unchanged."""
+        file_info = MockFileInfo(
+            size=1024,
+            mtime=None,
+            backend_version=None,
+            content_hash=None,
+        )
+        cached = ChangeLogEntry(
+            path="/test/file.txt",
+            backend_name="local_connector",
+            size_bytes=1024,
+            mtime=None,
+            backend_version=None,
+            content_hash=None,
+        )
+
+        # Same size but no mtime — can't confirm unchanged, assume changed
+        assert sync_service._file_unchanged(file_info, cached) is False
+
+    def test_one_has_mtime_other_doesnt(self, sync_service):
+        """Test file_info has mtime but cached doesn't — falls through to hash."""
+        now = datetime.now(UTC)
+        file_info = MockFileInfo(
+            size=1024,
+            mtime=now,
+            backend_version=None,
+            content_hash=None,
+        )
+        cached = ChangeLogEntry(
+            path="/test/file.txt",
+            backend_name="local_connector",
+            size_bytes=1024,
+            mtime=None,  # No mtime in cached
+            backend_version=None,
+            content_hash=None,
+        )
+
+        # mtime comparison skipped (one is None), no hash — assume changed
+        assert sync_service._file_unchanged(file_info, cached) is False
+
+    def test_zero_size_files(self, sync_service):
+        """Test both size=0 with matching mtime — unchanged."""
+        now = datetime.now(UTC)
+        file_info = MockFileInfo(
+            size=0,
+            mtime=now,
+            backend_version=None,
+        )
+        cached = ChangeLogEntry(
+            path="/test/empty.txt",
+            backend_name="local_connector",
+            size_bytes=0,
+            mtime=now,
+            backend_version=None,
+        )
+
+        # size=0 is a valid match, mtime matches — unchanged
+        assert sync_service._file_unchanged(file_info, cached) is True
+
+    def test_version_takes_precedence_over_size_change(self, sync_service):
+        """Test same version but different size — version wins, file unchanged."""
+        file_info = MockFileInfo(
+            size=2048,  # Different size
+            backend_version="gen:12345",
+        )
+        cached = ChangeLogEntry(
+            path="/test/file.txt",
+            backend_name="gcs_connector",
+            size_bytes=1024,  # Different size
+            backend_version="gen:12345",  # Same version
+        )
+
+        # Version match takes precedence over size difference
+        assert sync_service._file_unchanged(file_info, cached) is True
+
 
 # =============================================================================
 # Test SyncContext full_sync flag
@@ -464,3 +540,370 @@ class TestSyncFileDeltaSync:
         mock_backend.get_file_info.assert_not_called()
         # File should be created since full_sync bypasses delta
         assert result.files_created == 1
+
+
+# =============================================================================
+# Test Bootstrap: First Sync Populates Change Log, Second Sync Skips
+# =============================================================================
+
+
+class TestDeltaSyncBootstrap:
+    """Tests for the delta sync bootstrap flow.
+
+    Verifies that the first sync populates the change log, enabling
+    subsequent syncs to skip unchanged files via delta checking.
+    """
+
+    def test_first_sync_populates_change_log(self, sync_service, mock_gateway):
+        """Test that first sync creates file AND populates change log."""
+        # Setup mock backend with get_file_info
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+        mock_backend.get_file_info = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                data=MockFileInfo(
+                    size=1024,
+                    mtime=datetime.now(UTC),
+                    backend_version="gen:12345",
+                ),
+            )
+        )
+
+        # No cached entry (first sync)
+        sync_service._change_log.get_change_log = MagicMock(return_value=None)
+        sync_service._change_log.upsert_change_log = MagicMock(return_value=True)
+
+        # No existing metadata (new file)
+        mock_gateway.metadata_get = MagicMock(return_value=None)
+        mock_gateway.metadata_put = MagicMock()
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+
+        sync_service._sync_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=[],
+        )
+
+        # File should be created
+        assert result.files_created == 1
+        assert result.files_skipped == 0
+
+        # get_file_info SHOULD be called (to populate change log)
+        mock_backend.get_file_info.assert_called_once()
+
+        # Change log SHOULD be populated
+        sync_service._change_log.upsert_change_log.assert_called_once_with(
+            path="/mnt/test/file.txt",
+            backend_name="test_connector",
+            zone_id="test-zone",
+            size_bytes=1024,
+            mtime=mock_backend.get_file_info.return_value.data.mtime,
+            backend_version="gen:12345",
+            content_hash=None,
+        )
+
+    def test_second_sync_skips_unchanged_after_bootstrap(self, sync_service, mock_gateway):
+        """Test that second sync skips file when change log was populated by first sync."""
+        now = datetime.now(UTC)
+
+        # Setup mock backend with same file_info as "first sync"
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+        mock_backend.get_file_info = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                data=MockFileInfo(
+                    size=1024,
+                    mtime=now,
+                    backend_version="gen:12345",
+                ),
+            )
+        )
+
+        # Cached entry exists from first sync (same version)
+        sync_service._change_log.get_change_log = MagicMock(
+            return_value=ChangeLogEntry(
+                path="/mnt/test/file.txt",
+                backend_name="test_connector",
+                size_bytes=1024,
+                mtime=now,
+                backend_version="gen:12345",
+                synced_at=now,
+            )
+        )
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+
+        sync_service._sync_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=[],
+        )
+
+        # File should be SKIPPED (unchanged)
+        assert result.files_skipped == 1
+        assert result.files_created == 0
+
+        # metadata_get should NOT be called (skipped before metadata check)
+        mock_gateway.metadata_get.assert_not_called()
+
+    def test_first_sync_populates_for_existing_files(self, sync_service, mock_gateway):
+        """Test change log is populated for pre-existing files on first delta sync."""
+        existing_meta = MagicMock()
+        existing_meta.path = "/mnt/test/file.txt"
+
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+        mock_backend.get_file_info = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                data=MockFileInfo(
+                    size=2048,
+                    mtime=datetime.now(UTC),
+                    backend_version="gen:99999",
+                ),
+            )
+        )
+
+        # No cached entry (first delta sync for this file)
+        sync_service._change_log.get_change_log = MagicMock(return_value=None)
+        sync_service._change_log.upsert_change_log = MagicMock(return_value=True)
+
+        # File already exists in metadata (pre-existing)
+        mock_gateway.metadata_get = MagicMock(return_value=existing_meta)
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+
+        sync_service._sync_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=[],
+        )
+
+        # File should NOT be created (already exists)
+        assert result.files_created == 0
+        assert result.files_skipped == 0
+
+        # Change log SHOULD still be populated for the existing file
+        sync_service._change_log.upsert_change_log.assert_called_once()
+
+
+# =============================================================================
+# Test Deletion Cleans Up Change Log
+# =============================================================================
+
+
+class TestDeletionChangeLogCleanup:
+    """Tests for change log cleanup during file deletion."""
+
+    def test_sync_deletions_cleans_up_change_log(self, sync_service, mock_gateway):
+        """Test that _sync_deletions removes stale change log entries."""
+        # Setup: file exists in metadata but NOT in backend (was deleted)
+        existing_meta = MagicMock()
+        existing_meta.path = "/mnt/test/deleted_file.txt"
+
+        mock_gateway.metadata_list = MagicMock(return_value=[existing_meta])
+        mock_gateway.metadata_get = MagicMock(return_value=existing_meta)
+        mock_gateway.metadata_delete = MagicMock()
+        mock_gateway.list_mounts = MagicMock(return_value=[])
+
+        sync_service._change_log.delete_change_log = MagicMock(return_value=True)
+
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+
+        ctx = SyncContext(mount_point="/mnt/test")
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()  # Empty = file not found in backend
+
+        sync_service._sync_deletions(ctx, mock_backend, files_found, result)
+
+        # File should be deleted
+        assert result.files_deleted == 1
+        mock_gateway.metadata_delete.assert_called_once_with("/mnt/test/deleted_file.txt")
+
+        # Change log should be cleaned up
+        sync_service._change_log.delete_change_log.assert_called_once_with(
+            "/mnt/test/deleted_file.txt", "test_connector", "test-zone"
+        )
+
+
+# =============================================================================
+# Test _sync_single_file delegation
+# =============================================================================
+
+
+class TestSyncSingleFileDelegation:
+    """Tests that _sync_single_file delegates correctly to _sync_file."""
+
+    def test_sync_single_file_delegates_to_sync_file(self, sync_service, mock_gateway):
+        """Test that _sync_single_file produces same result as _sync_file."""
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+        mock_backend.get_file_info = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                data=MockFileInfo(
+                    size=1024,
+                    backend_version="gen:100",
+                ),
+            )
+        )
+
+        sync_service._change_log.get_change_log = MagicMock(return_value=None)
+        sync_service._change_log.upsert_change_log = MagicMock(return_value=True)
+
+        mock_gateway.metadata_get = MagicMock(return_value=None)
+        mock_gateway.metadata_put = MagicMock()
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+        paths_needing_tuples: list[str] = []
+        flush_fn = MagicMock()
+
+        returned = sync_service._sync_single_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=paths_needing_tuples,
+            flush_fn=flush_fn,
+        )
+
+        # File should be created via delegation
+        assert result.files_created == 1
+        assert result.files_scanned == 1
+        assert "/mnt/test/file.txt" in files_found
+        assert returned is files_found
+
+        # Change log should be populated (bootstrap via delegation)
+        sync_service._change_log.upsert_change_log.assert_called_once()
+
+    def test_sync_single_file_skips_unchanged_via_delegation(self, sync_service, mock_gateway):
+        """Test that _sync_single_file gets delta checking via delegation."""
+        now = datetime.now(UTC)
+
+        mock_backend = MagicMock()
+        mock_backend.name = "test_connector"
+        mock_backend.get_file_info = MagicMock(
+            return_value=MagicMock(
+                success=True,
+                data=MockFileInfo(size=1024, backend_version="gen:100"),
+            )
+        )
+
+        # Cached entry with same version (file unchanged)
+        sync_service._change_log.get_change_log = MagicMock(
+            return_value=ChangeLogEntry(
+                path="/mnt/test/file.txt",
+                backend_name="test_connector",
+                size_bytes=1024,
+                backend_version="gen:100",
+                synced_at=now,
+            )
+        )
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+
+        sync_service._sync_single_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=[],
+            flush_fn=MagicMock(),
+        )
+
+        # File should be SKIPPED (delta check via delegation)
+        assert result.files_skipped == 1
+        assert result.files_created == 0
+
+
+# =============================================================================
+# Test backend without get_file_info (graceful degradation)
+# =============================================================================
+
+
+class TestBackendWithoutGetFileInfo:
+    """Tests for backends that don't support get_file_info."""
+
+    def test_sync_file_works_without_get_file_info(self, sync_service, mock_gateway):
+        """Test that sync works when backend lacks get_file_info."""
+        mock_backend = MagicMock(spec=["name", "get_content_size"])
+        mock_backend.name = "basic_connector"
+        # No get_file_info attribute (spec limits available attributes)
+
+        mock_gateway.metadata_get = MagicMock(return_value=None)
+        mock_gateway.metadata_put = MagicMock()
+
+        ctx = SyncContext(mount_point="/mnt/test", full_sync=False)
+        ctx.context = MagicMock()
+        ctx.context.zone_id = "test-zone"
+
+        result = SyncResult()
+        files_found: set[str] = set()
+
+        sync_service._sync_file(
+            ctx=ctx,
+            backend=mock_backend,
+            virtual_path="/mnt/test/file.txt",
+            backend_path="file.txt",
+            created_by=None,
+            result=result,
+            files_found=files_found,
+            paths_needing_tuples=[],
+        )
+
+        # File should be created (no delta check, falls through to creation)
+        assert result.files_created == 1
+        assert result.files_skipped == 0

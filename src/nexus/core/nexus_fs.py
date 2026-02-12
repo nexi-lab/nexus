@@ -229,14 +229,10 @@ class NexusFS(  # type: ignore[misc]
             )
 
         # Initialize content cache if enabled and backend supports it
-        if enable_content_cache:
-            # Import here to avoid circular import
-            from nexus.backends.local import LocalBackend
-
-            if isinstance(backend, LocalBackend):
-                # Create content cache and attach to LocalBackend
-                content_cache = ContentCache(max_size_mb=content_cache_size_mb)
-                backend.content_cache = content_cache
+        if enable_content_cache and backend.has_root_path is True:
+            # Create content cache and attach to LocalBackend
+            content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+            backend.content_cache = content_cache
 
         # Store backend
         self.backend = backend
@@ -710,36 +706,22 @@ class NexusFS(  # type: ignore[misc]
             return 0
 
         try:
-            # Get all files from metadata store
-            all_files = self.metadata.list("/", recursive=True)
-            total = len(all_files)
-
-            if total == 0:
-                logger.debug("No files in metadata - nothing to sync")
-                return 0
-
-            logger.info(f"Syncing {total} files to tiger_resource_map...")
-
+            # Stream files from metadata store instead of materializing full list
             count = 0
-            batch_size = 1000
+            log_interval = 1000
 
-            for i in range(0, total, batch_size):
-                batch = all_files[i : i + batch_size]
-
-                for meta in batch:
-                    # Register resource in the map (idempotent operation)
-                    # Note: zone_id removed from resource map (Issue #xyz)
-                    resource_map.get_or_create_int_id(
-                        resource_type="file",
-                        resource_id=meta.path,
-                    )
-                    count += 1
+            for meta in self.metadata.list_iter("/", recursive=True):
+                # Register resource in the map (idempotent operation)
+                # Note: zone_id removed from resource map (Issue #xyz)
+                resource_map.get_or_create_int_id(
+                    resource_type="file",
+                    resource_id=meta.path,
+                )
+                count += 1
 
                 # Log progress for large datasets
-                if total > batch_size:
-                    logger.debug(
-                        f"Tiger resource map sync progress: {min(i + batch_size, total)}/{total}"
-                    )
+                if count % log_interval == 0:
+                    logger.debug(f"Tiger resource map sync progress: {count} resources...")
 
             logger.info(f"Tiger resource map sync complete: {count} resources")
             return count
@@ -2488,7 +2470,7 @@ class NexusFS(  # type: ignore[misc]
 
         all_files = [
             m
-            for m in self.metadata.list(filter.path_prefix)
+            for m in self.metadata.list_iter(filter.path_prefix)
             if not m.path.startswith(SYSTEM_PATH_PREFIX)
         ]
 
@@ -3503,29 +3485,45 @@ class NexusFS(  # type: ignore[misc]
     def list_workspaces(self, context: Any | None = None) -> list[dict]:
         """List all registered workspaces for the current user.
 
+        Requires authenticated context (raises ValueError if missing).
+
+        Filters workspaces by:
+        1. Workspaces created by the user (created_by matches user_id)
+        2. OR workspaces in the user's zone-scoped path
+
         Args:
-            context: Optional operation context (passed by RPC auto-dispatch)
+            context: Required operation context with user_id and zone_id
 
         Returns:
             List of workspace configuration dicts filtered by current user
 
+        Raises:
+            ValueError: If context is None or missing user_id/zone_id
+
         Example:
-            >>> workspaces = nx.list_workspaces()
+            >>> workspaces = nx.list_workspaces(context=ctx)
             >>> for ws in workspaces:
             ...     print(f"{ws['path']}: {ws['name']}")
         """
-        configs = self._workspace_registry.list_workspaces()
-
-        # Filter by current user if context is available
+        # Require authenticated context to prevent leaking all workspaces
+        user_id = None
+        zone_id = None
         if context is not None:
-            user_id = getattr(context, "user_id", None)
+            user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
             zone_id = getattr(context, "zone_id", None)
 
-            if user_id and zone_id:
-                # Filter workspaces that belong to the current user
-                # Workspace paths follow pattern: /zone/{zone_id}/user/{user_id}/workspace/...
-                user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
-                configs = [c for c in configs if c.path.startswith(user_prefix)]
+        if not user_id or not zone_id:
+            raise ValueError(
+                "list_workspaces requires authenticated context with user_id and zone_id"
+            )
+
+        configs = self._workspace_registry.list_workspaces()
+
+        # Filter workspaces belonging to the current user by:
+        # 1. created_by matches user_id (workspaces the user registered at any path)
+        # 2. OR path follows zone/user pattern (workspaces in user's scoped directory)
+        user_prefix = f"/zone/{zone_id}/user/{user_id}/workspace/"
+        configs = [c for c in configs if c.created_by == user_id or c.path.startswith(user_prefix)]
 
         return [c.to_dict() for c in configs]
 
@@ -5375,7 +5373,7 @@ class NexusFS(  # type: ignore[misc]
         had_content = False  # Track if directory had any content
 
         # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and hasattr(self.backend, "root_path"):
+        if hasattr(self, "backend") and self.backend.has_root_path is True:
             try:
                 # Convert virtual path to physical path
                 # LocalBackend stores directories under "dirs" subdirectory
@@ -5637,7 +5635,7 @@ class NexusFS(  # type: ignore[misc]
             possible_dirs.append(data_dir / "skills")
 
         # 2. Try backend data directory if available
-        if hasattr(self.backend, "data_dir") and self.backend.data_dir:
+        if self.backend.has_data_dir is True and self.backend.data_dir:
             backend_data_dir = Path(self.backend.data_dir)
             possible_dirs.append(backend_data_dir / "skills")
 
@@ -7750,3 +7748,12 @@ class NexusFS(  # type: ignore[misc]
         # Close TokenManager to release database connection
         if hasattr(self, "_token_manager") and self._token_manager is not None:
             self._token_manager.close()
+
+        # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
+        if hasattr(self, "router"):
+            import contextlib
+
+            for mount in self.router.list_mounts():
+                with contextlib.suppress(Exception):
+                    if hasattr(mount.backend, "token_manager"):
+                        mount.backend.token_manager.close()

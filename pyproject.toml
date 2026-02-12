@@ -282,6 +282,7 @@ markers = [
     "e2e: marks tests as end-to-end tests",
     "benchmark: marks tests as benchmarks",
     "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
+    "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
 ]
 
 [tool.coverage.run]

@@ -22,7 +22,6 @@ Layer 2 in the dual-track event system:
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import json
 import logging
 import uuid
@@ -57,6 +56,11 @@ class FileEventType(StrEnum):
     METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
     DIR_CREATE = "dir_create"
     DIR_DELETE = "dir_delete"
+    # Issue #1129: Bidirectional sync events
+    SYNC_TO_BACKEND_REQUESTED = "sync_to_backend_requested"
+    SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
+    SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
+    CONFLICT_DETECTED = "conflict_detected"
 
 
 @dataclass
@@ -221,11 +225,13 @@ class FileEvent:
             if not pattern.endswith("/") and self.old_path.startswith(pattern + "/"):
                 return True
 
-        # Glob pattern match
+        # Glob pattern match — delegate to reactive_subscriptions for consistency
         if "*" in pattern or "?" in pattern:
-            if fnmatch.fnmatch(self.path, pattern):
+            from nexus.core.reactive_subscriptions import path_matches_pattern
+
+            if path_matches_pattern(self.path, pattern):
                 return True
-            if self.old_path and fnmatch.fnmatch(self.old_path, pattern):
+            if self.old_path and path_matches_pattern(self.old_path, pattern):
                 return True
 
         return False
@@ -281,8 +287,7 @@ class EventBusProtocol(Protocol):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value (Issue #1187).
-                           Used for zookie-based watch resumption.
+            since_revision: Only return events with revision > this value.
 
         Returns:
             FileEvent if matched, None on timeout

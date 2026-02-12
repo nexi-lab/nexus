@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata, PaginatedResult
+from nexus.core._metadata_generated import DT_DIR, FileMetadata, PaginatedResult
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -52,7 +52,6 @@ class TestSerializeMetadata:
             mime_type="text/markdown",
             version=3,
             zone_id="zone1",
-            is_directory=False,
         )
         data = _serialize_metadata(original)
         restored = _deserialize_metadata(data)
@@ -64,7 +63,7 @@ class TestSerializeMetadata:
         assert restored.mime_type == original.mime_type
         assert restored.version == original.version
         assert restored.zone_id == original.zone_id
-        assert restored.is_directory == original.is_directory
+        assert restored.is_dir == original.is_dir
 
     def test_json_roundtrip_with_timestamps(self) -> None:
         """Timestamps should survive serialization round-trip."""
@@ -115,13 +114,13 @@ class TestSerializeMetadata:
 
         original = _make_metadata(
             path="/zone1/docs/",
-            is_directory=True,
+            entry_type=DT_DIR,
             size=0,
         )
         data = _serialize_metadata(original)
         restored = _deserialize_metadata(data)
 
-        assert restored.is_directory is True
+        assert restored.is_dir is True
         assert restored.path == "/zone1/docs/"
 
     def test_deserialize_list_of_ints(self) -> None:
@@ -158,7 +157,9 @@ class TestSerializeMetadata:
 class TestListPaginated:
     """Tests for RaftMetadataStore.list_paginated."""
 
-    def _make_store_with_entries(self, entries: list[tuple[str, FileMetadata]]) -> RaftMetadataStore:
+    def _make_store_with_entries(
+        self, entries: list[tuple[str, FileMetadata]]
+    ) -> RaftMetadataStore:
         """Create a mock RaftMetadataStore with pre-loaded entries."""
         from nexus.storage.raft_metadata_store import (
             RaftMetadataStore,
@@ -180,18 +181,14 @@ class TestListPaginated:
 
         # Create store via __new__ to bypass __init__
         store = object.__new__(RaftMetadataStore)
-        store._is_local = True
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
         return store
 
     def test_paginated_basic(self) -> None:
         """Basic pagination returns first page."""
-        entries = [
-            (f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt"))
-            for i in range(5)
-        ]
+        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(5)]
         store = self._make_store_with_entries(entries)
 
         result = store.list_paginated(prefix="/files/", limit=3)
@@ -204,10 +201,7 @@ class TestListPaginated:
 
     def test_paginated_all_fit_in_one_page(self) -> None:
         """When all items fit in one page, has_more should be False."""
-        entries = [
-            (f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt"))
-            for i in range(3)
-        ]
+        entries = [(f"/files/f{i}.txt", _make_metadata(path=f"/files/f{i}.txt")) for i in range(3)]
         store = self._make_store_with_entries(entries)
 
         result = store.list_paginated(prefix="/files/", limit=10)
@@ -281,15 +275,17 @@ class TestListPaginated:
         mock_local = MagicMock()
         mock_local.list_metadata.return_value = [
             ("/files/a.txt", _serialize_metadata(_make_metadata(path="/files/a.txt"))),
-            ("meta:/files/a.txt:custom_attr", _serialize_metadata(_make_metadata(path="meta:/files/a.txt:custom_attr"))),
+            (
+                "meta:/files/a.txt:custom_attr",
+                _serialize_metadata(_make_metadata(path="meta:/files/a.txt:custom_attr")),
+            ),
         ]
 
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         store = object.__new__(RaftMetadataStore)
-        store._is_local = True
-        store._local = mock_local
-        store._remote = None
+        store._engine = mock_local
+        store._client = None
         store._zone_id = None
 
         result = store.list_paginated(prefix="/files/", limit=10)

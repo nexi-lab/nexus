@@ -228,10 +228,10 @@ class AsyncPermissionEnforcer:
         zone_id = context.zone_id or "default"
         subject = context.get_subject()
 
-        # Issue #1239: Namespace pre-filter — only include paths visible to subject
-        # This runs before ReBAC bulk checks for efficiency
+        # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.
+        # filter_visible() acquires locks once for all paths (not per-path).
         if self.namespace_manager is not None:
-            paths = [p for p in paths if self.namespace_manager.is_visible(subject, p, zone_id)]
+            paths = self.namespace_manager.filter_visible(subject, paths, zone_id)
             if not paths:
                 return []
 
@@ -275,7 +275,7 @@ class AsyncPermissionEnforcer:
         # Check if path matches a backend mount
         for mount_point, backend in self.backends.items():
             if path.startswith(mount_point):
-                return getattr(backend, "rebac_object_type", "file")
+                return str(backend.get_object_type(path[len(mount_point) :]))
 
         # Default to "file"
         return "file"

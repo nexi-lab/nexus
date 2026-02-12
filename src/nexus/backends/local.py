@@ -117,6 +117,18 @@ class LocalBackend(Backend, ChunkedStorageMixin):
         """Backend identifier name."""
         return "local"
 
+    # --- Capability flags ---
+
+    @property
+    def has_root_path(self) -> bool:
+        """LocalBackend has a local root_path for physical storage."""
+        return True
+
+    @property
+    def supports_parallel_mmap_read(self) -> bool:
+        """LocalBackend supports Rust-accelerated parallel mmap reads."""
+        return True
+
     def _ensure_roots(self) -> None:
         """Create root directories if they don't exist."""
         try:

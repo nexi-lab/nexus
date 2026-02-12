@@ -1223,6 +1223,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
+        file_metadata: FileMetadata | None = None,
     ) -> None:
         """Check if operation is permitted.
 
@@ -1230,6 +1231,8 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path
             permission: Permission to check (READ, WRITE, EXECUTE)
             context: Optional operation context (defaults to self._default_context)
+            file_metadata: Pre-fetched metadata for owner fast-path (avoids redundant
+                metadata lookup when caller already has it)
 
         Raises:
             PermissionError: If access is denied
@@ -1307,7 +1310,13 @@ class NexusFS(  # type: ignore[misc]
         # Issue #920: O(1) owner fast-path check
         # If the file has posix_uid set and it matches the requesting user, skip ReBAC
         # This avoids expensive graph traversal for owner accessing their own files
-        file_meta = self.metadata.get(permission_path)
+        # Use pre-fetched metadata when available (avoids redundant FFI call)
+        # Use pre-fetched metadata when path wasn't redirected to a virtual view's original
+        file_meta = (
+            file_metadata
+            if (file_metadata is not None and permission_path == path)
+            else self.metadata.get(permission_path)
+        )
         if file_meta and file_meta.owner_id:
             subject_id = ctx.subject_id or ctx.user
             if file_meta.owner_id == subject_id:
@@ -5982,11 +5991,10 @@ class NexusFS(  # type: ignore[misc]
             from nexus.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
-            session = self.SessionLocal()
             # Pass config if available (needed for Docker provider initialization)
             config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
-                db_session=session,
+                session_factory=self.SessionLocal,
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),

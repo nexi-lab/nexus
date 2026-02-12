@@ -1,0 +1,84 @@
+// Agent Identity messages for the Nexus Exchange protocol.
+//
+// Maps to existing /api/v2/agents/ endpoints (Issue #1355).
+// Supports Ed25519 key management, identity verification, and key rotation.
+
+syntax = "proto3";
+
+package nexus.exchange.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// AgentKey represents a cryptographic public key for an agent.
+message AgentKey {
+  // JWK Thumbprint (RFC 7638) — deterministic key ID.
+  string key_id = 1;
+  // Agent this key belongs to.
+  string agent_id = 2;
+  // Zone scope for the key.
+  string zone_id = 3;
+  // Key algorithm (e.g., "Ed25519").
+  string algorithm = 4;
+  // Public key in JWK format (JSON object as struct).
+  string public_key_jwk = 5;
+  // When the key was created.
+  google.protobuf.Timestamp created_at = 6;
+  // When the key expires (absent if no expiration).
+  optional google.protobuf.Timestamp expires_at = 7;
+  // When the key was revoked (absent if active).
+  optional google.protobuf.Timestamp revoked_at = 8;
+}
+
+// AgentIdentityInfo contains verified identity information.
+message AgentIdentityInfo {
+  string agent_id = 1;
+  string owner_id = 2;
+  string zone_id = 3;
+  string key_id = 4;
+  string algorithm = 5;
+  string public_key_jwk = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+// VerifyIdentityRequest asks to verify an agent's cryptographic identity.
+message VerifyIdentityRequest {
+  string agent_id = 1;
+}
+
+// VerifyIdentityResponse returns the agent's active identity info.
+message VerifyIdentityResponse {
+  AgentIdentityInfo identity = 1;
+}
+
+// ListKeysRequest retrieves public keys for an agent.
+message ListKeysRequest {
+  string agent_id = 1;
+  bool include_revoked = 2;
+}
+
+// ListKeysResponse returns the agent's keys.
+message ListKeysResponse {
+  repeated AgentKey keys = 1;
+}
+
+// RotateKeyRequest triggers key rotation for an agent.
+message RotateKeyRequest {
+  string agent_id = 1;
+}
+
+// RotateKeyResponse returns the newly generated key.
+message RotateKeyResponse {
+  AgentKey new_key = 1;
+}
+
+// RevokeKeyRequest revokes a specific agent key.
+message RevokeKeyRequest {
+  string agent_id = 1;
+  string key_id = 2;
+}
+
+// RevokeKeyResponse confirms revocation.
+message RevokeKeyResponse {
+  string key_id = 1;
+  google.protobuf.Timestamp revoked_at = 2;
+}

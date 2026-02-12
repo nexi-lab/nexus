@@ -578,3 +578,54 @@ class AgentActivityResponse(BaseModel):
     recent_paths: list[str] = Field(default_factory=list)
     last_active: str | None = None  # ISO-8601
     first_seen: str | None = None  # ISO-8601
+
+
+# =============================================================================
+# Audit Transaction Models (Issue #1360)
+# =============================================================================
+
+
+class AuditTransactionResponse(BaseModel):
+    """Single exchange audit log entry."""
+
+    id: str
+    record_hash: str
+    created_at: str  # ISO-8601
+    protocol: str
+    buyer_agent_id: str
+    seller_agent_id: str
+    amount: str  # Decimal as string for precision
+    currency: str
+    status: str
+    application: str
+    zone_id: str
+    trace_id: str | None = None
+    metadata_hash: str | None = None
+    transfer_id: str | None = None
+
+
+class AuditTransactionListResponse(BaseModel):
+    """Paginated list of audit transactions."""
+
+    transactions: list[AuditTransactionResponse]
+    limit: int
+    has_more: bool = False
+    total: int | None = None
+    next_cursor: str | None = None
+
+
+class AuditAggregationResponse(BaseModel):
+    """Aggregation results for audit transactions."""
+
+    total_volume: str  # Decimal as string
+    tx_count: int
+    top_buyers: list[dict[str, Any]]
+    top_sellers: list[dict[str, Any]]
+
+
+class AuditIntegrityResponse(BaseModel):
+    """Result of integrity verification for a single record."""
+
+    record_id: str
+    is_valid: bool
+    record_hash: str

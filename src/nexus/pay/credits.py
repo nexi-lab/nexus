@@ -22,7 +22,9 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
@@ -45,7 +47,9 @@ from nexus.pay.constants import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+_audit_logger_module = logging.getLogger(__name__ + ".audit")
 
 
 # =============================================================================
@@ -128,6 +132,7 @@ class CreditsService:
         tigerbeetle_address: str = "127.0.0.1:3000",
         cluster_id: int = 0,
         enabled: bool = True,
+        audit_logger: ExchangeAuditLogger | None = None,
     ):
         """Initialize CreditsService.
 
@@ -136,16 +141,69 @@ class CreditsService:
             tigerbeetle_address: TigerBeetle server address.
             cluster_id: TigerBeetle cluster ID.
             enabled: If False, operates in pass-through mode (no real ledger).
+            audit_logger: Optional ExchangeAuditLogger for transaction audit trail (#1360).
         """
         self._enabled = enabled
         self._client = client
         self._address = tigerbeetle_address
         self._cluster_id = cluster_id
         self._tb = None  # Lazy import TigerBeetle module
+        self._audit_logger = audit_logger
 
         if enabled and client is None:
             # Will lazy-load client on first use
             pass
+
+    def _record_audit(
+        self,
+        *,
+        protocol: str,
+        buyer_agent_id: str,
+        seller_agent_id: str,
+        amount: Decimal,
+        currency: str = "credits",
+        status: str,
+        application: str = "gateway",
+        zone_id: str = "default",
+        trace_id: str | None = None,
+        transfer_id: str | None = None,
+    ) -> None:
+        """Best-effort audit write (Decision #7).
+
+        Failures are logged but never propagate to the caller.
+        """
+        if self._audit_logger is None:
+            return
+        try:
+            self._audit_logger.record(
+                protocol=protocol,
+                buyer_agent_id=buyer_agent_id,
+                seller_agent_id=seller_agent_id,
+                amount=amount,
+                currency=currency,
+                status=status,
+                application=application,
+                zone_id=zone_id,
+                trace_id=trace_id,
+                transfer_id=transfer_id,
+            )
+        except Exception:
+            _audit_logger_module.error(
+                "Audit write failed for transfer_id=%s",
+                transfer_id,
+                exc_info=True,
+            )
+
+    def _fire_audit(self, **kwargs: Any) -> None:
+        """Fire-and-forget audit write via asyncio (Decision #13)."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(asyncio.to_thread(self._record_audit, **kwargs))
+            )
+        except RuntimeError:
+            # No running loop — fall back to sync
+            self._record_audit(**kwargs)
 
     def _get_tb_module(self) -> Any:
         """Lazy import TigerBeetle module."""
@@ -339,13 +397,49 @@ class CreditsService:
             # EXISTS = 46 (idempotent success)
             # EXCEEDS_CREDITS = 54 (insufficient balance)
             if error.result == 46:  # EXISTS - idempotent, transfer already done
+                self._fire_audit(
+                    protocol="internal",
+                    buyer_agent_id=from_id,
+                    seller_agent_id=to_id,
+                    amount=amount,
+                    status="settled",
+                    zone_id=zone_id,
+                    transfer_id=str(transfer_id),
+                )
                 return str(transfer_id)
             if error.result == 54:  # EXCEEDS_CREDITS
+                self._fire_audit(
+                    protocol="internal",
+                    buyer_agent_id=from_id,
+                    seller_agent_id=to_id,
+                    amount=amount,
+                    status="failed",
+                    zone_id=zone_id,
+                    transfer_id=str(transfer_id),
+                )
                 raise InsufficientCreditsError(
                     f"Insufficient balance for transfer of {amount} credits"
                 )
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id=from_id,
+                seller_agent_id=to_id,
+                amount=amount,
+                status="failed",
+                zone_id=zone_id,
+                transfer_id=str(transfer_id),
+            )
             raise CreditsError(f"Transfer failed: {error.result}")
 
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id=from_id,
+            seller_agent_id=to_id,
+            amount=amount,
+            status="settled",
+            zone_id=zone_id,
+            transfer_id=str(transfer_id),
+        )
         return str(transfer_id)
 
     async def topup(
@@ -389,8 +483,26 @@ class CreditsService:
 
         errors = await client.create_transfers([transfer])
         if errors:
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id="treasury",
+                seller_agent_id=agent_id,
+                amount=amount,
+                status="failed",
+                zone_id=zone_id,
+                transfer_id=str(transfer_id),
+            )
             raise CreditsError(f"Topup failed: {errors[0].result}")
 
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id="treasury",
+            seller_agent_id=agent_id,
+            amount=amount,
+            status="settled",
+            zone_id=zone_id,
+            transfer_id=str(transfer_id),
+        )
         return str(transfer_id)
 
     # =========================================================================
@@ -449,9 +561,36 @@ class CreditsService:
             error = errors[0]
             # TigerBeetle CreateTransferResult.EXCEEDS_CREDITS = 54
             if error.result == 54:
+                self._fire_audit(
+                    protocol="internal",
+                    buyer_agent_id=agent_id,
+                    seller_agent_id="escrow",
+                    amount=amount,
+                    status="failed",
+                    zone_id=zone_id,
+                    transfer_id=str(reservation_id),
+                )
                 raise InsufficientCreditsError(f"Insufficient balance to reserve {amount} credits")
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id=agent_id,
+                seller_agent_id="escrow",
+                amount=amount,
+                status="failed",
+                zone_id=zone_id,
+                transfer_id=str(reservation_id),
+            )
             raise ReservationError(f"Reservation failed: {error.result}")
 
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id=agent_id,
+            seller_agent_id="escrow",
+            amount=amount,
+            status="initiated",
+            zone_id=zone_id,
+            transfer_id=str(reservation_id),
+        )
         return str(reservation_id)
 
     async def commit_reservation(
@@ -492,7 +631,24 @@ class CreditsService:
 
         errors = await client.create_transfers([post_transfer])
         if errors:
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id="unknown",
+                seller_agent_id="escrow",
+                amount=actual_amount or Decimal("0"),
+                status="failed",
+                transfer_id=reservation_id,
+            )
             raise CreditsError(f"Commit failed: {errors[0].result}")
+
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id="unknown",
+            seller_agent_id="escrow",
+            amount=actual_amount or Decimal("0"),
+            status="settled",
+            transfer_id=reservation_id,
+        )
 
     async def release_reservation(self, reservation_id: str) -> None:
         """Void a pending reservation (full refund).
@@ -521,7 +677,24 @@ class CreditsService:
 
         errors = await client.create_transfers([void_transfer])
         if errors:
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id="unknown",
+                seller_agent_id="escrow",
+                amount=Decimal("0"),
+                status="failed",
+                transfer_id=reservation_id,
+            )
             raise CreditsError(f"Release failed: {errors[0].result}")
+
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id="unknown",
+            seller_agent_id="escrow",
+            amount=Decimal("0"),
+            status="refunded",
+            transfer_id=reservation_id,
+        )
 
     # =========================================================================
     # Fast Metering Operations
@@ -568,7 +741,17 @@ class CreditsService:
         )
 
         errors = await client.create_transfers([transfer])
-        return len(errors) == 0
+        success = len(errors) == 0
+        self._fire_audit(
+            protocol="internal",
+            buyer_agent_id=agent_id,
+            seller_agent_id="treasury",
+            amount=amount,
+            status="settled" if success else "failed",
+            zone_id=zone_id,
+            transfer_id=str(transfer_id),
+        )
+        return success
 
     # =========================================================================
     # Batch Operations
@@ -623,8 +806,28 @@ class CreditsService:
 
         errors = await client.create_transfers(tb_transfers)
         if errors:
+            for i, t in enumerate(transfers):
+                self._fire_audit(
+                    protocol="internal",
+                    buyer_agent_id=t.from_id,
+                    seller_agent_id=t.to_id,
+                    amount=t.amount,
+                    status="failed",
+                    zone_id=zone_id,
+                    transfer_id=str(tb_transfers[i].id),
+                )
             raise CreditsError(f"Batch transfer failed: {errors}")
 
+        for i, t in enumerate(transfers):
+            self._fire_audit(
+                protocol="internal",
+                buyer_agent_id=t.from_id,
+                seller_agent_id=t.to_id,
+                amount=t.amount,
+                status="settled",
+                zone_id=zone_id,
+                transfer_id=str(tb_transfers[i].id),
+            )
         return [str(t.id) for t in tb_transfers]
 
     # =========================================================================

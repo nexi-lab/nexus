@@ -296,3 +296,21 @@ async def get_hierarchy_manager(
         session=session,
         zone_id=context.zone_id or "default",
     )
+
+
+async def get_exchange_audit_logger(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> Any:
+    """Get ExchangeAuditLogger scoped to the authenticated user's zone.
+
+    Returns a tuple of (ExchangeAuditLogger, zone_id) for zone-scoped queries.
+    Issue #1360.
+    """
+    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+    context = _get_operation_context(auth_result)
+    zone_id = context.zone_id or "default"
+
+    session_factory = nexus_fs.SessionLocal
+    return ExchangeAuditLogger(session_factory=session_factory), zone_id

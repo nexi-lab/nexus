@@ -68,9 +68,9 @@ message FileMetadata {
 
   // Reference count — number of DT_MOUNT entries pointing to this zone.
   // Follows POSIX i_nlink semantics (cf. shared_ptr reference counting):
-  //   zone create  → i_links_count = 1   (like make_shared / creat())
-  //   mount        → i_links_count++     (like shared_ptr copy / link())
-  //   unmount      → i_links_count--     (like shared_ptr dtor / unlink())
-  //   count == 0   → zone is destroyable (like shared_ptr delete / free inode)
+  //   zone create  → i_links_count = 0   (no references yet)
+  //   mount        → i_links_count++     (like link() / shared_ptr copy)
+  //   unmount      → i_links_count--     (like unlink() / shared_ptr dtor)
+  //   count == 0   → zone is destroyable (like free inode / shared_ptr delete)
   int32 i_links_count = 15;
 }

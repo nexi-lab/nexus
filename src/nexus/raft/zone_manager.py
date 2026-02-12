@@ -74,8 +74,9 @@ class ZoneManager:
     ) -> RaftMetadataStore:
         """Create a new zone and return its RaftMetadataStore.
 
-        Creates the zone's root "/" entry with i_links_count=1,
-        following POSIX i_nlink semantics: creat() sets nlink=1.
+        Creates the zone's root "/" entry with i_links_count=0.
+        The count starts at 0 because no DT_MOUNT references exist yet.
+        The first mount() call will increment it to 1.
 
         Args:
             zone_id: Unique zone identifier.
@@ -90,7 +91,7 @@ class ZoneManager:
         store = RaftMetadataStore(engine=handle, zone_id=zone_id)
         self._stores[zone_id] = store
 
-        # Create root "/" entry with i_links_count=1 (POSIX: creat() → nlink=1)
+        # Create root "/" entry with i_links_count=0 (no DT_MOUNT refs yet)
         root_entry = FileMetadata(
             path="/",
             backend_name="virtual",
@@ -98,12 +99,11 @@ class ZoneManager:
             size=0,
             entry_type=DT_DIR,
             zone_id=zone_id,
-            i_links_count=1,
         )
         store.put(root_entry)
 
         logger.info(
-            "Zone '%s' created (peers=%d, i_links_count=1)",
+            "Zone '%s' created (peers=%d)",
             zone_id,
             len(peers or []),
         )

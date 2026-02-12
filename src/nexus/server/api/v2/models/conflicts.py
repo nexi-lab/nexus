@@ -34,6 +34,7 @@ class ConflictListResponse(ApiModel):
 
     conflicts: list[ConflictDetailResponse]
     total: int
+    has_more: bool = False
 
 
 class ConflictResolveRequest(ApiModel):

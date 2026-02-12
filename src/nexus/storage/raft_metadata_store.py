@@ -163,26 +163,28 @@ class RaftMetadataStore(FileMetadataProtocol):
             return None
         return _deserialize_metadata(data)
 
-    def _put_engine(self, metadata: FileMetadata) -> None:
+    def _put_engine(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store metadata in the embedded sled engine.
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
         """
         data = _serialize_metadata(metadata)
-        self._engine.set_metadata(metadata.path, data)
+        self._engine.set_metadata(metadata.path, data, consistency=consistency)
 
-    def _delete_engine(self, path: str) -> dict[str, Any] | None:
+    def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
 
         Returns:
             Dictionary with deleted file info or None
         """
         existing = self._get_engine(path)
-        self._engine.delete_metadata(path)
+        self._engine.delete_metadata(path, consistency=consistency)
         if existing:
             return {
                 "path": existing.path,
@@ -328,28 +330,30 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata.
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
         """
         if self._has_engine:
-            self._put_engine(metadata)
+            self._put_engine(metadata, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata.
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
 
         Returns:
             Dictionary with deleted file info or None
         """
         if self._has_engine:
-            return self._delete_engine(path)
+            return self._delete_engine(path, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use delete_async() instead.")
 
@@ -969,28 +973,30 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             return await self._client.get_metadata(path, zone_id=self._zone_id)
 
-    async def put_async(self, metadata: FileMetadata) -> None:
+    async def put_async(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata (async).
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
         """
         if self._has_engine:
-            self._put_engine(metadata)
+            self._put_engine(metadata, consistency=consistency)
         else:
             await self._client.put_metadata(metadata, zone_id=self._zone_id)
 
-    async def delete_async(self, path: str) -> dict[str, Any] | None:
+    async def delete_async(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata (async).
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
 
         Returns:
             Dictionary with deleted file info or None
         """
         if self._has_engine:
-            return self._delete_engine(path)
+            return self._delete_engine(path, consistency=consistency)
         else:
             existing = await self.get_async(path)
             await self._client.delete_metadata(path, zone_id=self._zone_id)

@@ -513,7 +513,10 @@ impl PyMetastore {
 /// Writes go through Raft consensus (replicated to peers).
 /// Reads come from the local state machine (~5us).
 ///
-/// Per-op SC/EC hints will be added in #1364.
+/// Per-op SC/EC hints: callers pass `consistency="sc"` (default) or `"ec"`
+/// to `set_metadata()` / `delete_metadata()`. EC writes submit to Raft but
+/// return immediately (~5-10μs) without waiting for commit confirmation.
+/// Lock operations always use SC for correctness.
 ///
 /// This class is only available when built with `--features full` (grpc + python).
 #[cfg(all(feature = "grpc", has_protos))]
@@ -627,12 +630,21 @@ impl PyRaftConsensus {
     // =========================================================================
 
     /// Set metadata for a path (replicated through Raft consensus).
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>, consistency: &str) -> PyResult<bool> {
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        self.propose_command(py, cmd)
+        match consistency {
+            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            _ => self.propose_command(py, cmd),
+        }
     }
 
     /// Get metadata for a path (local read, no consensus).
@@ -649,11 +661,19 @@ impl PyRaftConsensus {
     }
 
     /// Delete metadata for a path (replicated through Raft consensus).
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        self.propose_command(py, cmd)
+        match consistency {
+            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            _ => self.propose_command(py, cmd),
+        }
     }
 
     /// List all metadata with a prefix (local read, no consensus).
@@ -800,6 +820,16 @@ impl PyRaftConsensus {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyRaftConsensus {
+    /// Propose a command through consensus with EC (fire-and-forget, ~5-10μs).
+    fn propose_command_ec(&self, py: Python<'_>, cmd: Command) -> PyResult<()> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime
+                .block_on(node.propose_ec(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("Propose EC failed: {}", e)))
+        })
+    }
+
     /// Propose a command through consensus and return success/failure (SC path).
     fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
         let result = self.propose_command_raw(py, cmd)?;
@@ -1071,13 +1101,21 @@ impl PyZoneHandle {
     // =========================================================================
 
     /// Set metadata for a path (replicated through Raft consensus).
-    /// Per-op SC/EC hints will be added in #1364.
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>, consistency: &str) -> PyResult<bool> {
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        self.propose_command(py, cmd)
+        match consistency {
+            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            _ => self.propose_command(py, cmd),
+        }
     }
 
     /// Get metadata for a path (local read, no consensus).
@@ -1094,11 +1132,19 @@ impl PyZoneHandle {
     }
 
     /// Delete metadata for a path (replicated through Raft consensus).
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        self.propose_command(py, cmd)
+        match consistency {
+            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            _ => self.propose_command(py, cmd),
+        }
     }
 
     /// List all metadata with a prefix (local read, no consensus).
@@ -1221,6 +1267,15 @@ impl PyZoneHandle {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyZoneHandle {
+    fn propose_command_ec(&self, py: Python<'_>, cmd: Command) -> PyResult<()> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime_handle
+                .block_on(node.propose_ec(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("Propose EC failed: {}", e)))
+        })
+    }
+
     fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
         let result = self.propose_command_raw(py, cmd)?;
         match result {

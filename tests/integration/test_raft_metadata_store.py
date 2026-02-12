@@ -55,7 +55,7 @@ class FakeLocalRaft:
 
     # -- Metadata ----------------------------------------------------------
 
-    def set_metadata(self, path: str, value: bytes | list[int]) -> bool:
+    def set_metadata(self, path: str, value: bytes | list[int], *, consistency: str = "sc") -> bool:
         if isinstance(value, list):
             value = bytes(value)
         self._metadata[path] = value
@@ -64,7 +64,7 @@ class FakeLocalRaft:
     def get_metadata(self, path: str) -> bytes | None:
         return self._metadata.get(path)
 
-    def delete_metadata(self, path: str) -> bool:
+    def delete_metadata(self, path: str, *, consistency: str = "sc") -> bool:
         return self._metadata.pop(path, None) is not None
 
     def list_metadata(self, prefix: str) -> list[tuple[str, bytes]]:
@@ -561,3 +561,84 @@ class TestLockOperations:
         fake = FakeLocalRaft()
         store = _make_store(fake)
         store.close()  # Should not raise
+
+
+# ===========================================================================
+# SC/EC Consistency Hint Tests (#1364)
+# ===========================================================================
+
+
+class TestConsistencyHints:
+    """Tests for per-operation SC/EC consistency parameter."""
+
+    def test_put_sc_default(self) -> None:
+        """Default put() uses SC (backward compatible)."""
+        store = _make_store()
+        meta = _make_meta(path="/sc/file.txt", size=100)
+        store.put(meta)
+        result = store.get("/sc/file.txt")
+        assert result is not None
+        assert result.size == 100
+
+    def test_put_ec(self) -> None:
+        """put() with consistency='ec' stores data."""
+        store = _make_store()
+        meta = _make_meta(path="/ec/file.txt", size=200)
+        store.put(meta, consistency="ec")
+        result = store.get("/ec/file.txt")
+        assert result is not None
+        assert result.size == 200
+
+    def test_put_sc_explicit(self) -> None:
+        """put() with explicit consistency='sc' works."""
+        store = _make_store()
+        meta = _make_meta(path="/sc2/file.txt", size=300)
+        store.put(meta, consistency="sc")
+        result = store.get("/sc2/file.txt")
+        assert result is not None
+        assert result.size == 300
+
+    def test_delete_sc_default(self) -> None:
+        """Default delete() uses SC."""
+        store = _make_store()
+        store.put(_make_meta(path="/del-sc.txt", size=10, etag="e"))
+        info = store.delete("/del-sc.txt")
+        assert info is not None
+        assert info["path"] == "/del-sc.txt"
+        assert store.get("/del-sc.txt") is None
+
+    def test_delete_ec(self) -> None:
+        """delete() with consistency='ec' removes data."""
+        store = _make_store()
+        store.put(_make_meta(path="/del-ec.txt", size=20, etag="e2"))
+        info = store.delete("/del-ec.txt", consistency="ec")
+        assert info is not None
+        assert store.get("/del-ec.txt") is None
+
+    def test_lock_operations_have_no_consistency_param(self) -> None:
+        """Lock operations are always SC — no consistency parameter."""
+        import inspect
+
+        store = _make_store()
+        # Verify acquire_lock, release_lock, extend_lock signatures
+        # do NOT have a 'consistency' parameter
+        for method_name in ("acquire_lock", "release_lock", "extend_lock"):
+            sig = inspect.signature(getattr(store, method_name))
+            assert "consistency" not in sig.parameters, (
+                f"{method_name} should not have a consistency parameter"
+            )
+
+    def test_fake_set_metadata_accepts_consistency_kwarg(self) -> None:
+        """FakeLocalRaft.set_metadata accepts consistency kwarg."""
+        fake = FakeLocalRaft()
+        fake.set_metadata("/test", b"data", consistency="ec")
+        assert fake.get_metadata("/test") == b"data"
+        fake.set_metadata("/test2", b"data2", consistency="sc")
+        assert fake.get_metadata("/test2") == b"data2"
+
+    def test_fake_delete_metadata_accepts_consistency_kwarg(self) -> None:
+        """FakeLocalRaft.delete_metadata accepts consistency kwarg."""
+        fake = FakeLocalRaft()
+        fake.set_metadata("/test", b"data")
+        assert fake.delete_metadata("/test", consistency="ec") is True
+        assert fake.get_metadata("/test") is None

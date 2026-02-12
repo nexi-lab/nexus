@@ -448,12 +448,12 @@ class FileMetadataProtocol(ABC):
         pass
 
     @abstractmethod
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata."""
         pass
 
     @abstractmethod
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata. Returns deleted file info or None."""
         pass
 
@@ -574,17 +574,28 @@ def _params_to_call_args(params: str) -> str:
 
     Example: ``"prefix: str = '', recursive: bool = True, **kwargs: Any"``
     → ``"prefix, recursive, **kwargs"``
+
+    Handles keyword-only marker ``*``: params after bare ``*`` are emitted
+    as ``name=name`` (keyword arguments in the call expression).
     """
     if not params:
         return ""
     args: list[str] = []
+    keyword_only = False
     for param in params.split(","):
         param = param.strip()
         if not param:
             continue
+        # Bare * is the keyword-only separator — skip it, mark subsequent args
+        if param == "*":
+            keyword_only = True
+            continue
         # Name is everything before ':' or '='
         name = param.split(":")[0].split("=")[0].strip()
-        args.append(name)
+        if keyword_only and not name.startswith("**"):
+            args.append(f"{name}={name}")
+        else:
+            args.append(name)
     return ", ".join(args)
 
 

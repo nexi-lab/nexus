@@ -126,14 +126,14 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
             return None
         return self._remap_metadata(meta, resolved.mount_chain)
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
-        resolved.store.put(zone_meta)
+        resolved.store.put(zone_meta, consistency=consistency)
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         resolved = self._resolve(path)
-        return resolved.store.delete(resolved.path)
+        return resolved.store.delete(resolved.path, consistency=consistency)
 
     def exists(self, path: str) -> bool:
         resolved = self._resolve(path)

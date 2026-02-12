@@ -569,6 +569,14 @@ impl FullStateMachine {
         Ok(self.metadata.get(path.as_bytes())?)
     }
 
+    /// Get metadata for multiple paths in a single call.
+    pub fn get_metadata_multi(&self, paths: &[String]) -> Result<Vec<(String, Option<Vec<u8>>)>> {
+        paths
+            .iter()
+            .map(|path| self.get_metadata(path).map(|opt| (path.clone(), opt)))
+            .collect()
+    }
+
     /// List all metadata with prefix.
     pub fn list_metadata(&self, prefix: &str) -> Result<Vec<(String, Vec<u8>)>> {
         let mut result = Vec::new();

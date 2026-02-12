@@ -466,7 +466,47 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         f(&mut *sm)
     }
 
-    /// Propose a command for replication.
+    /// Serialize a command and submit it to the driver channel.
+    ///
+    /// Returns the oneshot receiver for callers that want to wait for commit
+    /// (SC path). EC callers simply drop the receiver.
+    fn submit_to_channel(
+        &self,
+        command: Command,
+    ) -> Result<oneshot::Receiver<Result<CommandResult>>> {
+        if !self.is_leader() {
+            return Err(RaftError::NotLeader {
+                leader_hint: self.leader_id(),
+            });
+        }
+
+        let data = bincode::serialize(&command)?;
+        let (tx, rx) = oneshot::channel();
+
+        self.msg_tx
+            .send(RaftMsg::Propose {
+                data,
+                proposal_id: 0, // driver assigns real ID
+                tx,
+            })
+            .map_err(|_| RaftError::ChannelClosed)?;
+
+        Ok(rx)
+    }
+
+    /// Propose a command with Eventual Consistency — fire and forget.
+    ///
+    /// Submits the command to Raft but does NOT wait for commit confirmation.
+    /// The oneshot receiver is dropped immediately, so the driver's
+    /// `let _ = proposal.tx.send(Ok(result))` harmlessly discards the result.
+    ///
+    /// Latency: ~5-10μs (serialize + channel send).
+    pub async fn propose_ec(&self, command: Command) -> Result<()> {
+        let _rx = self.submit_to_channel(command)?; // drop receiver
+        Ok(())
+    }
+
+    /// Propose a command for replication (Strong Consistency).
     ///
     /// Sends the command through the channel to the driver, which will call
     /// `raw_node.propose()` sequentially. The caller awaits a oneshot for
@@ -475,34 +515,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// # Timeout
     /// Proposals time out after 10 seconds.
     pub async fn propose(&self, command: Command) -> Result<CommandResult> {
-        if !self.is_leader() {
-            return Err(RaftError::NotLeader {
-                leader_hint: self.leader_id(),
-            });
-        }
-
-        // Serialize the command
-        let data = bincode::serialize(&command)?;
-
-        // Generate proposal ID (shared atomic with driver)
-        let id = self.config.id; // use node id as part of context, actual id below
-        let _ = id; // suppress unused
-
-        // Proposal ID comes from the driver's shared atomic
-        // We generate it here so the handle can track timeouts
-        let proposal_id = 0u64; // placeholder — driver assigns real ID
-
-        // Create response channel
-        let (tx, rx) = oneshot::channel();
-
-        // Send through channel to driver
-        self.msg_tx
-            .send(RaftMsg::Propose {
-                data,
-                proposal_id, // driver will assign the real ID
-                tx,
-            })
-            .map_err(|_| RaftError::ChannelClosed)?;
+        let rx = self.submit_to_channel(command)?;
 
         // Wait for commit with timeout
         match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
@@ -1050,7 +1063,32 @@ mod tests {
             );
         }
 
+        // Phase 5: EC propose — returns immediately without waiting for commit
+        let ec_cmd = Command::SetMetadata {
+            key: "/ec-test.txt".into(),
+            value: b"eventual".to_vec(),
+        };
+        let ec_result = handles[leader_idx].propose_ec(ec_cmd).await;
+        assert!(ec_result.is_ok(), "EC propose should return Ok immediately");
+
         // Shutdown all drivers
         let _ = shutdown_tx.send(true);
+    }
+
+    #[tokio::test]
+    async fn test_propose_ec_not_leader_returns_error() {
+        let (handle, _driver, _dir) = create_test_node();
+
+        // Node is a follower (single node, no campaign), propose_ec should fail
+        let cmd = Command::SetMetadata {
+            key: "/test".into(),
+            value: b"data".to_vec(),
+        };
+        let result = handle.propose_ec(cmd).await;
+        assert!(result.is_err(), "EC propose on non-leader should fail");
+        assert!(
+            matches!(result.unwrap_err(), RaftError::NotLeader { .. }),
+            "Should be NotLeader error"
+        );
     }
 }

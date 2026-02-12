@@ -324,10 +324,7 @@ def connect(
                 )
                 zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
                 zone_mgr.bootstrap(root_zone_id="root", peers=peers)
-                store: FileMetadataProtocol = ZoneAwareMetadataStore.from_zone_manager(
-                    zone_mgr, root_zone_id="root"
-                )
-                return store
+                return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
             except (ImportError, RuntimeError):
                 pass
 

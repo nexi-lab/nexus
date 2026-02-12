@@ -146,7 +146,8 @@ pub type Result<T> = std::result::Result<T, TransportError>;
 /// - Read/write operations are very fast (HashMap insert/lookup)
 /// - Accessed from both sync (DashMap guard) and async (transport loop) contexts
 /// - Write-rarely, read-often pattern — no contention in practice
-pub type SharedPeerMap = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<u64, NodeAddress>>>;
+pub type SharedPeerMap =
+    std::sync::Arc<std::sync::RwLock<std::collections::HashMap<u64, NodeAddress>>>;
 
 /// Address of a Raft node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

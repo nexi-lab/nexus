@@ -538,12 +538,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             .send(RaftMsg::ProposeConfChange { change: cc, tx })
             .map_err(|_| RaftError::ChannelClosed)?;
 
-        match tokio::time::timeout(
-            Duration::from_secs(PROPOSAL_TIMEOUT_SECS),
-            rx,
-        )
-        .await
-        {
+        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(RaftError::ProposalDropped),
             Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
@@ -625,10 +620,7 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                 RaftMsg::ProposeConfChange { change, tx } => {
                     let target_node_id = change.node_id;
                     tracing::debug!(node_id = target_node_id, "raft.driver.propose_conf_change");
-                    match self
-                        .raw_node
-                        .propose_conf_change(vec![], change)
-                    {
+                    match self.raw_node.propose_conf_change(vec![], change) {
                         Ok(()) => {
                             // Store tx — will be resolved in apply_entries when committed
                             self.pending_conf_changes.insert(target_node_id, tx);
@@ -809,12 +801,11 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                         match cc.get_change_type() {
                             ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
                                 if !cc.context.is_empty() {
-                                    let address =
-                                        String::from_utf8_lossy(&cc.context).to_string();
-                                    peer_map.write().unwrap().insert(
-                                        cc.node_id,
-                                        NodeAddress::new(cc.node_id, address),
-                                    );
+                                    let address = String::from_utf8_lossy(&cc.context).to_string();
+                                    peer_map
+                                        .write()
+                                        .unwrap()
+                                        .insert(cc.node_id, NodeAddress::new(cc.node_id, address));
                                 }
                             }
                             ConfChangeType::RemoveNode => {

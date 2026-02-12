@@ -164,14 +164,14 @@ impl ZoneRaftRegistry {
             .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
 
         // Peer map — shared between ZoneEntry, TransportLoop, and RaftNodeDriver.
-        let peer_map: HashMap<u64, NodeAddress> =
-            peers.into_iter().map(|p| (p.id, p)).collect();
+        let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
         let shared_peers: SharedPeerMap = Arc::new(RwLock::new(peer_map));
 
         driver.set_peer_map(shared_peers.clone());
 
-        let transport_loop = TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::new())
-            .with_zone_id(zone_id.to_string());
+        let transport_loop =
+            TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::new())
+                .with_zone_id(zone_id.to_string());
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));

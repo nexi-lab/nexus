@@ -512,6 +512,7 @@ class ConflictListResponse(BaseModel):
 
     conflicts: list[ConflictDetailResponse]
     total: int
+    has_more: bool = False
 
 
 class ConflictResolveRequest(BaseModel):

@@ -25,6 +25,7 @@ from nexus.services.conflict_resolution import (
     ConflictAbortError,
     ConflictContext,
     ConflictRecord,
+    ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
     detect_conflict,
@@ -73,6 +74,7 @@ class WriteBackService:
         conflict_log_store: ConflictLogStore | None = None,
         max_concurrent_per_backend: int = 10,
         poll_interval_seconds: float = 30.0,
+        batch_size: int = 50,
     ) -> None:
         """Initialize WriteBackService.
 
@@ -85,6 +87,7 @@ class WriteBackService:
             conflict_log_store: Optional store for conflict audit logging
             max_concurrent_per_backend: Max concurrent write-backs per backend
             poll_interval_seconds: Interval between polling sweeps
+            batch_size: Max entries fetched per backend per poll cycle
         """
         self._gw = gateway
         self._event_bus = event_bus
@@ -94,6 +97,7 @@ class WriteBackService:
         self._conflict_log_store = conflict_log_store
         self._max_concurrent = max_concurrent_per_backend
         self._poll_interval = poll_interval_seconds
+        self._batch_size = batch_size
 
         # Per-backend semaphores for rate limiting
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -141,14 +145,6 @@ class WriteBackService:
         if event_type not in _WRITE_BACK_EVENT_TYPES:
             return
 
-        # Skip events that originated from write-back itself (avoid loops)
-        if event_type in (
-            FileEventType.SYNC_TO_BACKEND_COMPLETED,
-            FileEventType.SYNC_TO_BACKEND_FAILED,
-            FileEventType.SYNC_TO_BACKEND_REQUESTED,
-        ):
-            return
-
         mount_info = self._gw.get_mount_for_path(event.path)
         if mount_info is None:
             return
@@ -183,23 +179,23 @@ class WriteBackService:
             await asyncio.sleep(self._poll_interval)
 
     async def _process_all_backends(self) -> None:
-        """Process pending entries for all writable backends."""
-        mounts = self._gw.list_mounts()
-        seen: set[tuple[str, str]] = set()
-        for mount in mounts:
-            if mount["readonly"]:
-                continue
-            backend_name = getattr(mount["backend"], "name", mount["backend_type"])
-            # Process each backend+zone only once
-            key = (backend_name, "default")
-            if key in seen:
-                continue
-            seen.add(key)
-            await self._process_pending(backend_name, "default")
+        """Process pending entries for all backends with pending work.
+
+        Queries distinct (backend_name, zone_id) pairs from the backlog store
+        rather than iterating mounts, ensuring non-default zones are processed.
+        Backends are processed concurrently via asyncio.gather.
+        """
+        pairs = self._backlog_store.fetch_distinct_backend_zones()
+        if not pairs:
+            return
+        await asyncio.gather(
+            *(self._process_pending(name, zone) for name, zone in pairs),
+            return_exceptions=True,
+        )
 
     async def _process_pending(self, backend_name: str, zone_id: str) -> None:
         """Fetch and process a batch of pending entries for one backend."""
-        entries = self._backlog_store.fetch_pending(backend_name, zone_id)
+        entries = self._backlog_store.fetch_pending(backend_name, zone_id, limit=self._batch_size)
         if not entries:
             return
 
@@ -295,7 +291,7 @@ class WriteBackService:
         backend_file_info = None
         if hasattr(backend, "get_file_info"):
             with contextlib.suppress(Exception):
-                backend_file_info = backend.get_file_info(backend_path)
+                backend_file_info = await asyncio.to_thread(backend.get_file_info, backend_path)
 
         if backend_file_info is not None and last_synced is not None:
             # Get Nexus file info for comparison
@@ -336,7 +332,7 @@ class WriteBackService:
         if content is None:
             raise RuntimeError(f"Failed to read content for {entry.path}")
 
-        result = backend.write_content(content)
+        result = await asyncio.to_thread(backend.write_content, content)
         if hasattr(result, "success") and not result.success:
             raise RuntimeError(f"Backend write failed: {getattr(result, 'error', 'unknown')}")
 
@@ -398,7 +394,7 @@ class WriteBackService:
             backend_mtime=ctx.backend_mtime,
             backend_size=ctx.backend_size,
             conflict_copy_path=conflict_copy_path,
-            status="auto_resolved",
+            status=ConflictStatus.AUTO_RESOLVED,
             resolved_at=datetime.now(UTC),
         )
 
@@ -480,17 +476,19 @@ class WriteBackService:
 
     async def _handle_delete(self, backend: Any, backend_path: str) -> None:
         """Handle deletion of a file on the backend."""
-        if hasattr(backend, "delete_content"):
-            result = backend.delete_content(backend_path)
-            if hasattr(result, "success") and not result.success:
-                raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
+        if not hasattr(backend, "delete_content"):
+            raise RuntimeError(f"Backend {type(backend).__name__} does not support delete_content")
+        result = await asyncio.to_thread(backend.delete_content, backend_path)
+        if hasattr(result, "success") and not result.success:
+            raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
 
     async def _handle_mkdir(self, backend: Any, backend_path: str) -> None:
         """Handle directory creation on the backend."""
-        if hasattr(backend, "mkdir"):
-            result = backend.mkdir(backend_path)
-            if hasattr(result, "success") and not result.success:
-                raise RuntimeError(f"Backend mkdir failed: {getattr(result, 'error', 'unknown')}")
+        if not hasattr(backend, "mkdir"):
+            raise RuntimeError(f"Backend {type(backend).__name__} does not support mkdir")
+        result = await asyncio.to_thread(backend.mkdir, backend_path)
+        if hasattr(result, "success") and not result.success:
+            raise RuntimeError(f"Backend mkdir failed: {getattr(result, 'error', 'unknown')}")
 
     def _read_nexus_content(self, path: str) -> bytes | None:
         """Read file content from NexusFS.

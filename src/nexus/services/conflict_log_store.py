@@ -15,6 +15,7 @@ from typing import Any
 
 from nexus.services.conflict_resolution import (
     ConflictRecord,
+    ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
@@ -92,11 +93,7 @@ class ConflictLogStore(SyncStoreBase):
         """
         from nexus.storage.models import ConflictLogModel
 
-        session = self._get_session()
-        if session is None:
-            return []
-
-        try:
+        with self._with_session() as session:
             query = session.query(ConflictLogModel)
 
             if status is not None:
@@ -109,11 +106,35 @@ class ConflictLogStore(SyncStoreBase):
             query = query.order_by(ConflictLogModel.created_at.desc())
             rows = query.offset(offset).limit(limit).all()
             return [self._row_to_record(row) for row in rows]
-        except Exception as e:
-            logger.warning(f"Failed to list conflicts: {e}")
-            return []
-        finally:
-            session.close()
+
+    def count_conflicts(
+        self,
+        *,
+        status: str | None = None,
+        backend_name: str | None = None,
+        zone_id: str | None = None,
+    ) -> int:
+        """Count conflict records matching the given filters.
+
+        Args:
+            status: Filter by status
+            backend_name: Filter by backend name
+            zone_id: Filter by zone ID
+
+        Returns:
+            Total count matching filters
+        """
+        from nexus.storage.models import ConflictLogModel
+
+        with self._with_session() as session:
+            query = session.query(ConflictLogModel)
+            if status is not None:
+                query = query.filter(ConflictLogModel.status == status)
+            if backend_name is not None:
+                query = query.filter(ConflictLogModel.backend_name == backend_name)
+            if zone_id is not None:
+                query = query.filter(ConflictLogModel.zone_id == zone_id)
+            return int(query.count())
 
     def get_conflict(self, conflict_id: str) -> ConflictRecord | None:
         """Look up a conflict record by ID.
@@ -126,20 +147,11 @@ class ConflictLogStore(SyncStoreBase):
         """
         from nexus.storage.models import ConflictLogModel
 
-        session = self._get_session()
-        if session is None:
-            return None
-
-        try:
+        with self._with_session() as session:
             row = session.query(ConflictLogModel).filter_by(id=conflict_id).first()
             if row is None:
                 return None
             return self._row_to_record(row)
-        except Exception as e:
-            logger.warning(f"Failed to get conflict {conflict_id}: {e}")
-            return None
-        finally:
-            session.close()
 
     def resolve_conflict_manually(self, conflict_id: str, outcome: ResolutionOutcome) -> bool:
         """Update a conflict record to manually_resolved status.
@@ -153,34 +165,23 @@ class ConflictLogStore(SyncStoreBase):
         """
         from nexus.storage.models import ConflictLogModel
 
-        session = self._get_session()
-        if session is None:
-            return False
-
-        try:
+        with self._with_session() as session:
             updated = (
                 session.query(ConflictLogModel)
                 .filter(
                     ConflictLogModel.id == conflict_id,
-                    ConflictLogModel.status == "manual_pending",
+                    ConflictLogModel.status == ConflictStatus.MANUAL_PENDING,
                 )
                 .update(
                     {
-                        "status": "manually_resolved",
+                        "status": ConflictStatus.MANUALLY_RESOLVED,
                         "outcome": str(outcome),
                         "resolved_at": datetime.now(UTC),
                     },
                     synchronize_session="fetch",
                 )
             )
-            session.commit()
             return bool(updated > 0)
-        except Exception as e:
-            logger.warning(f"Failed to resolve conflict {conflict_id}: {e}")
-            session.rollback()
-            return False
-        finally:
-            session.close()
 
     def expire_stale(self, ttl_seconds: int = 2592000, max_entries: int = 10000) -> int:
         """Expire old conflict records by TTL (30 days) and cap (10K).
@@ -194,11 +195,7 @@ class ConflictLogStore(SyncStoreBase):
         """
         from nexus.storage.models import ConflictLogModel
 
-        session = self._get_session()
-        if session is None:
-            return 0
-
-        try:
+        with self._with_session() as session:
             now = datetime.now(UTC)
             cutoff = datetime.fromtimestamp(now.timestamp() - ttl_seconds, tz=UTC)
 
@@ -228,19 +225,12 @@ class ConflictLogStore(SyncStoreBase):
                         .delete(synchronize_session="fetch")
                     )
 
-            session.commit()
             total: int = ttl_deleted + cap_deleted
             if total > 0:
                 logger.info(
                     f"[CONFLICT_LOG] Expired {total} records (ttl={ttl_deleted}, cap={cap_deleted})"
                 )
             return total
-        except Exception as e:
-            logger.warning(f"Failed to expire stale conflict records: {e}")
-            session.rollback()
-            return 0
-        finally:
-            session.close()
 
     def get_stats(self) -> dict[str, Any]:
         """Get conflict log stats grouped by status.
@@ -248,15 +238,11 @@ class ConflictLogStore(SyncStoreBase):
         Returns:
             Dict with status counts and total
         """
+        from sqlalchemy import func
+
         from nexus.storage.models import ConflictLogModel
 
-        session = self._get_session()
-        if session is None:
-            return {"total": 0}
-
-        try:
-            from sqlalchemy import func
-
+        with self._with_session() as session:
             rows = (
                 session.query(ConflictLogModel.status, func.count())
                 .group_by(ConflictLogModel.status)
@@ -265,11 +251,6 @@ class ConflictLogStore(SyncStoreBase):
             result: dict[str, Any] = dict(rows)
             result["total"] = sum(result.values())
             return result
-        except Exception as e:
-            logger.warning(f"Failed to get conflict stats: {e}")
-            return {"total": 0}
-        finally:
-            session.close()
 
     @staticmethod
     def make_record_id() -> str:
@@ -293,6 +274,6 @@ class ConflictLogStore(SyncStoreBase):
             backend_mtime=row.backend_mtime,
             backend_size=row.backend_size,
             conflict_copy_path=row.conflict_copy_path,
-            status=row.status,
+            status=ConflictStatus(row.status),
             resolved_at=row.resolved_at,
         )

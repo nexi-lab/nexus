@@ -129,6 +129,35 @@ class SyncBacklogStore(SyncStoreBase):
         finally:
             session.close()
 
+    def fetch_distinct_backend_zones(self) -> list[tuple[str, str]]:
+        """Return distinct (backend_name, zone_id) pairs with pending entries.
+
+        Returns:
+            List of (backend_name, zone_id) tuples that have pending work.
+        """
+        from nexus.storage.models import SyncBacklogModel
+
+        session = self._get_session()
+        if session is None:
+            return []
+
+        try:
+            rows = (
+                session.query(
+                    SyncBacklogModel.backend_name,
+                    SyncBacklogModel.zone_id,
+                )
+                .filter(SyncBacklogModel.status == "pending")
+                .distinct()
+                .all()
+            )
+            return [(row[0], row[1]) for row in rows]
+        except Exception as e:
+            logger.warning(f"Failed to fetch distinct backend zones: {e}")
+            return []
+        finally:
+            session.close()
+
     def fetch_pending(
         self,
         backend_name: str,

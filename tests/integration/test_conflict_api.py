@@ -25,6 +25,7 @@ from nexus.server.api.v2.routers.conflicts import router
 from nexus.services.conflict_log_store import ConflictLogStore
 from nexus.services.conflict_resolution import (
     ConflictRecord,
+    ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
@@ -47,7 +48,7 @@ def _make_record(
     zone_id: str = "default",
     strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
     outcome: ResolutionOutcome = ResolutionOutcome.NEXUS_WINS,
-    status: str = "auto_resolved",
+    status: ConflictStatus = ConflictStatus.AUTO_RESOLVED,
 ) -> ConflictRecord:
     now = _now()
     return ConflictRecord(
@@ -95,7 +96,7 @@ def client(store: ConflictLogStore) -> TestClient:
     app.include_router(router)
 
     async def _mock_auth():
-        return {"user": "test-user"}
+        return {"user": "test-user", "is_admin": True}
 
     async def _mock_store():
         return store
@@ -104,6 +105,49 @@ def client(store: ConflictLogStore) -> TestClient:
     app.dependency_overrides[get_conflict_log_store] = _mock_store
 
     return TestClient(app)
+
+
+@pytest.fixture
+def non_admin_client(store: ConflictLogStore) -> TestClient:
+    """TestClient where the authenticated user is NOT an admin."""
+    app = FastAPI()
+    app.include_router(router)
+
+    async def _mock_auth():
+        return {"user": "regular-user", "is_admin": False}
+
+    async def _mock_store():
+        return store
+
+    app.dependency_overrides[_get_require_auth()] = _mock_auth
+    app.dependency_overrides[get_conflict_log_store] = _mock_store
+
+    return TestClient(app)
+
+
+# =============================================================================
+# Admin Authorization Tests (#4B)
+# =============================================================================
+
+
+class TestNonAdminRejection:
+    """Non-admin users get 403 on all conflict endpoints."""
+
+    def test_list_conflicts_requires_admin(self, non_admin_client: TestClient):
+        resp = non_admin_client.get("/api/v2/sync/conflicts")
+        assert resp.status_code == 403
+        assert "Admin role required" in resp.json()["detail"]
+
+    def test_get_conflict_requires_admin(self, non_admin_client: TestClient):
+        resp = non_admin_client.get("/api/v2/sync/conflicts/some-id")
+        assert resp.status_code == 403
+
+    def test_resolve_conflict_requires_admin(self, non_admin_client: TestClient):
+        resp = non_admin_client.post(
+            "/api/v2/sync/conflicts/some-id/resolve",
+            json={"outcome": "nexus_wins"},
+        )
+        assert resp.status_code == 403
 
 
 # =============================================================================
@@ -151,8 +195,10 @@ class TestListConflicts:
 
     def test_list_filter_by_status(self, client: TestClient, store: ConflictLogStore):
         """Filters by status."""
-        store.log_conflict(_make_record(record_id="auto-1", status="auto_resolved"))
-        store.log_conflict(_make_record(record_id="pending-1", status="manual_pending"))
+        store.log_conflict(_make_record(record_id="auto-1", status=ConflictStatus.AUTO_RESOLVED))
+        store.log_conflict(
+            _make_record(record_id="pending-1", status=ConflictStatus.MANUAL_PENDING)
+        )
 
         resp = client.get("/api/v2/sync/conflicts?status=manual_pending")
         assert resp.status_code == 200
@@ -209,7 +255,9 @@ class TestResolveConflict:
 
     def test_resolve_pending_conflict(self, client: TestClient, store: ConflictLogStore):
         """Successfully resolves a manual_pending conflict."""
-        store.log_conflict(_make_record(record_id="pending-1", status="manual_pending"))
+        store.log_conflict(
+            _make_record(record_id="pending-1", status=ConflictStatus.MANUAL_PENDING)
+        )
 
         resp = client.post(
             "/api/v2/sync/conflicts/pending-1/resolve",
@@ -236,7 +284,7 @@ class TestResolveConflict:
 
     def test_resolve_already_resolved(self, client: TestClient, store: ConflictLogStore):
         """Returns 404 when conflict is not in manual_pending status."""
-        store.log_conflict(_make_record(record_id="auto-1", status="auto_resolved"))
+        store.log_conflict(_make_record(record_id="auto-1", status=ConflictStatus.AUTO_RESOLVED))
 
         resp = client.post(
             "/api/v2/sync/conflicts/auto-1/resolve",
@@ -246,7 +294,9 @@ class TestResolveConflict:
 
     def test_resolve_invalid_outcome(self, client: TestClient, store: ConflictLogStore):
         """Returns 422 for invalid outcome value (Pydantic validation)."""
-        store.log_conflict(_make_record(record_id="pending-2", status="manual_pending"))
+        store.log_conflict(
+            _make_record(record_id="pending-2", status=ConflictStatus.MANUAL_PENDING)
+        )
 
         resp = client.post(
             "/api/v2/sync/conflicts/pending-2/resolve",
@@ -315,7 +365,7 @@ def client_no_store() -> TestClient:
     app.include_router(router)
 
     async def _mock_auth():
-        return {"user": "test-user"}
+        return {"user": "test-user", "is_admin": True}
 
     async def _no_store():
         raise HTTPException(status_code=503, detail="Conflict log store not initialized")

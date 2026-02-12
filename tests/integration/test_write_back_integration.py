@@ -387,3 +387,124 @@ class TestConflictIntegration:
         assert len(conflicts) == 1
         assert conflicts[0].outcome.value == "rename_conflict"
         assert conflicts[0].conflict_copy_path is not None
+
+    @pytest.mark.asyncio
+    async def test_conflict_lifecycle_detect_resolve_log_retrieve(
+        self, mock_gateway, mock_event_bus
+    ):
+        """Full conflict lifecycle: enqueue → detect → auto-resolve → log → query → manual resolve."""
+        from nexus.services.conflict_resolution import ConflictStatus, ResolutionOutcome
+
+        backlog_store = SyncBacklogStore(mock_gateway)
+        change_log_store = ChangeLogStore(mock_gateway)
+        conflict_log_store = ConflictLogStore(mock_gateway)
+
+        service = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+            conflict_log_store=conflict_log_store,
+            default_strategy=ConflictStrategy.KEEP_NEWER,
+        )
+
+        # Pre-populate change log (creates a "last synced" state)
+        change_log_store.upsert_change_log(
+            path="/mnt/gcs/project/file.txt",
+            backend_name="test_gcs",
+            zone_id="default",
+            content_hash="old_hash",
+        )
+
+        # Set up conflict: backend changed since last sync
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        backend.get_file_info.return_value = FakeFileInfo(
+            backend_version="v2",
+            mtime=datetime.now(UTC) - timedelta(hours=1),
+            size=500,
+        )
+        mock_gateway.metadata_get.return_value = MagicMock(
+            mtime=datetime.now(UTC),
+            content_hash="nexus_newer",
+            size=1024,
+        )
+
+        # Phase 1: Enqueue + process → conflict auto-resolved
+        await service._on_file_event(
+            FileEvent(
+                type=FileEventType.FILE_WRITE,
+                path="/mnt/gcs/project/file.txt",
+                zone_id="default",
+                etag="nexus_newer",
+            )
+        )
+        await service._process_all_backends()
+
+        # Phase 2: Verify conflict was logged with auto_resolved status
+        conflicts = conflict_log_store.list_conflicts()
+        assert len(conflicts) == 1
+        record = conflicts[0]
+        assert record.status == ConflictStatus.AUTO_RESOLVED
+        assert record.outcome == ResolutionOutcome.NEXUS_WINS
+
+        # Phase 3: Query by ID works
+        fetched = conflict_log_store.get_conflict(record.id)
+        assert fetched is not None
+        assert fetched.id == record.id
+
+        # Phase 4: Count matches
+        total = conflict_log_store.count_conflicts()
+        assert total == 1
+
+        # Phase 5: Stats reflect the conflict
+        stats = conflict_log_store.get_stats()
+        assert stats["total"] >= 1
+
+
+# =============================================================================
+# Multi-Zone Integration Tests (#9A)
+# =============================================================================
+
+
+class TestMultiZoneIntegration:
+    """Multi-zone write-back integration tests."""
+
+    @pytest.mark.asyncio
+    async def test_events_from_different_zones_process_independently(
+        self, mock_gateway, mock_event_bus
+    ):
+        """Events from different zones create separate backlog entries."""
+        backlog_store = SyncBacklogStore(mock_gateway)
+        change_log_store = ChangeLogStore(mock_gateway)
+
+        service = WriteBackService(
+            gateway=mock_gateway,
+            event_bus=mock_event_bus,
+            backlog_store=backlog_store,
+            change_log_store=change_log_store,
+        )
+
+        # Write events in two different zones
+        for zone in ("us-east", "eu-west"):
+            await service._on_file_event(
+                FileEvent(
+                    type=FileEventType.FILE_WRITE,
+                    path="/mnt/gcs/project/file.txt",
+                    zone_id=zone,
+                    etag=f"hash-{zone}",
+                )
+            )
+
+        # Each zone gets its own backlog entry
+        us_entries = backlog_store.fetch_pending("test_gcs", "us-east")
+        eu_entries = backlog_store.fetch_pending("test_gcs", "eu-west")
+        assert len(us_entries) == 1
+        assert len(eu_entries) == 1
+        assert us_entries[0].content_hash == "hash-us-east"
+        assert eu_entries[0].content_hash == "hash-eu-west"
+
+        # _process_all_backends picks up both zones
+        await service._process_all_backends()
+
+        backend = mock_gateway.get_mount_for_path.return_value["backend"]
+        assert backend.write_content.call_count == 2

@@ -38,6 +38,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 # Re-export shared base utilities (used by remaining models in this file)
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
 
+# Issue #1360: Exchange transaction audit log models
+from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel
+from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
+
 # Re-export extracted models so all existing imports continue to work:
 #   from nexus.storage.models import FilePathModel, VersionHistoryModel, OperationLogModel
 from nexus.storage.models.file_path import FilePathModel as FilePathModel

@@ -4,16 +4,15 @@ This module provides Python clients to communicate with Rust Raft nodes
 for metadata and lock operations.
 
 Two metastore drivers are provided:
-1. Metastore (PyO3 FFI) - Direct sled access for embedded/EC mode (~5μs)
-2. RaftConsensus (PyO3 FFI) - Full Raft consensus for SC mode (replicated writes)
+1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
+2. RaftConsensus (PyO3 FFI) - Full Raft consensus for replicated writes (~2-10ms)
 
 Plus a gRPC client for remote access:
 3. RaftClient (gRPC) - For RemoteNexusFS to access Raft cluster (remote mode)
 
 Architecture:
-    Embedded:   NexusFS -> Metastore (PyO3) -> sled (~5μs)
-    SC mode:    NexusFS -> RaftConsensus (PyO3) -> Raft consensus -> sled (~2-10ms)
-    EC mode:    NexusFS -> RaftConsensus (PyO3, lazy=True) -> local apply + bg propose (~5μs)
+    Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
+    Consensus:  NexusFS -> RaftConsensus (PyO3) -> Raft consensus -> redb (~2-10ms)
     Remote:     RemoteNexusFS -> RaftClient (gRPC) -> Raft cluster (~200μs)
 
 Example (Metastore - embedded mode):
@@ -23,7 +22,7 @@ Example (Metastore - embedded mode):
     store.set_metadata("/path/to/file", metadata_bytes)
     metadata = store.get_metadata("/path/to/file")
 
-Example (RaftConsensus - SC mode):
+Example (RaftConsensus - consensus mode):
     from nexus.raft import RaftConsensus
 
     node = RaftConsensus(1, "/var/lib/nexus/metadata", "0.0.0.0:2126", ["2@peer:2126"])
@@ -154,9 +153,9 @@ __all__ = [
     "RaftNotLeaderError",
     "LockResult",
     "RemoteLockInfo",
-    # PyO3 FFI: Metastore driver (embedded/EC mode)
+    # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
-    # PyO3 FFI: Raft consensus driver (SC mode)
+    # PyO3 FFI: Raft consensus driver (consensus mode)
     "RaftConsensus",
     # Multi-zone federation
     "ZoneManager",

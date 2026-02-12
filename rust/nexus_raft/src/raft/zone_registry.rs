@@ -75,7 +75,6 @@ impl ZoneRaftRegistry {
     /// # Arguments
     /// * `zone_id` — Unique zone identifier.
     /// * `peers` — Peer nodes in this zone's Raft group.
-    /// * `lazy` — If true, use EC mode (lazy consensus) for metadata writes.
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
     #[expect(
         clippy::result_large_err,
@@ -85,18 +84,14 @@ impl ZoneRaftRegistry {
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
-        lazy: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<RaftNode<FullStateMachine>, TransportError> {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let mut config = RaftConfig {
+        let config = RaftConfig {
             id: self.node_id,
             peers: peer_ids,
             ..Default::default()
         };
-        if lazy {
-            let _ = &mut config; // placeholder for future EC config
-        }
 
         let campaign = peers.is_empty(); // single-node: campaign immediately
         self.setup_zone(zone_id, config, peers, campaign, runtime_handle)

@@ -123,6 +123,7 @@ with contextlib.suppress(ImportError):
     from _nexus_raft import ZoneHandle
 
 # Python wrappers for multi-zone federation
+from nexus.raft.zone_aware_metadata import ZoneAwareMetadataStore
 from nexus.raft.zone_manager import ZoneManager
 from nexus.raft.zone_path_resolver import ZonePathResolver
 
@@ -158,6 +159,7 @@ __all__ = [
     # PyO3 FFI: Raft consensus driver (consensus mode)
     "RaftConsensus",
     # Multi-zone federation
+    "ZoneAwareMetadataStore",
     "ZoneManager",
     "ZonePathResolver",
     "ZoneHandle",

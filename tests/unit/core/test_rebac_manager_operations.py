@@ -251,10 +251,14 @@ class TestRebacCheck:
 
     def test_check_through_group_membership(self, nx: NexusFS) -> None:
         """Test permission inheritance through group membership."""
-        # Create group membership
+        # Create group membership using "member" relation (matches the userset
+        # subject_relation in the group-based permission tuple below).
+        # Note: "member-of" is a separate relation name; the userset
+        # (group, engineering, "member") resolves by checking the exact
+        # "member" relation on the group namespace.
         nx.rebac_create(
             subject=("user", "alice"),
-            relation="member-of",
+            relation="member",
             object=("group", "engineering"),
             zone_id="default",
         )

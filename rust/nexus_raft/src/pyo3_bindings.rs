@@ -37,6 +37,26 @@ use crate::raft::{
 };
 use crate::storage::RedbStore;
 
+// =========================================================================
+// Consistency mode constants (SSOT for all PyO3 bindings)
+// =========================================================================
+
+/// Strong Consistency — wait for Raft commit before returning.
+const CONSISTENCY_SC: &str = "sc";
+/// Eventual Consistency — fire-and-forget (propose + return immediately).
+const CONSISTENCY_EC: &str = "ec";
+
+/// Validate consistency mode string. Returns Ok(()) for "sc"/"ec", Err otherwise.
+fn validate_consistency(consistency: &str) -> PyResult<()> {
+    match consistency {
+        CONSISTENCY_SC | CONSISTENCY_EC => Ok(()),
+        _ => Err(PyRuntimeError::new_err(format!(
+            "Invalid consistency mode '{}': expected '{}' or '{}'",
+            consistency, CONSISTENCY_SC, CONSISTENCY_EC
+        ))),
+    }
+}
+
 /// Python-compatible holder info.
 #[pyclass(name = "HolderInfo")]
 #[derive(Clone)]
@@ -169,15 +189,24 @@ impl PyMetastore {
     /// Args:
     ///     path: The file path (key).
     ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously.
     ///
     /// Returns:
-    ///     True if successful.
-    pub fn set_metadata(&mut self, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    ///     Always None (embedded mode has no replication, writes are immediately durable).
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(
+        &mut self,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        self.apply_command(cmd)
+        self.apply_command(cmd)?;
+        Ok(None)
     }
 
     /// Get metadata for a path.
@@ -193,18 +222,45 @@ impl PyMetastore {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
     }
 
+    /// Get metadata for multiple paths in a single FFI call.
+    ///
+    /// Args:
+    ///     paths: List of file paths to look up.
+    ///
+    /// Returns:
+    ///     List of (path, metadata_bytes_or_none) tuples.
+    pub fn get_metadata_multi(
+        &self,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
+        self.sm
+            .get_metadata_multi(&paths)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e)))
+    }
+
     /// Delete metadata for a path.
     ///
     /// Args:
     ///     path: The file path.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously.
     ///
     /// Returns:
-    ///     True if successful.
-    pub fn delete_metadata(&mut self, path: &str) -> PyResult<bool> {
+    ///     Always None (embedded mode has no replication, writes are immediately durable).
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(&mut self, path: &str, consistency: &str) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        self.apply_command(cmd)
+        self.apply_command(cmd)?;
+        Ok(None)
+    }
+
+    /// Check if an EC write token has been replicated.
+    ///
+    /// Embedded mode has no replication — always returns None.
+    pub fn is_committed(&self, _token: u64) -> Option<String> {
+        None
     }
 
     /// List all metadata with a prefix.
@@ -507,11 +563,16 @@ impl PyMetastore {
 // RaftConsensus: Full Raft consensus participant for SC (Strong Consistency) mode
 // =============================================================================
 
-/// Raft consensus metastore driver — SC (Strong Consistency) mode.
+/// Raft consensus metastore driver — all writes go through Raft consensus.
 ///
 /// Embeds a full Raft participant with gRPC server inside the Python process.
 /// Writes go through Raft consensus (replicated to peers).
 /// Reads come from the local state machine (~5us).
+///
+/// Per-op SC/EC hints: callers pass `consistency="sc"` (default) or `"ec"`
+/// to `set_metadata()` / `delete_metadata()`. EC writes submit to Raft but
+/// return immediately (~5-10μs) without waiting for commit confirmation.
+/// Lock operations always use SC for correctness.
 ///
 /// This class is only available when built with `--features full` (grpc + python).
 #[cfg(all(feature = "grpc", has_protos))]
@@ -525,10 +586,6 @@ pub struct PyRaftConsensus {
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     /// Node ID for status queries.
     node_id: u64,
-    /// EC mode: metadata writes apply locally + fire-and-forget propose (lazy consensus).
-    /// SC mode (default): all writes wait for Raft consensus before ACK.
-    /// Lock operations always use SC regardless of this flag.
-    lazy_consensus: bool,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -546,19 +603,12 @@ impl PyRaftConsensus {
     ///     db_path: Path to the redb database directory.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
     ///     peers: List of peer addresses in "id@host:port" format.
-    ///     lazy: If True, metadata writes use EC (lazy consensus). Default: False (SC).
     ///
     /// Raises:
     ///     RuntimeError: If the node cannot be created or the server cannot start.
     #[new]
-    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", peers=vec![], lazy=false))]
-    pub fn new(
-        node_id: u64,
-        db_path: &str,
-        bind_addr: &str,
-        peers: Vec<String>,
-        lazy: bool,
-    ) -> PyResult<Self> {
+    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", peers=vec![]))]
+    pub fn new(node_id: u64, db_path: &str, bind_addr: &str, peers: Vec<String>) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
         use std::sync::Arc;
@@ -593,7 +643,7 @@ impl PyRaftConsensus {
         ));
 
         let node = registry
-            .create_zone("default", peer_addrs, lazy, runtime.handle())
+            .create_zone("default", peer_addrs, runtime.handle())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
 
         // Shutdown signal for gRPC server
@@ -616,11 +666,9 @@ impl PyRaftConsensus {
             }
         });
 
-        let mode = if lazy { "EC (lazy)" } else { "SC" };
         tracing::info!(
-            "RaftConsensus node {} started (mode={}, bind={}, peers={})",
+            "RaftConsensus node {} started (bind={}, peers={})",
             node_id,
-            mode,
             bind_addr,
             peers.len()
         );
@@ -630,7 +678,6 @@ impl PyRaftConsensus {
             runtime,
             shutdown_tx: Some(shutdown_tx),
             node_id,
-            lazy_consensus: lazy,
         })
     }
 
@@ -639,17 +686,34 @@ impl PyRaftConsensus {
     // =========================================================================
 
     /// Set metadata for a path.
-    /// SC mode: waits for Raft consensus (replicated).
-    /// EC mode: applies locally + fire-and-forget propose (lazy replication).
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        if self.lazy_consensus {
-            self.lazy_propose_metadata(py, cmd)
-        } else {
-            self.propose_command(py, cmd)
+        match consistency {
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
+            }
         }
     }
 
@@ -666,17 +730,50 @@ impl PyRaftConsensus {
         })
     }
 
+    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
+    pub fn get_metadata_multi(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime.block_on(async {
+                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
+                    .await
+                    .map_err(|e| {
+                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
+                    })
+            })
+        })
+    }
+
     /// Delete metadata for a path.
-    /// SC mode: waits for Raft consensus.
-    /// EC mode: applies locally + fire-and-forget propose.
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
+    ///
+    /// Args:
+    ///     path: The file path.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        if self.lazy_consensus {
-            self.lazy_propose_metadata(py, cmd)
-        } else {
-            self.propose_command(py, cmd)
+        match consistency {
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
+            }
         }
     }
 
@@ -693,9 +790,17 @@ impl PyRaftConsensus {
         })
     }
 
-    /// Check if this node is using lazy consensus (EC mode).
-    pub fn is_lazy(&self) -> bool {
-        self.lazy_consensus
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Args:
+    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
+    ///
+    /// Returns:
+    ///     "committed" — replicated to majority.
+    ///     "pending" — local only, awaiting replication.
+    ///     None — invalid token or no replication log.
+    pub fn is_committed(&self, token: u64) -> Option<String> {
+        self.node.is_committed(token).map(|s| s.to_string())
     }
 
     // =========================================================================
@@ -829,6 +934,16 @@ impl PyRaftConsensus {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyRaftConsensus {
+    /// True Local-First EC write — bypasses Raft, returns WAL token.
+    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime
+                .block_on(node.propose_ec_local(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
+        })
+    }
+
     /// Propose a command through consensus and return success/failure (SC path).
     fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
         let result = self.propose_command_raw(py, cmd)?;
@@ -848,71 +963,6 @@ impl PyRaftConsensus {
                 .block_on(node.propose(cmd))
                 .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
         })
-    }
-
-    /// EC path: apply metadata command locally + propose with retry for replication.
-    ///
-    /// The local apply is immediate (~5μs), giving read-after-write consistency.
-    /// The background propose replicates to peers via Raft consensus with retry.
-    /// Metadata operations are idempotent (upsert), so double-apply from Raft
-    /// committing the same entry is safe.
-    ///
-    /// Retry guarantees "eventual" in eventual consistency: the propose will be
-    /// retried with exponential backoff until it succeeds or max attempts is reached.
-    fn lazy_propose_metadata(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
-        let node = self.node.clone();
-        let cmd_for_propose = cmd.clone();
-
-        // 1. Apply to local state machine immediately (read-after-write)
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine_mut(|sm| {
-                    let index = sm.last_applied_index() + 1;
-                    sm.apply(index, &cmd)
-                })
-                .await
-                .map_err(|e| PyRuntimeError::new_err(format!("Local apply failed: {}", e)))
-            })
-        })?;
-
-        // 2. Background propose with retry (guarantees "eventual")
-        let node_bg = self.node.clone();
-        self.runtime.spawn(async move {
-            use std::time::Duration;
-            const MAX_ATTEMPTS: u32 = 50;
-            const BASE_DELAY_MS: u64 = 100;
-            const MAX_DELAY_MS: u64 = 10_000;
-
-            for attempt in 1..=MAX_ATTEMPTS {
-                match node_bg.propose(cmd_for_propose.clone()).await {
-                    Ok(_) => {
-                        if attempt > 1 {
-                            tracing::info!("EC propose succeeded on attempt {}", attempt);
-                        }
-                        return;
-                    }
-                    Err(e) => {
-                        let delay = Duration::from_millis(
-                            (BASE_DELAY_MS * 2u64.saturating_pow(attempt - 1)).min(MAX_DELAY_MS),
-                        );
-                        tracing::warn!(
-                            "EC propose attempt {}/{} failed: {} (retry in {:?})",
-                            attempt,
-                            MAX_ATTEMPTS,
-                            e,
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                    }
-                }
-            }
-            tracing::error!(
-                "EC propose gave up after {} attempts — write is local-only",
-                MAX_ATTEMPTS
-            );
-        });
-
-        Ok(true)
     }
 }
 
@@ -1023,17 +1073,11 @@ impl PyZoneManager {
     /// Args:
     ///     zone_id: Unique zone identifier.
     ///     peers: Peer addresses in "id@host:port" format.
-    ///     lazy: If True, metadata writes use EC mode. Default: False (SC).
     ///
     /// Returns:
     ///     ZoneHandle for the new zone.
-    #[pyo3(signature = (zone_id, peers=vec![], lazy=false))]
-    pub fn create_zone(
-        &self,
-        zone_id: &str,
-        peers: Vec<String>,
-        lazy: bool,
-    ) -> PyResult<PyZoneHandle> {
+    #[pyo3(signature = (zone_id, peers=vec![]))]
+    pub fn create_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
         use crate::transport::NodeAddress;
 
         let peer_addrs: Vec<NodeAddress> = peers
@@ -1046,14 +1090,49 @@ impl PyZoneManager {
 
         let node = self
             .registry
-            .create_zone(zone_id, peer_addrs, lazy, self.runtime.handle())
+            .create_zone(zone_id, peer_addrs, self.runtime.handle())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
 
         Ok(PyZoneHandle {
             node,
             runtime_handle: self.runtime.handle().clone(),
             zone_id: zone_id.to_string(),
-            lazy_consensus: lazy,
+        })
+    }
+
+    /// Join an existing zone as a new Voter.
+    ///
+    /// Creates a local RaftNode for this zone without bootstrapping ConfState.
+    /// After calling this, send a JoinZone RPC to the leader — the leader will
+    /// propose ConfChange(AddNode) and auto-send a snapshot.
+    ///
+    /// Args:
+    ///     zone_id: Zone to join.
+    ///     peers: Existing peer addresses in "id@host:port" format.
+    ///
+    /// Returns:
+    ///     ZoneHandle for the joined zone.
+    #[pyo3(signature = (zone_id, peers=vec![]))]
+    pub fn join_zone(&self, zone_id: &str, peers: Vec<String>) -> PyResult<PyZoneHandle> {
+        use crate::transport::NodeAddress;
+
+        let peer_addrs: Vec<NodeAddress> = peers
+            .iter()
+            .map(|s| {
+                NodeAddress::parse(s.trim())
+                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let node = self
+            .registry
+            .join_zone(zone_id, peer_addrs, self.runtime.handle())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to join zone: {}", e)))?;
+
+        Ok(PyZoneHandle {
+            node,
+            runtime_handle: self.runtime.handle().clone(),
+            zone_id: zone_id.to_string(),
         })
     }
 
@@ -1061,13 +1140,11 @@ impl PyZoneManager {
     ///
     /// Returns:
     ///     ZoneHandle if zone exists, None otherwise.
-    #[pyo3(signature = (zone_id, lazy=false))]
-    pub fn get_zone(&self, zone_id: &str, lazy: bool) -> Option<PyZoneHandle> {
+    pub fn get_zone(&self, zone_id: &str) -> Option<PyZoneHandle> {
         self.registry.get_node(zone_id).map(|node| PyZoneHandle {
             node,
             runtime_handle: self.runtime.handle().clone(),
             zone_id: zone_id.to_string(),
-            lazy_consensus: lazy,
         })
     }
 
@@ -1123,7 +1200,6 @@ pub struct PyZoneHandle {
     node: crate::raft::RaftNode<FullStateMachine>,
     runtime_handle: tokio::runtime::Handle,
     zone_id: String,
-    lazy_consensus: bool,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -1134,25 +1210,39 @@ impl PyZoneHandle {
         &self.zone_id
     }
 
-    /// Check if this zone uses lazy consensus (EC mode).
-    pub fn is_lazy(&self) -> bool {
-        self.lazy_consensus
-    }
-
     // =========================================================================
-    // Metadata Operations
+    // Metadata Operations (all writes go through Raft consensus)
     // =========================================================================
 
-    /// Set metadata for a path (SC: consensus, EC: local + lazy replicate).
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    /// Set metadata for a path.
+    ///
+    /// Args:
+    ///     path: The file path (key).
+    ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        if self.lazy_consensus {
-            self.lazy_propose_metadata(py, cmd)
-        } else {
-            self.propose_command(py, cmd)
+        match consistency {
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
+            }
         }
     }
 
@@ -1169,15 +1259,32 @@ impl PyZoneHandle {
         })
     }
 
-    /// Delete metadata for a path (SC: consensus, EC: local + lazy replicate).
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str) -> PyResult<bool> {
+    /// Delete metadata for a path.
+    ///
+    /// Args:
+    ///     path: The file path.
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        if self.lazy_consensus {
-            self.lazy_propose_metadata(py, cmd)
-        } else {
-            self.propose_command(py, cmd)
+        match consistency {
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
+            }
         }
     }
 
@@ -1192,6 +1299,19 @@ impl PyZoneHandle {
                     .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
             })
         })
+    }
+
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Args:
+    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
+    ///
+    /// Returns:
+    ///     "committed" — replicated to majority.
+    ///     "pending" — local only, awaiting replication.
+    ///     None — invalid token or no replication log.
+    pub fn is_committed(&self, token: u64) -> Option<String> {
+        self.node.is_committed(token).map(|s| s.to_string())
     }
 
     // =========================================================================
@@ -1301,6 +1421,16 @@ impl PyZoneHandle {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyZoneHandle {
+    /// True Local-First EC write — bypasses Raft, returns WAL token.
+    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime_handle
+                .block_on(node.propose_ec_local(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
+        })
+    }
+
     fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
         let result = self.propose_command_raw(py, cmd)?;
         match result {
@@ -1318,60 +1448,6 @@ impl PyZoneHandle {
                 .block_on(node.propose(cmd))
                 .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
         })
-    }
-
-    fn lazy_propose_metadata(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
-        let node = self.node.clone();
-        let cmd_for_propose = cmd.clone();
-
-        py.allow_threads(|| {
-            self.runtime_handle.block_on(async {
-                node.with_state_machine_mut(|sm| {
-                    let index = sm.last_applied_index() + 1;
-                    sm.apply(index, &cmd)
-                })
-                .await
-                .map_err(|e| PyRuntimeError::new_err(format!("Local apply failed: {}", e)))
-            })
-        })?;
-
-        let node_bg = self.node.clone();
-        self.runtime_handle.spawn(async move {
-            use std::time::Duration;
-            const MAX_ATTEMPTS: u32 = 50;
-            const BASE_DELAY_MS: u64 = 100;
-            const MAX_DELAY_MS: u64 = 10_000;
-
-            for attempt in 1..=MAX_ATTEMPTS {
-                match node_bg.propose(cmd_for_propose.clone()).await {
-                    Ok(_) => {
-                        if attempt > 1 {
-                            tracing::info!("EC propose succeeded on attempt {}", attempt);
-                        }
-                        return;
-                    }
-                    Err(e) => {
-                        let delay = Duration::from_millis(
-                            (BASE_DELAY_MS * 2u64.saturating_pow(attempt - 1)).min(MAX_DELAY_MS),
-                        );
-                        tracing::warn!(
-                            "EC propose attempt {}/{} failed: {} (retry in {:?})",
-                            attempt,
-                            MAX_ATTEMPTS,
-                            e,
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                    }
-                }
-            }
-            tracing::error!(
-                "EC propose gave up after {} attempts — write is local-only",
-                MAX_ATTEMPTS
-            );
-        });
-
-        Ok(true)
     }
 }
 

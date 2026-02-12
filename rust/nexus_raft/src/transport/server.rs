@@ -19,10 +19,10 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
     GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
-    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
-    SnapshotChunk, StepMessageRequest, StepMessageResponse, TransferLeaderRequest,
-    TransferLeaderResponse, VoteRequest, VoteResponse,
+    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
+    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
+    RaftCommand, RaftQueryResponse, RaftResponse, SnapshotChunk, StepMessageRequest,
+    StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -611,6 +611,92 @@ impl RaftClientService for RaftClientServiceImpl {
             leader_address: leader_addr,
         }))
     }
+
+    async fn join_zone(
+        &self,
+        request: Request<JoinZoneRequest>,
+    ) -> std::result::Result<Response<JoinZoneResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        // Only leader can process JoinZone — redirect followers
+        if !node.is_leader() {
+            let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+            let leader_id = node.leader_id().unwrap_or(0);
+            let leader_addr = peers.get(&leader_id).map(|a| a.endpoint.clone());
+            return Ok(Response::new(JoinZoneResponse {
+                success: false,
+                error: Some("not leader".to_string()),
+                leader_address: leader_addr,
+                config: None,
+            }));
+        }
+
+        tracing::info!(
+            zone = req.zone_id,
+            node_id = req.node_id,
+            address = req.node_address,
+            "JoinZone request received",
+        );
+
+        // Propose ConfChange(AddNode) with address in context (etcd pattern).
+        // This waits for the ConfChange to be committed and applied.
+        use raft::eraftpb::ConfChangeType;
+        match node
+            .propose_conf_change(
+                ConfChangeType::AddNode,
+                req.node_id,
+                req.node_address.into_bytes(),
+            )
+            .await
+        {
+            Ok(conf_state) => {
+                // Build ClusterConfig from the resulting ConfState + peer map
+                let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+                let voters: Vec<ProtoNodeInfo> = conf_state
+                    .voters
+                    .iter()
+                    .map(|&id| ProtoNodeInfo {
+                        id,
+                        address: peers
+                            .get(&id)
+                            .map(|a| a.endpoint.clone())
+                            .unwrap_or_default(),
+                        role: 0,
+                    })
+                    .collect();
+
+                Ok(Response::new(JoinZoneResponse {
+                    success: true,
+                    error: None,
+                    leader_address: None,
+                    config: Some(ProtoClusterConfig {
+                        voters,
+                        learners: vec![],
+                        witnesses: vec![],
+                    }),
+                }))
+            }
+            Err(RaftError::NotLeader { leader_hint }) => {
+                let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
+                let addr = leader_hint
+                    .and_then(|id| peers.get(&id))
+                    .map(|a| a.endpoint.clone());
+                Ok(Response::new(JoinZoneResponse {
+                    success: false,
+                    error: Some("not leader".to_string()),
+                    leader_address: addr,
+                    config: None,
+                }))
+            }
+            Err(e) => Ok(Response::new(JoinZoneResponse {
+                success: false,
+                error: Some(format!("JoinZone failed: {}", e)),
+                leader_address: None,
+                config: None,
+            })),
+        }
+    }
 }
 
 // =============================================================================
@@ -654,9 +740,10 @@ impl WitnessServerState {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
         let config = RaftConfig::witness(node_id, peer_ids);
 
-        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
-            TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
-        })?;
+        let (handle, driver) =
+            RaftNode::new(config, raft_storage, state_machine, None).map_err(|e| {
+                TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
+            })?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 

@@ -46,6 +46,9 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as Exc
 #   from nexus.storage.models import FilePathModel, VersionHistoryModel, OperationLogModel
 from nexus.storage.models.file_path import FilePathModel as FilePathModel
 from nexus.storage.models.operation_log import OperationLogModel as OperationLogModel
+from nexus.storage.models.persistent_namespace_view import (
+    PersistentNamespaceViewModel as PersistentNamespaceViewModel,
+)
 from nexus.storage.models.version_history import VersionHistoryModel as VersionHistoryModel
 
 

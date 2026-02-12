@@ -16,12 +16,13 @@
 //!   └── ...
 //! ```
 
-use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage};
+use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage, ReplicationLog};
 use crate::storage::RedbStore;
-use crate::transport::{NodeAddress, RaftClientPool, TransportError, TransportLoop};
+use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap, TransportError, TransportLoop};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -29,8 +30,8 @@ use tokio::task::JoinHandle;
 struct ZoneEntry {
     /// RaftNode handle (Clone + Send + Sync).
     node: RaftNode<FullStateMachine>,
-    /// Known peers for this zone.
-    peers: HashMap<u64, NodeAddress>,
+    /// Known peers for this zone. Shared with TransportLoop for runtime ConfChange updates.
+    peers: SharedPeerMap,
     /// This node's ID within the zone.
     #[expect(
         dead_code,
@@ -71,20 +72,10 @@ impl ZoneRaftRegistry {
 
     /// Create a new zone with its own Raft group.
     ///
-    /// This creates a new sled database, RaftNode, and TransportLoop for the zone.
-    /// The transport loop is spawned on the provided Tokio runtime.
-    ///
     /// # Arguments
     /// * `zone_id` — Unique zone identifier.
     /// * `peers` — Peer nodes in this zone's Raft group.
-    /// * `lazy` — If true, use EC mode (lazy consensus) for metadata writes.
     /// * `runtime_handle` — Tokio runtime handle for spawning the transport loop.
-    ///
-    /// # Returns
-    /// The RaftNode handle for the new zone.
-    ///
-    /// # Errors
-    /// Returns error if zone already exists or if creation fails.
     #[expect(
         clippy::result_large_err,
         reason = "TransportError contains tonic types; will Box in transport refactor"
@@ -93,10 +84,58 @@ impl ZoneRaftRegistry {
         &self,
         zone_id: &str,
         peers: Vec<NodeAddress>,
-        lazy: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<RaftNode<FullStateMachine>, TransportError> {
-        // Check for duplicate
+        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: peer_ids,
+            ..Default::default()
+        };
+
+        let campaign = peers.is_empty(); // single-node: campaign immediately
+        self.setup_zone(zone_id, config, peers, campaign, runtime_handle)
+    }
+
+    /// Join an existing zone as a new Voter.
+    ///
+    /// Unlike `create_zone`, this does NOT bootstrap ConfState and does NOT campaign.
+    /// The leader's snapshot will bring the correct voter set after ConfChange commit.
+    ///
+    /// After calling this, send a JoinZone RPC to the leader.
+    #[expect(
+        clippy::result_large_err,
+        reason = "TransportError contains tonic types; will Box in transport refactor"
+    )]
+    pub fn join_zone(
+        &self,
+        zone_id: &str,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<RaftNode<FullStateMachine>, TransportError> {
+        // Empty peers in config → no ConfState bootstrap. Snapshot overwrites.
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            ..Default::default()
+        };
+
+        self.setup_zone(zone_id, config, peers, false, runtime_handle)
+    }
+
+    /// Internal: open sled, create RaftNode + driver, spawn transport loop, register zone.
+    #[expect(
+        clippy::result_large_err,
+        reason = "TransportError contains tonic types; will Box in transport refactor"
+    )]
+    fn setup_zone(
+        &self,
+        zone_id: &str,
+        config: RaftConfig,
+        peers: Vec<NodeAddress>,
+        campaign: bool,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<RaftNode<FullStateMachine>, TransportError> {
         if self.zones.contains_key(zone_id) {
             return Err(TransportError::Connection(format!(
                 "Zone '{}' already exists",
@@ -104,56 +143,47 @@ impl ZoneRaftRegistry {
             )));
         }
 
-        // Create zone-specific sled paths
+        // Open zone-specific redb + state machine
         let zone_path = self.base_path.join(zone_id);
-        let sm_path = zone_path.join("sm");
-        let raft_path = zone_path.join("raft");
-
-        // Open sled + state machine
-        let store = RedbStore::open(&sm_path)
+        let store = RedbStore::open(zone_path.join("sm"))
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-
-        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
+        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
-
         let state_machine = FullStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create state machine: {}", e))
         })?;
 
-        // Configure Raft node
-        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let mut config = RaftConfig {
-            id: self.node_id,
-            peers: peer_ids,
-            ..Default::default()
+        // Create EC replication log (non-witness nodes only)
+        let replication_log = if !config.is_witness {
+            let log = ReplicationLog::new(&store, config.id).map_err(|e| {
+                TransportError::Connection(format!("Failed to create ReplicationLog: {}", e))
+            })?;
+            Some(Arc::new(log))
+        } else {
+            None
         };
-        if lazy {
-            // EC mode marker — the actual lazy behavior is handled in PyO3 layer
-            // For now, the RaftNode itself is always SC; EC wraps it with local-apply-first
-            let _ = &mut config; // placeholder for future EC config
-        }
 
         // Create RaftNode handle + driver
-        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine)
-            .map_err(|e| TransportError::Connection(format!("Failed to create RaftNode: {}", e)))?;
+        let (handle, mut driver) =
+            RaftNode::new(config, raft_storage, state_machine, replication_log).map_err(|e| {
+                TransportError::Connection(format!("Failed to create RaftNode: {}", e))
+            })?;
 
-        // Peer map for transport loop
-        let peer_map: HashMap<u64, NodeAddress> =
-            peers.iter().cloned().map(|p| (p.id, p)).collect();
+        // Peer map — shared between ZoneEntry, TransportLoop, and RaftNodeDriver.
+        let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
+        let shared_peers: SharedPeerMap = Arc::new(RwLock::new(peer_map));
 
-        // Create transport loop with zone_id for message routing
-        let transport_loop = TransportLoop::new(driver, peer_map.clone(), RaftClientPool::new())
-            .with_zone_id(zone_id.to_string());
+        driver.set_peer_map(shared_peers.clone());
 
-        // Shutdown signal
+        let transport_loop =
+            TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::new())
+                .with_zone_id(zone_id.to_string());
+
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-        // Spawn transport loop
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
-        // Single-node: campaign immediately
-        if peers.is_empty() {
+        if campaign {
             let campaign_node = handle.clone();
             runtime_handle.spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -164,21 +194,23 @@ impl ZoneRaftRegistry {
         }
 
         tracing::info!(
-            "Zone '{}' created (node_id={}, peers={})",
+            "Zone '{}' {} (node_id={}, peers={})",
             zone_id,
+            if campaign { "created" } else { "joined" },
             self.node_id,
-            peer_map.len()
+            shared_peers.read().unwrap().len()
         );
 
-        let entry = ZoneEntry {
-            node: handle.clone(),
-            peers: peer_map,
-            node_id: self.node_id,
-            shutdown_tx,
-            _transport_handle: transport_handle,
-        };
-
-        self.zones.insert(zone_id.to_string(), entry);
+        self.zones.insert(
+            zone_id.to_string(),
+            ZoneEntry {
+                node: handle.clone(),
+                peers: shared_peers,
+                node_id: self.node_id,
+                shutdown_tx,
+                _transport_handle: transport_handle,
+            },
+        );
 
         Ok(handle)
     }
@@ -188,9 +220,24 @@ impl ZoneRaftRegistry {
         self.zones.get(zone_id).map(|e| e.node.clone())
     }
 
-    /// Get the peers map for a zone.
+    /// Get a snapshot of the peers map for a zone.
     pub fn get_peers(&self, zone_id: &str) -> Option<HashMap<u64, NodeAddress>> {
-        self.zones.get(zone_id).map(|e| e.peers.clone())
+        self.zones
+            .get(zone_id)
+            .map(|e| e.peers.read().unwrap().clone())
+    }
+
+    /// Add a peer to a zone's peer map at runtime (called after ConfChange commit).
+    ///
+    /// The transport loop sees the new peer on its next tick because
+    /// it shares the same `SharedPeerMap` via `Arc`.
+    pub fn add_peer(&self, zone_id: &str, node_id: u64, address: NodeAddress) -> bool {
+        if let Some(entry) = self.zones.get(zone_id) {
+            entry.peers.write().unwrap().insert(node_id, address);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get the node_id for a zone (same across all zones on this node).

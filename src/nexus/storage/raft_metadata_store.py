@@ -1,23 +1,19 @@
 """Raft-backed metadata store for Nexus.
 
-This is the primary metadata storage for Nexus, using an embedded sled database
+This is the primary metadata storage for Nexus, using an embedded redb database
 with optional Raft consensus for multi-node deployments.
 
 Architecture:
-    Embedded:  Python -> Metastore (PyO3) -> sled (~5μs)
-    SC mode:   Python -> RaftConsensus (PyO3) -> Raft consensus -> sled (~2-10ms)
-    EC mode:   Python -> RaftConsensus (PyO3, lazy) -> local apply + bg propose (~5μs)
-    Remote:    Python -> gRPC -> Rust (nexus_raft) -> sled (~200μs)
+    Embedded:  Python -> Metastore (PyO3) -> redb (~5μs)
+    Consensus: Python -> RaftConsensus (PyO3) -> Raft consensus -> redb (~2-10ms)
+    Remote:    Python -> gRPC -> Rust (nexus_raft) -> redb (~200μs)
 
 Usage:
     # Embedded mode (same box) - DEFAULT
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
-    # SC mode (multi-node with Raft consensus)
-    store = RaftMetadataStore.sc(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
-
-    # EC mode (multi-node with lazy consensus)
-    store = RaftMetadataStore.ec(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+    # Consensus mode (multi-node with Raft)
+    store = RaftMetadataStore.consensus(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
 
     # Remote mode (thin client)
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
@@ -53,7 +49,7 @@ def _serialize_metadata(metadata: FileMetadata) -> bytes:
     Uses protobuf when available, falls back to JSON otherwise.
     Delegates field mapping to MetadataMapper (Issue #1246).
     """
-    from nexus.storage.metadata_mapper import MetadataMapper
+    from nexus.storage._metadata_mapper_generated import MetadataMapper
 
     if _HAS_PROTOBUF:
         proto = MetadataMapper.to_proto(metadata)
@@ -70,11 +66,14 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
     Supports both protobuf (new) and JSON (fallback) formats.
     Delegates field mapping to MetadataMapper (Issue #1246).
     """
-    from nexus.storage.metadata_mapper import MetadataMapper
+    from nexus.storage._metadata_mapper_generated import MetadataMapper
 
     # Handle both bytes and list of ints (from PyO3)
     if isinstance(data, list):
         data = bytes(data)
+
+    if not data:
+        raise ValueError("Cannot deserialize empty bytes")
 
     # Try protobuf first if available
     if _HAS_PROTOBUF:
@@ -97,26 +96,21 @@ class RaftMetadataStore(FileMetadataProtocol):
     """Primary metadata store for Nexus using embedded sled database.
 
     This store provides fast local metadata operations (~5μs) with optional
-    Raft consensus for multi-node strong consistency.
+    Raft consensus for multi-node replication.
 
-    Four modes of operation:
-    1. Embedded mode (DEFAULT): Direct sled via Metastore PyO3 (~5μs latency)
-    2. SC mode: Raft consensus via RaftConsensus PyO3 (~2-10ms, replicated)
-    3. EC mode: Lazy consensus via RaftConsensus PyO3 (~5μs, background replication)
-    4. Remote mode: gRPC client (~200μs latency)
+    Three modes of operation:
+    1. Embedded mode (DEFAULT): Direct redb via Metastore PyO3 (~5μs latency)
+    2. Consensus mode: Raft consensus via RaftConsensus PyO3 (~2-10ms, replicated)
+    3. Remote mode: gRPC client (~200μs latency)
 
     Example:
         # Embedded mode (default)
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
-        # SC mode (multi-node consensus)
-        store = RaftMetadataStore.sc(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+        # Consensus mode (multi-node)
+        store = RaftMetadataStore.consensus(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
         store.put(metadata)  # replicated
-
-        # EC mode (multi-node lazy consensus)
-        store = RaftMetadataStore.ec(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
-        store.put(metadata)  # local + background replication
 
         # Remote mode (thin client)
         store = await RaftMetadataStore.remote("10.0.0.2:2026")
@@ -130,7 +124,7 @@ class RaftMetadataStore(FileMetadataProtocol):
     ):
         """Initialize RaftMetadataStore.
 
-        Use the factory methods `embedded()`, `sc()`, `ec()`, or `remote()`
+        Use the factory methods `embedded()`, `consensus()`, or `remote()`
         instead of calling this constructor directly.
 
         Args:
@@ -169,26 +163,33 @@ class RaftMetadataStore(FileMetadataProtocol):
             return None
         return _deserialize_metadata(data)
 
-    def _put_engine(self, metadata: FileMetadata) -> None:
+    def _put_engine(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store metadata in the embedded sled engine.
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed).
         """
         data = _serialize_metadata(metadata)
-        self._engine.set_metadata(metadata.path, data)
+        return self._engine.set_metadata(metadata.path, data, consistency=consistency)
 
-    def _delete_engine(self, path: str) -> dict[str, Any] | None:
+    def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget).
+                         Only used when the engine is RaftConsensus.
 
         Returns:
             Dictionary with deleted file info or None
         """
         existing = self._get_engine(path)
-        self._engine.delete_metadata(path)
+        self._engine.delete_metadata(path, consistency=consistency)
         if existing:
             return {
                 "path": existing.path,
@@ -258,7 +259,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         return cls(engine=metastore, zone_id=zone_id)
 
     @classmethod
-    def sc(
+    def consensus(
         cls,
         node_id: int,
         db_path: str,
@@ -266,20 +267,20 @@ class RaftMetadataStore(FileMetadataProtocol):
         peers: list[str] | None = None,
         zone_id: str | None = None,
     ) -> RaftMetadataStore:
-        """Create an SC (Strong Consistency) metastore with Raft consensus.
+        """Create a consensus metastore with Raft replication.
 
         Each NexusFS node becomes a full Raft participant. Writes go through
         consensus (replicated to peers), reads are local (~5us).
 
         Args:
             node_id: Unique node ID within the cluster (1-indexed).
-            db_path: Path to the sled database directory.
+            db_path: Path to the redb database directory.
             bind_address: gRPC bind address for Raft inter-node traffic.
             peers: List of peer addresses in "id@host:port" format.
             zone_id: Zone ID for this store.
 
         Returns:
-            RaftMetadataStore instance with Raft consensus (SC mode).
+            RaftMetadataStore instance with Raft consensus.
         """
         from nexus.raft import RaftConsensus
 
@@ -291,46 +292,7 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         consensus = RaftConsensus(node_id, db_path, bind_address, peers or [])
         logger.info(
-            f"Created SC RaftMetadataStore (node={node_id}, bind={bind_address}, "
-            f"peers={len(peers or [])})"
-        )
-        return cls(engine=consensus, zone_id=zone_id)
-
-    @classmethod
-    def ec(
-        cls,
-        node_id: int,
-        db_path: str,
-        bind_address: str = "0.0.0.0:2126",
-        peers: list[str] | None = None,
-        zone_id: str | None = None,
-    ) -> RaftMetadataStore:
-        """Create an EC (Eventual Consistency) metastore with lazy consensus.
-
-        Metadata writes apply locally (~5μs) and replicate in the background
-        via Raft propose with retry. Lock operations always use SC (consensus).
-
-        Args:
-            node_id: Unique node ID within the cluster (1-indexed).
-            db_path: Path to the sled database directory.
-            bind_address: gRPC bind address for Raft inter-node traffic.
-            peers: List of peer addresses in "id@host:port" format.
-            zone_id: Zone ID for this store.
-
-        Returns:
-            RaftMetadataStore instance with lazy consensus (EC mode).
-        """
-        from nexus.raft import RaftConsensus
-
-        if RaftConsensus is None:
-            raise RuntimeError(
-                "RaftConsensus not available. Build with: "
-                "maturin develop -m rust/nexus_raft/Cargo.toml --features full"
-            )
-
-        consensus = RaftConsensus(node_id, db_path, bind_address, peers or [], lazy=True)
-        logger.info(
-            f"Created EC RaftMetadataStore (node={node_id}, bind={bind_address}, "
+            f"Created consensus RaftMetadataStore (node={node_id}, bind={bind_address}, "
             f"peers={len(peers or [])})"
         )
         return cls(engine=consensus, zone_id=zone_id)
@@ -373,28 +335,49 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store or update file metadata.
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed when this returns).
         """
         if self._has_engine:
-            self._put_engine(metadata)
+            return self._put_engine(metadata, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def is_committed(self, token: int) -> str | None:
+        """Check if an EC write token has been replicated to a majority.
+
+        Args:
+            token: Write token returned by put() with consistency="ec".
+
+        Returns:
+            "committed" — replicated to majority.
+            "pending" — local only, awaiting replication.
+            None — invalid token or no replication log.
+        """
+        if self._has_engine:
+            return self._engine.is_committed(token)
+        return None
+
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata.
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
 
         Returns:
             Dictionary with deleted file info or None
         """
         if self._has_engine:
-            return self._delete_engine(path)
+            return self._delete_engine(path, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use delete_async() instead.")
 
@@ -528,12 +511,12 @@ class RaftMetadataStore(FileMetadataProtocol):
                 # Skip extended attribute keys (format: "meta:{path}:{key}")
                 if path.startswith("meta:"):
                     continue
-                metadata = _deserialize_metadata(data)
+                # Apply path-based filters BEFORE expensive deserialization
                 if not recursive:
-                    # Filter to direct children only
                     rel_path = path[len(prefix) :].lstrip("/")
                     if "/" in rel_path:
                         continue
+                metadata = _deserialize_metadata(data)
                 # Filter by accessible_int_ids if provided
                 if accessible_int_ids is not None:
                     if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
@@ -550,12 +533,15 @@ class RaftMetadataStore(FileMetadataProtocol):
         cursor: str | None = None,
         zone_id: str | None = None,
     ) -> PaginatedResult:
-        """List files with cursor-based pagination."""
-        # Simple implementation - get all and paginate in memory
-        all_items = self.list(prefix, recursive)
+        """List files with cursor-based pagination.
 
-        # Handle cursor - decode if it's a base64-encoded cursor from pagination module
-        start_idx = 0
+        Uses list_iter() to avoid loading all entries into memory.
+        Memory usage is O(limit) instead of O(total).
+        """
+        from itertools import islice
+
+        # Decode cursor if it's base64-encoded
+        cursor_path: str | None = None
         if cursor:
             cursor_path = cursor
             try:
@@ -569,26 +555,28 @@ class RaftMetadataStore(FileMetadataProtocol):
                 decoded = decode_cursor(cursor, filters)
                 cursor_path = decoded.path
             except Exception:
-                # Fall back to treating cursor as a raw path
                 cursor_path = cursor
 
-            for i, item in enumerate(all_items):
-                if item.path > cursor_path:
-                    start_idx = i
-                    break
-            else:
-                # No item found after cursor - we're past the end
-                start_idx = len(all_items)
+        # Stream through entries, skipping past cursor
+        items_iter = self.list_iter(prefix, recursive)
 
-        page = all_items[start_idx : start_idx + limit]
-        has_more = start_idx + limit < len(all_items)
+        if cursor_path:
+            # Skip entries up to and including cursor position
+            items_iter = (item for item in items_iter if item.path > cursor_path)
+
+        # Take limit + 1 to detect has_more without loading everything
+        page = list(islice(items_iter, limit + 1))
+        has_more = len(page) > limit
+        if has_more:
+            page = page[:limit]
+
         next_cursor = page[-1].path if has_more and page else None
 
         return PaginatedResult(
             items=page,
             next_cursor=next_cursor,
             has_more=has_more,
-            total_count=len(all_items),
+            total_count=None,  # Unavailable without full scan (use -1 for unknown)
         )
 
     def close(self) -> None:
@@ -620,8 +608,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             The new revision number after incrementing
         """
-        if self._is_local:
-            return self._local.increment_revision(zone_id)
+        if self._has_engine:
+            return self._engine.increment_revision(zone_id)
         raise NotImplementedError("Remote revision counter requires async")
 
     def get_revision(self, zone_id: str) -> int:
@@ -633,8 +621,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             The current revision number (0 if not found)
         """
-        if self._is_local:
-            return self._local.get_revision(zone_id)
+        if self._has_engine:
+            return self._engine.get_revision(zone_id)
         raise NotImplementedError("Remote revision counter requires async")
 
     # =========================================================================
@@ -644,12 +632,26 @@ class RaftMetadataStore(FileMetadataProtocol):
     def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         """Get metadata for multiple files.
 
+        Uses native get_metadata_multi when available (single FFI call)
+        instead of N individual get() calls.
+
         Args:
             paths: List of virtual paths
 
         Returns:
             Dictionary mapping path to FileMetadata (or None if not found)
         """
+        if not paths:
+            return {}
+
+        if self._has_engine:
+            results = self._engine.get_metadata_multi(list(paths))
+            return {
+                path: _deserialize_metadata(data) if data is not None else None
+                for path, data in results
+            }
+
+        # Fallback for remote mode
         return {path: self.get(path) for path in paths}
 
     def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
@@ -673,13 +675,10 @@ class RaftMetadataStore(FileMetadataProtocol):
             (m.path, _serialize_metadata(m)) for m in metadata_list
         ]
 
-        # Phase 2: apply all writes, tracking progress for rollback
-        completed_paths: list[str] = []
+        # Phase 2: apply all writes in a single FFI call
         try:
             if self._has_engine:
-                for path, data in serialized:
-                    self._engine.set_metadata(path, data)
-                    completed_paths.append(path)
+                self._engine.batch_set_metadata(serialized)
             else:
                 raise NotImplementedError(
                     "Remote mode requires async. Use put_batch_async() instead."
@@ -688,22 +687,18 @@ class RaftMetadataStore(FileMetadataProtocol):
             raise
         except Exception as e:
             # Best-effort rollback: delete entries that were written
-            for rollback_path in completed_paths:
-                try:
-                    self._engine.delete_metadata(rollback_path)
-                except Exception:
-                    logger.warning("put_batch rollback failed for path: %s", rollback_path)
-            raise RuntimeError(
-                f"put_batch failed after writing {len(completed_paths)}/{len(serialized)} "
-                f"entries (rolled back {len(completed_paths)} writes): {e}"
-            ) from e
+            paths_to_rollback = [path for path, _ in serialized]
+            try:
+                self._engine.batch_delete_metadata(paths_to_rollback)
+            except Exception:
+                logger.warning("put_batch rollback failed for %d paths", len(paths_to_rollback))
+            raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
 
     def delete_batch(self, paths: Sequence[str]) -> None:
         """Delete multiple file metadata entries atomically.
 
-        Existing metadata is captured upfront so that previously deleted
-        entries can be restored on a best-effort basis if a failure occurs
-        mid-batch.
+        Uses batch FFI calls: get_metadata_multi (1 call) for rollback snapshots
+        and batch_delete_metadata (1 call) for deletes.
 
         Args:
             paths: List of virtual paths to delete
@@ -714,43 +709,36 @@ class RaftMetadataStore(FileMetadataProtocol):
         if not paths:
             return
 
-        # Phase 1: capture existing metadata for rollback
-        snapshots: list[tuple[str, bytes | None]] = []
-        if self._has_engine:
-            for path in paths:
-                existing_data = self._engine.get_metadata(path)
-                snapshots.append((path, existing_data))
-        else:
+        if not self._has_engine:
             raise NotImplementedError(
                 "Remote mode requires async. Use delete_batch_async() instead."
             )
 
-        # Phase 2: apply all deletes, tracking progress for rollback
-        completed: list[tuple[str, bytes | None]] = []
+        path_list = list(paths)
+
+        # Phase 1: capture existing metadata for rollback (single FFI call)
+        snapshots = self._engine.get_metadata_multi(path_list)
+
+        # Phase 2: apply all deletes in a single FFI call
         try:
-            for path, existing_data in snapshots:
-                self._engine.delete_metadata(path)
-                completed.append((path, existing_data))
+            self._engine.batch_delete_metadata(path_list)
         except Exception as e:
             # Best-effort rollback: restore entries that were deleted
-            for rollback_path, rollback_data in completed:
-                if rollback_data is not None:
-                    try:
-                        self._engine.set_metadata(rollback_path, rollback_data)
-                    except Exception:
-                        logger.warning(
-                            "delete_batch rollback failed for path: %s",
-                            rollback_path,
-                        )
-            raise RuntimeError(
-                f"delete_batch failed after deleting {len(completed)}/{len(paths)} "
-                f"entries (rolled back {len(completed)} deletes): {e}"
-            ) from e
+            rollback_items = [(path, data) for path, data in snapshots if data is not None]
+            if rollback_items:
+                try:
+                    self._engine.batch_set_metadata(rollback_items)
+                except Exception:
+                    logger.warning(
+                        "delete_batch rollback failed for %d paths",
+                        len(rollback_items),
+                    )
+            raise RuntimeError(f"delete_batch failed deleting {len(path_list)} entries: {e}") from e
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         """Get content IDs (hashes) for multiple paths.
 
-        Useful for CAS deduplication.
+        Uses get_batch() for a single FFI call instead of N individual calls.
 
         Args:
             paths: List of virtual paths
@@ -758,11 +746,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary mapping path to content_hash (or None if not found)
         """
-        result = {}
-        for path in paths:
-            metadata = self.get(path)
-            result[path] = metadata.etag if metadata else None
-        return result
+        if not paths:
+            return {}
+        batch = self.get_batch(paths)
+        return {path: (meta.etag if meta else None) for path, meta in batch.items()}
 
     # =========================================================================
     # Custom File Metadata (key-value pairs per file)
@@ -821,6 +808,8 @@ class RaftMetadataStore(FileMetadataProtocol):
     def get_file_metadata_bulk(self, paths: Sequence[str], key: str) -> dict[str, Any]:
         """Get custom metadata value for multiple files.
 
+        Uses get_metadata_multi for a single FFI call instead of N individual calls.
+
         Args:
             paths: List of virtual file paths
             key: Metadata key
@@ -828,6 +817,20 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             Dictionary mapping path to value (or None if not found)
         """
+        if not paths:
+            return {}
+        if self._has_engine:
+            # Build meta keys and batch-fetch in one FFI call
+            meta_keys = [f"meta:{path}:{key}" for path in paths]
+            results = self._engine.get_metadata_multi(meta_keys)
+            out: dict[str, Any] = {}
+            for (_meta_key, data), path in zip(results, paths, strict=True):
+                if data is None:
+                    out[path] = None
+                else:
+                    raw = bytes(data) if isinstance(data, list) else data
+                    out[path] = json.loads(raw.decode("utf-8"))
+            return out
         return {path: self.get_file_metadata(path, key) for path in paths}
 
     def get_searchable_text(self, path: str) -> str | None:
@@ -847,18 +850,18 @@ class RaftMetadataStore(FileMetadataProtocol):
     def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:
         """Get cached searchable text for multiple files.
 
+        Uses get_file_metadata_bulk for a single FFI call instead of N individual calls.
+
         Args:
             paths: List of virtual file paths
 
         Returns:
             Dictionary mapping path to text (only includes paths with cached text)
         """
-        result = {}
-        for path in paths:
-            text = self.get_searchable_text(path)
-            if text is not None:
-                result[path] = text
-        return result
+        if not paths:
+            return {}
+        bulk = self.get_file_metadata_bulk(paths, "parsed_text")
+        return {path: text for path, text in bulk.items() if text is not None}
 
     # =========================================================================
     # Lock Operations (Raft provides distributed locks)
@@ -1014,28 +1017,30 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             return await self._client.get_metadata(path, zone_id=self._zone_id)
 
-    async def put_async(self, metadata: FileMetadata) -> None:
+    async def put_async(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata (async).
 
         Args:
             metadata: File metadata to store
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
         """
         if self._has_engine:
-            self._put_engine(metadata)
+            self._put_engine(metadata, consistency=consistency)
         else:
             await self._client.put_metadata(metadata, zone_id=self._zone_id)
 
-    async def delete_async(self, path: str) -> dict[str, Any] | None:
+    async def delete_async(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata (async).
 
         Args:
             path: Virtual path
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
 
         Returns:
             Dictionary with deleted file info or None
         """
         if self._has_engine:
-            return self._delete_engine(path)
+            return self._delete_engine(path, consistency=consistency)
         else:
             existing = await self.get_async(path)
             await self._client.delete_metadata(path, zone_id=self._zone_id)

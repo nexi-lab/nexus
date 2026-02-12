@@ -309,6 +309,8 @@ class AppState:
         self.task_runner: Any = None
         # Event Log WAL for durable event persistence (Issue #1397)
         self.event_log: Any = None
+        # Issue #1355: Agent identity KeyService
+        self.key_service: Any = None
 
 
 # Global state (set during app creation)
@@ -373,25 +375,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Issue #1239: Create namespace manager for per-subject visibility
-                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 if enforce_permissions and hasattr(_app_state, "nexus_fs"):
                     sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
-                            "using sync rebac_manager for mount table queries)"
+                            "(using sync rebac_manager, L3=%s)",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -481,16 +480,6 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
-
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
-    try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
-
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
 
     # Issue #1397: Start event bus and wire event log for WAL-first persistence
     if _app_state.nexus_fs:
@@ -807,6 +796,39 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app_state.agent_registry = None
 
+    # Issue #1355: Initialize KeyService for agent identity
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.identity.crypto import IdentityCrypto
+            from nexus.identity.key_service import KeyService
+            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
+            from nexus.server.auth.oauth_crypto import OAuthCrypto
+
+            # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
+            # after SQLAlchemyRecordStore.create_all already ran)
+            _nx_engine = getattr(_app_state.nexus_fs, "_sql_engine", None)
+            if _nx_engine is not None:
+                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
+
+            # Reuse OAuthCrypto for Fernet encryption of private keys
+            _db_url = _app_state.database_url or "sqlite:///nexus.db"
+            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
+
+            _app_state.key_service = KeyService(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                crypto=_identity_crypto,
+            )
+            # Inject into NexusFS for register_agent integration
+            _app_state.nexus_fs._key_service = _app_state.key_service
+
+            logger.info("[KYA] KeyService initialized and wired")
+        except Exception as e:
+            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            _app_state.key_service = None
+    else:
+        _app_state.key_service = None
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -844,7 +866,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # (separate from NexusFS's lazy sandbox manager — different layers)
                 sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
-                    db_session=session_factory(),
+                    session_factory=session_factory,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
                     e2b_team_id=os.getenv("E2B_TEAM_ID"),
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
@@ -852,19 +874,17 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Get NamespaceManager if available (best-effort)
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(
@@ -1040,15 +1060,11 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Error closing event log: {e}")
 
-    # Issue #1307: Close SandboxAuthService database session
+    # SandboxManager now uses session-per-operation — no persistent session to close
     if _app_state.sandbox_auth_service:
-        try:
-            sandbox_mgr = _app_state.sandbox_auth_service._sandbox_manager
-            if hasattr(sandbox_mgr, "db") and sandbox_mgr.db:
-                sandbox_mgr.db.close()
-            logger.info("[SANDBOX-AUTH] SandboxAuthService session closed")
-        except Exception as e:
-            logger.warning(f"[SANDBOX-AUTH] Error closing session: {e}")
+        logger.info(
+            "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
+        )
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1739,74 +1755,29 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
-    # API v2 routes - Memory & ACE endpoints (Issue #1193)
+    # API v2 routes — centralized registration via versioning module (#995)
+    from nexus.server.api.v2.versioning import (
+        DeprecationMiddleware,
+        VersionHeaderMiddleware,
+        build_v2_registry,
+        register_v2_routers,
+    )
+
+    v2_registry = build_v2_registry(
+        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
+    )
+    register_v2_routers(app, v2_registry)
+    app.add_middleware(VersionHeaderMiddleware)
+    app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Exchange Protocol error handler (Issue #1361)
     try:
-        from nexus.server.api.v2.routers import (
-            audit,
-            conflicts,
-            consolidation,
-            curate,
-            feedback,
-            memories,
-            mobile_search,
-            operations,
-            playbooks,
-            reflect,
-            trajectories,
-        )
+        from nexus.server.api.v2.error_handler import register_exchange_error_handler
 
-        app.include_router(memories.router)
-        app.include_router(trajectories.router)
-        app.include_router(feedback.router)
-        app.include_router(playbooks.router)
-        app.include_router(reflect.router)
-        app.include_router(curate.router)
-        app.include_router(consolidation.router)
-        app.include_router(mobile_search.router)
-        app.include_router(conflicts.router)
-        app.include_router(operations.router)
-        app.include_router(audit.router)
-        logger.info("API v2 routes registered (48 endpoints)")
+        register_exchange_error_handler(app)
+        logger.info("Exchange protocol error handler registered")
     except ImportError as e:
-        logger.warning(
-            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
-        )
-
-    # Nexus Pay API routes (Issue #1209)
-    try:
-        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        app.include_router(pay_router)
-        _register_pay_exception_handlers(app)
-        logger.info("Nexus Pay API routes registered (8 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
-        )
-
-    # Scheduler REST API routes (Issue #1212)
-    try:
-        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
-
-        app.include_router(scheduler_router)
-        logger.info("Scheduler API routes registered (3 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
-        )
-
-    # Issue #940: Register async files router (lazy initialization via lifespan)
-    try:
-        from nexus.server.api.v2.routers.async_files import create_async_files_router
-
-        async_files_router = create_async_files_router(
-            get_fs=lambda: _app_state.async_nexus_fs,
-        )
-        app.include_router(async_files_router, prefix="/api/v2/files")
-        logger.info("Async files router registered (9 endpoints)")
-    except ImportError as e:
-        logger.warning(f"Failed to import async files router: {e}")
+        logger.warning(f"Failed to register Exchange error handler: {e}.")
 
     # A2A Protocol Endpoint (Issue #1256)
     try:
@@ -3375,6 +3346,99 @@ def _register_routes(app: FastAPI) -> None:
             expires_at=expires_at_iso,
             fence_token=fence_token,
         )
+
+    # ========================================================================
+    # Agent Identity Endpoints (Issue #1355)
+    # ========================================================================
+
+    @app.get("/api/agents/{agent_id}/identity", tags=["identity"])
+    async def get_agent_identity(
+        agent_id: str,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Get an agent's public identity (DID, public key, key_id).
+
+        Returns the agent's active signing key information for verification.
+        """
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+        if not keys:
+            raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
+
+        newest = keys[0]
+        return {
+            "agent_id": agent_id,
+            "key_id": newest.key_id,
+            "did": newest.did,
+            "algorithm": newest.algorithm,
+            "public_key_hex": newest.public_key_bytes.hex(),
+            "created_at": newest.created_at.isoformat() if newest.created_at else None,
+            "expires_at": newest.expires_at.isoformat() if newest.expires_at else None,
+        }
+
+    @app.post("/api/agents/{agent_id}/verify", tags=["identity"])
+    async def verify_agent_signature(
+        agent_id: str,
+        request: Request,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Verify a signature produced by an agent's signing key.
+
+        Request body:
+            {
+                "message": "<base64-encoded message>",
+                "signature": "<base64-encoded signature>",
+                "key_id": "<optional key_id, uses newest active key if omitted>"
+            }
+        """
+        import base64
+
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        body = await request.json()
+        message_b64 = body.get("message")
+        signature_b64 = body.get("signature")
+        key_id = body.get("key_id")
+
+        if not message_b64 or not signature_b64:
+            raise HTTPException(
+                status_code=400, detail="'message' and 'signature' are required (base64)"
+            )
+
+        try:
+            message = base64.b64decode(message_b64)
+            signature = base64.b64decode(signature_b64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding") from exc
+
+        # Resolve public key
+        resolved_key_id = key_id
+        if key_id:
+            record = await asyncio.to_thread(_app_state.key_service.get_public_key, key_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Key not found or not active")
+            if record.agent_id != agent_id:
+                raise HTTPException(status_code=403, detail="Key does not belong to this agent")
+            from nexus.identity.crypto import IdentityCrypto
+
+            public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
+        else:
+            keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+            if not keys:
+                raise HTTPException(
+                    status_code=404, detail=f"No active keys for agent '{agent_id}'"
+                )
+            resolved_key_id = keys[0].key_id
+            from nexus.identity.crypto import IdentityCrypto
+
+            public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
+
+        valid = _app_state.key_service._crypto.verify(message, signature, public_key)
+
+        return {"valid": valid, "agent_id": agent_id, "key_id": resolved_key_id}
 
     # ========================================================================
     # WebSocket Endpoint for Real-Time Events (Issue #1116)

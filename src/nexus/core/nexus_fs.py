@@ -38,7 +38,8 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_events import NexusFSEventsMixin
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+
+# NexusFSLLMMixin removed in Phase B — replaced by LLMSubsystem (Issue #1287)
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
@@ -76,7 +77,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSOAuthMixin,
     NexusFSSkillsMixin,
     NexusFSMCPMixin,
-    NexusFSLLMMixin,
+    # NexusFSLLMMixin removed — replaced by LLMSubsystem (Issue #1287)
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
     NexusFSTasksMixin,  # Issue #574: Durable task queue
     NexusFilesystem,
@@ -160,6 +161,10 @@ class NexusFS(  # type: ignore[misc]
         version_service: Any | None = None,
         # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
         overlay_resolver: Any | None = None,
+        # Issue #1210: Wallet provisioner for auto-creating TigerBeetle accounts
+        # on agent registration. Duck-typed callable: (agent_id: str, zone_id: str) -> None.
+        # Injected by factory.py when NEXUS_PAY is available.
+        wallet_provisioner: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -360,6 +365,7 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
         self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
+        self._wallet_provisioner = wallet_provisioner  # Issue #1210: auto-wallet on registration
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -583,7 +589,11 @@ class NexusFS(  # type: ignore[misc]
         self.mcp_service = MCPService(nexus_fs=self)
 
         # LLMService: LLM integration operations (4 methods)
+        # Issue #1287 Phase B: Wrapped in LLMSubsystem for lifecycle management
         self.llm_service = LLMService(nexus_fs=self)
+        from nexus.services.subsystems.llm_subsystem import LLMSubsystem
+
+        self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 
         # OAuthService: OAuth authentication operations (7 methods)
         # Lazy initialization of oauth_factory and token_manager happens in service
@@ -1219,6 +1229,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
+        file_metadata: FileMetadata | None = None,
     ) -> None:
         """Check if operation is permitted.
 
@@ -1226,6 +1237,8 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path
             permission: Permission to check (READ, WRITE, EXECUTE)
             context: Optional operation context (defaults to self._default_context)
+            file_metadata: Pre-fetched metadata for owner fast-path (avoids redundant
+                metadata lookup when caller already has it)
 
         Raises:
             PermissionError: If access is denied
@@ -1303,7 +1316,13 @@ class NexusFS(  # type: ignore[misc]
         # Issue #920: O(1) owner fast-path check
         # If the file has posix_uid set and it matches the requesting user, skip ReBAC
         # This avoids expensive graph traversal for owner accessing their own files
-        file_meta = self.metadata.get(permission_path)
+        # Use pre-fetched metadata when available (avoids redundant FFI call)
+        # Use pre-fetched metadata when path wasn't redirected to a virtual view's original
+        file_meta = (
+            file_metadata
+            if (file_metadata is not None and permission_path == path)
+            else self.metadata.get(permission_path)
+        )
         if file_meta and file_meta.owner_id:
             subject_id = ctx.subject_id or ctx.user
             if file_meta.owner_id == subject_id:
@@ -3868,6 +3887,7 @@ class NexusFS(  # type: ignore[misc]
         description: str | None = None,
         generate_api_key: bool = False,
         metadata: dict | None = None,  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
+        capabilities: list[str] | None = None,  # Issue #1210: Agent capabilities for discovery
         context: dict | None = None,
     ) -> dict:
         """Register an AI agent (v0.5.0).
@@ -3885,6 +3905,7 @@ class NexusFS(  # type: ignore[misc]
             generate_api_key: If True, create API key for agent (not recommended)
             metadata: Optional metadata dict (platform, endpoint_url, agent_id, etc.)
                      Stored in agent's config.yaml for agent configuration
+            capabilities: Optional list of capabilities for discovery (e.g. ["search", "analyze"])
             context: Operation context (user_id extracted from here)
 
         Returns:
@@ -3955,10 +3976,43 @@ class NexusFS(  # type: ignore[misc]
                     zone_id=zone_id,
                     name=name,
                     metadata=metadata,
+                    capabilities=capabilities,
                 )
             except Exception as reg_err:
                 logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
 
+        # Issue #1355: Provision cryptographic identity (Ed25519 keypair + DID)
+        agent_did: str | None = None
+        if hasattr(self, "_key_service") and self._key_service:
+            try:
+                key_record = self._key_service.ensure_keypair(agent_id)
+                agent_did = key_record.did
+                agent = {**agent, "did": agent_did, "key_id": key_record.key_id}
+                logger.info(
+                    "[KYA] Provisioned identity for agent %s (did=%s)",
+                    agent_id,
+                    agent_did,
+                )
+            except Exception as kya_err:
+                logger.warning(
+                    "[KYA] Failed to provision identity for agent %s: %s",
+                    agent_id,
+                    kya_err,
+                )
+
+        # Issue #1210: Auto-provision wallet (sync, non-blocking on failure)
+        if self._wallet_provisioner is not None:
+            try:
+                self._wallet_provisioner(agent_id, zone_id)
+                logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
+            except Exception as wallet_err:
+                logger.warning(
+                    f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
+                )
+
+        # Store capabilities in agent return dict for caller convenience
+        if capabilities:
+            agent["capabilities"] = list(capabilities)
         # Create initial config data
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
@@ -3993,6 +4047,28 @@ class NexusFS(  # type: ignore[misc]
             logger.info(f"Granted viewer permission to agent {agent_id} on {agent_dir}")
         except Exception as e:
             logger.warning(f"Failed to grant viewer permission to agent: {e}")
+
+        # Issue #1355: Write public identity document to agent namespace
+        if agent_did:
+            try:
+                from nexus.identity.did import create_did_document
+
+                key_record = self._key_service.get_active_keys(agent_id)[0]
+                public_key = self._key_service._crypto.public_key_from_bytes(
+                    key_record.public_key_bytes
+                )
+                did_doc = create_did_document(agent_did, public_key)
+                identity_dir = f"{agent_dir}/.identity"
+                ctx = self._parse_context(context)
+                self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+                self.write(
+                    f"{identity_dir}/did.json",
+                    json.dumps(did_doc, indent=2),
+                    context=ctx,
+                )
+                logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
+            except Exception as did_err:
+                logger.warning("[KYA] Failed to write DID document: %s", did_err)
 
         # Optionally generate API key
         if generate_api_key:
@@ -4563,6 +4639,25 @@ class NexusFS(  # type: ignore[misc]
                         )
         except Exception as e:
             logger.warning(f"Failed to cleanup agent resources: {e}")
+
+        # Issue #1210: Wallet cleanup warning on agent deletion
+        if self._wallet_provisioner is not None:
+            zone_id_for_wallet = self._extract_zone_id(_context) or "default"
+            try:
+                # Check if wallet provisioner supports cleanup (duck-typed)
+                cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
+                if cleanup_fn is not None:
+                    cleanup_fn(agent_id, zone_id_for_wallet)
+                    logger.info(f"[WALLET] Cleaned up wallet for agent {agent_id}")
+                else:
+                    logger.debug(
+                        f"[WALLET] No cleanup handler for agent {agent_id} wallet "
+                        f"(TigerBeetle accounts are immutable)"
+                    )
+            except Exception as wallet_err:
+                logger.warning(
+                    f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
+                )
 
         # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
         if hasattr(self, "_agent_registry") and self._agent_registry:
@@ -5978,11 +6073,10 @@ class NexusFS(  # type: ignore[misc]
             from nexus.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
-            session = self.SessionLocal()
             # Pass config if available (needed for Docker provider initialization)
             config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
-                db_session=session,
+                session_factory=self.SessionLocal,
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
@@ -6970,9 +7064,11 @@ class NexusFS(  # type: ignore[misc]
 
     # -------------------------------------------------------------------------
     # LLMService Delegation Methods (4 methods)
+    # Issue #1287 Phase B: NexusFSLLMMixin removed, replaced by LLMService delegation
     # -------------------------------------------------------------------------
 
-    async def allm_read(
+    @rpc_expose(description="Read document with LLM and return answer")
+    async def llm_read(
         self,
         path: str,
         prompt: str,
@@ -6983,23 +7079,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> str:
-        """Read document with LLM and return answer - delegates to LLMService.
-
-        Async version of llm_read() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search for context
-            search_mode: Search mode ("semantic" or "keyword")
-            provider: LLM provider override
-
-        Returns:
-            LLM's answer as string
-        """
+        """Read document with LLM and return answer - delegates to LLMService."""
         return await self.llm_service.llm_read(
             path=path,
             prompt=prompt,
@@ -7011,7 +7091,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    async def allm_read_detailed(
+    # Backward-compat alias
+    allm_read = llm_read
+
+    @rpc_expose(description="Read document with LLM and return detailed result")
+    async def llm_read_detailed(
         self,
         path: str,
         prompt: str,
@@ -7022,23 +7106,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> Any:
-        """Read document with LLM with detailed metadata - delegates to LLMService.
-
-        Async version of llm_read_detailed() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search
-            search_mode: Search mode
-            provider: LLM provider override
-
-        Returns:
-            DocumentReadResult with answer, context, and metadata
-        """
+        """Read document with LLM with detailed metadata - delegates to LLMService."""
         return await self.llm_service.llm_read_detailed(
             path=path,
             prompt=prompt,
@@ -7050,7 +7118,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    async def allm_read_stream(
+    # Backward-compat alias
+    allm_read_detailed = llm_read_detailed
+
+    @rpc_expose(description="Stream document reading response")
+    async def llm_read_stream(
         self,
         path: str,
         prompt: str,
@@ -7061,23 +7133,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> Any:
-        """Stream LLM response - delegates to LLMService.
-
-        Async version of llm_read_stream() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search
-            search_mode: Search mode
-            provider: LLM provider override
-
-        Returns:
-            AsyncIterator yielding response chunks
-        """
+        """Stream LLM response - delegates to LLMService."""
         return self.llm_service.llm_read_stream(
             path=path,
             prompt=prompt,
@@ -7089,7 +7145,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    def acreate_llm_reader(
+    # Backward-compat alias
+    allm_read_stream = llm_read_stream
+
+    @rpc_expose(description="Create an LLM document reader for advanced usage")
+    def create_llm_reader(
         self,
         provider: Any = None,
         model: str | None = None,
@@ -7097,20 +7157,7 @@ class NexusFS(  # type: ignore[misc]
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any:
-        """Create an LLM document reader - delegates to LLMService.
-
-        Sync version but with 'a' prefix for consistency.
-
-        Args:
-            provider: LLM provider
-            model: Model name
-            api_key: API key override
-            system_prompt: System prompt for the LLM
-            max_context_tokens: Maximum context window tokens
-
-        Returns:
-            LLMDocumentReader instance
-        """
+        """Create an LLM document reader - delegates to LLMService."""
         return self.llm_service.create_llm_reader(
             provider=provider,
             model=model,
@@ -7118,6 +7165,9 @@ class NexusFS(  # type: ignore[misc]
             system_prompt=system_prompt,
             max_context_tokens=max_context_tokens,
         )
+
+    # Backward-compat alias
+    acreate_llm_reader = create_llm_reader
 
     # =========================================================================
     # OAuthService Delegation Methods

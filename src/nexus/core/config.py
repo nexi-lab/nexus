@@ -1,10 +1,13 @@
-"""Configuration dataclasses for NexusFS subsystems.
+"""Configuration dataclasses for NexusFS kernel.
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
 
 These frozen dataclasses group related constructor parameters so that
-subsystems receive a single config object instead of 5-10 keyword args.
-Each subsystem may also define its own config if needed.
+the kernel receives a single config object instead of 5-10 keyword args.
+
+Note: ``LRUCacheConfig`` configures the kernel's **in-memory LRU caches**
+(path/list/kv/exists). This is distinct from the ``CacheStore`` pillar
+(Dragonfly/ephemeral KV+PubSub) which is a separate storage medium.
 """
 
 from __future__ import annotations
@@ -13,8 +16,12 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class CacheConfig:
-    """Cache-related configuration for NexusFS kernel."""
+class LRUCacheConfig:
+    """In-memory LRU cache configuration for NexusFS kernel.
+
+    Configures sizes for the kernel's internal path/list/kv/exists caches.
+    NOT related to the CacheStore pillar (Dragonfly/ephemeral KV+PubSub).
+    """
 
     path_size: int = 512
     list_size: int = 1024

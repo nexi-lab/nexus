@@ -7,14 +7,12 @@ from typing import Any
 import pytest
 
 from nexus.core.context_manifest.models import (
-    ContextSource,
     FileGlobSource,
     MCPToolSource,
     MemoryQuerySource,
     SourceResult,
     WorkspaceSnapshotSource,
 )
-
 
 # ---------------------------------------------------------------------------
 # Factory functions

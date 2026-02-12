@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-
 # ---------------------------------------------------------------------------
 # Import targets — these don't exist yet (RED phase)
 # ---------------------------------------------------------------------------
@@ -25,7 +24,6 @@ from nexus.core.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-
 
 # ===========================================================================
 # MCPToolSource

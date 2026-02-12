@@ -8,7 +8,6 @@ Uses tmp_path for filesystem and in-memory stubs for executors.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import types
 from datetime import datetime
@@ -20,14 +19,13 @@ import pytest
 from nexus.core.agent_record import AgentRecord, AgentState
 from nexus.core.context_manifest.models import (
     FileGlobSource,
-    MCPToolSource,
     ManifestResult,
+    MCPToolSource,
     MemoryQuerySource,
     SourceResult,
     WorkspaceSnapshotSource,
 )
 from nexus.core.context_manifest.resolver import ManifestResolver
-
 
 # ---------------------------------------------------------------------------
 # Stub executors

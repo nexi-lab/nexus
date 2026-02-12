@@ -24,7 +24,7 @@ import logging
 import time
 import unicodedata
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -139,7 +139,7 @@ class ManifestResolver:
         results = self._apply_truncation(sources, results)
 
         elapsed_ms = (time.monotonic() - start) * 1000
-        resolved_at = datetime.now(timezone.utc).isoformat()
+        resolved_at = datetime.now(UTC).isoformat()
 
         manifest_result = ManifestResult(
             sources=tuple(results),
@@ -154,7 +154,7 @@ class ManifestResolver:
         # Step 8: Check for required failures
         failed_required = [
             r
-            for r, s in zip(results, sources)
+            for r, s in zip(results, sources, strict=True)
             if getattr(s, "required", True)
             and r.status in ("error", "timeout", "skipped")
         ]
@@ -311,7 +311,7 @@ class ManifestResolver:
     ) -> list[SourceResult]:
         """Truncate results that exceed max_result_bytes."""
         truncated: list[SourceResult] = []
-        for source, result in zip(sources, results):
+        for source, result in zip(sources, results, strict=True):
             max_bytes = getattr(source, "max_result_bytes", 1_048_576)
             if result.status == "ok" and result.data is not None:
                 data_str = str(result.data)
@@ -344,7 +344,7 @@ class ManifestResolver:
         """Write individual result files and _index.json to output_dir."""
         index_entries: list[dict[str, Any]] = []
 
-        for _i, (source, result) in enumerate(zip(sources, results)):
+        for _i, (source, result) in enumerate(zip(sources, results, strict=True)):
             # Generate a safe filename
             name = self._get_source_name(source)
             safe_name = _sanitize_filename(name)

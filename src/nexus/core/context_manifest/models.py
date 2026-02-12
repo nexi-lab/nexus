@@ -16,7 +16,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field
 
@@ -110,7 +110,7 @@ class MemoryQuerySource(BaseModel):
 # ---------------------------------------------------------------------------
 
 ContextSource = Annotated[
-    Union[MCPToolSource, WorkspaceSnapshotSource, FileGlobSource, MemoryQuerySource],
+    MCPToolSource | WorkspaceSnapshotSource | FileGlobSource | MemoryQuerySource,
     Discriminator("type"),
 ]
 """Discriminated union of all context source types.

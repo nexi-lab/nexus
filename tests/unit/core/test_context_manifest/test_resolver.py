@@ -14,17 +14,12 @@ from typing import Any
 import pytest
 
 from nexus.core.context_manifest.models import (
-    FileGlobSource,
     ManifestResolutionError,
-    MCPToolSource,
-    MemoryQuerySource,
     SourceResult,
-    WorkspaceSnapshotSource,
 )
 from nexus.core.context_manifest.resolver import ManifestResolver, SourceExecutor
 
 from .conftest import make_source
-
 
 # ===========================================================================
 # Stub executors for testing

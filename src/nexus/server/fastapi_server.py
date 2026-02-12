@@ -379,15 +379,15 @@ async def lifespan(_app: FastAPI) -> Any:
                     if sync_rebac:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
                             "(using sync rebac_manager, L3=%s)",
-                            "enabled" if rebac_engine else "disabled",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -840,10 +840,10 @@ async def lifespan(_app: FastAPI) -> Any:
                     try:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(
@@ -1720,6 +1720,15 @@ def _register_routes(app: FastAPI) -> None:
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Exchange Protocol error handler (Issue #1361)
+    try:
+        from nexus.server.api.v2.error_handler import register_exchange_error_handler
+
+        register_exchange_error_handler(app)
+        logger.info("Exchange protocol error handler registered")
+    except ImportError as e:
+        logger.warning(f"Failed to register Exchange error handler: {e}.")
 
     # A2A Protocol Endpoint (Issue #1256)
     try:

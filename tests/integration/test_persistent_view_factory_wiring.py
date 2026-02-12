@@ -16,13 +16,12 @@ This is the same code path used by fastapi_server.py when permissions are enable
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.core.namespace_factory import create_namespace_manager
 from nexus.core.namespace_manager import MountEntry
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
-from nexus.storage.models import Base
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -30,18 +29,18 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture
-def engine():
-    """Create in-memory SQLite database with all tables."""
-    eng = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(eng)
-    return eng
+def record_store():
+    """Create an in-memory SQLite RecordStore with all tables."""
+    rs = SQLAlchemyRecordStore(db_url="sqlite:///:memory:")
+    yield rs
+    rs.close()
 
 
 @pytest.fixture
-def rebac_manager(engine):
+def rebac_manager(record_store):
     """Create an EnhancedReBACManager."""
     manager = EnhancedReBACManager(
-        engine=engine,
+        engine=record_store.engine,
         cache_ttl_seconds=300,
         max_depth=10,
     )
@@ -67,25 +66,25 @@ def _grant(rebac, subject_type, subject_id, path, zone_id=None):
 class TestFactoryWiring:
     """Tests for create_namespace_manager() factory function."""
 
-    def test_factory_creates_manager_with_l3(self, rebac_manager, engine):
-        """Factory with engine enables L3 persistent store."""
-        ns = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+    def test_factory_creates_manager_with_l3(self, rebac_manager, record_store):
+        """Factory with record_store enables L3 persistent store."""
+        ns = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         assert ns._persistent_store is not None
         assert isinstance(ns._persistent_store, PostgresPersistentViewStore)
 
-    def test_factory_without_engine_disables_l3(self, rebac_manager):
-        """Factory without engine disables L3 (graceful degradation)."""
-        ns = create_namespace_manager(rebac_manager=rebac_manager, engine=None)
+    def test_factory_without_record_store_disables_l3(self, rebac_manager):
+        """Factory without record_store disables L3 (graceful degradation)."""
+        ns = create_namespace_manager(rebac_manager=rebac_manager, record_store=None)
 
         assert ns._persistent_store is None
 
-    def test_factory_reads_env_config(self, rebac_manager, engine, monkeypatch):
+    def test_factory_reads_env_config(self, rebac_manager, record_store, monkeypatch):
         """Factory reads NEXUS_NAMESPACE_CACHE_TTL and REVISION_WINDOW from env."""
         monkeypatch.setenv("NEXUS_NAMESPACE_CACHE_TTL", "600")
         monkeypatch.setenv("NEXUS_NAMESPACE_REVISION_WINDOW", "20")
 
-        ns = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Verify the config was read (check internal state)
         assert ns._revision_window == 20
@@ -99,18 +98,18 @@ class TestFactoryWiring:
 class TestAgentReconnectionFlow:
     """Tests for the full agent reconnection flow via factory."""
 
-    def test_reconnection_restores_from_l3(self, rebac_manager, engine):
+    def test_reconnection_restores_from_l3(self, rebac_manager, record_store):
         """Full flow: build → disconnect → reconnect → L3 restores namespace.
 
         This simulates what happens in production:
         1. Server starts, creates NamespaceManager via factory
         2. User makes requests, namespace built from ReBAC (saved to L3)
         3. Server restarts (or worker recycled)
-        4. New NamespaceManager created via factory (same engine)
+        4. New NamespaceManager created via factory (same RecordStore)
         5. L3 restores namespace instantly (no ReBAC query)
         """
         # --- Session 1: Initial namespace build ---
-        ns1 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns1 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Grant permissions
         _grant(rebac_manager, "user", "agent-1", "/workspace/proj/main.py")
@@ -124,7 +123,7 @@ class TestAgentReconnectionFlow:
         assert ns1.metrics["mount_table_rebuilds"] == 1
 
         # --- Session 2: Reconnection (new NamespaceManager, same DB) ---
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Second access: L2 miss (new instance) → L3 hit → restore
         entries2 = ns2.get_mount_table(("user", "agent-1"))
@@ -133,9 +132,9 @@ class TestAgentReconnectionFlow:
         assert ns2.metrics["l3_hits"] == 1
         assert ns2.metrics["mount_table_rebuilds"] == 0  # No ReBAC query!
 
-    def test_two_users_l3_isolation(self, rebac_manager, engine):
+    def test_two_users_l3_isolation(self, rebac_manager, record_store):
         """Two users with different grants → L3 stores separate views."""
-        ns = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Grant different paths to different users
         _grant(rebac_manager, "user", "alice", "/workspace/alice-proj/data.csv")
@@ -149,7 +148,7 @@ class TestAgentReconnectionFlow:
         assert bob_entries == [MountEntry(virtual_path="/workspace/bob-proj")]
 
         # Reconnect
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         alice_entries2 = ns2.get_mount_table(("user", "alice"))
         bob_entries2 = ns2.get_mount_table(("user", "bob"))
@@ -158,9 +157,9 @@ class TestAgentReconnectionFlow:
         assert bob_entries2 == bob_entries
         assert ns2.metrics["l3_hits"] == 2
 
-    def test_is_visible_after_reconnection(self, rebac_manager, engine):
+    def test_is_visible_after_reconnection(self, rebac_manager, record_store):
         """is_visible() works correctly after L3 restore."""
-        ns1 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns1 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         _grant(rebac_manager, "user", "alice", "/workspace/proj/a.txt")
         _grant(rebac_manager, "user", "alice", "/workspace/proj/b.txt")
@@ -170,16 +169,16 @@ class TestAgentReconnectionFlow:
         assert not ns1.is_visible(("user", "alice"), "/other/secret.txt")
 
         # Reconnect
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Same visibility after L3 restore
         assert ns2.is_visible(("user", "alice"), "/workspace/proj/a.txt")
         assert ns2.is_visible(("user", "alice"), "/workspace/proj/b.txt")
         assert not ns2.is_visible(("user", "alice"), "/other/secret.txt")
 
-    def test_filter_visible_after_reconnection(self, rebac_manager, engine):
+    def test_filter_visible_after_reconnection(self, rebac_manager, record_store):
         """filter_visible() works correctly after L3 restore."""
-        ns1 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns1 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         _grant(rebac_manager, "user", "alice", "/workspace/proj/a.txt")
 
@@ -187,7 +186,7 @@ class TestAgentReconnectionFlow:
         ns1.get_mount_table(("user", "alice"))
 
         # Reconnect
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         paths = ["/workspace/proj/a.txt", "/other/b.txt", "/workspace/proj/c.txt"]
         visible = ns2.filter_visible(("user", "alice"), paths)
@@ -202,15 +201,15 @@ class TestAgentReconnectionFlow:
 class TestL3Metrics:
     """Tests for L3 metrics in the factory-created NamespaceManager."""
 
-    def test_l3_hits_in_metrics(self, rebac_manager, engine):
+    def test_l3_hits_in_metrics(self, rebac_manager, record_store):
         """l3_hits metric is exposed and incremented correctly."""
-        ns1 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns1 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         _grant(rebac_manager, "user", "alice", "/workspace/proj/a.txt")
         ns1.get_mount_table(("user", "alice"))
 
         # Reconnect
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
         ns2.get_mount_table(("user", "alice"))
 
         metrics = ns2.metrics
@@ -227,16 +226,16 @@ class TestL3Metrics:
 class TestZeroGrantSafety:
     """Tests for fail-closed behavior with L3."""
 
-    def test_zero_grants_after_reconnection(self, rebac_manager, engine):
+    def test_zero_grants_after_reconnection(self, rebac_manager, record_store):
         """User with no grants → empty namespace, even after L3 restore."""
-        ns1 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns1 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # Build namespace for user with no grants
         entries1 = ns1.get_mount_table(("user", "nobody"))
         assert entries1 == []
 
         # Reconnect
-        ns2 = create_namespace_manager(rebac_manager=rebac_manager, engine=engine)
+        ns2 = create_namespace_manager(rebac_manager=rebac_manager, record_store=record_store)
 
         # L3 restores empty namespace (fail-closed preserved)
         entries2 = ns2.get_mount_table(("user", "nobody"))

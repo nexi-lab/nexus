@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.core.subsystem import Subsystem
-from nexus.core.subsystems.llm_subsystem import LLMSubsystem
+from nexus.services.subsystem import Subsystem
+from nexus.services.subsystems.llm_subsystem import LLMSubsystem
 
 
 @pytest.fixture

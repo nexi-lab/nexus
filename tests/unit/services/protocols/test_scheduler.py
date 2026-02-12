@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from nexus.core.protocols.scheduler import (
+from nexus.services.protocols.scheduler import (
     AgentRequest,
     InMemoryScheduler,
     SchedulerProtocol,

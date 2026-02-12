@@ -29,16 +29,16 @@
 //! ## Embedded Storage
 //!
 //! ```rust,ignore
-//! use nexus_raft::storage::SledStore;
+//! use nexus_raft::storage::RedbStore;
 //!
-//! let store = SledStore::open("/var/lib/nexus/data").unwrap();
+//! let store = RedbStore::open("/var/lib/nexus/data").unwrap();
 //! let cache = store.tree("cache").unwrap();
 //! cache.set(b"key", b"value").unwrap();
 //! ```
 //!
 //! # Storage Backend
 //!
-//! Uses **redb 2.x** (replaced sled 0.34). See `docs/rfcs/adr-raft-sled-strategy.md`.
+//! Uses **redb 2.x** — stable, pure Rust embedded KV database.
 //!
 //! # Issue Reference
 //!
@@ -104,8 +104,7 @@ pub mod transport {
 
 /// Re-export commonly used types for convenience.
 pub mod prelude {
-    pub use crate::storage::{RedbBatch, RedbStore, RedbTree, RedbTreeBatch};
-    pub use crate::storage::{SledBatch, SledStore, SledTree, StorageError, TreeBatch};
+    pub use crate::storage::{RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError};
 
     pub use crate::raft::{
         Command, CommandResult, FullStateMachine, HolderInfo, LockInfo, LockState, RaftError,

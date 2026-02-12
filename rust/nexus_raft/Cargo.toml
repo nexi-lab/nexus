@@ -20,11 +20,8 @@ path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
-# Embedded KV storage — redb 2.x (1.0 stable since June 2023).
+# Embedded KV storage — redb 2.x (stable since 1.0, June 2023).
 # Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
-# sled kept for backward compat (migration).
-# See: docs/rfcs/adr-raft-sled-strategy.md
-sled = "0.34"
 redb = "2"
 tempfile = "3"
 

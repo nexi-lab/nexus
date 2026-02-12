@@ -8,19 +8,17 @@
 //! - **Task Queues**: Persistent task/event queues
 //! - **Session Storage**: Persistent session state
 //!
-//! # Storage Backends
+//! # Storage Backend
 //!
-//! Currently, we provide:
-//!
-//! - [`SledStore`]: Pure Rust embedded key-value database (like SQLite for KV)
+//! Uses [`RedbStore`]: Pure Rust embedded key-value database backed by redb 2.x.
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use nexus_raft::storage::{SledStore, SledTree, SledBatch};
+//! use nexus_raft::storage::RedbStore;
 //!
 //! // Open a database
-//! let store = SledStore::open("/var/lib/nexus/data").unwrap();
+//! let store = RedbStore::open("/var/lib/nexus/data").unwrap();
 //!
 //! // Use named trees for different data
 //! let raft_log = store.tree("raft_log").unwrap();
@@ -31,11 +29,11 @@
 //! cache.set(b"item:1", b"cached_value").unwrap();
 //! ```
 
-pub mod migration;
 mod redb_store;
-mod sled_store;
 
 pub use redb_store::{
     RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError as RedbStorageError,
 };
-pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};
+
+// Re-export StorageError as the primary error type
+pub use redb_store::StorageError;

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nexus.services.sync_store_base import SyncStoreBase
+from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
@@ -123,9 +123,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             True if successful, False otherwise
         """
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
         from nexus.storage.models import BackendChangeLogModel
 
         session = self._get_session()
@@ -152,22 +149,14 @@ class ChangeLogStore(SyncStoreBase):
                 "synced_at": now,
             }
 
-            if self._detect_dialect():
-                # PostgreSQL ON CONFLICT DO UPDATE (named constraint)
-                stmt = pg_insert(BackendChangeLogModel).values(**values)
-                stmt = stmt.on_conflict_do_update(
-                    constraint="uq_backend_change_log",
-                    set_=update_set,
-                )
-            else:
-                # SQLite ON CONFLICT DO UPDATE (index elements)
-                stmt = sqlite_insert(BackendChangeLogModel).values(**values)  # type: ignore[assignment]
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["path", "backend_name", "zone_id"],
-                    set_=update_set,
-                )
-
-            session.execute(stmt)
+            self._dialect_upsert(
+                session,
+                BackendChangeLogModel,
+                values,
+                pg_constraint="uq_backend_change_log",
+                sqlite_index_elements=["path", "backend_name", "zone_id"],
+                update_set=update_set,
+            )
             session.commit()
             return True
         except Exception as e:
@@ -279,9 +268,6 @@ class ChangeLogStore(SyncStoreBase):
         if not entries:
             return True
 
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
         from nexus.storage.models import BackendChangeLogModel
 
         session = self._get_session()
@@ -314,7 +300,8 @@ class ChangeLogStore(SyncStoreBase):
                 chunk = all_values[i : i + chunk_size]
 
                 if is_pg:
-                    stmt = pg_insert(BackendChangeLogModel).values(chunk)
+                    # PG supports multi-row insert with stmt.excluded references
+                    stmt = self._dialect_insert(BackendChangeLogModel).values(chunk)
                     stmt = stmt.on_conflict_do_update(
                         constraint="uq_backend_change_log",
                         set_={
@@ -330,10 +317,13 @@ class ChangeLogStore(SyncStoreBase):
                     # SQLite doesn't support multi-row on_conflict_do_update
                     # with excluded references, so use per-row upserts
                     for row in chunk:
-                        row_stmt = sqlite_insert(BackendChangeLogModel).values(**row)
-                        row_stmt = row_stmt.on_conflict_do_update(
-                            index_elements=["path", "backend_name", "zone_id"],
-                            set_={
+                        self._dialect_upsert(
+                            session,
+                            BackendChangeLogModel,
+                            row,
+                            pg_constraint="uq_backend_change_log",
+                            sqlite_index_elements=["path", "backend_name", "zone_id"],
+                            update_set={
                                 "size_bytes": row["size_bytes"],
                                 "mtime": row["mtime"],
                                 "backend_version": row["backend_version"],
@@ -341,7 +331,6 @@ class ChangeLogStore(SyncStoreBase):
                                 "synced_at": now,
                             },
                         )
-                        session.execute(row_stmt)
 
             session.commit()
             logger.debug(f"[DELTA_SYNC] Batch upserted {len(entries)} change log entries")

@@ -102,6 +102,15 @@ async def get_llm_provider(
 # =============================================================================
 
 
+async def get_conflict_log_store() -> Any:
+    """Get ConflictLogStore instance from app state."""
+    app_state = _get_app_state()
+    store = getattr(app_state, "conflict_log_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="Conflict log store not initialized")
+    return store
+
+
 async def get_trajectory_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
@@ -254,7 +263,7 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = _get_operation_context(auth_result)
-    session = nexus_fs.memory.session
+    session = nexus_fs.SessionLocal()
     zone_id = context.zone_id or "default"
 
     return OperationLogger(session=session), zone_id
@@ -287,3 +296,21 @@ async def get_hierarchy_manager(
         session=session,
         zone_id=context.zone_id or "default",
     )
+
+
+async def get_exchange_audit_logger(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> Any:
+    """Get ExchangeAuditLogger scoped to the authenticated user's zone.
+
+    Returns a tuple of (ExchangeAuditLogger, zone_id) for zone-scoped queries.
+    Issue #1360.
+    """
+    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+    context = _get_operation_context(auth_result)
+    zone_id = context.zone_id or "default"
+
+    session_factory = nexus_fs.SessionLocal
+    return ExchangeAuditLogger(session_factory=session_factory), zone_id

@@ -351,7 +351,7 @@ class ZoneExportService:
 
         try:
             # Fetch all tuples for the zone from the database
-            tuples = rebac_manager._fetch_zone_tuples_from_db(zone_id)
+            tuples = rebac_manager.get_zone_tuples(zone_id)
 
             with output_path.open("w", encoding="utf-8") as f:
                 for t in tuples:

@@ -589,8 +589,15 @@ ReBAC permission can replicate the Raft log but gets rejected when proposing wri
 2. Migrates metadata from parent zone's sled → new zone's sled (like `git subtree split`)
 3. Replaces original path with DT_MOUNT in parent zone
 4. Creator's node becomes Voter in new zone's Raft group
-5. Invited users' nodes join as Learners
+5. Invited users' nodes join as **Voters** (All-Voter model — no Learner asymmetry)
 6. Creates DT_MOUNT in each invited user's zone
+
+**Implicit zone creation vs join** (decision logic):
+- If the mount **contributes new metadata** (expands visibility of local data) → **create new zone**
+- If the mount **only consumes** existing shared metadata (joining to view) → **join existing zone**
+
+Example: node1 shares /folderA with node2 → creates zone-X (contributes metadata).
+node3 mounts node2:/folderA → discovers zone-X already exists → joins as Voter (no new zone).
 
 **When explicit is needed**:
 - Zone migration to different region (`nexus zone migrate`)
@@ -666,16 +673,21 @@ New zone starts at 1 (owner reference). Each DT_MOUNT adds 1. Drop to 0 is impos
 
 ### 6.7 Metastore as Cache Backing Store
 
-Since mounting = joining Raft group, every mounted zone has a **local sled replica**.
-The existing `Metastore` (PyO3, non-Raft sled wrapper) serves dual purpose:
+Since mounting = joining Raft group (All-Voter model), every mounted zone has a
+**local sled replica**. The existing `Metastore` serves dual purpose:
 
 | Use case | sled instance | Raft? | Data |
 |----------|--------------|-------|------|
 | **Own zone** | RaftConsensus (SC/EC) | Yes (Voter) | This zone's metadata |
 | **Mounted zone** | RaftConsensus | Yes (Voter) | Shared zone's metadata |
 
-Both use sled's built-in page cache (~5μs for hot data). No separate cache layer needed.
+Both use sled's built-in page cache (~5μs for hot data). **No separate cache layer needed.**
 Raft log replication IS the cache invalidation mechanism.
+
+**Note (2026-02-11)**: An earlier design discussed a separate `cache_sled` (local-only,
+no Raft) for caching remote zone metadata. This is **superseded** by the All-Voter model —
+since every participant has a full local replica via Raft, the authoritative sled IS the cache.
+No `cache_sled` or Dragonfly needed for metadata caching.
 
 ### 6.8 Implications for Current Code
 
@@ -738,7 +750,7 @@ are **always local**:
 4. gRPC is only used for Raft log replication (background, async)
 
 **Mixed consistency**: Zone A can be EC, Zone B can be SC. Each zone's Raft group
-operates independently. The node participates as Learner in both.
+operates independently. The node participates as **Voter** in both.
 
 #### Unified Mount Logic (DRY)
 

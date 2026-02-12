@@ -15,23 +15,18 @@ name = "_nexus_raft"
 crate-type = ["cdylib", "rlib"]  # cdylib for Python, rlib for Rust deps
 
 [[bin]]
-name = "nexus-raft-server"
-path = "src/bin/raft_server.rs"
-required-features = ["grpc"]
-
-[[bin]]
 name = "nexus-witness"
 path = "src/bin/witness.rs"
 required-features = ["grpc"]
 
 [dependencies]
-# Embedded KV storage — sled is default, redb is opt-in via `storage-redb` feature.
-# sled 0.34: perpetual beta but battle-tested in this codebase.
-# redb 2.x: 1.0 stable since June 2023, use --features storage-redb to enable.
+# Embedded KV storage — redb 2.x (1.0 stable since June 2023).
+# Issue #1330: Replaced sled 0.34 with redb for reliability + maintenance.
+# sled kept for backward compat (migration).
 # See: docs/rfcs/adr-raft-sled-strategy.md
 sled = "0.34"
-redb = { version = "2", optional = true }
-tempfile = { version = "3", optional = true }  # Used by redb's open_temporary()
+redb = "2"
+tempfile = "3"
 
 # Raft consensus (tikv/raft-rs)
 raft = { version = "0.7", default-features = false, features = ["protobuf-codec"], optional = true }
@@ -59,6 +54,7 @@ prost = { version = "0.13", optional = true }
 
 # Utilities
 bytes = { version = "1", optional = true }
+dashmap = { version = "6", optional = true }
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
@@ -71,11 +67,6 @@ tokio-test = "0.4"
 
 [features]
 default = []
-
-# Use redb 2.x instead of sled 0.34 for embedded storage.
-# Both backends export identical types (SledStore, SledTree, etc.).
-# Default = sled. Enable this flag to switch to redb.
-storage-redb = ["dep:redb", "dep:tempfile"]
 
 # Enable async support (Tokio runtime)
 async = ["tokio"]
@@ -92,10 +83,10 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap"]
 
 # Enable everything (including experimental features)
-full = ["grpc", "consensus", "python", "storage-redb"]
+full = ["grpc", "consensus", "python"]
 
 [profile.release]
 lto = true

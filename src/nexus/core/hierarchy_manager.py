@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
+
 if TYPE_CHECKING:
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 
@@ -79,8 +81,8 @@ class HierarchyManager:
         if not path or path == "/":
             return 0
 
-        parts = path.strip("/").split("/")
-        if len(parts) < 2:
+        chain = get_parent_chain(path)
+        if not chain:
             # Root-level file, no parent
             return 0
 
@@ -90,10 +92,7 @@ class HierarchyManager:
         # Example: /a/b/c.txt
         # - /a/b/c.txt -> /a/b
         # - /a/b -> /a
-        for i in range(len(parts), 1, -1):
-            child_path = "/" + "/".join(parts[:i])
-            parent_path = "/" + "/".join(parts[: i - 1])
-
+        for child_path, parent_path in chain:
             # Check if parent tuple already exists
             if self._has_parent_tuple(child_path, parent_path, zone_id):
                 # Parent tuple exists, assume rest of chain exists too
@@ -210,10 +209,7 @@ class HierarchyManager:
 
             # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
             # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-            parts = path.strip("/").split("/")
-            ancestor_paths = []
-            for i in range(len(parts), 0, -1):
-                ancestor_paths.append("/" + "/".join(parts[:i]))
+            ancestor_paths = list(get_ancestors(path))
 
             # Invalidate cache for all ancestor paths (exact matches)
             for ancestor_path in ancestor_paths:
@@ -262,14 +258,11 @@ class HierarchyManager:
             cursor = self.rebac_manager._create_cursor(conn)
 
             # Collect all paths to invalidate (ancestors + exact + descendants)
-            all_invalidate_paths = set()
+            all_invalidate_paths: set[str] = set()
 
             for path in paths:
                 # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-                parts = path.strip("/").split("/")
-                for i in range(len(parts), 0, -1):
-                    ancestor_path = "/" + "/".join(parts[:i])
-                    all_invalidate_paths.add(ancestor_path)
+                all_invalidate_paths.update(get_ancestors(path))
 
             # Convert to list for SQL query
             paths_list = list(all_invalidate_paths)
@@ -441,18 +434,8 @@ class HierarchyManager:
         for path in paths:
             if not path or path == "/":
                 continue
-            parts = path.strip("/").split("/")
-            if len(parts) < 2:
-                continue
-
-            # Create parent chain from leaf to root
-            # Example: /a/b/c.txt creates:
-            # - /a/b/c.txt -> /a/b
-            # - /a/b -> /a
-            for i in range(len(parts), 1, -1):
-                child_path = "/" + "/".join(parts[:i])
-                parent_path = "/" + "/".join(parts[: i - 1])
-                all_tuples.append((child_path, parent_path))
+            chain = get_parent_chain(path)
+            all_tuples.extend(chain)
 
         if not all_tuples:
             return 0
@@ -535,14 +518,7 @@ class HierarchyManager:
         Returns:
             Parent path or None if root
         """
-        if not path or path == "/":
-            return None
-
-        parts = path.strip("/").split("/")
-        if len(parts) < 2:
-            return "/"
-
-        return "/" + "/".join(parts[:-1])
+        return get_parent(path)
 
     def get_all_parents(self, path: str) -> list[str]:
         """Get all parent paths in hierarchy order.

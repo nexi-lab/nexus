@@ -287,8 +287,7 @@ class EventBusProtocol(Protocol):
             zone_id: Zone ID to subscribe to
             path_pattern: Path pattern to match
             timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value (Issue #1187).
-                           Used for zookie-based watch resumption.
+            since_revision: Only return events with revision > this value.
 
         Returns:
             FileEvent if matched, None on timeout

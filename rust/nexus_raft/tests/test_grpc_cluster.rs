@@ -21,13 +21,23 @@
 
 #[cfg(all(feature = "grpc", has_protos))]
 mod grpc_cluster {
+    use _nexus_raft::raft::ZoneRaftRegistry;
     use _nexus_raft::transport::{
-        ClientConfig, NodeAddress, RaftApiClient, RaftClientPool, RaftServer, ServerConfig,
-        TransportLoop,
+        ClientConfig, NodeAddress, RaftApiClient, RaftGrpcServer, ServerConfig,
     };
-    use std::collections::HashMap;
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    /// Connect a RaftApiClient with zone_id = "default".
+    async fn connect_client(
+        endpoint: &str,
+        config: ClientConfig,
+    ) -> _nexus_raft::transport::Result<RaftApiClient> {
+        RaftApiClient::connect(endpoint, config)
+            .await
+            .map(|c| c.with_zone_id("default".into()))
+    }
 
     /// Wait for a leader to be elected across the cluster.
     ///
@@ -47,7 +57,7 @@ mod grpc_cluster {
             }
 
             for endpoint in endpoints {
-                match RaftApiClient::connect(endpoint, config.clone()).await {
+                match connect_client(endpoint, config.clone()).await {
                     Ok(mut client) => {
                         if let Ok(info) = client.get_cluster_info().await {
                             if info.is_leader && info.leader_id > 0 {
@@ -77,7 +87,7 @@ mod grpc_cluster {
                 return false;
             }
 
-            if let Ok(mut client) = RaftApiClient::connect(endpoint, config.clone()).await {
+            if let Ok(mut client) = connect_client(endpoint, config.clone()).await {
                 if let Ok(result) = client.get_metadata(path, "", false).await {
                     if result.success {
                         return true;
@@ -121,7 +131,7 @@ mod grpc_cluster {
         // Shutdown channel
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Start 3 RaftServer instances + TransportLoop for each
+        // Start 3 nodes, each with ZoneRaftRegistry + RaftGrpcServer
         let mut server_handles = vec![];
 
         for i in 0..3 {
@@ -135,27 +145,24 @@ mod grpc_cluster {
                 ..Default::default()
             };
 
-            let server = RaftServer::with_config(
+            // Create registry and register "default" zone (handles TransportLoop internally)
+            let registry = Arc::new(ZoneRaftRegistry::new(
+                temp_dirs[i].path().to_path_buf(),
                 node_id,
-                temp_dirs[i].path().to_str().unwrap(),
-                config,
-                all_peers[i].clone(),
-            )
-            .expect("Failed to create RaftServer");
+            ));
 
-            // Start transport loop in background
-            let peer_map: HashMap<u64, NodeAddress> =
-                all_peers[i].iter().map(|p| (p.id, p.clone())).collect();
-
-            let transport_loop = TransportLoop::new(server.node(), peer_map, RaftClientPool::new());
-
-            let shutdown_rx_clone = shutdown_rx.clone();
-            tokio::spawn(async move {
-                transport_loop.run(shutdown_rx_clone).await;
-            });
+            let _node = registry
+                .create_zone(
+                    "default",
+                    all_peers[i].clone(),
+                    false,
+                    &tokio::runtime::Handle::current(),
+                )
+                .expect("Failed to create zone");
 
             // Start gRPC server in background
             let shutdown_rx_clone = shutdown_rx.clone();
+            let server = RaftGrpcServer::new(registry, config);
             let handle = tokio::spawn(async move {
                 let shutdown = async move {
                     let mut rx = shutdown_rx_clone;
@@ -193,7 +200,7 @@ mod grpc_cluster {
 
         let mut leader_count = 0;
         for endpoint in &endpoints {
-            if let Ok(mut client) = RaftApiClient::connect(endpoint, config.clone()).await {
+            if let Ok(mut client) = connect_client(endpoint, config.clone()).await {
                 if let Ok(info) = client.get_cluster_info().await {
                     if info.is_leader {
                         leader_count += 1;
@@ -208,7 +215,7 @@ mod grpc_cluster {
         // ================================================================
         tracing::info!("=== Test 2: Metadata Replication ===");
 
-        let mut leader_client = RaftApiClient::connect(&leader_endpoint, config.clone())
+        let mut leader_client = connect_client(&leader_endpoint, config.clone())
             .await
             .expect("Failed to connect to leader");
 
@@ -257,7 +264,7 @@ mod grpc_cluster {
             .find(|e| **e != leader_endpoint)
             .expect("Should have at least one follower");
 
-        let mut follower_client = RaftApiClient::connect(follower_endpoint, config.clone())
+        let mut follower_client = connect_client(follower_endpoint, config.clone())
             .await
             .expect("Failed to connect to follower");
 
@@ -323,7 +330,7 @@ mod grpc_cluster {
 
         // Verify all 10 files on each node
         for (node_idx, endpoint) in endpoints.iter().enumerate() {
-            let mut client = RaftApiClient::connect(endpoint, config.clone())
+            let mut client = connect_client(endpoint, config.clone())
                 .await
                 .expect("Failed to connect");
 
@@ -346,7 +353,7 @@ mod grpc_cluster {
         // ================================================================
         tracing::info!("=== Test 5: Query from Follower ===");
 
-        let mut follower_client = RaftApiClient::connect(follower_endpoint, config.clone())
+        let mut follower_client = connect_client(follower_endpoint, config.clone())
             .await
             .expect("Failed to connect to follower");
 
@@ -391,12 +398,12 @@ mod grpc_cluster {
             request_timeout: Duration::from_secs(2),
             ..Default::default()
         };
-        if RaftApiClient::connect("http://127.0.0.1:2026", probe_config)
+        if connect_client("http://127.0.0.1:2126", probe_config)
             .await
             .is_err()
         {
             eprintln!(
-                "Skipping Docker cluster test: no server at localhost:2026. \
+                "Skipping Docker cluster test: no gRPC server at localhost:2126. \
                  Start with: docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d"
             );
             return;
@@ -407,17 +414,18 @@ mod grpc_cluster {
             .with_test_writer()
             .try_init();
 
-        // Docker compose maps: 2026→raft-1 (full), 2027→raft-2 (full), 2028→raft-3 (witness)
+        // Docker compose gRPC ports: 2126→nexus-1 (full), 2127→nexus-2 (full), 2128→witness
+        // (HTTP ports 2026/2027 are for the Python FastAPI server, not gRPC)
         // Witness participates in voting but does NOT store state machine data,
         // so metadata queries are only valid against full nodes.
         let full_endpoints: Vec<String> = vec![
-            "http://127.0.0.1:2026".to_string(),
-            "http://127.0.0.1:2027".to_string(),
+            "http://127.0.0.1:2126".to_string(),
+            "http://127.0.0.1:2127".to_string(),
         ];
         let all_endpoints: Vec<String> = vec![
-            "http://127.0.0.1:2026".to_string(),
-            "http://127.0.0.1:2027".to_string(),
-            "http://127.0.0.1:2028".to_string(),
+            "http://127.0.0.1:2126".to_string(),
+            "http://127.0.0.1:2127".to_string(),
+            "http://127.0.0.1:2128".to_string(),
         ];
 
         let config = ClientConfig {
@@ -444,7 +452,7 @@ mod grpc_cluster {
         // Verify exactly 1 leader across all nodes (including witness)
         let mut leader_count = 0;
         for endpoint in &all_endpoints {
-            if let Ok(mut client) = RaftApiClient::connect(endpoint, config.clone()).await {
+            if let Ok(mut client) = connect_client(endpoint, config.clone()).await {
                 if let Ok(info) = client.get_cluster_info().await {
                     tracing::info!(
                         "  {} → node_id={}, leader_id={}, term={}, is_leader={}",
@@ -467,7 +475,7 @@ mod grpc_cluster {
         // ================================================================
         tracing::info!("=== Docker Test 2: Metadata Replication ===");
 
-        let mut leader_client = RaftApiClient::connect(&leader_endpoint, config.clone())
+        let mut leader_client = connect_client(&leader_endpoint, config.clone())
             .await
             .expect("Failed to connect to leader");
 
@@ -519,7 +527,7 @@ mod grpc_cluster {
             .find(|e| **e != leader_endpoint)
             .expect("Should have at least one full-node follower");
 
-        let mut follower_client = RaftApiClient::connect(follower_endpoint, config.clone())
+        let mut follower_client = connect_client(follower_endpoint, config.clone())
             .await
             .expect("Failed to connect to follower");
 
@@ -581,7 +589,7 @@ mod grpc_cluster {
 
         // Verify all 10 files on full nodes
         for (node_idx, endpoint) in full_endpoints.iter().enumerate() {
-            let mut client = RaftApiClient::connect(endpoint, config.clone())
+            let mut client = connect_client(endpoint, config.clone())
                 .await
                 .expect("Failed to connect");
 
@@ -604,7 +612,7 @@ mod grpc_cluster {
         // ================================================================
         tracing::info!("=== Docker Test 5: Query from Full-Node Follower ===");
 
-        let mut follower_client = RaftApiClient::connect(follower_endpoint, config.clone())
+        let mut follower_client = connect_client(follower_endpoint, config.clone())
             .await
             .expect("Failed to connect to full-node follower");
 

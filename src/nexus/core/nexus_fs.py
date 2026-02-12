@@ -38,7 +38,8 @@ from nexus.core.export_import import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_events import NexusFSEventsMixin
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+
+# NexusFSLLMMixin removed in Phase B — replaced by LLMSubsystem (Issue #1287)
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
@@ -76,7 +77,7 @@ class NexusFS(  # type: ignore[misc]
     NexusFSOAuthMixin,
     NexusFSSkillsMixin,
     NexusFSMCPMixin,
-    NexusFSLLMMixin,
+    # NexusFSLLMMixin removed — replaced by LLMSubsystem (Issue #1287)
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
     NexusFSTasksMixin,  # Issue #574: Durable task queue
     NexusFilesystem,
@@ -582,7 +583,11 @@ class NexusFS(  # type: ignore[misc]
         self.mcp_service = MCPService(nexus_fs=self)
 
         # LLMService: LLM integration operations (4 methods)
+        # Issue #1287 Phase B: Wrapped in LLMSubsystem for lifecycle management
         self.llm_service = LLMService(nexus_fs=self)
+        from nexus.core.subsystems.llm_subsystem import LLMSubsystem
+
+        self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 
         # OAuthService: OAuth authentication operations (7 methods)
         # Lazy initialization of oauth_factory and token_manager happens in service
@@ -6969,9 +6974,11 @@ class NexusFS(  # type: ignore[misc]
 
     # -------------------------------------------------------------------------
     # LLMService Delegation Methods (4 methods)
+    # Issue #1287 Phase B: NexusFSLLMMixin removed, replaced by LLMService delegation
     # -------------------------------------------------------------------------
 
-    async def allm_read(
+    @rpc_expose(description="Read document with LLM and return answer")
+    async def llm_read(
         self,
         path: str,
         prompt: str,
@@ -6982,23 +6989,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> str:
-        """Read document with LLM and return answer - delegates to LLMService.
-
-        Async version of llm_read() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search for context
-            search_mode: Search mode ("semantic" or "keyword")
-            provider: LLM provider override
-
-        Returns:
-            LLM's answer as string
-        """
+        """Read document with LLM and return answer - delegates to LLMService."""
         return await self.llm_service.llm_read(
             path=path,
             prompt=prompt,
@@ -7010,7 +7001,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    async def allm_read_detailed(
+    # Backward-compat alias
+    allm_read = llm_read
+
+    @rpc_expose(description="Read document with LLM and return detailed result")
+    async def llm_read_detailed(
         self,
         path: str,
         prompt: str,
@@ -7021,23 +7016,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> Any:
-        """Read document with LLM with detailed metadata - delegates to LLMService.
-
-        Async version of llm_read_detailed() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search
-            search_mode: Search mode
-            provider: LLM provider override
-
-        Returns:
-            DocumentReadResult with answer, context, and metadata
-        """
+        """Read document with LLM with detailed metadata - delegates to LLMService."""
         return await self.llm_service.llm_read_detailed(
             path=path,
             prompt=prompt,
@@ -7049,7 +7028,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    async def allm_read_stream(
+    # Backward-compat alias
+    allm_read_detailed = llm_read_detailed
+
+    @rpc_expose(description="Stream document reading response")
+    async def llm_read_stream(
         self,
         path: str,
         prompt: str,
@@ -7060,23 +7043,7 @@ class NexusFS(  # type: ignore[misc]
         search_mode: str = "semantic",
         provider: Any = None,
     ) -> Any:
-        """Stream LLM response - delegates to LLMService.
-
-        Async version of llm_read_stream() using the service layer.
-
-        Args:
-            path: Document path to read
-            prompt: Question/prompt for the LLM
-            model: LLM model to use
-            max_tokens: Maximum response tokens
-            api_key: Optional API key override
-            use_search: Whether to use semantic search
-            search_mode: Search mode
-            provider: LLM provider override
-
-        Returns:
-            AsyncIterator yielding response chunks
-        """
+        """Stream LLM response - delegates to LLMService."""
         return self.llm_service.llm_read_stream(
             path=path,
             prompt=prompt,
@@ -7088,7 +7055,11 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    def acreate_llm_reader(
+    # Backward-compat alias
+    allm_read_stream = llm_read_stream
+
+    @rpc_expose(description="Create an LLM document reader for advanced usage")
+    def create_llm_reader(
         self,
         provider: Any = None,
         model: str | None = None,
@@ -7096,20 +7067,7 @@ class NexusFS(  # type: ignore[misc]
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any:
-        """Create an LLM document reader - delegates to LLMService.
-
-        Sync version but with 'a' prefix for consistency.
-
-        Args:
-            provider: LLM provider
-            model: Model name
-            api_key: API key override
-            system_prompt: System prompt for the LLM
-            max_context_tokens: Maximum context window tokens
-
-        Returns:
-            LLMDocumentReader instance
-        """
+        """Create an LLM document reader - delegates to LLMService."""
         return self.llm_service.create_llm_reader(
             provider=provider,
             model=model,
@@ -7117,6 +7075,9 @@ class NexusFS(  # type: ignore[misc]
             system_prompt=system_prompt,
             max_context_tokens=max_context_tokens,
         )
+
+    # Backward-compat alias
+    acreate_llm_reader = create_llm_reader
 
     # =========================================================================
     # OAuthService Delegation Methods

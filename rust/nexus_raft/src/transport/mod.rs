@@ -140,6 +140,15 @@ pub enum TransportError {
 
 pub type Result<T> = std::result::Result<T, TransportError>;
 
+/// Shared peer map that can be updated at runtime (e.g., when new nodes join via ConfChange).
+///
+/// Uses `std::sync::RwLock` (not tokio) because:
+/// - Read/write operations are very fast (HashMap insert/lookup)
+/// - Accessed from both sync (DashMap guard) and async (transport loop) contexts
+/// - Write-rarely, read-often pattern — no contention in practice
+pub type SharedPeerMap =
+    std::sync::Arc<std::sync::RwLock<std::collections::HashMap<u64, NodeAddress>>>;
+
 /// Address of a Raft node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NodeAddress {

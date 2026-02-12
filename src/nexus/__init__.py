@@ -307,7 +307,7 @@ def connect(
                 node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
                 bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
                 peers = [p.strip() for p in nexus_peers.split(",") if p.strip()]
-                return RaftMetadataStore.sc(
+                return RaftMetadataStore.consensus(
                     node_id=node_id,
                     db_path=metadata_path,
                     bind_address=bind_addr,

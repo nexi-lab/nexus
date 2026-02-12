@@ -272,6 +272,7 @@ addopts = [
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml
 testpaths = ["tests"]
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
@@ -609,4 +610,5 @@ line-ending = "auto"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "types-protobuf>=6.32.1.20251210",
 ]

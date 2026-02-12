@@ -1,0 +1,126 @@
+// Audit messages for the Nexus Exchange protocol.
+//
+// Maps to existing /api/v2/audit/ endpoints (Issue #1360).
+// Provides immutable transaction audit trail with integrity verification.
+
+syntax = "proto3";
+
+package nexus.exchange.v1;
+
+import "google/protobuf/timestamp.proto";
+import "nexus/exchange/v1/common.proto";
+
+// AuditTransaction represents a single immutable exchange audit log entry.
+message AuditTransaction {
+  string id = 1;
+  string record_hash = 2;
+  google.protobuf.Timestamp created_at = 3;
+  string protocol = 4;
+  string buyer_agent_id = 5;
+  string seller_agent_id = 6;
+  // Amount as decimal string for precision.
+  string amount = 7;
+  string currency = 8;
+  string status = 9;
+  string application = 10;
+  string zone_id = 11;
+  string trace_id = 12;
+  string metadata_hash = 13;
+  string transfer_id = 14;
+}
+
+// ListTransactionsRequest queries audit transactions with filters.
+message ListTransactionsRequest {
+  google.protobuf.Timestamp since = 1;
+  google.protobuf.Timestamp until = 2;
+  string protocol = 3;
+  string buyer_agent_id = 4;
+  string seller_agent_id = 5;
+  string status = 6;
+  string application = 7;
+  string trace_id = 8;
+  // Minimum amount filter (decimal string).
+  string amount_min = 9;
+  // Maximum amount filter (decimal string).
+  string amount_max = 10;
+  Pagination pagination = 11;
+  // Whether to include total count in response.
+  bool include_total = 12;
+}
+
+// ListTransactionsResponse returns paginated audit transactions.
+message ListTransactionsResponse {
+  repeated AuditTransaction transactions = 1;
+  PaginationInfo pagination = 2;
+}
+
+// GetTransactionRequest retrieves a single audit transaction.
+message GetTransactionRequest {
+  string record_id = 1;
+}
+
+// GetTransactionResponse returns a single transaction.
+message GetTransactionResponse {
+  AuditTransaction transaction = 1;
+}
+
+// GetAggregationsRequest queries aggregate statistics.
+message GetAggregationsRequest {
+  google.protobuf.Timestamp since = 1;
+  google.protobuf.Timestamp until = 2;
+}
+
+// GetAggregationsResponse returns aggregate audit statistics.
+message GetAggregationsResponse {
+  // Total volume as decimal string.
+  string total_volume = 1;
+  int64 tx_count = 2;
+  repeated CounterpartyVolume top_buyers = 3;
+  repeated CounterpartyVolume top_sellers = 4;
+}
+
+// CounterpartyVolume represents a single counterparty's transaction volume.
+message CounterpartyVolume {
+  string agent_id = 1;
+  string volume = 2;
+  int64 count = 3;
+}
+
+// VerifyIntegrityRequest checks a record's hash for tamper detection.
+message VerifyIntegrityRequest {
+  string record_id = 1;
+}
+
+// VerifyIntegrityResponse returns the integrity verification result.
+message VerifyIntegrityResponse {
+  string record_id = 1;
+  bool is_valid = 2;
+  string record_hash = 3;
+}
+
+// ExportFormat specifies the export format.
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_JSON = 1;
+  EXPORT_FORMAT_CSV = 2;
+}
+
+// ExportTransactionsRequest triggers a bulk export.
+message ExportTransactionsRequest {
+  ExportFormat format = 1;
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp until = 3;
+  string protocol = 4;
+  string buyer_agent_id = 5;
+  string seller_agent_id = 6;
+  string status = 7;
+  string application = 8;
+}
+
+// ExportTransactionsResponse returns export data as a byte stream.
+message ExportTransactionsResponse {
+  // Raw export data (CSV or JSON bytes).
+  bytes data = 1;
+  // MIME content type (e.g., "text/csv", "application/json").
+  string content_type = 2;
+}

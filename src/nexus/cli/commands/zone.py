@@ -1,6 +1,18 @@
-"""Nexus CLI Zone Commands - Zone export/import operations.
+"""Nexus CLI Zone Commands.
 
-Commands for exporting and importing zone data as portable .nexus bundles.
+Subcommands:
+  Federation (Issue #1326):
+    zone create   - Create a new Raft zone
+    zone join     - Join an existing zone as Voter
+    zone list     - List local zones
+    zone mount    - Mount a zone at a path (DT_MOUNT)
+    zone unmount  - Remove a mount point
+
+  Portability (Issue #1161):
+    zone export   - Export zone data to .nexus bundle
+    zone import   - Import zone data from .nexus bundle
+    zone inspect  - Inspect a .nexus bundle
+    zone validate - Validate a .nexus bundle
 """
 
 from __future__ import annotations
@@ -25,11 +37,351 @@ from nexus.core.nexus_fs import NexusFS
 
 @click.group()
 def zone() -> None:
-    """Zone data management commands.
+    """Zone management — federation and portability.
 
-    Export and import zone data as portable .nexus bundles.
+    Federation commands (create, join, list, mount, unmount) manage
+    Raft zones and cross-zone DT_MOUNT points. Requires PyO3 build
+    with --features full.
+
+    Portability commands (export, import, inspect, validate) work
+    with .nexus bundle files for zone data migration.
     """
     pass
+
+
+# =========================================================================
+# Federation commands (Issue #1326)
+# =========================================================================
+
+
+def _get_zone_manager(
+    node_id: int,
+    data_dir: str,
+    bind_addr: str,
+):
+    """Create a ZoneManager from CLI options.
+
+    Imports lazily to avoid requiring PyO3 for non-federation commands.
+    """
+    from nexus.raft.zone_manager import ZoneManager
+
+    return ZoneManager(
+        node_id=node_id,
+        base_path=data_dir,
+        bind_addr=bind_addr,
+    )
+
+
+@zone.command(name="create")
+@click.argument("zone_id", type=str)
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    default=1,
+    show_default=True,
+    help="This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="gRPC bind address",
+)
+@click.option(
+    "--peers",
+    type=str,
+    default=None,
+    help="Comma-separated peer addresses (format: id@host:port)",
+)
+def create_zone_cmd(
+    zone_id: str,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+    peers: str | None,
+) -> None:
+    """Create a new Raft zone.
+
+    Each zone is an independent Raft group with its own redb database.
+    All participants are equal Voters (All-Voters model).
+
+    Examples:
+        nexus zone create my-zone
+
+        nexus zone create shared-zone --peers 2@peer2:2126,3@peer3:2126
+
+        NEXUS_NODE_ID=2 nexus zone create shared-zone --peers 1@peer1:2126
+    """
+    try:
+        peer_list = [p.strip() for p in peers.split(",")] if peers else []
+        mgr = _get_zone_manager(node_id, data_dir, bind)
+        store = mgr.create_zone(zone_id, peers=peer_list)
+
+        console.print(f"[green]Zone '{zone_id}' created[/green]")
+        console.print(f"  Node ID: {node_id}")
+        console.print(f"  Data dir: {data_dir}/{zone_id}/")
+        console.print(f"  Bind: {bind}")
+        if peer_list:
+            console.print(f"  Peers: {', '.join(peer_list)}")
+
+        store.close()
+        mgr.shutdown()
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="join")
+@click.argument("zone_id", type=str)
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    required=True,
+    help="This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="gRPC bind address",
+)
+@click.option(
+    "--peers",
+    type=str,
+    required=True,
+    help="Comma-separated existing peer addresses (format: id@host:port)",
+)
+def join_zone_cmd(
+    zone_id: str,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+    peers: str,
+) -> None:
+    """Join an existing zone as a new Voter.
+
+    Creates a local RaftNode without bootstrapping. The leader must
+    be notified via JoinZone RPC to add this node via ConfChange.
+
+    Examples:
+        NEXUS_NODE_ID=3 nexus zone join shared-zone --peers 1@leader:2126,2@peer2:2126
+    """
+    try:
+        peer_list = [p.strip() for p in peers.split(",")]
+        mgr = _get_zone_manager(node_id, data_dir, bind)
+        store = mgr.join_zone(zone_id, peers=peer_list)
+
+        console.print(f"[green]Joined zone '{zone_id}'[/green]")
+        console.print(f"  Node ID: {node_id}")
+        console.print(f"  Peers: {', '.join(peer_list)}")
+        console.print("  Waiting for leader to send snapshot...")
+
+        store.close()
+        mgr.shutdown()
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="list")
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    default=1,
+    show_default=True,
+    help="This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="gRPC bind address",
+)
+def list_zones_cmd(
+    node_id: int,
+    data_dir: str,
+    bind: str,
+) -> None:
+    """List all local zones on this node.
+
+    Examples:
+        nexus zone list
+
+        nexus zone list --data-dir /var/lib/nexus/zones
+    """
+    try:
+        mgr = _get_zone_manager(node_id, data_dir, bind)
+        zones = mgr.list_zones()
+
+        if not zones:
+            console.print("[dim]No zones found[/dim]")
+        else:
+            table = Table(title=f"Zones (node {node_id})")
+            table.add_column("Zone ID", style="cyan")
+            console.print()
+            for z in sorted(zones):
+                table.add_row(z)
+            console.print(table)
+
+        mgr.shutdown()
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="mount")
+@click.argument("mount_path", type=str)
+@click.argument("target_zone", type=str)
+@click.option(
+    "--parent-zone",
+    type=str,
+    default="default",
+    show_default=True,
+    help="Zone containing the mount point",
+)
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    default=1,
+    show_default=True,
+    help="This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="gRPC bind address",
+)
+def mount_zone_cmd(
+    mount_path: str,
+    target_zone: str,
+    parent_zone: str,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+) -> None:
+    """Mount a zone at a path (DT_MOUNT).
+
+    Creates a cross-zone mount point. Files under MOUNT_PATH will
+    be routed to TARGET_ZONE's metadata store.
+
+    NFS-style semantics: rejects if MOUNT_PATH already exists (no shadow).
+
+    Examples:
+        nexus zone mount /shared team-zone
+
+        nexus zone mount /projects/alice alice-zone --parent-zone root
+    """
+    try:
+        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr.mount(parent_zone, mount_path, target_zone)
+
+        console.print(
+            f"[green]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/green]"
+        )
+
+        mgr.shutdown()
+    except Exception as e:
+        handle_error(e)
+
+
+@zone.command(name="unmount")
+@click.argument("mount_path", type=str)
+@click.option(
+    "--parent-zone",
+    type=str,
+    default="default",
+    show_default=True,
+    help="Zone containing the mount point",
+)
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    default=1,
+    show_default=True,
+    help="This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="gRPC bind address",
+)
+def unmount_zone_cmd(
+    mount_path: str,
+    parent_zone: str,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+) -> None:
+    """Remove a mount point (DT_MOUNT).
+
+    Examples:
+        nexus zone unmount /shared
+
+        nexus zone unmount /projects/alice --parent-zone root
+    """
+    try:
+        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr.unmount(parent_zone, mount_path)
+
+        console.print(f"[green]Unmounted '{mount_path}' from zone '{parent_zone}'[/green]")
+
+        mgr.shutdown()
+    except Exception as e:
+        handle_error(e)
 
 
 @zone.command(name="export")

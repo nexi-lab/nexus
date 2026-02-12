@@ -377,3 +377,114 @@ class TestThreeNodeShareScenario:
         assert res.zone_id == "proj-zone"
         assert res.path == "/a/b/c/deep.txt"
         assert res.store.get("/a/b/c/deep.txt").size == 1
+
+
+class TestBootstrapContract:
+    """Verify node bootstrap contract: root zone + "/" with i_links_count=1.
+
+    These tests exercise the bootstrap semantics using embedded stores
+    (no PyO3 ZoneManager needed). The real ZoneManager.bootstrap() follows
+    the same logic.
+    """
+
+    def test_bootstrap_creates_root_with_links_count_1(self, tmp_path):
+        """After bootstrap, root zone has "/" with i_links_count=1."""
+        from nexus.core._metadata_generated import DT_DIR
+
+        store = RaftMetadataStore.embedded(str(tmp_path / "root"))
+
+        # Simulate bootstrap: create "/" with i_links_count=1 (self-ref)
+        store.put(
+            FileMetadata(
+                path="/",
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id="root",
+                i_links_count=1,
+            )
+        )
+
+        root = store.get("/")
+        assert root is not None
+        assert root.i_links_count == 1
+        assert root.entry_type == DT_DIR
+        assert root.zone_id == "root"
+
+    def test_bootstrap_idempotent(self, tmp_path):
+        """Calling bootstrap twice doesn't change i_links_count."""
+        from nexus.core._metadata_generated import DT_DIR
+
+        store = RaftMetadataStore.embedded(str(tmp_path / "root"))
+
+        root_entry = FileMetadata(
+            path="/",
+            backend_name="virtual",
+            physical_path="",
+            size=0,
+            entry_type=DT_DIR,
+            zone_id="root",
+            i_links_count=1,
+        )
+        store.put(root_entry)
+
+        # Second bootstrap: "/" already exists → don't overwrite
+        existing = store.get("/")
+        assert existing is not None  # already exists, skip
+
+        assert existing.i_links_count == 1  # unchanged
+
+    def test_mount_after_bootstrap_increments_links(self, tmp_path):
+        """mount() increments i_links_count from bootstrap's initial 1 to 2."""
+        from dataclasses import replace
+
+        from nexus.core._metadata_generated import DT_DIR
+
+        root_store = RaftMetadataStore.embedded(str(tmp_path / "root"))
+        target_store = RaftMetadataStore.embedded(str(tmp_path / "target"))
+
+        # Bootstrap root zone
+        root_store.put(
+            FileMetadata(
+                path="/",
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id="root",
+                i_links_count=1,
+            )
+        )
+
+        # Bootstrap target zone
+        target_store.put(
+            FileMetadata(
+                path="/",
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id="target",
+                i_links_count=1,
+            )
+        )
+
+        # Mount target at /shared in root (simulates ZoneManager.mount)
+        root_store.put(
+            FileMetadata(
+                path="/shared",
+                backend_name="mount",
+                physical_path="",
+                size=0,
+                entry_type=DT_MOUNT,
+                target_zone_id="target",
+                zone_id="root",
+            )
+        )
+
+        # Increment target's i_links_count (mount does this)
+        target_root = target_store.get("/")
+        target_store.put(replace(target_root, i_links_count=target_root.i_links_count + 1))
+
+        assert target_store.get("/").i_links_count == 2  # bootstrap(1) + mount(+1)

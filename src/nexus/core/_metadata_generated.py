@@ -280,27 +280,14 @@ class AsyncFileMetadataWrapper:
     async def aexists(self, path: str) -> bool:
         return await asyncio.to_thread(self._store.exists, path)
 
-    async def alist(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]:
+    async def alist(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         return await asyncio.to_thread(self._store.list, prefix, recursive, **kwargs)
 
-    async def alist_iter(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> Iterator[FileMetadata]:
+    async def alist_iter(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> Iterator[FileMetadata]:
         return await asyncio.to_thread(self._store.list_iter, prefix, recursive, **kwargs)
 
-    async def alist_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,
-        zone_id: str | None = None,
-    ) -> PaginatedResult:
-        return await asyncio.to_thread(
-            self._store.list_paginated, prefix, recursive, limit, cursor, zone_id
-        )
+    async def alist_paginated(self, prefix: str = "", recursive: bool = True, limit: int = 1000, cursor: str | None = None, zone_id: str | None = None) -> PaginatedResult:
+        return await asyncio.to_thread(self._store.list_paginated, prefix, recursive, limit, cursor, zone_id)
 
     async def aget_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         return await asyncio.to_thread(self._store.get_batch, paths)

@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTO_PATH = REPO_ROOT / "proto" / "nexus" / "core" / "metadata.proto"
 METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_metadata_generated.py"
 COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
+MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generated.py"
 
 # --- Generated class names (SSOT) ---
 # Canonical names exported by each generated module.
@@ -38,6 +39,7 @@ GENERATED_NAMES: dict[str, set[str]] = {
         "DT_MOUNT",
     },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
+    "_metadata_mapper_generated": {"MetadataMapper"},
 }
 
 # --- One-time migration: old → new name ---
@@ -102,6 +104,11 @@ COMPACT_FIELD_NAMES: dict[str, str] = {
     "created_by": "created_by_id",
     "owner_id": "owner_id_intern",
     "target_zone_id": "target_zone_id_intern",
+}
+
+# from_proto fallback: when a proto field is empty, use another field's value
+FROM_PROTO_FALLBACKS: dict[str, str] = {
+    "physical_path": "proto.path",
 }
 
 # Fields stored directly (not interned) in CompactFileMetadata
@@ -779,11 +786,262 @@ def clear_intern_pool() -> None:
 '''
 
 
+def _field_category(field: dict[str, str]) -> str:
+    """Classify a proto field for mapper code generation.
+
+    Returns one of: 'datetime', 'nullable_string', 'int', 'required_string'.
+    """
+    name = field["name"]
+    if name in DATETIME_FIELDS:
+        return "datetime"
+    if name in NULLABLE_STRING_FIELDS:
+        return "nullable_string"
+    proto_type = field["type"]
+    if proto_type in ("int64", "int32"):
+        return "int"
+    if proto_type in PROTO_TYPE_MAP and PROTO_TYPE_MAP[proto_type] == "int":
+        return "enum"
+    return "required_string"
+
+
+def generate_mapper_py(fields: list[dict[str, str]]) -> str:
+    """Generate _metadata_mapper_generated.py content.
+
+    Produces MetadataMapper with to_proto/from_proto/to_json/from_json
+    derived from the proto field list. SQL methods are included verbatim
+    in the template (they use a different column name mapping).
+    """
+    # --- Build to_proto keyword args ---
+    to_proto_lines = []
+    for f in fields:
+        name = f["name"]
+        cat = _field_category(f)
+        if cat == "datetime":
+            to_proto_lines.append(
+                f'            {name}=metadata.{name}.isoformat() if metadata.{name} else "",'
+            )
+        elif cat == "nullable_string":
+            to_proto_lines.append(f'            {name}=metadata.{name} or "",')
+        elif cat == "enum":
+            enum_type = f["type"]
+            to_proto_lines.append(
+                f"            {name}=metadata_pb2.{enum_type}.Name(metadata.{name}),"
+            )
+        elif cat == "int":
+            to_proto_lines.append(f"            {name}=metadata.{name},")
+        else:  # required_string
+            if name in FROM_PROTO_FALLBACKS:
+                to_proto_lines.append(f'            {name}=metadata.{name} or "",')
+            else:
+                to_proto_lines.append(f"            {name}=metadata.{name},")
+    to_proto_block = "\n".join(to_proto_lines)
+
+    # --- Build from_proto keyword args ---
+    from_proto_lines = []
+    for f in fields:
+        name = f["name"]
+        cat = _field_category(f)
+        if cat == "datetime":
+            # Handled separately via local variables
+            from_proto_lines.append(f"            {name}={name},")
+        elif cat == "nullable_string":
+            from_proto_lines.append(f"            {name}=proto.{name} or None,")
+        elif cat == "int":
+            from_proto_lines.append(f"            {name}=proto.{name},")
+        else:  # required_string
+            fallback = FROM_PROTO_FALLBACKS.get(name)
+            if fallback:
+                from_proto_lines.append(f"            {name}=proto.{name} or {fallback},")
+            else:
+                from_proto_lines.append(f"            {name}=proto.{name},")
+    from_proto_block = "\n".join(from_proto_lines)
+
+    # --- Build datetime parsing block for from_proto ---
+    datetime_parse_lines = []
+    for name in sorted(DATETIME_FIELDS):
+        datetime_parse_lines.append(f"        {name} = None")
+        datetime_parse_lines.append(f"        if proto.{name}:")
+        datetime_parse_lines.append("            with suppress(ValueError):")
+        datetime_parse_lines.append(
+            f"                {name} = datetime.fromisoformat(proto.{name})"
+        )
+    datetime_parse_block = "\n".join(datetime_parse_lines)
+
+    # --- Build to_json dict entries ---
+    to_json_lines = []
+    for f in fields:
+        name = f["name"]
+        cat = _field_category(f)
+        if cat == "datetime":
+            to_json_lines.append(
+                f'            "{name}": metadata.{name}.isoformat() if metadata.{name} else None,'
+            )
+        else:
+            to_json_lines.append(f'            "{name}": metadata.{name},')
+    to_json_block = "\n".join(to_json_lines)
+
+    return f'''\
+"""Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
+
+This module is generated by: python scripts/gen_metadata.py
+SSOT: proto/nexus/core/metadata.proto
+
+Central metadata mapping between FileMetadata and serialization formats.
+Proto/JSON methods are auto-generated. SQL methods are manual (different schema).
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import suppress
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.core._metadata_generated import FileMetadata
+
+logger = logging.getLogger(__name__)
+
+
+def _to_naive(dt: datetime | None) -> datetime | None:
+    """Strip timezone from datetime (SQLite stores naive UTC)."""
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def _utcnow_naive() -> datetime:
+    """Return current UTC time as naive datetime (for SQLite compat)."""
+    from datetime import UTC
+
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+# ---------------------------------------------------------------------------
+# Field name mapping: proto field -> SQLAlchemy column (manual, not generated)
+# ---------------------------------------------------------------------------
+
+PROTO_TO_SQL: dict[str, str | None] = {{
+    "path": "virtual_path",
+    "backend_name": "backend_id",
+    "physical_path": "physical_path",
+    "size": "size_bytes",
+    "etag": "content_hash",
+    "mime_type": "file_type",
+    "created_at": "created_at",
+    "modified_at": "updated_at",
+    "version": "current_version",
+    "zone_id": "zone_id",
+    "created_by": None,  # TODO(#1246): Add to FilePathModel
+    "entry_type": None,  # TODO(#1246): Add to FilePathModel
+    "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
+    "owner_id": "posix_uid",
+    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
+}}
+
+
+class MetadataMapper:
+    """Centralized mapping between FileMetadata and other representations.
+
+    Proto/JSON methods are auto-generated from proto field definitions.
+    SQL methods are manual (different column name mapping).
+    """
+
+    # -- Proto serialization (GENERATED) ------------------------------------
+
+    @staticmethod
+    def to_proto(metadata: FileMetadata) -> Any:
+        """Convert FileMetadata dataclass to protobuf message."""
+        from nexus.core import metadata_pb2
+
+        return metadata_pb2.FileMetadata(
+{to_proto_block}
+        )
+
+    @staticmethod
+    def from_proto(proto: Any) -> FileMetadata:
+        """Convert protobuf message to FileMetadata dataclass."""
+        from nexus.core._metadata_generated import FileMetadata
+
+{datetime_parse_block}
+
+        return FileMetadata(
+{from_proto_block}
+        )
+
+    # -- JSON serialization (GENERATED) -------------------------------------
+
+    @staticmethod
+    def to_json(metadata: FileMetadata) -> dict[str, Any]:
+        """Convert FileMetadata to JSON-serializable dict."""
+        return {{
+{to_json_block}
+        }}
+
+    @staticmethod
+    def from_json(obj: dict[str, Any]) -> FileMetadata:
+        """Convert JSON dict to FileMetadata dataclass."""
+        from nexus.core._metadata_generated import FileMetadata
+
+        # Migration: convert legacy is_directory -> entry_type
+        if "is_directory" in obj:
+            is_dir = obj.pop("is_directory")
+            if "entry_type" not in obj:
+                obj["entry_type"] = 1 if is_dir else 0
+
+        if obj.get("created_at"):
+            obj["created_at"] = datetime.fromisoformat(obj["created_at"])
+        if obj.get("modified_at"):
+            obj["modified_at"] = datetime.fromisoformat(obj["modified_at"])
+        return FileMetadata(**obj)
+
+    # -- SQLAlchemy column values (MANUAL — different schema) ---------------
+
+    @staticmethod
+    def to_file_path_values(
+        metadata: FileMetadata,
+        *,
+        include_version: bool = True,
+    ) -> dict[str, Any]:
+        """Convert FileMetadata to dict of FilePathModel column values.
+
+        Keys are FilePathModel column names (not proto field names).
+        """
+        values: dict[str, Any] = {{
+            "virtual_path": metadata.path,
+            "backend_id": metadata.backend_name or "local",
+            "physical_path": metadata.physical_path or metadata.path,
+            "size_bytes": metadata.size or 0,
+            "content_hash": metadata.etag,
+            "file_type": metadata.mime_type,
+            "created_at": _to_naive(metadata.created_at) or _utcnow_naive(),
+            "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
+            "zone_id": metadata.zone_id or "default",
+            "posix_uid": metadata.owner_id,
+        }}
+        if include_version:
+            values["current_version"] = 1
+        return values
+
+    @staticmethod
+    def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
+        """Convert FileMetadata to dict for UPDATE operations."""
+        return {{
+            "backend_id": metadata.backend_name,
+            "physical_path": metadata.physical_path,
+            "size_bytes": metadata.size or 0,
+            "content_hash": metadata.etag,
+            "file_type": metadata.mime_type,
+            "updated_at": _to_naive(metadata.modified_at) or _utcnow_naive(),
+        }}
+'''
+
+
 def generate_protobuf_stubs() -> None:
     """Generate metadata_pb2.py via grpc_tools.protoc.
 
     This produces the standard protobuf Python stubs used by
-    RaftFileMetadataProtocol for binary serialization into sled.
+    RaftFileMetadataProtocol for binary serialization into redb.
     """
     try:
         from grpc_tools import protoc
@@ -804,6 +1062,7 @@ def generate_protobuf_stubs() -> None:
             "grpc_tools.protoc",
             f"-I{proto_include}",
             f"--python_out={src_out}",
+            f"--pyi_out={src_out}",
             proto_file,
         ]
     )
@@ -813,7 +1072,9 @@ def generate_protobuf_stubs() -> None:
         sys.exit(1)
 
     pb2_path = REPO_ROOT / "src" / "nexus" / "core" / "metadata_pb2.py"
+    pyi_path = REPO_ROOT / "src" / "nexus" / "core" / "metadata_pb2.pyi"
     print(f"Generated: {pb2_path}")
+    print(f"Generated: {pyi_path}")
 
 
 def apply_renames(renames: dict[str, str]) -> list[str]:
@@ -835,7 +1096,7 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in old_names) + r")\b")
 
     # Files to skip (generated by this script)
-    skip = {METADATA_OUT.resolve(), COMPACT_OUT.resolve()}
+    skip = {METADATA_OUT.resolve(), COMPACT_OUT.resolve(), MAPPER_OUT.resolve()}
 
     modified = []
     for search_dir in [src_dir, tests_dir]:
@@ -956,7 +1217,12 @@ def main() -> None:
     COMPACT_OUT.write_text(compact_content, encoding="utf-8")
     print(f"Generated: {COMPACT_OUT}")
 
-    # 4. Apply one-time renames to downstream imports
+    # 4. Generate metadata mapper (MetadataMapper — proto/JSON serialization)
+    mapper_content = generate_mapper_py(fields)
+    MAPPER_OUT.write_text(mapper_content, encoding="utf-8")
+    print(f"Generated: {MAPPER_OUT}")
+
+    # 5. Apply one-time renames to downstream imports
     if RENAMES:
         print(f"\nApplying {len(RENAMES)} rename(s) to downstream files:")
         for old, new in RENAMES.items():
@@ -969,7 +1235,7 @@ def main() -> None:
         else:
             print("No downstream files needed updating.")
 
-    # 5. SSOT coverage audit
+    # 6. SSOT coverage audit
     print("\nSSOT coverage audit:")
     warnings = audit_ssot_coverage()
     if warnings:

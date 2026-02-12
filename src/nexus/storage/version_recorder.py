@@ -87,7 +87,7 @@ class VersionRecorder:
             )
         )
 
-        from nexus.storage.metadata_mapper import MetadataMapper
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         values = MetadataMapper.to_file_path_values(metadata)
         file_path = FilePathModel(
@@ -127,7 +127,7 @@ class VersionRecorder:
             self._record_create(metadata)
             return
 
-        from nexus.storage.metadata_mapper import MetadataMapper
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         update_values = MetadataMapper.to_file_path_update_values(metadata)
         # Preserve existing values for fields the metadata doesn't override

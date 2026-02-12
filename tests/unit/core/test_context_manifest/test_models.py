@@ -209,9 +209,7 @@ class TestContextSourceDiscriminator:
             ({"type": "memory_query", "query": "test"}, MemoryQuerySource),
         ],
     )
-    def test_discriminator_dispatches(
-        self, data: dict[str, Any], expected_type: type
-    ) -> None:
+    def test_discriminator_dispatches(self, data: dict[str, Any], expected_type: type) -> None:
         from pydantic import TypeAdapter
 
         adapter = TypeAdapter(ContextSource)
@@ -400,21 +398,15 @@ class TestManifestResolutionError:
         assert err.failed_sources == (failed,)
 
     def test_multiple_failures(self) -> None:
-        f1 = SourceResult(
-            source_type="mcp_tool", source_name="tool_a", status="error", data=None
-        )
-        f2 = SourceResult(
-            source_type="file_glob", source_name="*.rs", status="timeout", data=None
-        )
+        f1 = SourceResult(source_type="mcp_tool", source_name="tool_a", status="error", data=None)
+        f2 = SourceResult(source_type="file_glob", source_name="*.rs", status="timeout", data=None)
         err = ManifestResolutionError(failed_sources=(f1, f2))
         assert "tool_a" in str(err)
         assert "*.rs" in str(err)
         assert len(err.failed_sources) == 2
 
     def test_is_exception(self) -> None:
-        failed = SourceResult(
-            source_type="mcp_tool", source_name="x", status="error", data=None
-        )
+        failed = SourceResult(source_type="mcp_tool", source_name="x", status="error", data=None)
         err = ManifestResolutionError(failed_sources=(failed,))
         assert isinstance(err, Exception)
         with pytest.raises(ManifestResolutionError):

@@ -82,9 +82,7 @@ class TestFullPipeline:
     @pytest.mark.asyncio
     async def test_multi_source_resolve_writes_files(self, tmp_path: Path) -> None:
         """Full pipeline: 4 sources → resolve → verify files on disk."""
-        resolver = ManifestResolver(
-            executors=_make_all_ok_executors(), max_resolve_seconds=10.0
-        )
+        resolver = ManifestResolver(executors=_make_all_ok_executors(), max_resolve_seconds=10.0)
         sources = [
             FileGlobSource(pattern="src/**/*.py"),
             MemoryQuerySource(query="relevant to auth"),

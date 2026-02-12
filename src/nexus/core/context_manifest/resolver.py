@@ -155,8 +155,7 @@ class ManifestResolver:
         failed_required = [
             r
             for r, s in zip(results, sources, strict=True)
-            if getattr(s, "required", True)
-            and r.status in ("error", "timeout", "skipped")
+            if getattr(s, "required", True) and r.status in ("error", "timeout", "skipped")
         ]
         if failed_required:
             raise ManifestResolutionError(failed_sources=tuple(failed_required))
@@ -175,9 +174,7 @@ class ManifestResolver:
     # Internal helpers
     # -------------------------------------------------------------------
 
-    def _validate_templates(
-        self, sources: Sequence[Any], variables: dict[str, str]
-    ) -> None:
+    def _validate_templates(self, sources: Sequence[Any], variables: dict[str, str]) -> None:
         """Validate template variables in all sources before execution."""
         for source in sources:
             for field_name in _SOURCE_NAME_FIELDS:
@@ -197,10 +194,7 @@ class ManifestResolver:
 
         # CRITICAL-1 fix: Use asyncio.create_task() so cancellation works
         # when global timeout fires. Plain coroutines can't be cancelled.
-        tasks = [
-            asyncio.create_task(self._execute_one(source, variables))
-            for source in sources
-        ]
+        tasks = [asyncio.create_task(self._execute_one(source, variables)) for source in sources]
 
         try:
             async with asyncio.timeout(self._max_resolve_seconds):
@@ -243,9 +237,7 @@ class ManifestResolver:
                 )
         return processed
 
-    async def _execute_one(
-        self, source: Any, variables: dict[str, str]
-    ) -> SourceResult:
+    async def _execute_one(self, source: Any, variables: dict[str, str]) -> SourceResult:
         """Execute a single source with its per-source timeout."""
         source_type = source.type
         name = self._get_source_name(source)
@@ -291,9 +283,7 @@ class ManifestResolver:
                 elapsed_ms=elapsed_ms,
             )
 
-    async def _collect_timeout_results(
-        self, sources: Sequence[Any]
-    ) -> list[SourceResult]:
+    async def _collect_timeout_results(self, sources: Sequence[Any]) -> list[SourceResult]:
         """Build timeout results for all sources when global timeout fires."""
         return [
             SourceResult(
@@ -317,9 +307,7 @@ class ManifestResolver:
                 data_str = str(result.data)
                 data_size = len(data_str.encode("utf-8"))
                 if data_size > max_bytes:
-                    cut_data = data_str.encode("utf-8")[:max_bytes].decode(
-                        "utf-8", errors="ignore"
-                    )
+                    cut_data = data_str.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
                     truncated.append(
                         SourceResult(
                             source_type=result.source_type,
@@ -389,9 +377,7 @@ class ManifestResolver:
             "source_count": len(results),
             "sources": index_entries,
         }
-        (output_dir / "_index.json").write_text(
-            json.dumps(index_data, indent=2), encoding="utf-8"
-        )
+        (output_dir / "_index.json").write_text(json.dumps(index_data, indent=2), encoding="utf-8")
 
     @staticmethod
     def _get_source_name(source: Any) -> str:

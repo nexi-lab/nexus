@@ -82,8 +82,7 @@ def resolve_template(template: str, variables: dict[str, str]) -> str:
     for var_name in referenced:
         if var_name not in variables:
             msg = (
-                f"Template variable '{var_name}' is referenced but not "
-                f"provided in variables dict."
+                f"Template variable '{var_name}' is referenced but not provided in variables dict."
             )
             raise ValueError(msg)
 

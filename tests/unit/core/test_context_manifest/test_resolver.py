@@ -218,9 +218,7 @@ class TestManifestResolverHappyPath:
     ) -> None:
         """Template variables in sources are resolved before execution."""
         resolver = ManifestResolver(executors=_make_executors())
-        sources = [
-            make_source("memory_query", query="relevant to {{task.description}}")
-        ]
+        sources = [make_source("memory_query", query="relevant to {{task.description}}")]
 
         # Should not raise — template is valid
         result = await resolver.resolve(sources, template_variables, tmp_path)
@@ -269,9 +267,7 @@ class TestEdgeCaseAllRequiredFail:
 
 class TestEdgeCaseRequiredFailOptionalSucceed:
     @pytest.mark.asyncio
-    async def test_required_fail_aborts_despite_optional_success(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_required_fail_aborts_despite_optional_success(self, tmp_path: Path) -> None:
         executors = _make_executors(
             file_glob=ErrorExecutor(),
             memory=OkExecutor(),
@@ -321,14 +317,10 @@ class TestEdgeCaseOptionalFail:
 
 class TestEdgeCaseSourceTimeout:
     @pytest.mark.asyncio
-    async def test_source_timeout_produces_timeout_status(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_source_timeout_produces_timeout_status(self, tmp_path: Path) -> None:
         executors = _make_executors(file_glob=SlowExecutor(delay_seconds=10.0))
         resolver = ManifestResolver(executors=executors)
-        sources = [
-            make_source("file_glob", pattern="*.py", timeout_seconds=0.1, required=False)
-        ]
+        sources = [make_source("file_glob", pattern="*.py", timeout_seconds=0.1, required=False)]
 
         result = await resolver.resolve(sources, {}, tmp_path)
 
@@ -338,9 +330,7 @@ class TestEdgeCaseSourceTimeout:
     async def test_required_timeout_raises(self, tmp_path: Path) -> None:
         executors = _make_executors(file_glob=SlowExecutor(delay_seconds=10.0))
         resolver = ManifestResolver(executors=executors)
-        sources = [
-            make_source("file_glob", pattern="*.py", timeout_seconds=0.1, required=True)
-        ]
+        sources = [make_source("file_glob", pattern="*.py", timeout_seconds=0.1, required=True)]
 
         with pytest.raises(ManifestResolutionError):
             await resolver.resolve(sources, {}, tmp_path)
@@ -377,13 +367,9 @@ class TestEdgeCaseResultTruncation:
 
 class TestEdgeCaseUndefinedVariable:
     @pytest.mark.asyncio
-    async def test_undefined_variable_raises_before_execution(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_undefined_variable_raises_before_execution(self, tmp_path: Path) -> None:
         resolver = ManifestResolver(executors=_make_executors())
-        sources = [
-            make_source("memory_query", query="{{task.description}}")
-        ]
+        sources = [make_source("memory_query", query="{{task.description}}")]
 
         with pytest.raises(ValueError, match="task.description"):
             await resolver.resolve(sources, {}, tmp_path)  # no variables provided
@@ -398,9 +384,7 @@ class TestEdgeCaseTemplateInjection:
     @pytest.mark.asyncio
     async def test_injection_via_dunder_raises(self, tmp_path: Path) -> None:
         resolver = ManifestResolver(executors=_make_executors())
-        sources = [
-            make_source("memory_query", query="{{task.__class__}}")
-        ]
+        sources = [make_source("memory_query", query="{{task.__class__}}")]
 
         with pytest.raises(ValueError, match="task.__class__"):
             await resolver.resolve(sources, {}, tmp_path)
@@ -413,14 +397,10 @@ class TestEdgeCaseTemplateInjection:
 
 class TestEdgeCaseConcurrentResolution:
     @pytest.mark.asyncio
-    async def test_no_shared_state_between_concurrent_resolves(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_no_shared_state_between_concurrent_resolves(self, tmp_path: Path) -> None:
         """Two concurrent resolve() calls produce independent results."""
         resolver = ManifestResolver(
-            executors=_make_executors(
-                file_glob=OkExecutor(data={"files": ["a.py"]}, delay_ms=50)
-            )
+            executors=_make_executors(file_glob=OkExecutor(data={"files": ["a.py"]}, delay_ms=50))
         )
 
         dir1 = tmp_path / "agent1"
@@ -468,9 +448,7 @@ class TestEdgeCaseEmptyData:
 
 class TestEdgeCaseDuplicateSources:
     @pytest.mark.asyncio
-    async def test_duplicate_sources_execute_independently(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_duplicate_sources_execute_independently(self, tmp_path: Path) -> None:
         resolver = ManifestResolver(executors=_make_executors())
         sources = [
             make_source("file_glob", pattern="*.py"),
@@ -492,9 +470,7 @@ class TestEdgeCaseUnicodeTemplates:
     @pytest.mark.asyncio
     async def test_unicode_template_values(self, tmp_path: Path) -> None:
         resolver = ManifestResolver(executors=_make_executors())
-        sources = [
-            make_source("memory_query", query="{{task.description}}")
-        ]
+        sources = [make_source("memory_query", query="{{task.description}}")]
         variables = {"task.description": "日本語テスト"}
 
         result = await resolver.resolve(sources, variables, tmp_path)
@@ -515,9 +491,7 @@ class TestGlobalTimeout:
             file_glob=SlowExecutor(delay_seconds=10.0),
             memory=SlowExecutor(delay_seconds=10.0),
         )
-        resolver = ManifestResolver(
-            executors=executors, max_resolve_seconds=0.2
-        )
+        resolver = ManifestResolver(executors=executors, max_resolve_seconds=0.2)
         sources = [
             make_source("file_glob", pattern="*.py", required=False, timeout_seconds=60),
             make_source("memory_query", query="test", required=False, timeout_seconds=60),

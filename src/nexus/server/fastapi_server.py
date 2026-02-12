@@ -4666,6 +4666,13 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
         kwargs["if_none_match"] = params.if_none_match
     if hasattr(params, "force") and params.force:
         kwargs["force"] = params.force
+    # Lock params (Issue #1143) — only forward when non-default
+    lock_val = getattr(params, "lock", None)
+    if lock_val:
+        kwargs["lock"] = lock_val
+    lock_timeout_val = getattr(params, "lock_timeout", None)
+    if lock_timeout_val is not None and lock_timeout_val != 30.0:
+        kwargs["lock_timeout"] = lock_timeout_val
 
     bytes_written = nexus_fs.write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}

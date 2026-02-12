@@ -120,9 +120,7 @@ class IdentityCrypto:
         """
         return private_key.sign(message)
 
-    def verify(
-        self, message: bytes, signature: bytes, public_key: Ed25519PublicKey
-    ) -> bool:
+    def verify(self, message: bytes, signature: bytes, public_key: Ed25519PublicKey) -> bool:
         """Verify an Ed25519 signature.
 
         Args:

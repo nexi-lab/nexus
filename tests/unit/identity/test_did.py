@@ -61,7 +61,9 @@ class TestResolveDidKey:
         _, public = crypto.generate_keypair()
         did = create_did_key(public)
         resolved = resolve_did_key(did)
-        assert IdentityCrypto.public_key_to_bytes(resolved) == IdentityCrypto.public_key_to_bytes(public)
+        assert IdentityCrypto.public_key_to_bytes(resolved) == IdentityCrypto.public_key_to_bytes(
+            public
+        )
 
     def test_invalid_prefix(self) -> None:
         with pytest.raises(ValueError, match="must start with"):
@@ -210,9 +212,8 @@ class TestDidProperties:
         _, public = crypto.generate_keypair()
         did = create_did_key(public)
         resolved = resolve_did_key(did)
-        assert (
-            IdentityCrypto.public_key_to_bytes(resolved)
-            == IdentityCrypto.public_key_to_bytes(public)
+        assert IdentityCrypto.public_key_to_bytes(resolved) == IdentityCrypto.public_key_to_bytes(
+            public
         )
 
     @given(data=st.binary(min_size=1, max_size=100))

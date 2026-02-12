@@ -112,7 +112,6 @@ class TaskQueueService:
         """
         self._runner = runner
 
-
     def submit_task(
         self,
         task_type: str,

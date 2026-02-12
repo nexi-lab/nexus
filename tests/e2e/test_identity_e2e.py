@@ -46,9 +46,7 @@ class InMemoryMetadataStore(FileMetadataProtocol):
     def exists(self, path: str) -> bool:
         return path in self._store
 
-    def list(
-        self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]:
+    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
         return [m for p, m in self._store.items() if p.startswith(prefix)]
 
     def list_paginated(
@@ -214,7 +212,9 @@ def normal_headers(api_keys: Any) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def rpc_call(client: Any, method: str, params: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+def rpc_call(
+    client: Any, method: str, params: dict[str, Any], headers: dict[str, str]
+) -> dict[str, Any]:
     """Make an RPC call and return the result."""
     resp = client.post(
         f"/api/nfs/{method}",
@@ -335,7 +335,9 @@ class TestIdentityE2EServerLevel:
         assert data["valid"] is True
         assert data["agent_id"] == agent_id
 
-    def test_verify_tampered_signature_fails(self, client: Any, admin_headers: Any, app: Any) -> None:
+    def test_verify_tampered_signature_fails(
+        self, client: Any, admin_headers: Any, app: Any
+    ) -> None:
         """Tampered signature is rejected."""
         from nexus.server.fastapi_server import _app_state
 
@@ -377,14 +379,26 @@ class TestIdentityE2EServerLevel:
         agent_a = f"e2e-admin,cross-a-{uuid.uuid4().hex[:8]}"
         agent_b = f"e2e-admin,cross-b-{uuid.uuid4().hex[:8]}"
 
-        rpc_call(client, "register_agent", {
-            "agent_id": agent_a, "name": "Agent A",
-            "context": {"user_id": "e2e-admin", "zone_id": "default"},
-        }, admin_headers)
-        rpc_call(client, "register_agent", {
-            "agent_id": agent_b, "name": "Agent B",
-            "context": {"user_id": "e2e-admin", "zone_id": "default"},
-        }, admin_headers)
+        rpc_call(
+            client,
+            "register_agent",
+            {
+                "agent_id": agent_a,
+                "name": "Agent A",
+                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+            },
+            admin_headers,
+        )
+        rpc_call(
+            client,
+            "register_agent",
+            {
+                "agent_id": agent_b,
+                "name": "Agent B",
+                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+            },
+            admin_headers,
+        )
 
         key_service = _app_state.key_service
         keys_a = key_service.get_active_keys(agent_a)
@@ -422,7 +436,9 @@ class TestIdentityE2EServerLevel:
         )
         assert resp.status_code == 404
 
-    def test_normal_user_can_query_identity(self, client: Any, normal_headers: Any, admin_headers: Any) -> None:
+    def test_normal_user_can_query_identity(
+        self, client: Any, normal_headers: Any, admin_headers: Any
+    ) -> None:
         """Non-admin authenticated users can query agent identity."""
         agent_id = f"e2e-admin,normal-test-{uuid.uuid4().hex[:8]}"
         rpc_call(
@@ -509,7 +525,9 @@ class TestNormalUserIdentityFlow:
         assert data["valid"] is True
         assert data["agent_id"] == agent_id
 
-    def test_normal_user_tampered_signature_rejected(self, client: Any, normal_headers: Any) -> None:
+    def test_normal_user_tampered_signature_rejected(
+        self, client: Any, normal_headers: Any
+    ) -> None:
         """Normal user's tampered signature is rejected."""
         from nexus.server.fastapi_server import _app_state
 
@@ -538,14 +556,17 @@ class TestNormalUserIdentityFlow:
         assert resp.status_code == 200
         assert resp.json()["valid"] is False
 
-    def test_normal_user_cannot_use_other_agents_key(self, client: Any, normal_headers: Any, admin_headers: Any) -> None:
+    def test_normal_user_cannot_use_other_agents_key(
+        self, client: Any, normal_headers: Any, admin_headers: Any
+    ) -> None:
         """Normal user cannot verify with another agent's key_id."""
         from nexus.server.fastapi_server import _app_state
 
         # Admin creates an agent
         admin_agent = f"e2e-admin,admin-agent-{uuid.uuid4().hex[:8]}"
         rpc_call(
-            client, "register_agent",
+            client,
+            "register_agent",
             {"agent_id": admin_agent, "name": "Admin Agent"},
             admin_headers,
         )
@@ -554,7 +575,8 @@ class TestNormalUserIdentityFlow:
         # Normal user creates their own agent
         user_agent = f"e2e-user,user-agent-{uuid.uuid4().hex[:8]}"
         rpc_call(
-            client, "register_agent",
+            client,
+            "register_agent",
             {"agent_id": user_agent, "name": "User Agent"},
             normal_headers,
         )
@@ -579,7 +601,8 @@ class TestNormalUserIdentityFlow:
         agent_id = f"e2e-user,didresolve-{uuid.uuid4().hex[:8]}"
 
         result = rpc_call(
-            client, "register_agent",
+            client,
+            "register_agent",
             {"agent_id": agent_id, "name": "DID Resolve Agent"},
             normal_headers,
         )

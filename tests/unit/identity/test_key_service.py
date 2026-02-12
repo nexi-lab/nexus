@@ -28,6 +28,7 @@ def _utcnow_naive() -> datetime:
     """UTC naive datetime for tests — matches key_service._utcnow_naive()."""
     return datetime.now(UTC).replace(tzinfo=None)
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

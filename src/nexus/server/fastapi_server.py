@@ -3429,7 +3429,9 @@ def _register_routes(app: FastAPI) -> None:
         key_id = body.get("key_id")
 
         if not message_b64 or not signature_b64:
-            raise HTTPException(status_code=400, detail="'message' and 'signature' are required (base64)")
+            raise HTTPException(
+                status_code=400, detail="'message' and 'signature' are required (base64)"
+            )
 
         try:
             message = base64.b64decode(message_b64)
@@ -3440,23 +3442,23 @@ def _register_routes(app: FastAPI) -> None:
         # Resolve public key
         resolved_key_id = key_id
         if key_id:
-            record = await asyncio.to_thread(
-                _app_state.key_service.get_public_key, key_id
-            )
+            record = await asyncio.to_thread(_app_state.key_service.get_public_key, key_id)
             if record is None:
                 raise HTTPException(status_code=404, detail="Key not found or not active")
             if record.agent_id != agent_id:
                 raise HTTPException(status_code=403, detail="Key does not belong to this agent")
             from nexus.identity.crypto import IdentityCrypto
+
             public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
         else:
-            keys = await asyncio.to_thread(
-                _app_state.key_service.get_active_keys, agent_id
-            )
+            keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
             if not keys:
-                raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
+                raise HTTPException(
+                    status_code=404, detail=f"No active keys for agent '{agent_id}'"
+                )
             resolved_key_id = keys[0].key_id
             from nexus.identity.crypto import IdentityCrypto
+
             public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
 
         valid = _app_state.key_service._crypto.verify(message, signature, public_key)

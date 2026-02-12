@@ -37,6 +37,7 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(UTC).replace(tzinfo=None)
 
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 

@@ -134,12 +134,10 @@ def resolve_did_key(did: str) -> Ed25519PublicKey:
         ValueError: If the DID is malformed or not an Ed25519 key.
     """
     if not did.startswith("did:key:z"):
-        raise ValueError(
-            f"Invalid did:key format: must start with 'did:key:z', got {did!r}"
-        )
+        raise ValueError(f"Invalid did:key format: must start with 'did:key:z', got {did!r}")
 
     # Strip "did:key:z" prefix and decode base58btc
-    encoded = did[len("did:key:z"):]
+    encoded = did[len("did:key:z") :]
     if not encoded:
         raise ValueError("Empty did:key identifier")
 
@@ -158,9 +156,7 @@ def resolve_did_key(did: str) -> Ed25519PublicKey:
     # Extract raw public key bytes
     raw_key_bytes = decoded[2:]
     if len(raw_key_bytes) != 32:
-        raise ValueError(
-            f"Ed25519 public key must be 32 bytes, got {len(raw_key_bytes)}"
-        )
+        raise ValueError(f"Ed25519 public key must be 32 bytes, got {len(raw_key_bytes)}")
 
     return IdentityCrypto.public_key_from_bytes(raw_key_bytes)
 

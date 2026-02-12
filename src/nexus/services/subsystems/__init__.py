@@ -7,5 +7,6 @@ with explicit constructor dependencies (no self god-reference).
 """
 
 from nexus.services.subsystems.llm_subsystem import LLMSubsystem
+from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
-__all__ = ["LLMSubsystem"]
+__all__ = ["LLMSubsystem", "ObservabilitySubsystem"]

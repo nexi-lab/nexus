@@ -572,8 +572,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             The new revision number after incrementing
         """
-        if self._is_local:
-            return self._local.increment_revision(zone_id)
+        if self._has_engine:
+            return self._engine.increment_revision(zone_id)
         raise NotImplementedError("Remote revision counter requires async")
 
     def get_revision(self, zone_id: str) -> int:
@@ -585,8 +585,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         Returns:
             The current revision number (0 if not found)
         """
-        if self._is_local:
-            return self._local.get_revision(zone_id)
+        if self._has_engine:
+            return self._engine.get_revision(zone_id)
         raise NotImplementedError("Remote revision counter requires async")
 
     # =========================================================================

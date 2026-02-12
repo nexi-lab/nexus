@@ -52,3 +52,15 @@ class FeatureFlags:
     enable_distributed_events: bool = True
     enable_distributed_locks: bool = True
     enable_memory_paging: bool = True
+
+
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """Query observability configuration (Issue #1301)."""
+
+    slow_query_threshold_ms: float = 500.0
+    enable_query_logging: bool = True
+    enable_pool_metrics: bool = True
+    log_query_parameters: bool = False  # security: off by default
+    max_query_length: int = 1000  # truncate long statements
+    max_listener_errors: int = 10  # auto-disable threshold

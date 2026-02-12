@@ -311,6 +311,16 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
+    # --- Observability Subsystem (Issue #1301) ---
+    from nexus.core.config import ObservabilityConfig
+    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+
+    observability_config = ObservabilityConfig()
+    observability_subsystem = ObservabilitySubsystem(
+        config=observability_config,
+        engines=[engine],
+    )
+
     # --- Wallet Provisioner (Issue #1210) ---
     # Creates TigerBeetle wallet accounts on agent registration.
     # Uses sync TigerBeetle client since NexusFS methods are sync.
@@ -330,6 +340,7 @@ def create_nexus_services(
         "workspace_manager": workspace_manager,
         "write_observer": write_observer,
         "version_service": version_service,
+        "observability_subsystem": observability_subsystem,
         "wallet_provisioner": wallet_provisioner,
     }
 
@@ -424,7 +435,11 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
         )
 
-    return NexusFS(
+    # ObservabilitySubsystem is not a NexusFS constructor param — pop it
+    # and attach after construction for lifecycle access (health_check, cleanup).
+    observability_subsystem = services.pop("observability_subsystem", None)
+
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -455,3 +470,8 @@ def create_nexus_fs(
         enable_distributed_locks=enable_distributed_locks,
         **services,
     )
+
+    if observability_subsystem is not None:
+        nx._observability_subsystem = observability_subsystem  # type: ignore[attr-defined]
+
+    return nx

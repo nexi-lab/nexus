@@ -105,6 +105,8 @@ class TestCreateNexusServices:
             "workspace_manager",
             "write_observer",
             "version_service",
+            "observability_subsystem",
+            "wallet_provisioner",
         }
         assert expected_keys.issubset(result.keys()), (
             f"Missing keys: {expected_keys - result.keys()}"

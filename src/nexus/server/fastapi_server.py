@@ -785,7 +785,6 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.identity.key_service import KeyService
             from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
-            from nexus.storage.models import Base
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
@@ -3435,8 +3434,8 @@ def _register_routes(app: FastAPI) -> None:
         try:
             message = base64.b64decode(message_b64)
             signature = base64.b64decode(signature_b64)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid base64 encoding")
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding") from exc
 
         # Resolve public key
         resolved_key_id = key_id

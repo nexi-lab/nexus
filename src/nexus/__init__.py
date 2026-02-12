@@ -41,6 +41,8 @@ nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
+from __future__ import annotations
+
 __version__ = "0.7.1.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
@@ -163,8 +165,8 @@ def __getattr__(name: str) -> Any:
 
 
 def connect(
-    config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+    config: str | Path | dict | NexusConfig | None = None,
+) -> NexusFilesystem:
     """
     Connect to Nexus filesystem.
 

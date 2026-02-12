@@ -18,6 +18,7 @@ Subcommands:
 from __future__ import annotations
 
 import sys
+from typing import Any
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,7 +59,7 @@ def _get_zone_manager(
     node_id: int,
     data_dir: str,
     bind_addr: str,
-):
+) -> Any:
     """Create a ZoneManager from CLI options.
 
     Imports lazily to avoid requiring PyO3 for non-federation commands.

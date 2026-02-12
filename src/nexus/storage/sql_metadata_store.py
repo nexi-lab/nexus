@@ -139,7 +139,7 @@ class SqlMetadataStore(FileMetadataProtocol):
                 return None
             return _row_to_metadata(row)
 
-    def put(self, metadata: FileMetadata) -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
         """Store or update file metadata in SQL (SSOT).
 
         Creates/updates FilePathModel, records version history, and logs
@@ -147,6 +147,7 @@ class SqlMetadataStore(FileMetadataProtocol):
 
         Args:
             metadata: File metadata to store
+            consistency: Ignored (SQL is always transactional).
         """
         with self._session_factory() as session:
             existing = session.execute(
@@ -165,11 +166,12 @@ class SqlMetadataStore(FileMetadataProtocol):
 
             session.commit()
 
-    def delete(self, path: str) -> dict[str, Any] | None:
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Soft-delete file metadata in SQL.
 
         Args:
             path: Virtual path
+            consistency: Ignored (SQL is always transactional).
 
         Returns:
             Dictionary with deleted file info or None if not found

@@ -139,7 +139,7 @@ class SqlMetadataStore(FileMetadataProtocol):
                 return None
             return _row_to_metadata(row)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:  # noqa: ARG002
         """Store or update file metadata in SQL (SSOT).
 
         Creates/updates FilePathModel, records version history, and logs
@@ -166,7 +166,7 @@ class SqlMetadataStore(FileMetadataProtocol):
 
             session.commit()
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:  # noqa: ARG002
         """Soft-delete file metadata in SQL.
 
         Args:

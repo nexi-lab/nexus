@@ -636,13 +636,22 @@ impl PyRaftConsensus {
     ///     value: Serialized metadata bytes.
     ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
     #[pyo3(signature = (path, value, consistency="sc"))]
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>, consistency: &str) -> PyResult<bool> {
+    pub fn set_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<bool> {
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            "ec" => {
+                self.propose_command_ec(py, cmd)?;
+                Ok(true)
+            }
             _ => self.propose_command(py, cmd),
         }
     }
@@ -671,7 +680,10 @@ impl PyRaftConsensus {
             key: path.to_string(),
         };
         match consistency {
-            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            "ec" => {
+                self.propose_command_ec(py, cmd)?;
+                Ok(true)
+            }
             _ => self.propose_command(py, cmd),
         }
     }
@@ -1107,13 +1119,22 @@ impl PyZoneHandle {
     ///     value: Serialized metadata bytes.
     ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
     #[pyo3(signature = (path, value, consistency="sc"))]
-    pub fn set_metadata(&self, py: Python<'_>, path: &str, value: Vec<u8>, consistency: &str) -> PyResult<bool> {
+    pub fn set_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<bool> {
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            "ec" => {
+                self.propose_command_ec(py, cmd)?;
+                Ok(true)
+            }
             _ => self.propose_command(py, cmd),
         }
     }
@@ -1142,7 +1163,10 @@ impl PyZoneHandle {
             key: path.to_string(),
         };
         match consistency {
-            "ec" => { self.propose_command_ec(py, cmd)?; Ok(true) }
+            "ec" => {
+                self.propose_command_ec(py, cmd)?;
+                Ok(true)
+            }
             _ => self.propose_command(py, cmd),
         }
     }

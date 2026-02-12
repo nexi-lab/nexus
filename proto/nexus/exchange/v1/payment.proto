@@ -1,0 +1,161 @@
+// Payment messages for the Nexus Exchange protocol.
+//
+// Maps to existing /api/v2/pay/ endpoints (Issue #1209).
+// Supports credit transfers, reservations, metering, and balance queries.
+
+syntax = "proto3";
+
+package nexus.exchange.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// GetBalanceRequest queries an agent's current balance.
+message GetBalanceRequest {
+  // Agent ID (resolved from auth context if empty).
+  string agent_id = 1;
+}
+
+// GetBalanceResponse returns available, reserved, and total balance.
+message GetBalanceResponse {
+  // Available balance (decimal string).
+  string available = 1;
+  // Reserved/pending balance (decimal string).
+  string reserved = 2;
+  // Total balance: available + reserved (decimal string).
+  string total = 3;
+}
+
+// TransferRequest initiates a single credit transfer.
+message TransferRequest {
+  // Recipient agent ID or wallet address.
+  string to = 1;
+  // Amount as decimal string (e.g., "10.50").
+  string amount = 2;
+  // Optional memo/description.
+  string memo = 3;
+  // Optional idempotency key for retry safety.
+  string idempotency_key = 4;
+  // Payment method: "auto", "credits", or "x402".
+  string method = 5;
+}
+
+// TransferResponse contains the receipt for a completed transfer.
+message TransferResponse {
+  Receipt receipt = 1;
+}
+
+// Receipt represents a completed payment transaction.
+message Receipt {
+  // Transaction ID.
+  string id = 1;
+  // Payment method used ("credits" or "x402").
+  string method = 2;
+  // Amount transferred (decimal string).
+  string amount = 3;
+  // Sender agent ID.
+  string from_agent = 4;
+  // Recipient agent ID or address.
+  string to_agent = 5;
+  // Transaction memo.
+  string memo = 6;
+  // Completion timestamp.
+  google.protobuf.Timestamp timestamp = 7;
+  // Blockchain tx hash (x402 only).
+  string tx_hash = 8;
+}
+
+// BatchTransferItem is a single entry in a batch transfer.
+message BatchTransferItem {
+  string to = 1;
+  string amount = 2;
+  string memo = 3;
+}
+
+// BatchTransferRequest executes multiple transfers atomically.
+message BatchTransferRequest {
+  repeated BatchTransferItem transfers = 1;
+}
+
+// BatchTransferResponse returns receipts for all batch transfers.
+message BatchTransferResponse {
+  repeated Receipt receipts = 1;
+}
+
+// ReserveRequest creates a two-phase credit reservation.
+message ReserveRequest {
+  // Amount to reserve (decimal string).
+  string amount = 1;
+  // Auto-release timeout in seconds (1-86400, default 300).
+  int32 timeout = 2;
+  // Purpose of reservation.
+  string purpose = 3;
+  // Optional task identifier.
+  string task_id = 4;
+}
+
+// ReserveResponse returns reservation details for a new reservation.
+message ReserveResponse {
+  // Reservation ID.
+  string id = 1;
+  // Reserved amount (decimal string).
+  string amount = 2;
+  // Reservation purpose.
+  string purpose = 3;
+  // Auto-release time.
+  google.protobuf.Timestamp expires_at = 4;
+  // Status: "pending", "committed", or "released".
+  string status = 5;
+}
+
+// CommitReservationResponse returns reservation details after commit.
+message CommitReservationResponse {
+  string id = 1;
+  string amount = 2;
+  string status = 3;
+}
+
+// ReleaseReservationResponse returns reservation details after release.
+message ReleaseReservationResponse {
+  string id = 1;
+  string amount = 2;
+  string status = 3;
+}
+
+// CommitReservationRequest commits a pending reservation.
+message CommitReservationRequest {
+  // Reservation ID to commit.
+  string reservation_id = 1;
+  // Actual amount to charge (empty = full reserved amount).
+  string actual_amount = 2;
+}
+
+// ReleaseReservationRequest releases a pending reservation.
+message ReleaseReservationRequest {
+  // Reservation ID to release.
+  string reservation_id = 1;
+}
+
+// MeterRequest records metered usage.
+message MeterRequest {
+  // Amount to deduct (decimal string).
+  string amount = 1;
+  // Type of metered event (e.g., "api_call").
+  string event_type = 2;
+}
+
+// MeterResponse indicates whether metering succeeded.
+message MeterResponse {
+  bool success = 1;
+}
+
+// CanAffordRequest checks if an agent can afford a given amount.
+message CanAffordRequest {
+  // Amount to check (decimal string).
+  string amount = 1;
+}
+
+// CanAffordResponse indicates affordability.
+message CanAffordResponse {
+  bool can_afford = 1;
+  string amount = 2;
+}

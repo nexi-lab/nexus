@@ -1,0 +1,12 @@
+version: v2
+modules:
+  - path: proto
+    name: buf.build/nexus/exchange
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE

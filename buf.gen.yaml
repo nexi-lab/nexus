@@ -1,0 +1,10 @@
+version: v2
+plugins:
+  # Python protobuf stubs
+  - remote: buf.build/protocolbuffers/python
+    out: src/nexus/server/api/v2/generated
+  # OpenAPI 3.1 generation
+  - remote: buf.build/community/google-gnostic-openapi
+    out: docs/protocol
+    opt:
+      - naming=proto

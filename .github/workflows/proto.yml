@@ -1,0 +1,45 @@
+name: Protocol
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proto/**"
+      - "buf.yaml"
+      - "buf.gen.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "proto/**"
+      - "buf.yaml"
+      - "buf.gen.yaml"
+      - "docs/protocol/nexus-exchange-v1.openapi.yaml"
+
+jobs:
+  proto-check:
+    name: Proto Lint & Breaking Change Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install buf CLI
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.47.2"
+
+      - name: Lint exchange proto files
+        run: buf lint --path proto/nexus/exchange/
+
+      - name: Build proto files
+        run: buf build proto/
+
+      - name: Check for breaking changes (exchange protos)
+        # Only run when main branch exists AND has exchange proto files
+        run: |
+          if git ls-remote --heads origin main | grep -q main && \
+             git cat-file -e origin/main:proto/nexus/exchange 2>/dev/null; then
+            buf breaking --path proto/nexus/exchange/ --against '.git#branch=main,subdir=proto'
+          else
+            echo "No exchange protos on main yet — skipping breaking change check"
+          fi

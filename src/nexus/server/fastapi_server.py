@@ -1721,6 +1721,15 @@ def _register_routes(app: FastAPI) -> None:
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
 
+    # Exchange Protocol error handler (Issue #1361)
+    try:
+        from nexus.server.api.v2.error_handler import register_exchange_error_handler
+
+        register_exchange_error_handler(app)
+        logger.info("Exchange protocol error handler registered")
+    except ImportError as e:
+        logger.warning(f"Failed to register Exchange error handler: {e}.")
+
     # A2A Protocol Endpoint (Issue #1256)
     try:
         from nexus.a2a import create_a2a_router

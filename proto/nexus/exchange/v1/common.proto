@@ -1,0 +1,98 @@
+// Common types and error codes for the Nexus Agent Exchange protocol.
+//
+// SSOT: This file defines shared types used across all Exchange services.
+// Version: 2026.1
+
+syntax = "proto3";
+
+package nexus.exchange.v1;
+
+// Money represents a monetary amount with currency.
+// Amount is a decimal string to avoid floating-point precision issues.
+message Money {
+  // Decimal string (e.g., "10.50"). Must be non-negative.
+  string amount = 1;
+  // ISO 4217 currency code (e.g., "NXC" for Nexus Credits).
+  string currency = 2;
+}
+
+// AgentIdentifier uniquely identifies an agent within a zone.
+message AgentIdentifier {
+  string agent_id = 1;
+  string zone_id = 2;
+}
+
+// Pagination parameters for list endpoints.
+message Pagination {
+  // Opaque cursor from a previous response (empty for first page).
+  string cursor = 1;
+  // Maximum number of items to return (1-1000, default 100).
+  int32 limit = 2;
+}
+
+// PaginationInfo provides navigation data in list responses.
+message PaginationInfo {
+  // Opaque cursor for the next page (empty if no more pages).
+  string next_cursor = 1;
+  // Whether more pages exist.
+  bool has_more = 2;
+  // Total count (only populated when explicitly requested).
+  optional int64 total = 3;
+}
+
+// NexusErrorCode defines domain-specific error codes for the Exchange protocol.
+//
+// Code ranges:
+//   0-999:    General errors
+//   1000-1999: Identity errors
+//   2000-2999: Payment errors
+//   3000-3999: Audit errors
+//   4000-4999: Exchange errors (reserved for future auction/settlement)
+enum NexusErrorCode {
+  // General (0-999)
+  NEXUS_ERROR_CODE_UNSPECIFIED = 0;
+  NEXUS_ERROR_CODE_INTERNAL = 1;
+  NEXUS_ERROR_CODE_INVALID_ARGUMENT = 2;
+  NEXUS_ERROR_CODE_NOT_FOUND = 3;
+  NEXUS_ERROR_CODE_ALREADY_EXISTS = 4;
+  NEXUS_ERROR_CODE_PERMISSION_DENIED = 5;
+  NEXUS_ERROR_CODE_UNAUTHENTICATED = 6;
+  NEXUS_ERROR_CODE_RATE_LIMITED = 7;
+
+  // Identity (1000-1999)
+  NEXUS_ERROR_CODE_AGENT_NOT_FOUND = 1000;
+  NEXUS_ERROR_CODE_KEY_NOT_FOUND = 1001;
+  NEXUS_ERROR_CODE_KEY_REVOKED = 1002;
+  NEXUS_ERROR_CODE_KEY_EXPIRED = 1003;
+  NEXUS_ERROR_CODE_SIGNATURE_INVALID = 1004;
+
+  // Payment (2000-2999)
+  NEXUS_ERROR_CODE_INSUFFICIENT_BALANCE = 2000;
+  NEXUS_ERROR_CODE_TRANSFER_FAILED = 2001;
+  NEXUS_ERROR_CODE_RESERVATION_NOT_FOUND = 2002;
+  NEXUS_ERROR_CODE_RESERVATION_EXPIRED = 2003;
+  NEXUS_ERROR_CODE_INVALID_AMOUNT = 2004;
+  NEXUS_ERROR_CODE_WALLET_NOT_FOUND = 2005;
+
+  // Audit (3000-3999)
+  NEXUS_ERROR_CODE_RECORD_NOT_FOUND = 3000;
+  NEXUS_ERROR_CODE_INTEGRITY_VIOLATION = 3001;
+  NEXUS_ERROR_CODE_EXPORT_FAILED = 3002;
+
+  // Exchange (4000-4999) - reserved for future auction/settlement
+  NEXUS_ERROR_CODE_AUCTION_NOT_FOUND = 4000;
+  NEXUS_ERROR_CODE_BID_REJECTED = 4001;
+  NEXUS_ERROR_CODE_SETTLEMENT_FAILED = 4002;
+}
+
+// NexusError follows the google.rpc.Status pattern for structured errors.
+message NexusError {
+  // Machine-readable error code.
+  NexusErrorCode code = 1;
+  // Human-readable error message.
+  string message = 2;
+  // Additional context about the error (key-value pairs).
+  map<string, string> details = 3;
+  // Distributed trace ID for correlating logs.
+  string trace_id = 4;
+}

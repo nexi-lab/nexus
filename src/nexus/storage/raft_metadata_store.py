@@ -49,7 +49,7 @@ def _serialize_metadata(metadata: FileMetadata) -> bytes:
     Uses protobuf when available, falls back to JSON otherwise.
     Delegates field mapping to MetadataMapper (Issue #1246).
     """
-    from nexus.storage.metadata_mapper import MetadataMapper
+    from nexus.storage._metadata_mapper_generated import MetadataMapper
 
     if _HAS_PROTOBUF:
         proto = MetadataMapper.to_proto(metadata)
@@ -66,11 +66,14 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
     Supports both protobuf (new) and JSON (fallback) formats.
     Delegates field mapping to MetadataMapper (Issue #1246).
     """
-    from nexus.storage.metadata_mapper import MetadataMapper
+    from nexus.storage._metadata_mapper_generated import MetadataMapper
 
     # Handle both bytes and list of ints (from PyO3)
     if isinstance(data, list):
         data = bytes(data)
+
+    if not data:
+        raise ValueError("Cannot deserialize empty bytes")
 
     # Try protobuf first if available
     if _HAS_PROTOBUF:

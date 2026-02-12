@@ -10,7 +10,7 @@ Architecture:
     ├── zone_id → RaftMetadataStore mapping (Python dict)
     └── create_zone() / get_store() / mount() / unmount()
 
-Each zone is an independent Raft group with its own sled database.
+Each zone is an independent Raft group with its own redb database.
 All zones share one gRPC port (zone_id routing in transport layer).
 """
 
@@ -27,12 +27,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _get_py_zone_manager():
+def _get_py_zone_manager() -> type | None:
     """Import PyO3 ZoneManager from _nexus_raft (avoid circular import with __init__)."""
     try:
         from _nexus_raft import ZoneManager as PyZoneManager
     except ImportError:
-        PyZoneManager = None
+        return None
     return PyZoneManager
 
 
@@ -66,6 +66,67 @@ class ZoneManager:
         self._stores: dict[str, RaftMetadataStore] = {}
         self._node_id = node_id
         self._base_path = base_path
+        self._root_zone_id: str | None = None
+
+    def bootstrap(
+        self,
+        root_zone_id: str = "root",
+        peers: list[str] | None = None,
+    ) -> RaftMetadataStore:
+        """Bootstrap this node's root zone with a "/" entry.
+
+        Idempotent — safe to call on every startup. If the root zone
+        already exists and has a "/" entry, returns the existing store
+        without modification.
+
+        This is the first tier of the zone lifecycle:
+          1. bootstrap()    → root zone + "/" (i_links_count=1, self-ref)
+          2. create_zone()  → Raft group + redb only, no "/"
+          3. mount()        → DT_MOUNT + i_links_count++ (lazy "/" if needed)
+
+        Args:
+            root_zone_id: Zone ID for this node's root zone.
+            peers: Peer addresses for the root zone (multi-node).
+
+        Returns:
+            RaftMetadataStore for the root zone.
+        """
+        self._root_zone_id = root_zone_id
+
+        # Check if root zone already exists
+        store = self.get_store(root_zone_id)
+        if store is not None:
+            root = store.get("/")
+            if root is not None:
+                logger.info("Node bootstrap: root zone '%s' already exists", root_zone_id)
+                return store
+
+        # Create root zone if it doesn't exist yet
+        if store is None:
+            store = self.create_zone(root_zone_id, peers=peers)
+
+        # Write root "/" entry with i_links_count=1 (node's self-reference)
+        root_entry = FileMetadata(
+            path="/",
+            backend_name="virtual",
+            physical_path="",
+            size=0,
+            entry_type=DT_DIR,
+            zone_id=root_zone_id,
+            i_links_count=1,
+        )
+        store.put(root_entry)
+
+        logger.info(
+            "Node bootstrap: root zone '%s' created with '/' (i_links_count=1)",
+            root_zone_id,
+        )
+        return store
+
+    @property
+    def root_zone_id(self) -> str | None:
+        """The root zone ID set during bootstrap, or None if not bootstrapped."""
+        return self._root_zone_id
 
     def create_zone(
         self,
@@ -181,7 +242,8 @@ class ZoneManager:
 
     def list_zones(self) -> list[str]:
         """List all zone IDs."""
-        return self._py_mgr.list_zones()
+        result: list[str] = self._py_mgr.list_zones()
+        return result
 
     @property
     def node_id(self) -> int:

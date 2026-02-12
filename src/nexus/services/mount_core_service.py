@@ -38,6 +38,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _record_error(result: dict, msg: str) -> None:
+    """Append an error message to result["errors"] and log a warning."""
+    result["errors"].append(msg)
+    logger.warning(msg)
+
+
 class MountCoreService:
     """Core mount management operations (SYNC).
 
@@ -173,9 +179,7 @@ class MountCoreService:
             result["files_deleted"] = len(paths_to_delete)
             logger.info(f"Deleted {len(paths_to_delete)} metadata entries for {mount_point}")
         except Exception as e:
-            error_msg = f"Failed to delete metadata entries for {mount_point}: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
+            _record_error(result, f"Failed to delete metadata entries for {mount_point}: {e}")
 
         # Clean up sparse directory index entries
         try:
@@ -186,9 +190,7 @@ class MountCoreService:
                 f"Deleted {dir_entries_deleted} directory index entries under {mount_point}"
             )
         except Exception as e:
-            error_msg = f"Failed to clean up directory index: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
+            _record_error(result, f"Failed to clean up directory index: {e}")
 
         # Clean up hierarchy tuples
         try:
@@ -197,9 +199,7 @@ class MountCoreService:
             result["permissions_cleaned"] += removed
             logger.info(f"Removed {removed} parent tuples for {mount_point}")
         except Exception as e:
-            error_msg = f"Failed to clean up parent tuples: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
+            _record_error(result, f"Failed to clean up parent tuples: {e}")
 
         # Remove permission tuples
         try:
@@ -211,9 +211,7 @@ class MountCoreService:
             result["permissions_cleaned"] += deleted
             logger.info(f"Removed {deleted} permission tuples for {mount_point}")
         except Exception as e:
-            error_msg = f"Failed to delete permission tuples: {e}"
-            result["errors"].append(error_msg)
-            logger.warning(error_msg)
+            _record_error(result, f"Failed to delete permission tuples: {e}")
 
         if result["errors"]:
             logger.warning(f"Mount removed with {len(result['errors'])} errors: {result['errors']}")

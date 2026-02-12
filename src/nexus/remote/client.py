@@ -42,17 +42,13 @@ from tenacity import (
 )
 
 from nexus.core.exceptions import (
-    ConflictError,
-    InvalidPathError,
     NexusError,
     NexusFileNotFoundError,
-    NexusPermissionError,
-    ValidationError,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.server.protocol import (
-    RPCErrorCode,
     RPCRequest,
     RPCResponse,
     decode_rpc_message,
@@ -635,7 +631,7 @@ class RemoteTimeoutError(RemoteFilesystemError):
     pass
 
 
-class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
+class RemoteNexusFS(NexusFSLLMMixin, BaseRemoteNexusFS, NexusFilesystem):
     """Remote Nexus filesystem client.
 
     Implements NexusFilesystem interface by making RPC calls to a remote server.
@@ -729,90 +725,6 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         self._negative_bloom: Any = None
         self._init_negative_cache()
 
-    def _init_negative_cache(self) -> None:
-        """Initialize Bloom filter for negative caching of non-existent files."""
-        try:
-            from nexus_fast import BloomFilter
-
-            self._negative_bloom = BloomFilter(
-                self._negative_cache_capacity, self._negative_cache_fp_rate
-            )
-            logger.debug(
-                f"Negative cache initialized: capacity={self._negative_cache_capacity}, "
-                f"fp_rate={self._negative_cache_fp_rate}, memory={self._negative_bloom.memory_bytes} bytes"
-            )
-        except ImportError:
-            logger.debug("nexus_fast not available, negative cache disabled")
-            self._negative_bloom = None
-        except Exception as e:
-            logger.warning(f"Failed to initialize negative cache: {e}")
-            self._negative_bloom = None
-
-    def _negative_cache_key(self, path: str) -> str:
-        """Generate cache key with zone isolation."""
-        return f"{self._zone_id or 'default'}:{path}"
-
-    def _negative_cache_check(self, path: str) -> bool:
-        """Check if path is known to not exist (in negative cache).
-
-        Returns:
-            True if path is definitely non-existent (skip RPC)
-            False if path might exist (need to check server)
-        """
-        if self._negative_bloom is None:
-            return False
-        key = self._negative_cache_key(path)
-        return bool(self._negative_bloom.might_exist(key))
-
-    def _negative_cache_add(self, path: str) -> None:
-        """Add path to negative cache (file confirmed to not exist)."""
-        if self._negative_bloom is None:
-            return
-        key = self._negative_cache_key(path)
-        self._negative_bloom.add(key)
-
-    def _negative_cache_invalidate(self, path: str) -> None:
-        """Invalidate negative cache entry for path.
-
-        Note: Bloom filters don't support deletion, so we clear the entire filter
-        when invalidation is needed. This is acceptable because:
-        1. Write/delete operations are less frequent than reads
-        2. The filter will repopulate naturally as files are checked
-        """
-        if self._negative_bloom is None:
-            return
-        # Bloom filters can't delete individual keys, so we clear the entire filter
-        # This is a trade-off: occasional full clear vs. complex counting bloom filter
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to write/delete of {path}")
-
-    def _negative_cache_invalidate_bulk(self, paths: list[str]) -> None:
-        """Invalidate negative cache for multiple paths."""
-        if self._negative_bloom is None or not paths:
-            return
-        self._negative_bloom.clear()
-        logger.debug(f"Negative cache cleared due to bulk write/delete of {len(paths)} paths")
-
-    @property
-    def agent_id(self) -> str | None:
-        """Agent ID for this filesystem instance."""
-        return self._agent_id
-
-    @agent_id.setter
-    def agent_id(self, value: str | None) -> None:
-        """Set agent ID for this filesystem instance."""
-        self._agent_id = value
-
-    @property
-    def zone_id(self) -> str | None:
-        """Zone ID for this filesystem instance."""
-        return self._zone_id
-
-    @zone_id.setter
-    def zone_id(self, value: str | None) -> None:
-        """Set zone ID for this filesystem instance."""
-        self._zone_id = value
-
     def _fetch_auth_info(self) -> None:
         """Fetch authenticated user info from server.
 
@@ -826,21 +738,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
             if response.status_code == 200:
                 auth_info = response.json()
-                if auth_info.get("authenticated"):
-                    self.zone_id = auth_info.get("zone_id")
-                    # BUGFIX: Only set agent_id if subject_type is "agent"
-                    # For users, agent_id should remain None
-                    subject_type = auth_info.get("subject_type")
-                    if subject_type == "agent":
-                        self.agent_id = auth_info.get("subject_id")
-                    else:
-                        self.agent_id = None
-                    logger.info(
-                        f"Authenticated as {subject_type}:{auth_info.get('subject_id')} "
-                        f"(zone: {self.zone_id})"
-                    )
-                else:
-                    logger.debug("Not authenticated (anonymous access)")
+                self._parse_auth_info(auth_info)
             else:
                 logger.warning(f"Failed to fetch auth info: HTTP {response.status_code}")
         except Exception as e:
@@ -1000,42 +898,6 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
                 method=method,
             ) from e
 
-    def _handle_rpc_error(self, error: dict[str, Any]) -> None:
-        """Handle RPC error response.
-
-        Args:
-            error: Error dict from RPC response
-
-        Raises:
-            Appropriate NexusError subclass
-        """
-        code = error.get("code", -32603)
-        message = error.get("message", "Unknown error")
-        data = error.get("data")
-
-        # Map error codes to exceptions
-        if code == RPCErrorCode.FILE_NOT_FOUND.value:
-            path = data.get("path") if data else None
-            raise NexusFileNotFoundError(path or message)
-        elif code == RPCErrorCode.FILE_EXISTS.value:
-            raise FileExistsError(message)
-        elif code == RPCErrorCode.INVALID_PATH.value:
-            raise InvalidPathError(message)
-        elif (
-            code == RPCErrorCode.ACCESS_DENIED.value or code == RPCErrorCode.PERMISSION_ERROR.value
-        ):
-            raise NexusPermissionError(message)
-        elif code == RPCErrorCode.VALIDATION_ERROR.value:
-            raise ValidationError(message)
-        elif code == RPCErrorCode.CONFLICT.value:
-            # Extract etag info from data
-            expected_etag = data.get("expected_etag") if data else "(unknown)"
-            current_etag = data.get("current_etag") if data else "(unknown)"
-            path = data.get("path") if data else "unknown"
-            raise ConflictError(path, expected_etag, current_etag)
-        else:
-            raise NexusError(f"RPC error [{code}]: {message}")
-
     # ============================================================
     # Core File Operations
     # ============================================================
@@ -1061,50 +923,13 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if self._negative_cache_check(path):
             raise NexusFileNotFoundError(path)
 
-        import base64
-
         try:
             result = self._call_rpc("read", {"path": path, "return_metadata": return_metadata})
         except NexusFileNotFoundError:
             self._negative_cache_add(path)
             raise
 
-        # Handle standard bytes format: {__type__: 'bytes', data: '...'}
-        # This is the format from encode_rpc_message in protocol.py
-        if isinstance(result, dict) and result.get("__type__") == "bytes" and "data" in result:
-            decoded_content = base64.b64decode(result["data"])
-            if return_metadata:
-                return {"content": decoded_content}
-            return decoded_content
-
-        # Handle legacy format: {content: '...', encoding: 'base64'}
-        # (kept for backward compatibility with older servers)
-        if isinstance(result, dict) and "content" in result:
-            content = result["content"]
-            encoding = result.get("encoding", "base64")
-
-            # Decode base64 content to bytes
-            if encoding == "base64" and isinstance(content, str):
-                decoded_content = base64.b64decode(content)
-            elif isinstance(content, bytes):
-                decoded_content = content
-            else:
-                # Already decoded or unknown format
-                decoded_content = content.encode() if isinstance(content, str) else content
-
-            if return_metadata:
-                # Return dict with decoded content and metadata
-                result["content"] = decoded_content
-                return result
-            else:
-                # Return just the bytes
-                return decoded_content
-
-        # Handle raw bytes (if result is already bytes)
-        if isinstance(result, bytes):
-            return result
-
-        return result  # type: ignore[no-any-return]
+        return self._parse_read_response(result, return_metadata)
 
     def read_bulk(
         self,
@@ -1231,12 +1056,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             "read_range",
             {"path": path, "start": start, "end": end},
         )
-        # Result should be bytes (base64-decoded by protocol)
-        if isinstance(result, str):
-            import base64
-
-            return base64.b64decode(result)
-        return result  # type: ignore[no-any-return]
+        return self._decode_bytes_field(result)
 
     def stream(self, path: str, chunk_size: int = 8192, context: Any = None) -> Any:  # noqa: ARG002
         """Stream file content in chunks using server-side range reads.
@@ -1274,6 +1094,8 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
     ) -> dict[str, Any]:
         """Write content to a file with optional optimistic concurrency control.
 
@@ -1284,6 +1106,10 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             if_match: Optional etag for optimistic concurrency control
             if_none_match: If True, create-only mode
             force: If True, skip version check
+            lock: If True, acquire distributed lock before writing (server-side).
+                Adds ~2-10ms latency for lock acquire/release.
+                For read-modify-write patterns, use locked() context manager instead.
+            lock_timeout: Max time to wait for lock in seconds (only used if lock=True).
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)
@@ -1295,16 +1121,19 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
         if isinstance(content, str):
             content = content.encode("utf-8")
 
-        result = self._call_rpc(
-            "write",
-            {
-                "path": path,
-                "content": content,
-                "if_match": if_match,
-                "if_none_match": if_none_match,
-                "force": force,
-            },
-        )
+        params: dict[str, Any] = {
+            "path": path,
+            "content": content,
+            "if_match": if_match,
+            "if_none_match": if_none_match,
+            "force": force,
+        }
+        if lock:
+            params["lock"] = True
+        if lock_timeout != 30.0:
+            params["lock_timeout"] = lock_timeout
+
+        result = self._call_rpc("write", params)
 
         # Invalidate negative cache after successful write (issue #858)
         self._negative_cache_invalidate(path)
@@ -1393,8 +1222,6 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
             ...     import bsdiff4
             ...     content = bsdiff4.patch(content, result["delta"])  # Apply delta
         """
-        import base64
-
         params: dict[str, Any] = {
             "path": path,
             "max_delta_ratio": max_delta_ratio,
@@ -1408,25 +1235,7 @@ class RemoteNexusFS(NexusFSLLMMixin, NexusFilesystem):
 
         result = self._call_rpc("delta_read", params)
 
-        # Decode binary fields
-        if isinstance(result, dict):
-            # Decode delta if present
-            if (
-                "delta" in result
-                and isinstance(result["delta"], dict)
-                and result["delta"].get("__type__") == "bytes"
-            ):
-                result["delta"] = base64.b64decode(result["delta"]["data"])
-
-            # Decode content if present
-            if (
-                "content" in result
-                and isinstance(result["content"], dict)
-                and result["content"].get("__type__") == "bytes"
-            ):
-                result["content"] = base64.b64decode(result["content"]["data"])
-
-        return result  # type: ignore[no-any-return]
+        return self._decode_delta_read_response(result)
 
     def delta_write(
         self,

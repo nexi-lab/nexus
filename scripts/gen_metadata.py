@@ -33,6 +33,9 @@ GENERATED_NAMES: dict[str, set[str]] = {
         "PaginatedResult",
         "FileMetadataProtocol",
         "AsyncFileMetadataWrapper",
+        "DT_REG",
+        "DT_DIR",
+        "DT_MOUNT",
     },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
 }
@@ -52,6 +55,7 @@ PROTO_TYPE_MAP: dict[str, str] = {
     "int64": "int",
     "int32": "int",
     "bool": "bool",
+    "DirEntryType": "int",  # Enum stored as int in Python
 }
 
 # Fields where Python uses datetime | None instead of str
@@ -64,12 +68,13 @@ NULLABLE_STRING_FIELDS: set[str] = {
     "zone_id",
     "created_by",
     "owner_id",
+    "target_zone_id",
 }
 
 # Non-default defaults
 FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
-    "is_directory": "False",
+    "entry_type": "0",
 }
 
 # String fields that get interned in CompactFileMetadata
@@ -82,6 +87,7 @@ INTERNED_FIELDS: list[str] = [
     "zone_id",
     "created_by",
     "owner_id",
+    "target_zone_id",
 ]
 
 # Compact field name mapping
@@ -94,10 +100,38 @@ COMPACT_FIELD_NAMES: dict[str, str] = {
     "zone_id": "zone_id_intern",
     "created_by": "created_by_id",
     "owner_id": "owner_id_intern",
+    "target_zone_id": "target_zone_id_intern",
+}
+
+# Fields stored directly (not interned) in CompactFileMetadata
+DIRECT_COMPACT_FIELDS: dict[str, str] = {
+    "size": "int",
+    "version": "int",
+    "entry_type": "int",
 }
 
 
 # --- Proto parser ---
+
+
+def parse_proto_enums(proto_path: Path) -> dict[str, list[tuple[str, int]]]:
+    """Parse enum definitions from proto file.
+
+    Returns dict mapping enum name to list of (value_name, value_number).
+    Example: {"DirEntryType": [("DT_REG", 0), ("DT_DIR", 1), ("DT_MOUNT", 2)]}
+    """
+    content = proto_path.read_text(encoding="utf-8")
+    enums: dict[str, list[tuple[str, int]]] = {}
+
+    for m in re.finditer(r"enum\s+(\w+)\s*\{(.*?)\}", content, re.DOTALL):
+        enum_name = m.group(1)
+        body = m.group(2)
+        values: list[tuple[str, int]] = []
+        for vm in re.finditer(r"(\w+)\s*=\s*(\d+)\s*;", body):
+            values.append((vm.group(1), int(vm.group(2))))
+        enums[enum_name] = values
+
+    return enums
 
 
 def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
@@ -168,8 +202,79 @@ def python_default_for(field: dict[str, str]) -> str | None:
     return None
 
 
-def generate_metadata_py(fields: list[dict[str, str]]) -> str:
+def _enum_common_prefix(values: list[tuple[str, int]]) -> str:
+    """Find common prefix of enum value names ending with '_'.
+
+    Example: [("DT_REG", 0), ("DT_DIR", 1)] -> "DT_"
+    """
+    if not values:
+        return ""
+    names = [v[0] for v in values]
+    prefix = names[0]
+    for name in names[1:]:
+        while not name.startswith(prefix):
+            prefix = prefix[:-1]
+    # Trim to last '_' boundary
+    idx = prefix.rfind("_")
+    return prefix[: idx + 1] if idx >= 0 else ""
+
+
+def _generate_enum_constants(enums: dict[str, list[tuple[str, int]]]) -> str:
+    """Generate Python constants from proto enums.
+
+    Example output:
+        # DirEntryType (from proto/nexus/core/metadata.proto)
+        DT_REG = 0
+        DT_DIR = 1
+        DT_MOUNT = 2
+    """
+    blocks = []
+    for enum_name, values in enums.items():
+        lines = [f"# {enum_name} (from proto/nexus/core/metadata.proto)"]
+        for vname, vnum in values:
+            lines.append(f"{vname} = {vnum}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def _generate_enum_properties(
+    fields: list[dict[str, str]],
+    enums: dict[str, list[tuple[str, int]]],
+) -> str:
+    """Generate @property methods for enum-typed fields.
+
+    For field 'entry_type' of type 'DirEntryType' with values
+    DT_REG=0, DT_DIR=1, DT_MOUNT=2, generates:
+        @property
+        def is_reg(self) -> bool: return self.entry_type == 0
+        @property
+        def is_dir(self) -> bool: return self.entry_type == 1
+        @property
+        def is_mount(self) -> bool: return self.entry_type == 2
+    """
+    lines = []
+    for f in fields:
+        enum_values = enums.get(f["type"])
+        if not enum_values:
+            continue
+        field_name = f["name"]
+        prefix = _enum_common_prefix(enum_values)
+        for vname, vnum in enum_values:
+            prop_name = "is_" + vname.removeprefix(prefix).lower()
+            lines.append("    @property")
+            lines.append(f"    def {prop_name}(self) -> bool:")
+            lines.append(f"        return self.{field_name} == {vnum}")
+            lines.append("")
+    return "\n".join(lines)
+
+
+def generate_metadata_py(
+    fields: list[dict[str, str]],
+    enums: dict[str, list[tuple[str, int]]] | None = None,
+) -> str:
     """Generate _metadata_generated.py content."""
+    enums = enums or {}
+
     # Build field lines
     field_lines = []
     for f in fields:
@@ -184,6 +289,12 @@ def generate_metadata_py(fields: list[dict[str, str]]) -> str:
         field_lines.append(line)
 
     fields_block = "\n".join(field_lines)
+
+    # Build enum constants and properties
+    enum_constants = _generate_enum_constants(enums)
+    enum_constants_block = f"\n\n{enum_constants}\n" if enum_constants else ""
+    enum_properties = _generate_enum_properties(fields, enums)
+    enum_properties_block = f"\n{enum_properties}" if enum_properties else ""
 
     return f'''\
 """Auto-generated from proto/nexus/core/metadata.proto - DO NOT EDIT.
@@ -214,7 +325,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
-
+{enum_constants_block}
 
 @dataclass
 class PaginatedResult:
@@ -255,7 +366,7 @@ class FileMetadata:
     """
 
 {fields_block}
-
+{enum_properties_block}
     def validate(self) -> None:
         """Validate file metadata before database operations.
 
@@ -507,12 +618,8 @@ def generate_compact_py(fields: list[dict[str, str]]) -> str:
             compact_field_lines.append(f"    {cname}: int")
         elif name in DATETIME_FIELDS:
             compact_field_lines.append(f"    {name}: str | None")
-        elif name == "size":
-            compact_field_lines.append("    size: int")
-        elif name == "version":
-            compact_field_lines.append("    version: int")
-        elif name == "is_directory":
-            compact_field_lines.append("    is_directory: bool")
+        elif name in DIRECT_COMPACT_FIELDS:
+            compact_field_lines.append(f"    {name}: {DIRECT_COMPACT_FIELDS[name]}")
     compact_fields_block = "\n".join(compact_field_lines)
 
     # Build from_file_metadata keyword args
@@ -524,7 +631,7 @@ def generate_compact_py(fields: list[dict[str, str]]) -> str:
             ctor_args.append(f"            {cname}=_intern(m.{name}),")
         elif name in DATETIME_FIELDS:
             ctor_args.append(f"            {name}=m.{name}.isoformat() if m.{name} else None,")
-        elif name in ("size", "version", "is_directory"):
+        elif name in DIRECT_COMPACT_FIELDS:
             ctor_args.append(f"            {name}=m.{name},")
     ctor_block = "\n".join(ctor_args)
 
@@ -544,7 +651,7 @@ def generate_compact_py(fields: list[dict[str, str]]) -> str:
             fm_args.append(
                 f"            {name}=datetime.fromisoformat(self.{name}) if self.{name} else None,"
             )
-        elif name in ("size", "version", "is_directory"):
+        elif name in DIRECT_COMPACT_FIELDS:
             fm_args.append(f"            {name}=self.{name},")
     fm_block = "\n".join(fm_args)
 
@@ -795,10 +902,16 @@ def main() -> None:
         print(f"ERROR: Proto file not found: {PROTO_PATH}", file=sys.stderr)
         sys.exit(1)
 
+    enums = parse_proto_enums(PROTO_PATH)
     fields = parse_proto_fields(PROTO_PATH)
     if not fields:
         print("ERROR: No fields found in FileMetadata message", file=sys.stderr)
         sys.exit(1)
+
+    if enums:
+        print(f"Parsed {len(enums)} enum(s) from {PROTO_PATH.name}:")
+        for ename, evals in enums.items():
+            print(f"  {ename}: {', '.join(f'{v[0]}={v[1]}' for v in evals)}")
 
     print(f"Parsed {len(fields)} fields from {PROTO_PATH.name}:")
     for f in fields:
@@ -808,7 +921,7 @@ def main() -> None:
     generate_protobuf_stubs()
 
     # 2. Generate Python dataclass (FileMetadata + FileMetadataProtocol ABC)
-    metadata_content = generate_metadata_py(fields)
+    metadata_content = generate_metadata_py(fields, enums)
 
     # 2b. Derive AsyncFileMetadataWrapper from FileMetadataProtocol (SSOT)
     async_wrapper = generate_async_wrapper(metadata_content)

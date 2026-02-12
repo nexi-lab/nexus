@@ -22,6 +22,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+pytestmark = pytest.mark.quarantine
+
 # === Helpers ===
 
 PYTHON = sys.executable

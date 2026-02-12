@@ -26,10 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
 import logging
 import os
-import secrets
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
@@ -40,7 +38,6 @@ from anyio import to_thread
 from fastapi import (
     Depends,
     FastAPI,
-    Header,
     HTTPException,
     Query,
     Request,
@@ -55,7 +52,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.core.exceptions import (
@@ -64,8 +60,17 @@ from nexus.core.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
-    StaleSessionError,
     ValidationError,
+)
+
+# --- Extracted modules (re-exported for backward compatibility) ---
+from nexus.server.dependencies import (  # noqa: E402
+    get_auth_result,
+    get_operation_context,
+    require_auth,
+)
+from nexus.server.error_handlers import (  # noqa: E402
+    nexus_error_handler as _nexus_error_handler,
 )
 from nexus.server.path_utils import (
     unscope_internal_dict,
@@ -77,6 +82,17 @@ from nexus.server.protocol import (
     decode_rpc_message,
     encode_rpc_message,
     parse_method_params,
+)
+from nexus.server.rate_limiting import (  # noqa: E402
+    RATE_LIMIT_ANONYMOUS,
+    RATE_LIMIT_AUTHENTICATED,
+    RATE_LIMIT_PREMIUM,
+    _get_rate_limit_key,
+    _rate_limit_exceeded_handler,
+)
+from nexus.server.streaming import (  # noqa: E402
+    _sign_stream_token,
+    _verify_stream_token,
 )
 
 if TYPE_CHECKING:
@@ -205,134 +221,9 @@ class LockListResponse(BaseModel):
     count: int
 
 
-# ============================================================================
-# Rate Limiting Configuration (Issue #780)
-# ============================================================================
-
-# Rate limit tiers (configurable via environment variables)
-RATE_LIMIT_ANONYMOUS = os.environ.get("NEXUS_RATE_LIMIT_ANONYMOUS", "60/minute")
-RATE_LIMIT_AUTHENTICATED = os.environ.get("NEXUS_RATE_LIMIT_AUTHENTICATED", "300/minute")
-RATE_LIMIT_PREMIUM = os.environ.get("NEXUS_RATE_LIMIT_PREMIUM", "1000/minute")
-
-
-def _get_rate_limit_key(request: Request) -> str:
-    """Extract rate limit key from request.
-
-    Priority:
-    1. Authenticated user from Bearer token (parsed from sk- format)
-    2. Agent ID from header
-    3. IP address for anonymous requests
-    """
-    # Try to extract identity from Authorization header
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        # Parse sk-<zone>_<user>_<id>_<random> format
-        if token.startswith("sk-"):
-            parts = token[3:].split("_")
-            if len(parts) >= 2:
-                zone = parts[0] or "default"
-                user = parts[1] or "unknown"
-                return f"user:{zone}:{user}"
-        # For other tokens, use hash as key
-        return f"token:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
-
-    # Check for agent ID header
-    agent_id = request.headers.get("X-Agent-ID")
-    if agent_id:
-        return f"agent:{agent_id}"
-
-    # Fall back to IP address
-    return str(get_remote_address(request))
-
-
-def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Custom handler for rate limit exceeded errors."""
-    detail = getattr(exc, "detail", str(exc))
-    retry_after = getattr(exc, "retry_after", 60)
-    return JSONResponse(
-        status_code=429,
-        content={
-            "error": "Rate limit exceeded",
-            "detail": str(detail),
-            "retry_after": retry_after,
-        },
-        headers={"Retry-After": str(retry_after)},
-    )
-
-
-def _nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
-    """Custom handler for Nexus exceptions.
-
-    Includes is_expected flag for error classification:
-    - Expected errors: User errors (validation, not found, permission denied)
-    - Unexpected errors: System errors (backend failures, bugs)
-    """
-    from nexus.core.exceptions import (
-        AuthenticationError,
-        BackendError,
-        ConflictError,
-        InvalidPathError,
-        NexusError,
-        NexusFileNotFoundError,
-        NexusPermissionError,
-        ParserError,
-        PermissionDeniedError,
-        ValidationError,
-    )
-
-    # Determine HTTP status code and error type based on exception
-    if isinstance(exc, NexusFileNotFoundError):
-        status_code = 404
-        error_type = "Not Found"
-    elif isinstance(exc, (NexusPermissionError, PermissionDeniedError)):
-        status_code = 403
-        error_type = "Forbidden"
-    elif isinstance(exc, AuthenticationError):
-        status_code = 401
-        error_type = "Unauthorized"
-    elif isinstance(exc, (InvalidPathError, ValidationError)):
-        status_code = 400
-        error_type = "Bad Request"
-    elif isinstance(exc, (ConflictError, StaleSessionError)):
-        status_code = 409
-        error_type = "Conflict"
-    elif isinstance(exc, ParserError):
-        status_code = 422
-        error_type = "Unprocessable Entity"
-    elif isinstance(exc, BackendError):
-        status_code = 502
-        error_type = "Bad Gateway"
-    elif isinstance(exc, NexusError):
-        status_code = 500
-        error_type = "Internal Server Error"
-    else:
-        status_code = 500
-        error_type = "Internal Server Error"
-
-    is_expected = getattr(exc, "is_expected", False)
-    path = getattr(exc, "path", None)
-
-    content: dict[str, Any] = {
-        "error": error_type,
-        "detail": str(exc),
-        "is_expected": is_expected,
-    }
-    if path:
-        content["path"] = path
-
-    # Add conflict-specific data
-    if isinstance(exc, ConflictError):
-        content["expected_etag"] = exc.expected_etag
-        content["current_etag"] = exc.current_etag
-
-    return JSONResponse(status_code=status_code, content=content)
-
-
-# Global limiter instance (initialized in create_app)
-# Note: This is set before routes are registered, so it's never None when decorators run
-limiter: Limiter
-
+# Rate limiting and error handlers are now in rate_limiting.py and error_handlers.py.
+# The `limiter` global, rate limit constants, and handler functions are imported above.
+from nexus.server.rate_limiting import limiter  # noqa: F811, E402 — re-import for module-level use
 
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
@@ -421,326 +312,9 @@ class AppState:
 _app_state = AppState()
 
 
-# ============================================================================
-# Stream Token Signing (for local backend streaming URLs)
-# ============================================================================
-
-# Secret key for signing stream tokens (persistent across restarts if set via env)
-_STREAM_SECRET: bytes | None = None
-
-
-def _get_stream_secret() -> bytes:
-    """Get or generate the stream token signing secret."""
-    global _STREAM_SECRET
-    if _STREAM_SECRET is None:
-        env_secret = os.environ.get("NEXUS_STREAM_SECRET")
-        # Use env var if set, otherwise generate random secret (changes on restart)
-        _STREAM_SECRET = env_secret.encode() if env_secret else secrets.token_bytes(32)
-    return _STREAM_SECRET
-
-
-def _sign_stream_token(path: str, expires_in: int, zone_id: str = "default") -> str:
-    """Generate a signed token for streaming access to a file.
-
-    Token format: {expires_at}.{signature}
-    Where signature = HMAC-SHA256(path:expires_at:zone_id)[:16]
-
-    Args:
-        path: Virtual file path
-        expires_in: Token validity in seconds
-        zone_id: Zone ID for isolation
-
-    Returns:
-        Signed token string
-    """
-    expires_at = int(time.time()) + expires_in
-    payload = f"{path}:{expires_at}:{zone_id}"
-    signature = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
-    return f"{expires_at}.{signature}"
-
-
-def _verify_stream_token(token: str, path: str, zone_id: str = "default") -> bool:
-    """Verify a stream token is valid and not expired.
-
-    Args:
-        token: Token string from _sign_stream_token
-        path: Virtual file path (must match token)
-        zone_id: Zone ID (must match token)
-
-    Returns:
-        True if token is valid, False otherwise
-    """
-    try:
-        parts = token.split(".")
-        if len(parts) != 2:
-            return False
-
-        expires_at_str, signature = parts
-        expires_at = int(expires_at_str)
-
-        # Check expiration
-        if expires_at < time.time():
-            return False
-
-        # Verify signature
-        payload = f"{path}:{expires_at}:{zone_id}"
-        expected_sig = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
-
-        return hmac.compare_digest(signature, expected_sig)
-    except (ValueError, TypeError):
-        return False
-
-
-# ============================================================================
-# Dependencies
-# ============================================================================
-
-# Auth cache: token_hash -> (result, expiry_time)
-# TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
-_AUTH_CACHE: dict[str, tuple[dict[str, Any], float]] = {}
-_AUTH_CACHE_TTL = 900  # 15 minutes in seconds
-_AUTH_CACHE_MAX_SIZE = 1000  # Prevent unbounded growth
-
-
-def _get_cached_auth(token: str) -> dict[str, Any] | None:
-    """Get cached auth result if valid."""
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-    cached = _AUTH_CACHE.get(token_hash)
-    if cached:
-        result, expiry = cached
-        if time.time() < expiry:
-            return result
-        # Expired, remove from cache
-        _AUTH_CACHE.pop(token_hash, None)
-    return None
-
-
-def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
-    """Cache auth result with TTL."""
-    # Simple size limit: remove oldest if too large
-    if len(_AUTH_CACHE) >= _AUTH_CACHE_MAX_SIZE:
-        # Remove ~10% of entries (oldest first by expiry)
-        to_remove = sorted(_AUTH_CACHE.items(), key=lambda x: x[1][1])[: _AUTH_CACHE_MAX_SIZE // 10]
-        for key, _ in to_remove:
-            _AUTH_CACHE.pop(key, None)
-
-    token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-    _AUTH_CACHE[token_hash] = (result, time.time() + _AUTH_CACHE_TTL)
-
-
-async def get_auth_result(
-    authorization: str | None = Header(None, alias="Authorization"),
-    x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
-    x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
-    x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
-) -> dict[str, Any] | None:
-    """Validate authentication and return auth result.
-
-    Note: Timing added for performance debugging (Issue #perf19).
-
-    Args:
-        authorization: Bearer token from Authorization header
-        x_agent_id: Optional agent ID header
-        x_nexus_subject: Optional identity hint header (e.g., "user:alice")
-        x_nexus_zone_id: Optional zone hint header
-
-    Returns:
-        Auth result dict or None if not authenticated
-    """
-
-    def _parse_subject_header(value: str) -> tuple[str | None, str | None]:
-        parts = value.split(":", 1)
-        if len(parts) != 2:
-            return (None, None)
-        subject_type, subject_id = parts[0].strip(), parts[1].strip()
-        if not subject_type or not subject_id:
-            return (None, None)
-        return (subject_type, subject_id)
-
-    # No auth configured = open access
-    if not _app_state.api_key and not _app_state.auth_provider:
-        # In open access mode, we still want a stable identity for permission checks.
-        # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
-        subject_type: str | None = None
-        subject_id: str | None = None
-        zone_id: str | None = x_nexus_zone_id
-
-        if x_nexus_subject:
-            st, sid = _parse_subject_header(x_nexus_subject)
-            subject_type, subject_id = st, sid
-        elif authorization and authorization.startswith("Bearer "):
-            token = authorization[7:]
-            # Best-effort: infer zone/user from DatabaseAPIKeyAuth format
-            # Format: sk-<zone>_<user>_<id>_<random-hex>
-            if token.startswith("sk-"):
-                remainder = token[len("sk-") :]
-                parts = remainder.split("_")
-                if len(parts) >= 2:
-                    inferred_zone = parts[0] or None
-                    inferred_user = parts[1] or None
-                    zone_id = zone_id or inferred_zone
-                    subject_type = "user"
-                    subject_id = inferred_user
-
-        return {
-            "authenticated": True,
-            "is_admin": False,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "zone_id": zone_id,
-            "inherit_permissions": True,  # Open access mode always inherits
-            "metadata": {"open_access": True},
-            "x_agent_id": x_agent_id,
-        }
-
-    if not authorization:
-        return None
-
-    # Extract token: support both "Bearer <token>" and raw "sk-<token>" formats
-    if authorization.startswith("Bearer "):
-        token = authorization[7:]
-    elif authorization.startswith("sk-"):
-        # API keys (sk-*) can be sent directly without Bearer prefix
-        token = authorization
-    else:
-        return None
-
-    # Try auth provider first
-    if _app_state.auth_provider:
-        import time as _time
-
-        # Check cache first (15 min TTL)
-        cached_result = _get_cached_auth(token)
-        if cached_result:
-            # Update x_agent_id and timing for this request
-            cached_result["x_agent_id"] = x_agent_id
-            cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
-            cached_result["_auth_cached"] = True
-            return cached_result
-
-        # Cache miss - call provider
-        _auth_start = _time.time()
-        result = await _app_state.auth_provider.authenticate(token)
-        _auth_elapsed = (_time.time() - _auth_start) * 1000
-        if _auth_elapsed > 10:  # Log if auth takes >10ms
-            logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
-        if result is None:
-            return None
-        auth_result = {
-            "authenticated": result.authenticated,
-            "is_admin": result.is_admin,
-            "subject_type": result.subject_type,
-            "subject_id": result.subject_id,
-            "zone_id": result.zone_id,
-            "inherit_permissions": result.inherit_permissions
-            if hasattr(result, "inherit_permissions")
-            else True,
-            "metadata": result.metadata if hasattr(result, "metadata") else {},
-            "x_agent_id": x_agent_id,
-            "_auth_time_ms": _auth_elapsed,  # Pass to RPC for logging
-            "_auth_cached": False,
-        }
-        # Cache successful auth result
-        _set_cached_auth(token, auth_result.copy())
-        return auth_result
-
-    # Fall back to static API key
-    if _app_state.api_key:
-        if token == _app_state.api_key:
-            return {
-                "authenticated": True,
-                "is_admin": True,
-                "subject_type": "user",
-                "subject_id": "admin",
-                "inherit_permissions": True,  # Static admin key always inherits
-            }
-        return None
-
-    return None
-
-
-async def require_auth(
-    auth_result: dict[str, Any] | None = Depends(get_auth_result),
-) -> dict[str, Any]:
-    """Require authentication for endpoint.
-
-    Raises:
-        HTTPException: If not authenticated
-    """
-    if auth_result is None or not auth_result.get("authenticated"):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
-    return auth_result
-
-
-def get_operation_context(auth_result: dict[str, Any]) -> Any:
-    """Create OperationContext from auth result.
-
-    Args:
-        auth_result: Authentication result dict
-
-    Returns:
-        OperationContext for filesystem operations
-    """
-    from nexus.core.permissions import OperationContext
-
-    subject_type = auth_result.get("subject_type") or "user"
-    subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or "default"
-    is_admin = auth_result.get("is_admin", False)
-    agent_id = auth_result.get("x_agent_id")
-    user_id = subject_id
-
-    # Handle agent authentication
-    if subject_type == "agent":
-        agent_id = subject_id
-        metadata = auth_result.get("metadata", {})
-        user_id = metadata.get("legacy_user_id", subject_id)
-
-    # Handle X-Agent-ID header
-    if agent_id and subject_type == "user":
-        subject_type = "agent"
-        subject_id = agent_id
-
-    # Admin capabilities
-    admin_capabilities = set()
-    if is_admin:
-        from nexus.core.permissions_enhanced import AdminCapability
-
-        admin_capabilities = {
-            AdminCapability.READ_ALL,
-            AdminCapability.WRITE_ALL,
-            AdminCapability.DELETE_ANY,
-            AdminCapability.MANAGE_REBAC,
-        }
-
-    # Issue #1240: Populate agent_generation from AgentRegistry
-    # TODO: In production, agent_generation should come from client JWT token,
-    # not a server-side DB lookup (which makes stale-session detection a no-op
-    # since both sides read the same DB). This is a temporary bridge until
-    # JWT token integration is implemented.
-    agent_generation = None
-    if subject_type == "agent" and _app_state.agent_registry:
-        try:
-            agent_record = _app_state.agent_registry.get(subject_id)
-            if agent_record:
-                agent_generation = agent_record.generation
-        except Exception:
-            logger.debug(
-                "[AGENT-GEN] Failed to look up generation for agent %s",
-                subject_id,
-            )
-
-    return OperationContext(
-        user=user_id,
-        agent_id=agent_id,
-        subject_type=subject_type,
-        subject_id=subject_id,
-        zone_id=zone_id,
-        is_admin=is_admin,
-        groups=[],
-        admin_capabilities=admin_capabilities,
-        agent_generation=agent_generation,
-    )
+# Stream token signing/verification is now in streaming.py.
+# Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
+# All are imported above for backward compatibility.
 
 
 # ============================================================================
@@ -1342,13 +916,13 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.tasks import is_available
 
             if is_available():
-                service = _app_state.nexus_fs._task_queue_service
+                service = _app_state.nexus_fs.task_queue_service
                 engine = service.get_engine()
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
                 runner = AsyncTaskRunner(engine=engine, max_workers=4)
-                service._runner = runner
+                service.set_runner(runner)
                 _app_state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
                 logger.info("Task Queue runner started (4 workers)")
@@ -1595,6 +1169,8 @@ def create_app(
     # Initialize rate limiter (Issue #780)
     # Rate limiting is DISABLED by default for better performance
     # Set NEXUS_RATE_LIMIT_ENABLED=true to enable rate limiting
+    import nexus.server.rate_limiting as _rate_limiting_mod
+
     global limiter
     rate_limit_enabled = os.environ.get("NEXUS_RATE_LIMIT_ENABLED", "").lower() in (
         "true",
@@ -1610,6 +1186,9 @@ def create_app(
         strategy="fixed-window",
         enabled=rate_limit_enabled,
     )
+    # Keep the canonical module in sync so any code importing from rate_limiting gets
+    # the initialized Limiter instance, not the bare type annotation.
+    _rate_limiting_mod.limiter = limiter
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -1663,6 +1242,16 @@ def create_app(
 
     # Register routes
     _register_routes(app)
+
+    # Register NexusFS instance for zone routes, migration, and user provisioning.
+    # This must happen unconditionally (not only when OAuth is configured).
+    try:
+        from nexus.server.auth.auth_routes import set_nexus_instance
+
+        set_nexus_instance(nexus_fs)
+        logger.info("NexusFS instance registered for zone management")
+    except Exception as e:
+        logger.warning(f"Failed to register NexusFS instance: {e}")
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
@@ -1742,14 +1331,8 @@ def _initialize_oauth_provider(
             f"Failed to initialize OAuth provider: {e}. OAuth endpoints will not be available."
         )
 
-    # Set NexusFS instance for user provisioning in OAuth flow
-    try:
-        from nexus.server.auth.auth_routes import set_nexus_instance
-
-        set_nexus_instance(_app_state.nexus_fs)
-        logger.info("NexusFS instance registered for OAuth provisioning")
-    except Exception as e:
-        logger.warning(f"Failed to register NexusFS instance: {e}")
+    # NexusFS instance is now registered unconditionally in create_app()
+    # (moved from here to avoid being gated on OAuth credentials)
 
 
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
@@ -2120,6 +1703,7 @@ def _register_routes(app: FastAPI) -> None:
     # API v2 routes - Memory & ACE endpoints (Issue #1193)
     try:
         from nexus.server.api.v2.routers import (
+            audit,
             conflicts,
             consolidation,
             curate,
@@ -2142,7 +1726,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(mobile_search.router)
         app.include_router(conflicts.router)
         app.include_router(operations.router)
-        logger.info("API v2 routes registered (42 endpoints)")
+        app.include_router(audit.router)
+        logger.info("API v2 routes registered (48 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
@@ -2353,7 +1938,6 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Search results with scores and metadata
         """
-        import time
 
         start_time = time.perf_counter()
 
@@ -2553,7 +2137,6 @@ def _register_routes(app: FastAPI) -> None:
             Query expansions with metadata
         """
         import os
-        import time
 
         from nexus.search.query_expansion import (
             OpenRouterQueryExpander,
@@ -4320,23 +3903,6 @@ def _register_routes(app: FastAPI) -> None:
             # Get operation context
             context = get_operation_context(auth_result)
 
-            # Issue #923: Parse X-Nexus-Consistency header for CTO consistency model
-            x_consistency = request.headers.get("X-Nexus-Consistency")
-            if x_consistency:
-                try:
-                    from dataclasses import replace
-
-                    from nexus.core.consistency import FSConsistency
-
-                    context = replace(context, consistency=FSConsistency(x_consistency))
-                except ValueError:
-                    return _error_response(
-                        rpc_request.id,
-                        RPCErrorCode.INVALID_PARAMS,
-                        f"Invalid X-Nexus-Consistency value: {x_consistency}. "
-                        f"Valid values: eventual, close_to_open, strong",
-                    )
-
             _setup_elapsed = (_time.time() - _rpc_start) * 1000 - _parse_elapsed
 
             # Early 304 check for read operations - check ETag BEFORE reading content
@@ -4366,76 +3932,6 @@ def _register_routes(app: FastAPI) -> None:
                 except Exception as e:
                     # If ETag check fails, fall through to normal read
                     logger.debug(f"Early ETag check failed for {params.path}: {e}")
-
-            # Issue #1187 + #923: Handle X-Nexus-Zookie header for consistency
-            x_nexus_zookie = request.headers.get("X-Nexus-Zookie")
-            if x_nexus_zookie and method in ("read", "list", "glob", "get_metadata", "exists"):
-                # Set min_zookie on context for core-layer consistency checks
-                from dataclasses import replace
-
-                context = replace(context, min_zookie=x_nexus_zookie)
-
-                # For read/list, the core layer handles the zookie wait via
-                # _check_consistency_before_read() (Issue #923).
-                # For other methods (glob, get_metadata, exists), do the wait here.
-                if method not in ("read", "list"):
-                    try:
-                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
-                        from nexus.core.zookie import (
-                            ConsistencyTimeoutError,
-                            InvalidZookieError,
-                            Zookie,
-                        )
-
-                        consistency = getattr(context, "consistency", DEFAULT_CONSISTENCY)
-
-                        # EVENTUAL: skip zookie check entirely
-                        if consistency != FSConsistency.EVENTUAL:
-                            zookie = Zookie.decode(x_nexus_zookie)
-                            if _app_state.nexus_fs:
-                                zone_id = context.zone_id if context else "default"
-                                if zone_id != zookie.zone_id:
-                                    logger.warning(
-                                        f"Zookie zone mismatch: request={zone_id}, "
-                                        f"zookie={zookie.zone_id}"
-                                    )
-                                if (
-                                    not _app_state.nexus_fs._wait_for_revision(
-                                        zookie.zone_id, zookie.revision, timeout_ms=5000
-                                    )
-                                    and consistency == FSConsistency.STRONG
-                                ):
-                                    raise ConsistencyTimeoutError(
-                                        f"Timeout waiting for revision {zookie.revision}",
-                                        zone_id=zookie.zone_id,
-                                        requested_revision=zookie.revision,
-                                        current_revision=_app_state.nexus_fs._get_current_revision(
-                                            zookie.zone_id
-                                        ),
-                                        timeout_ms=5000,
-                                    )
-                                # CTO: timeout is acceptable, fall through
-
-                    except InvalidZookieError as e:
-                        from nexus.core.consistency import DEFAULT_CONSISTENCY, FSConsistency
-
-                        if (
-                            getattr(context, "consistency", DEFAULT_CONSISTENCY)
-                            == FSConsistency.STRONG
-                        ):
-                            return _error_response(
-                                rpc_request.id,
-                                RPCErrorCode.INVALID_PARAMS,
-                                f"Invalid X-Nexus-Zookie header: {e.message}",
-                            )
-                        # CTO/EVENTUAL: ignore invalid zookies gracefully
-                    except ConsistencyTimeoutError as e:
-                        return _error_response(
-                            rpc_request.id,
-                            RPCErrorCode.INTERNAL_ERROR,
-                            f"Consistency timeout: requested revision {e.requested_revision}, "
-                            f"current revision {e.current_revision}",
-                        )
 
             # Dispatch method
             _dispatch_start = _time.time()
@@ -4531,7 +4027,6 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
     Returns:
         Dict of HTTP cache headers
     """
-    import hashlib
 
     headers: dict[str, str] = {}
 
@@ -4565,17 +4060,6 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
     # Write/delete operations - no cache
     elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
         headers["Cache-Control"] = "no-store"
-        # Issue #1187: Return zookie in response header for consistency tracking
-        # Check for zookie at top level or nested in bytes_written (for write)
-        if isinstance(result, dict):
-            if "zookie" in result:
-                headers["X-Nexus-Zookie"] = result["zookie"]
-            elif (
-                "bytes_written" in result
-                and isinstance(result["bytes_written"], dict)
-                and "zookie" in result["bytes_written"]
-            ):
-                headers["X-Nexus-Zookie"] = result["bytes_written"]["zookie"]
 
     # Delta read - cache like regular read
     elif method == "delta_read":
@@ -5184,6 +4668,13 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
         kwargs["if_none_match"] = params.if_none_match
     if hasattr(params, "force") and params.force:
         kwargs["force"] = params.force
+    # Lock params (Issue #1143) — only forward when non-default
+    lock_val = getattr(params, "lock", None)
+    if lock_val:
+        kwargs["lock"] = lock_val
+    lock_timeout_val = getattr(params, "lock_timeout", None)
+    if lock_timeout_val is not None and lock_timeout_val != 30.0:
+        kwargs["lock_timeout"] = lock_timeout_val
 
     bytes_written = nexus_fs.write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}
@@ -5285,17 +4776,11 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        result = nexus_fs.delete(params.path, context=context)
+        nexus_fs.delete(params.path, context=context)
     except TypeError:
-        result = nexus_fs.delete(params.path)
+        nexus_fs.delete(params.path)
 
-    # Issue #1187: Include zookie in response for consistency tracking
     response: dict[str, Any] = {"deleted": True}
-    if isinstance(result, dict):
-        if "zookie" in result:
-            response["zookie"] = result["zookie"]
-        if "revision" in result:
-            response["revision"] = result["revision"]
     return response
 
 
@@ -5306,17 +4791,11 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
     try:
-        result = nexus_fs.rename(params.old_path, params.new_path, context=context)
+        nexus_fs.rename(params.old_path, params.new_path, context=context)
     except TypeError:
-        result = nexus_fs.rename(params.old_path, params.new_path)
+        nexus_fs.rename(params.old_path, params.new_path)
 
-    # Issue #1187: Include zookie in response for consistency tracking
     response: dict[str, Any] = {"renamed": True}
-    if isinstance(result, dict):
-        if "zookie" in result:
-            response["zookie"] = result["zookie"]
-        if "revision" in result:
-            response["revision"] = result["revision"]
     return response
 
 

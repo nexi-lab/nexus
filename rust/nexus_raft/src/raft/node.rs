@@ -746,7 +746,26 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                     }
                 }
                 EntryType::EntryConfChange | EntryType::EntryConfChangeV2 => {
-                    tracing::info!("Applied config change at index {}", entry.index);
+                    let cc: ConfChange = protobuf::Message::parse_from_bytes(&entry.data)
+                        .map_err(|e| RaftError::Serialization(e.to_string()))?;
+
+                    let cs = self
+                        .raw_node
+                        .apply_conf_change(&cc)
+                        .map_err(|e| RaftError::Raft(e.to_string()))?;
+
+                    self.raw_node
+                        .mut_store()
+                        .set_conf_state(&cs)
+                        .map_err(|e| RaftError::Storage(e.to_string()))?;
+
+                    tracing::info!(
+                        index = entry.index,
+                        change_type = ?cc.get_change_type(),
+                        node_id = cc.node_id,
+                        voters = ?cs.voters,
+                        "raft.conf_change.applied",
+                    );
                 }
             }
         }
@@ -769,7 +788,7 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
 mod tests {
     use super::*;
     use crate::raft::state_machine::{FullStateMachine, WitnessStateMachine};
-    use crate::storage::SledStore;
+    use crate::storage::RedbStore;
     use tempfile::TempDir;
 
     /// Create a test node pair (handle + driver).
@@ -780,7 +799,7 @@ mod tests {
     ) {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let store = RedbStore::open(dir.path().join("witness")).unwrap();
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -806,7 +825,7 @@ mod tests {
     async fn test_witness_node() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("witness")).unwrap();
+        let store = RedbStore::open(dir.path().join("witness")).unwrap();
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig::witness(1, vec![2, 3]);
@@ -819,7 +838,7 @@ mod tests {
     async fn test_bootstrap_conf_state() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
         let state_machine = FullStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -837,7 +856,7 @@ mod tests {
     async fn test_with_state_machine() {
         let dir = TempDir::new().unwrap();
         let storage = RaftStorage::open(dir.path()).unwrap();
-        let store = SledStore::open(dir.path().join("sm")).unwrap();
+        let store = RedbStore::open(dir.path().join("sm")).unwrap();
         let state_machine = FullStateMachine::new(&store).unwrap();
 
         let config = RaftConfig {
@@ -894,7 +913,7 @@ mod tests {
         for id in 1..=3u64 {
             let dir = TempDir::new().unwrap();
             let storage = RaftStorage::open(dir.path()).unwrap();
-            let store = SledStore::open(dir.path().join("sm")).unwrap();
+            let store = RedbStore::open(dir.path().join("sm")).unwrap();
             let state_machine = FullStateMachine::new(&store).unwrap();
 
             let peers: Vec<u64> = (1..=3).filter(|&p| p != id).collect();

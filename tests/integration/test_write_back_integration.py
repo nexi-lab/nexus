@@ -392,7 +392,7 @@ class TestConflictIntegration:
     async def test_conflict_lifecycle_detect_resolve_log_retrieve(
         self, mock_gateway, mock_event_bus
     ):
-        """Full conflict lifecycle: enqueue → detect → auto-resolve → log → query → manual resolve."""
+        """Full conflict lifecycle: enqueue -> detect -> auto-resolve -> log -> query -> manual resolve."""
         from nexus.services.conflict_resolution import ConflictStatus, ResolutionOutcome
 
         backlog_store = SyncBacklogStore(mock_gateway)
@@ -429,7 +429,7 @@ class TestConflictIntegration:
             size=1024,
         )
 
-        # Phase 1: Enqueue + process → conflict auto-resolved
+        # Phase 1: Enqueue + process -> conflict auto-resolved
         await service._on_file_event(
             FileEvent(
                 type=FileEventType.FILE_WRITE,

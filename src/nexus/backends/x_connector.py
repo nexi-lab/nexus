@@ -185,6 +185,13 @@ class XConnectorBackend(Backend):
         """Backend identifier name."""
         return "x"
 
+    # --- Capability flags ---
+
+    @property
+    def has_token_manager(self) -> bool:
+        """X connector manages OAuth tokens."""
+        return True
+
     async def _get_api_client_async(
         self, context: "OperationContext | None"
     ) -> Any:  # Returns XAPIClient but avoid circular import

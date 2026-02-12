@@ -597,6 +597,55 @@ class TestRemoteNexusFSFileOperations:
             },
         )
 
+    def test_write_with_lock(self, remote_client):
+        """Test write operation with lock=True sends lock in RPC params."""
+        remote_client._call_rpc = Mock(return_value={"etag": "etag789", "size": 11})
+
+        result = remote_client.write("/test.txt", b"hello world", lock=True)
+
+        assert result["etag"] == "etag789"
+        remote_client._call_rpc.assert_called_once_with(
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": None,
+                "if_none_match": False,
+                "force": False,
+                "lock": True,
+            },
+        )
+
+    def test_write_with_lock_timeout(self, remote_client):
+        """Test write operation with lock=True and custom lock_timeout."""
+        remote_client._call_rpc = Mock(return_value={"etag": "etag789", "size": 11})
+
+        result = remote_client.write("/test.txt", b"hello world", lock=True, lock_timeout=5.0)
+
+        assert result["etag"] == "etag789"
+        remote_client._call_rpc.assert_called_once_with(
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": None,
+                "if_none_match": False,
+                "force": False,
+                "lock": True,
+                "lock_timeout": 5.0,
+            },
+        )
+
+    def test_write_without_lock_omits_lock_params(self, remote_client):
+        """Test write operation without lock does not include lock params."""
+        remote_client._call_rpc = Mock(return_value={"etag": "etag123", "size": 11})
+
+        remote_client.write("/test.txt", b"hello world")
+
+        call_params = remote_client._call_rpc.call_args[0][1]
+        assert "lock" not in call_params
+        assert "lock_timeout" not in call_params
+
     def test_list(self, remote_client):
         """Test list operation."""
         remote_client._call_rpc = Mock(return_value={"files": ["/file1.txt", "/file2.txt"]})

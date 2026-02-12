@@ -13,11 +13,15 @@ Extracted modules:
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.storage.zone_settings import ZoneSettings
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -33,6 +37,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 # Re-export shared base utilities (used by remaining models in this file)
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
+
+# Issue #1360: Exchange transaction audit log models
+from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel
+from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
 
 # Re-export extracted models so all existing imports continue to work:
 #   from nexus.storage.models import FilePathModel, VersionHistoryModel, OperationLogModel
@@ -1299,10 +1307,7 @@ class FileSystemVersionSequenceModel(Base):
     """Per-zone version sequence for filesystem consistency tokens (Issue #1187).
 
     Stores monotonic revision counters used to track filesystem changes
-    for each zone. Used for Zookie consistency tokens to enable
-    read-after-write consistency guarantees.
-
-    See: nexus.core.zookie for the Zookie class implementation.
+    for each zone.
     """
 
     __tablename__ = "filesystem_version_sequences"
@@ -2996,14 +3001,30 @@ class ZoneModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    # Indexes
+    # Indexes and constraints
     __table_args__ = (
         Index("idx_zones_name", "name"),
         Index("idx_zones_active", "is_active"),
     )
 
+    @property
+    def parsed_settings(self) -> "ZoneSettings":
+        """Parse settings JSON into a ZoneSettings Pydantic model.
+
+        Returns an empty ZoneSettings if settings is None.
+        Raises json.JSONDecodeError / ValueError for malformed JSON.
+        """
+        from nexus.storage.zone_settings import ZoneSettings
+
+        if self.settings is None:
+            return ZoneSettings()
+        return ZoneSettings(**json.loads(self.settings))
+
     def __repr__(self) -> str:
-        return f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, domain={self.domain}, is_active={self.is_active})>"
+        return (
+            f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, "
+            f"domain={self.domain}, is_active={self.is_active})>"
+        )
 
 
 class ExternalUserServiceModel(Base):

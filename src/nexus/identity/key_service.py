@@ -18,7 +18,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from cachetools import TTLCache
 from sqlalchemy import select, update
@@ -208,7 +208,7 @@ class KeyService:
         with self._lock:
             cached = self._agent_keys_cache.get(agent_id, _CACHE_MISS)
         if cached is not _CACHE_MISS:
-            return cached
+            return cast(list[AgentKeyRecord], cached)
 
         now = _utcnow_naive()
         with self._get_session() as session:
@@ -249,7 +249,7 @@ class KeyService:
         with self._lock:
             cached = self._key_cache.get(key_id, _CACHE_MISS)
         if cached is not _CACHE_MISS:
-            return cached
+            return cast("AgentKeyRecord | None", cached)
 
         with self._get_session() as session:
             model = session.execute(

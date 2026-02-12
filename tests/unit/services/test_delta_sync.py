@@ -739,7 +739,7 @@ class TestDeletionChangeLogCleanup:
         mock_gateway.metadata_delete = MagicMock()
         mock_gateway.list_mounts = MagicMock(return_value=[])
 
-        sync_service._change_log.delete_change_log = MagicMock(return_value=True)
+        sync_service._change_log.delete_change_logs_batch = MagicMock(return_value=True)
 
         mock_backend = MagicMock()
         mock_backend.name = "test_connector"
@@ -757,9 +757,9 @@ class TestDeletionChangeLogCleanup:
         assert result.files_deleted == 1
         mock_gateway.metadata_delete.assert_called_once_with("/mnt/test/deleted_file.txt")
 
-        # Change log should be cleaned up
-        sync_service._change_log.delete_change_log.assert_called_once_with(
-            "/mnt/test/deleted_file.txt", "test_connector", "test-zone"
+        # Change log should be cleaned up (batch deletion)
+        sync_service._change_log.delete_change_logs_batch.assert_called_once_with(
+            ["/mnt/test/deleted_file.txt"], "test_connector", "test-zone"
         )
 
 

@@ -45,10 +45,15 @@ def engine():
 
 
 @pytest.fixture
-def db_session(engine):
+def session_factory(engine):
+    """Create a session factory for SandboxManager."""
+    return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+@pytest.fixture
+def db_session(session_factory):
     """Create a database session."""
-    Session = sessionmaker(bind=engine, expire_on_commit=False)
-    session = Session()
+    session = session_factory()
     yield session
     session.close()
 
@@ -79,10 +84,10 @@ def mock_provider():
 
 
 @pytest.fixture
-def manager(db_session, mock_provider):
+def manager(session_factory, mock_provider):
     """Create a SandboxManager with mocked providers."""
     mgr = SandboxManager.__new__(SandboxManager)
-    mgr.db = db_session
+    mgr._session_factory = session_factory
     mgr.providers = {"docker": mock_provider}
     return mgr
 
@@ -132,9 +137,9 @@ class TestCreateSandbox:
         assert result["provider"] == "docker"
 
     @pytest.mark.asyncio
-    async def test_create_sandbox_no_providers_raises(self, db_session):
+    async def test_create_sandbox_no_providers_raises(self, session_factory):
         mgr = SandboxManager.__new__(SandboxManager)
-        mgr.db = db_session
+        mgr._session_factory = session_factory
         mgr.providers = {}
 
         with pytest.raises(ValueError, match="No sandbox providers available"):

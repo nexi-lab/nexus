@@ -22,3 +22,26 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "quarantine" in item.keywords:
                 item.add_marker(skip_quarantine)
+
+
+# ---------------------------------------------------------------------------
+# Autouse fixtures for test isolation (reset module-level singletons)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_cache_fixture():
+    """Reset the TTLCache auth cache between tests for isolation."""
+    yield
+    from nexus.server.dependencies import _reset_auth_cache
+
+    _reset_auth_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_stream_secret_fixture():
+    """Reset the HMAC stream signing secret between tests for isolation."""
+    yield
+    from nexus.server.streaming import _reset_stream_secret
+
+    _reset_stream_secret()

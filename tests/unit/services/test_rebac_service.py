@@ -859,30 +859,34 @@ class TestCheckSharePermission:
         )
 
     def test_denies_non_owner_for_non_file_resource(self, enforced_service, mock_rebac_manager):
-        """Test that non-owners cannot manage non-file resources."""
-        # rebac_check is a coroutine here because it's called via self.rebac_check
-        # but in _check_share_permission for non-file resources, it calls self.rebac_check
-        # which is an async method. The sync helper calls it directly so we mock rebac_check
-        # at the manager level to return False.
+        """Test that non-owners cannot manage non-file resources.
+
+        The permission check calls self._rebac_manager.rebac_check() (sync) directly.
+        When rebac_check returns False, PermissionError must be raised.
+        """
         mock_rebac_manager.rebac_check.return_value = False
 
-        # For non-file resources, _check_share_permission checks owner via rebac_check
-        # but rebac_check is async and _check_share_permission calls it without await
-        # for non-file types. This is the actual behavior of the code.
         ctx = OperationContext(
             user="user1", groups=[], zone_id="z1", is_system=False, is_admin=False
         )
-        # Note: this may raise PermissionError or work differently depending on
-        # how the code handles the coroutine. We test the behavior as documented.
-        # For non-file resources, the code calls self.rebac_check which returns a coroutine.
-        # The truthiness of a coroutine is always True, so non-file check may pass unexpectedly.
-        # This test documents the current behavior.
-        try:
+        with pytest.raises(PermissionError, match="does not have owner permission"):
             enforced_service._check_share_permission(
                 resource=("group", "developers"),
                 context=ctx,
             )
-        except (PermissionError, TypeError):
-            # Either PermissionError (correct denial) or TypeError (coroutine issue)
-            # is acceptable for non-file resources in current implementation
-            pass
+
+    def test_allows_owner_for_non_file_resource(self, enforced_service, mock_rebac_manager):
+        """Test that owners can manage non-file resources.
+
+        When rebac_check returns True for ownership, no exception is raised.
+        """
+        mock_rebac_manager.rebac_check.return_value = True
+
+        ctx = OperationContext(
+            user="owner1", groups=[], zone_id="z1", is_system=False, is_admin=False
+        )
+        # Should not raise - owner has permission
+        enforced_service._check_share_permission(
+            resource=("group", "developers"),
+            context=ctx,
+        )

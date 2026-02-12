@@ -222,6 +222,22 @@ impl PyMetastore {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
     }
 
+    /// Get metadata for multiple paths in a single FFI call.
+    ///
+    /// Args:
+    ///     paths: List of file paths to look up.
+    ///
+    /// Returns:
+    ///     List of (path, metadata_bytes_or_none) tuples.
+    pub fn get_metadata_multi(
+        &self,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
+        self.sm
+            .get_metadata_multi(&paths)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e)))
+    }
+
     /// Delete metadata for a path.
     ///
     /// Args:
@@ -699,6 +715,24 @@ impl PyRaftConsensus {
                 node.with_state_machine(|sm| sm.get_metadata(&path))
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
+            })
+        })
+    }
+
+    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
+    pub fn get_metadata_multi(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
+        let node = self.node.clone();
+        py.allow_threads(|| {
+            self.runtime.block_on(async {
+                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
+                    .await
+                    .map_err(|e| {
+                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
+                    })
             })
         })
     }

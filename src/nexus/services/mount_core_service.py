@@ -30,6 +30,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -571,39 +572,10 @@ class MountCoreService:
     ) -> bool:
         """Check if user has permission on path.
 
-        Args:
-            path: Virtual path to check
-            permission: Permission to check ("read", "write", "owner")
-            context: Operation context
-
-        Returns:
-            True if user has permission
+        Delegates to shared permission_utils.check_permission.
+        Raises PermissionCheckError on infrastructure failures.
         """
-        if not context:
-            # No context = allow (backward compatibility)
-            return True
-
-        try:
-            # Admin users bypass permission checks
-            is_admin = getattr(context, "is_admin", False)
-            if is_admin:
-                return True
-
-            subject_type, subject_id = get_user_identity(context)
-            if not subject_id:
-                return False
-
-            zone_id = get_zone_id(context)
-
-            return self._gw.rebac_check(
-                subject=(subject_type, subject_id),
-                permission=permission,
-                object=("file", path),
-                zone_id=zone_id,
-            )
-        except Exception as e:
-            logger.error(f"Permission check failed for {path}: {e}")
-            return False
+        return check_permission(self._gw, path, permission, context)
 
     def _check_mount_permission(
         self,

@@ -196,7 +196,7 @@ class TestListPaginated:
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 3
         assert result.has_more is True
-        assert result.total_count == 5
+        assert result.total_count is None  # streaming impl doesn't scan for total
         assert result.next_cursor is not None
 
     def test_paginated_all_fit_in_one_page(self) -> None:
@@ -209,7 +209,7 @@ class TestListPaginated:
         assert len(result.items) == 3
         assert result.has_more is False
         assert result.next_cursor is None
-        assert result.total_count == 3
+        assert result.total_count is None  # streaming impl doesn't scan for total
 
     def test_paginated_empty_results(self) -> None:
         """Empty prefix returns empty results."""
@@ -219,7 +219,7 @@ class TestListPaginated:
 
         assert len(result.items) == 0
         assert result.has_more is False
-        assert result.total_count == 0
+        assert result.total_count is None  # streaming impl doesn't scan for total
 
     def test_paginated_cursor_pagination(self) -> None:
         """Cursor-based pagination navigates through pages."""

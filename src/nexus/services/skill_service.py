@@ -1099,12 +1099,14 @@ class SkillService:
 
     def _format_skills_xml(self, skills: list[SkillInfo]) -> str:
         """Format skills as XML for system prompt injection."""
+        from xml.sax.saxutils import escape, quoteattr
+
         xml_parts = ["<available_skills>"]
         for skill in skills:
-            xml_parts.append(f'  <skill path="{skill.path}">')
-            xml_parts.append(f"    <name>{skill.name}</name>")
-            xml_parts.append(f"    <description>{skill.description}</description>")
-            xml_parts.append(f"    <owner>{skill.owner}</owner>")
+            xml_parts.append(f"  <skill path={quoteattr(skill.path)}>")
+            xml_parts.append(f"    <name>{escape(skill.name)}</name>")
+            xml_parts.append(f"    <description>{escape(skill.description)}</description>")
+            xml_parts.append(f"    <owner>{escape(skill.owner)}</owner>")
             xml_parts.append("  </skill>")
         xml_parts.append("</available_skills>")
         return "\n".join(xml_parts)

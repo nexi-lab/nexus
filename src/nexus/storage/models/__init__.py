@@ -40,12 +40,10 @@ from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_de
 
 # Issue #1360: Exchange transaction audit log models
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel
-from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
 
 # Issue #1356: Reputation & Trust models
 from nexus.storage.models.dispute import DisputeModel as DisputeModel
-from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
-from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
+from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
 
 # Re-export extracted models so all existing imports continue to work:
 #   from nexus.storage.models import FilePathModel, VersionHistoryModel, OperationLogModel
@@ -54,6 +52,8 @@ from nexus.storage.models.operation_log import OperationLogModel as OperationLog
 from nexus.storage.models.persistent_namespace_view import (
     PersistentNamespaceViewModel as PersistentNamespaceViewModel,
 )
+from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
+from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
 from nexus.storage.models.version_history import VersionHistoryModel as VersionHistoryModel
 
 

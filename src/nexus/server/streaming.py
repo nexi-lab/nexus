@@ -75,3 +75,9 @@ def _verify_stream_token(token: str, path: str, zone_id: str = "default") -> boo
         return hmac.compare_digest(signature, expected_sig)
     except (ValueError, TypeError):
         return False
+
+
+def _reset_stream_secret() -> None:
+    """Reset the stream secret. Used by tests for isolation."""
+    global _STREAM_SECRET
+    _STREAM_SECRET = None

@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from nexus.server.token_utils import parse_sk_token
+
 # Rate limit tiers (configurable via environment variables)
 RATE_LIMIT_ANONYMOUS = os.environ.get("NEXUS_RATE_LIMIT_ANONYMOUS", "60/minute")
 RATE_LIMIT_AUTHENTICATED = os.environ.get("NEXUS_RATE_LIMIT_AUTHENTICATED", "300/minute")
@@ -45,13 +47,11 @@ def _get_rate_limit_key(request: Request) -> str:
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        # Parse sk-<zone>_<user>_<id>_<random> format
-        if token.startswith("sk-"):
-            parts = token[3:].split("_")
-            if len(parts) >= 2:
-                zone = parts[0] or "default"
-                user = parts[1] or "unknown"
-                return f"user:{zone}:{user}"
+        parsed = parse_sk_token(token)
+        if parsed is not None:
+            zone = parsed.zone or "default"
+            user = parsed.user or "unknown"
+            return f"user:{zone}:{user}"
         # For other tokens, use hash as key
         return f"token:{hashlib.sha256(token.encode()).hexdigest()[:16]}"
 

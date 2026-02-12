@@ -1,4 +1,4 @@
-"""API versioning infrastructure.
+"""API versioning infrastructure (#995).
 
 Provides:
 - RouterEntry: metadata wrapper for versioned routers

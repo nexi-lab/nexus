@@ -270,6 +270,7 @@ addopts = [
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml
 testpaths = ["tests"]
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]

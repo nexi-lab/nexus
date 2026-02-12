@@ -86,6 +86,7 @@ class FileMetadata:
     owner_id: str | None = None
     entry_type: int = 0
     target_zone_id: str | None = None
+    i_links_count: int = 0
 
     @property
     def is_reg(self) -> bool:
@@ -203,14 +204,6 @@ class FileMetadataProtocol(ABC):
 
         Subclasses may override for true streaming from the underlying store.
         The default implementation delegates to list() for backward compatibility.
-
-        Args:
-            prefix: Path prefix to match
-            recursive: If True, include nested paths
-            **kwargs: Additional backend-specific filters
-
-        Yields:
-            FileMetadata entries matching the prefix
         """
         yield from self.list(prefix, recursive, **kwargs)
 
@@ -294,16 +287,8 @@ class AsyncFileMetadataWrapper:
 
     async def alist_iter(
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
-    ) -> list[FileMetadata]:
-        """Async list_iter - returns list since async generators need different patterns.
-
-        Delegates to list_iter() in a thread to avoid blocking the event loop.
-        Returns a list because async iteration across thread boundaries is complex;
-        callers should use alist() or alist_iter() based on their needs.
-        """
-        return await asyncio.to_thread(
-            lambda: list(self._store.list_iter(prefix, recursive, **kwargs))
-        )
+    ) -> Iterator[FileMetadata]:
+        return await asyncio.to_thread(self._store.list_iter, prefix, recursive, **kwargs)
 
     async def alist_paginated(
         self,

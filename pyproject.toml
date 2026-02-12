@@ -607,4 +607,5 @@ line-ending = "auto"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "types-protobuf>=6.32.1.20251210",
 ]

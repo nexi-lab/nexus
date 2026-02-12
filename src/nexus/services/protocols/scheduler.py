@@ -1,11 +1,14 @@
-"""Scheduler kernel protocol (Nexus Lego Architecture, Issue #1383).
+"""Scheduler service protocol (Nexus Lego Architecture, Issue #1383).
 
 Defines the contract for agent work-request scheduling.
 No existing production implementation — ``InMemoryScheduler`` is provided
 as a test stub.
 
+Storage Affinity: **CacheStore** — ephemeral work queue (Dragonfly sorted set).
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
@@ -36,7 +39,7 @@ class AgentRequest:
 
 @runtime_checkable
 class SchedulerProtocol(Protocol):
-    """Kernel contract for agent work-request scheduling.
+    """Service contract for agent work-request scheduling.
 
     All methods are async.  No existing production implementation.
     """

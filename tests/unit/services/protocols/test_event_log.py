@@ -114,7 +114,7 @@ class TestEventLogProtocol:
     """Verify the protocol is runtime-checkable and has expected methods."""
 
     def test_expected_methods(self) -> None:
-        expected = {"append", "read", "subscribe"}
+        expected = {"append", "read"}
         actual = {
             name
             for name in dir(EventLogProtocol)

@@ -1,19 +1,21 @@
-"""Event log kernel protocol (Nexus Lego Architecture, Issue #1383).
+"""Event log service protocol (Nexus Lego Architecture, Issue #1383).
 
 Defines the contract for persistent audit-trail event storage.
-This is SEPARATE from ``EventBusProtocol`` (real-time pub/sub in
-``nexus.core.event_bus``).  EventLog is for durable, queryable history.
+This is SEPARATE from ``EventBusProtocol`` (real-time pub/sub in CacheStore).
+EventLog is append-only durable history; EventBus is ephemeral pub/sub.
 
 No existing implementation — this is a new protocol.
 
+Storage Affinity: **RecordStore** — append-only BRIN audit log (PostgreSQL).
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
@@ -54,7 +56,7 @@ class KernelEvent:
 
 @runtime_checkable
 class EventLogProtocol(Protocol):
-    """Kernel contract for persistent event storage (audit trail).
+    """Service contract for persistent event storage (audit trail).
 
     All methods are async.  No existing implementation — this protocol
     defines the target interface for future EventLog bricks.
@@ -69,10 +71,3 @@ class EventLogProtocol(Protocol):
         limit: int = 100,
         zone_id: str | None = None,
     ) -> list[KernelEvent]: ...
-
-    async def subscribe(
-        self,
-        *,
-        zone_id: str | None = None,
-        pattern: str = "*",
-    ) -> AsyncIterator[KernelEvent]: ...

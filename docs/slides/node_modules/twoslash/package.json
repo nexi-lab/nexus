@@ -1,0 +1,69 @@
+{
+  "name": "twoslash",
+  "type": "module",
+  "version": "0.3.6",
+  "description": "Markup for generating rich type information in your documentations ahead of time",
+  "author": "TypeScript team",
+  "license": "MIT",
+  "homepage": "https://github.com/twoslashes/twoslash",
+  "repository": {
+    "url": "https://github.com/twoslashes/twoslash",
+    "type": "git",
+    "directory": "packages/twoslash"
+  },
+  "bugs": {
+    "url": "https://github.com/twoslashes/twoslash/issues"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
+      "import": "./dist/core.mjs",
+      "require": "./dist/core.cjs"
+    },
+    "./fallback": {
+      "import": "./dist/fallback.mjs",
+      "require": "./dist/fallback.cjs"
+    }
+  },
+  "main": "dist/index.mjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "typesVersions": {
+    "*": {
+      "./core": [
+        "./dist/core.d.mts"
+      ],
+      "./fallback": [
+        "./dist/fallback.d.mts"
+      ],
+      "*": [
+        "./dist/index.d.mts"
+      ]
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "peerDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@typescript/vfs": "^1.6.2",
+    "twoslash-protocol": "0.3.6"
+  },
+  "devDependencies": {
+    "ohash": "^2.0.11"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*": "eslint --fix"
+  },
+  "scripts": {
+    "build": "unbuild"
+  }
+}

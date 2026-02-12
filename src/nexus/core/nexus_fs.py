@@ -585,7 +585,7 @@ class NexusFS(  # type: ignore[misc]
         # LLMService: LLM integration operations (4 methods)
         # Issue #1287 Phase B: Wrapped in LLMSubsystem for lifecycle management
         self.llm_service = LLMService(nexus_fs=self)
-        from nexus.core.subsystems.llm_subsystem import LLMSubsystem
+        from nexus.services.subsystems.llm_subsystem import LLMSubsystem
 
         self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 

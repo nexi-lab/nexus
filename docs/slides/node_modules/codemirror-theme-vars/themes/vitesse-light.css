@@ -1,0 +1,21 @@
+:root {
+  --cm-foreground: #393a34;
+  --cm-background: #fbfbfb;
+  --cm-comment: #a0ada0;
+  --cm-string: #b56959;
+  --cm-literal: #2f8a89;
+  --cm-number: #296aa3;
+  --cm-keyword: #1c6b48;
+  --cm-function: #6c7834;
+  --cm-boolean: #1c6b48;
+  --cm-constant: #a65e2b;
+  --cm-deleted: #a14f55;
+  --cm-class: #2993a3;
+  --cm-builtin: #ab5959;
+  --cm-property: #b58451;
+  --cm-namespace: #b05a78;
+  --cm-punctuation: #8e8f8b;
+  --cm-decorator: #bd8f8f;
+  --cm-regex: #ab5e3f;
+  --cm-json-property: #698c96;
+}

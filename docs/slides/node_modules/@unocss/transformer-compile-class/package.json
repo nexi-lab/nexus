@@ -1,0 +1,45 @@
+{
+  "name": "@unocss/transformer-compile-class",
+  "type": "module",
+  "version": "66.6.0",
+  "description": "Compile group of classes into one class",
+  "author": "Anthony Fu <anthonyfu117@hotmail.com>",
+  "license": "MIT",
+  "funding": "https://github.com/sponsors/antfu",
+  "homepage": "https://unocss.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unocss/unocss.git",
+    "directory": "packages-presets/transformer-compile-class"
+  },
+  "bugs": {
+    "url": "https://github.com/unocss/unocss/issues"
+  },
+  "keywords": [
+    "unocss",
+    "unocss-transformer"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@unocss/core": "66.6.0"
+  },
+  "devDependencies": {
+    "magic-string": "^0.30.21"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch"
+  }
+}

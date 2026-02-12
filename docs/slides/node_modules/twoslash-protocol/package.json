@@ -1,0 +1,53 @@
+{
+  "name": "twoslash-protocol",
+  "type": "module",
+  "version": "0.3.6",
+  "description": "The protocol for the Twoslash interface",
+  "author": "Anthony Fu",
+  "license": "MIT",
+  "homepage": "https://github.com/twoslashes/twoslash",
+  "repository": {
+    "url": "https://github.com/twoslashes/twoslash",
+    "type": "git",
+    "directory": "packages/twoslash-protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/twoslashes/twoslash/issues"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    },
+    "./types": {
+      "types": "./dist/types.d.mts",
+      "import": "./dist/types.mjs",
+      "require": "./dist/types.cjs"
+    }
+  },
+  "main": "dist/index.mjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "typesVersions": {
+    "*": {
+      "./types": [
+        "./dist/types.d.mts"
+      ],
+      "*": [
+        "./dist/index.d.mts"
+      ]
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*": "eslint --fix"
+  },
+  "scripts": {
+    "build": "unbuild"
+  }
+}

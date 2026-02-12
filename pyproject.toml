@@ -538,6 +538,7 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [
+    "nexus",
     "nexus.cli.commands.work",
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
@@ -553,7 +554,7 @@ module = [
     "nexus.storage.database",
     "nexus.core.distributed_lock",
 ]
-# RaftMetadataStore (PyO3) - Rust methods not visible to mypy (Issue #1159)
+# Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
 disable_error_code = ["attr-defined", "union-attr", "no-any-return"]
 warn_unused_ignores = false
 

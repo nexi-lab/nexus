@@ -1,0 +1,61 @@
+{
+  "name": "vue-flow-layout",
+  "type": "module",
+  "version": "0.2.0",
+  "description": "🌊 The Vue waterfull layout component.",
+  "author": "Chris <hizyyv@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/zyyv/vue-flow-layout#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zyyv/vue-flow-layout.git"
+  },
+  "bugs": "https://github.com/zyyv/vue-flow-layout/issues",
+  "keywords": [
+    "vue",
+    "waterfull",
+    "flow-layout",
+    "vue-flow-layout"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/*",
+        "./dist/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "@antfu/eslint-config": "^4.16.1",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "bumpp": "^10.2.0",
+    "eslint": "^9.29.0",
+    "eslint-import-resolver-node": "^0.3.9",
+    "tsdown": "^0.12.8",
+    "typescript": "^5.8.3",
+    "vite": "^7.0.0",
+    "vue": "^3.5.17",
+    "vue-tsc": "^2.2.10"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch && pnpm play",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "play": "pnpm -C playground dev",
+    "release": "pnpm lint:fix && bumpp -r && pnpm publish"
+  }
+}

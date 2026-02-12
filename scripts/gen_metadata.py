@@ -448,9 +448,27 @@ class FileMetadataProtocol(ABC):
         pass
 
     @abstractmethod
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
-        """Store or update file metadata."""
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+        """Store or update file metadata.
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed when this returns).
+        """
         pass
+
+    def is_committed(self, token: int) -> str | None:
+        """Check if an EC write token has been replicated to a majority.
+
+        Args:
+            token: Write token returned by put() with consistency="ec".
+
+        Returns:
+            "committed" — replicated to majority.
+            "pending" — local only, awaiting replication.
+            None — invalid token or no replication log.
+        """
+        return None
 
     @abstractmethod
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:

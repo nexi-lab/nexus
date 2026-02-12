@@ -55,6 +55,7 @@ use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+use super::replication_log::ReplicationLog;
 use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
 use super::{Command, CommandResult, RaftError, Result};
@@ -229,6 +230,8 @@ pub struct RaftNode<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term, updated by driver after each advance().
     cached_term: Arc<AtomicU64>,
+    /// EC replication WAL (None for witness nodes that don't store data).
+    replication_log: Option<Arc<ReplicationLog>>,
 }
 
 impl<S: StateMachine + 'static> Clone for RaftNode<S> {
@@ -240,6 +243,7 @@ impl<S: StateMachine + 'static> Clone for RaftNode<S> {
             cached_role: self.cached_role.clone(),
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
+            replication_log: self.replication_log.clone(),
         }
     }
 }
@@ -337,6 +341,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         config: RaftConfig,
         storage: RaftStorage,
         state_machine: S,
+        replication_log: Option<Arc<ReplicationLog>>,
     ) -> Result<(Self, RaftNodeDriver<S>)> {
         // Bootstrap: set initial ConfState if this is a fresh cluster
         let initial_state = storage
@@ -382,6 +387,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             cached_role: cached_role.clone(),
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
+            replication_log,
         };
 
         let driver = RaftNodeDriver {
@@ -523,6 +529,46 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             Ok(Err(_)) => Err(RaftError::ProposalDropped),
             Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
         }
+    }
+
+    /// True Local-First EC write — bypasses Raft entirely.
+    ///
+    /// Applies the command directly to the local state machine, then appends
+    /// to the replication WAL. Returns the WAL sequence number as a write token.
+    /// Callers can later poll [`is_committed`] to check replication status.
+    ///
+    /// Only metadata operations (SetMetadata, DeleteMetadata) are supported.
+    /// Lock operations require linearizability and must use SC ([`propose`]).
+    ///
+    /// Latency: ~5-50μs (redb write, no network).
+    pub async fn propose_ec_local(&self, command: Command) -> Result<u64> {
+        let repl_log = self.replication_log.as_ref().ok_or_else(|| {
+            RaftError::InvalidState("EC local writes require a ReplicationLog".into())
+        })?;
+
+        // Serialize command for WAL before acquiring lock
+        let command_bytes = bincode::serialize(&command)?;
+
+        // Apply to local state machine (write lock)
+        {
+            let mut sm = self.state_machine.write().await;
+            sm.apply_local(&command)?;
+        }
+
+        // Append to replication WAL → returns write token
+        repl_log.append(&command_bytes)
+    }
+
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Returns:
+    /// - `Some("committed")` — write has been replicated
+    /// - `Some("pending")` — write is local-only, awaiting replication
+    /// - `None` — no replication log, or invalid token
+    pub fn is_committed(&self, token: u64) -> Option<&str> {
+        self.replication_log
+            .as_ref()
+            .and_then(|log| log.is_committed(token))
     }
 
     /// Propose a configuration change and wait for it to be committed.
@@ -881,7 +927,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, driver) = RaftNode::new(config, storage, state_machine, None).unwrap();
         (handle, driver, dir)
     }
 
@@ -902,7 +948,7 @@ mod tests {
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig::witness(1, vec![2, 3]);
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = RaftNode::new(config, storage, state_machine, None).unwrap();
 
         assert!(handle.is_witness());
     }
@@ -920,7 +966,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = RaftNode::new(config, storage, state_machine, None).unwrap();
         assert_eq!(handle.id(), 1);
         assert_eq!(handle.role(), NodeRole::Follower);
     }
@@ -938,7 +984,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = RaftNode::new(config, storage, state_machine, None).unwrap();
 
         let result = handle
             .with_state_machine(|sm| sm.get_metadata("/nonexistent"))
@@ -997,7 +1043,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let (handle, driver) = RaftNode::new(config, storage, state_machine).unwrap();
+            let (handle, driver) = RaftNode::new(config, storage, state_machine, None).unwrap();
             handles.push(handle);
             drivers.push(driver);
             _dirs.push(dir);

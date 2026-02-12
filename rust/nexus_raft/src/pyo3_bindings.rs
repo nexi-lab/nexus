@@ -189,24 +189,24 @@ impl PyMetastore {
     /// Args:
     ///     path: The file path (key).
     ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously,
-    ///                  but accepts the parameter for API uniformity with RaftConsensus.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously.
     ///
     /// Returns:
-    ///     True if successful.
+    ///     Always None (embedded mode has no replication, writes are immediately durable).
     #[pyo3(signature = (path, value, consistency="sc"))]
     pub fn set_metadata(
         &mut self,
         path: &str,
         value: Vec<u8>,
         consistency: &str,
-    ) -> PyResult<bool> {
+    ) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
-        self.apply_command(cmd)
+        self.apply_command(cmd)?;
+        Ok(None)
     }
 
     /// Get metadata for a path.
@@ -242,18 +242,25 @@ impl PyMetastore {
     ///
     /// Args:
     ///     path: The file path.
-    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously,
-    ///                  but accepts the parameter for API uniformity with RaftConsensus.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously.
     ///
     /// Returns:
-    ///     True if successful.
+    ///     Always None (embedded mode has no replication, writes are immediately durable).
     #[pyo3(signature = (path, consistency="sc"))]
-    pub fn delete_metadata(&mut self, path: &str, consistency: &str) -> PyResult<bool> {
+    pub fn delete_metadata(&mut self, path: &str, consistency: &str) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
-        self.apply_command(cmd)
+        self.apply_command(cmd)?;
+        Ok(None)
+    }
+
+    /// Check if an EC write token has been replicated.
+    ///
+    /// Embedded mode has no replication — always returns None.
+    pub fn is_committed(&self, _token: u64) -> Option<String> {
+        None
     }
 
     /// List all metadata with a prefix.
@@ -678,12 +685,16 @@ impl PyRaftConsensus {
     // Metadata Operations (writes go through consensus)
     // =========================================================================
 
-    /// Set metadata for a path (replicated through Raft consensus).
+    /// Set metadata for a path.
     ///
     /// Args:
     ///     path: The file path (key).
     ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
     #[pyo3(signature = (path, value, consistency="sc"))]
     pub fn set_metadata(
         &self,
@@ -691,18 +702,18 @@ impl PyRaftConsensus {
         path: &str,
         value: Vec<u8>,
         consistency: &str,
-    ) -> PyResult<bool> {
+    ) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            CONSISTENCY_EC => {
-                self.propose_command_ec(py, cmd)?;
-                Ok(true)
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
             }
-            _ => self.propose_command(py, cmd),
         }
     }
 
@@ -737,23 +748,32 @@ impl PyRaftConsensus {
         })
     }
 
-    /// Delete metadata for a path (replicated through Raft consensus).
+    /// Delete metadata for a path.
     ///
     /// Args:
     ///     path: The file path.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
     #[pyo3(signature = (path, consistency="sc"))]
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
+    pub fn delete_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
         match consistency {
-            CONSISTENCY_EC => {
-                self.propose_command_ec(py, cmd)?;
-                Ok(true)
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
             }
-            _ => self.propose_command(py, cmd),
         }
     }
 
@@ -768,6 +788,19 @@ impl PyRaftConsensus {
                     .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
             })
         })
+    }
+
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Args:
+    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
+    ///
+    /// Returns:
+    ///     "committed" — replicated to majority.
+    ///     "pending" — local only, awaiting replication.
+    ///     None — invalid token or no replication log.
+    pub fn is_committed(&self, token: u64) -> Option<String> {
+        self.node.is_committed(token).map(|s| s.to_string())
     }
 
     // =========================================================================
@@ -901,13 +934,13 @@ impl PyRaftConsensus {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyRaftConsensus {
-    /// Propose a command through consensus with EC (fire-and-forget, ~5-10μs).
-    fn propose_command_ec(&self, py: Python<'_>, cmd: Command) -> PyResult<()> {
+    /// True Local-First EC write — bypasses Raft, returns WAL token.
+    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
         let node = self.node.clone();
         py.allow_threads(|| {
             self.runtime
-                .block_on(node.propose_ec(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("Propose EC failed: {}", e)))
+                .block_on(node.propose_ec_local(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
         })
     }
 
@@ -1181,12 +1214,16 @@ impl PyZoneHandle {
     // Metadata Operations (all writes go through Raft consensus)
     // =========================================================================
 
-    /// Set metadata for a path (replicated through Raft consensus).
+    /// Set metadata for a path.
     ///
     /// Args:
     ///     path: The file path (key).
     ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
     #[pyo3(signature = (path, value, consistency="sc"))]
     pub fn set_metadata(
         &self,
@@ -1194,18 +1231,18 @@ impl PyZoneHandle {
         path: &str,
         value: Vec<u8>,
         consistency: &str,
-    ) -> PyResult<bool> {
+    ) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            CONSISTENCY_EC => {
-                self.propose_command_ec(py, cmd)?;
-                Ok(true)
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
             }
-            _ => self.propose_command(py, cmd),
         }
     }
 
@@ -1222,23 +1259,32 @@ impl PyZoneHandle {
         })
     }
 
-    /// Delete metadata for a path (replicated through Raft consensus).
+    /// Delete metadata for a path.
     ///
     /// Args:
     ///     path: The file path.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
+    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
+    ///
+    /// Returns:
+    ///     EC mode: write token (int) for polling via is_committed().
+    ///     SC mode: None (write is already committed when this returns).
     #[pyo3(signature = (path, consistency="sc"))]
-    pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
+    pub fn delete_metadata(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        consistency: &str,
+    ) -> PyResult<Option<u64>> {
         validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
         match consistency {
-            CONSISTENCY_EC => {
-                self.propose_command_ec(py, cmd)?;
-                Ok(true)
+            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
+            _ => {
+                self.propose_command(py, cmd)?;
+                Ok(None)
             }
-            _ => self.propose_command(py, cmd),
         }
     }
 
@@ -1253,6 +1299,19 @@ impl PyZoneHandle {
                     .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
             })
         })
+    }
+
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Args:
+    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
+    ///
+    /// Returns:
+    ///     "committed" — replicated to majority.
+    ///     "pending" — local only, awaiting replication.
+    ///     None — invalid token or no replication log.
+    pub fn is_committed(&self, token: u64) -> Option<String> {
+        self.node.is_committed(token).map(|s| s.to_string())
     }
 
     // =========================================================================
@@ -1362,12 +1421,13 @@ impl PyZoneHandle {
 
 #[cfg(all(feature = "grpc", has_protos))]
 impl PyZoneHandle {
-    fn propose_command_ec(&self, py: Python<'_>, cmd: Command) -> PyResult<()> {
+    /// True Local-First EC write — bypasses Raft, returns WAL token.
+    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
         let node = self.node.clone();
         py.allow_threads(|| {
             self.runtime_handle
-                .block_on(node.propose_ec(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("Propose EC failed: {}", e)))
+                .block_on(node.propose_ec_local(cmd))
+                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
         })
     }
 

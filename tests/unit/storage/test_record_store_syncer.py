@@ -1,296 +1,373 @@
-"""Unit and integration tests for RecordStoreSyncer.
+"""Unit tests for RecordStoreSyncer — the bridge between Metastore and RecordStore.
 
-Tests transaction coordination, error propagation, and batch behavior.
+Tests happy paths, SQL failure injection, partial failures, and session exhaustion.
+Phase 1.1 of #1246/#1330 consolidation plan.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from unittest.mock import patch
+import tempfile
+from collections.abc import Generator
+from datetime import UTC, datetime
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine, event, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import OperationalError
 
-from nexus.core._metadata_generated import DT_DIR, DT_REG, FileMetadata
-from nexus.storage.models import Base, FilePathModel, OperationLogModel
+from nexus.core._metadata_generated import FileMetadata
+from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
+from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def temp_dir() -> Generator[Path, None, None]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
+@pytest.fixture
+def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
+    rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
+    yield rs
+    rs.close()
+
+
+@pytest.fixture
+def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreSyncer:
+    return RecordStoreSyncer(record_store.session_factory)
 
 
 def _make_metadata(
-    path: str = "/test/file.txt",
-    etag: str | None = "sha256-abc",
-    backend_name: str = "local",
-    physical_path: str = "/data/abc123",
-    size: int = 1024,
-    mime_type: str | None = "text/plain",
+    path: str = "/test.txt",
+    *,
+    etag: str = "abc123",
+    size: int = 100,
     version: int = 1,
-    zone_id: str | None = "default",
-    created_by: str | None = "user-1",
-    owner_id: str | None = "owner-1",
-    is_directory: bool = False,
-    created_at: datetime | None = None,
-    modified_at: datetime | None = None,
+    zone_id: str = "default",
+    owner_id: str | None = "user1",
 ) -> FileMetadata:
-    now = datetime(2026, 2, 10, 12, 0, 0)
+    """Create a FileMetadata for testing."""
     return FileMetadata(
         path=path,
-        backend_name=backend_name,
-        physical_path=physical_path,
+        backend_name="local",
+        physical_path=etag,
         size=size,
         etag=etag,
-        mime_type=mime_type,
+        mime_type="text/plain",
+        created_at=datetime.now(UTC),
+        modified_at=datetime.now(UTC),
         version=version,
         zone_id=zone_id,
-        created_by=created_by,
+        created_by="test_user",
         owner_id=owner_id,
-        entry_type=DT_DIR if is_directory else DT_REG,
-        created_at=created_at or now,
-        modified_at=modified_at or now,
     )
 
 
-# ---------------------------------------------------------------------------
-# Unit Tests (mock session)
-# ---------------------------------------------------------------------------
+# =========================================================================
+# Happy path tests
+# =========================================================================
 
 
-class TestOnWriteUnit:
-    """Unit tests for on_write with real session factory."""
+class TestOnWriteHappyPath:
+    """Test on_write() creates OperationLog + FilePathModel + VersionHistory."""
 
-    def test_commits_once(self, session_factory) -> None:
-        """on_write should result in exactly one committed transaction."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
-        metadata = _make_metadata()
+    def test_new_file_creates_all_records(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        metadata = _make_metadata("/new.txt", etag="hash1")
+        syncer.on_write(metadata, is_new=True, path="/new.txt", zone_id="default")
 
-        syncer.on_write(
-            metadata=metadata,
-            is_new=True,
-            path="/test/file.txt",
-            zone_id="default",
-        )
-
-        # Verify data was committed (would be empty if commit didn't happen)
-        with session_factory() as session:
-            fps = (
-                session.execute(select(FilePathModel).where(FilePathModel.deleted_at.is_(None)))
-                .scalars()
-                .all()
-            )
-            assert len(fps) == 1
-
-    def test_raises_on_logger_failure(self, session_factory) -> None:
-        """If OperationLogger raises, the exception should propagate."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
-
-        with (
-            patch(
-                "nexus.storage.operation_logger.OperationLogger.log_operation",
-                side_effect=RuntimeError("DB connection lost"),
-            ),
-            pytest.raises(RuntimeError, match="DB connection lost"),
-        ):
-            syncer.on_write(
-                metadata=_make_metadata(),
-                is_new=True,
-                path="/test/file.txt",
-            )
-
-
-# ---------------------------------------------------------------------------
-# Integration Tests (real SQLite DB)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def engine():
-    """In-memory SQLite engine."""
-    eng = create_engine("sqlite:///:memory:")
-
-    @event.listens_for(eng, "connect")
-    def _pragma(dbapi_conn, connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture
-def session_factory(engine):
-    """Session factory that yields context-managed sessions."""
-    factory = sessionmaker(bind=engine)
-
-    def make_session():
-        return factory()
-
-    return make_session
-
-
-class TestOnWriteIntegration:
-    """Integration tests with real database."""
-
-    def test_creates_operation_log_and_file_path(self, session_factory) -> None:
-        """on_write should create both OperationLogModel and FilePathModel."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
-        metadata = _make_metadata()
-
-        syncer.on_write(
-            metadata=metadata,
-            is_new=True,
-            path="/test/file.txt",
-            zone_id="default",
-            agent_id="agent-1",
-            snapshot_hash="prev-hash",
-        )
-
-        # Verify records in DB
-        with session_factory() as session:
-            ops = session.execute(select(OperationLogModel)).scalars().all()
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
             assert len(ops) == 1
             assert ops[0].operation_type == "write"
-            assert ops[0].path == "/test/file.txt"
-            assert ops[0].agent_id == "agent-1"
-            assert ops[0].status == "success"
+            assert ops[0].path == "/new.txt"
 
-            fps = (
-                session.execute(select(FilePathModel).where(FilePathModel.deleted_at.is_(None)))
-                .scalars()
+            fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
+            assert len(fps) == 1
+            assert fps[0].virtual_path == "/new.txt"
+            assert fps[0].content_hash == "hash1"
+            assert fps[0].current_version == 1
+
+            vhs = session.query(VersionHistoryModel).all()
+            assert len(vhs) == 1
+            assert vhs[0].version_number == 1
+            assert vhs[0].content_hash == "hash1"
+
+    def test_update_file_increments_version(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        # Create initial file
+        m1 = _make_metadata("/file.txt", etag="v1hash")
+        syncer.on_write(m1, is_new=True, path="/file.txt", zone_id="default")
+
+        # Update file
+        m2 = _make_metadata("/file.txt", etag="v2hash", version=2)
+        syncer.on_write(m2, is_new=False, path="/file.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/file.txt",
+                    FilePathModel.deleted_at.is_(None),
+                )
+                .one()
+            )
+            assert fp.current_version == 2
+            assert fp.content_hash == "v2hash"
+
+            vhs = (
+                session.query(VersionHistoryModel)
+                .filter(
+                    VersionHistoryModel.resource_id == fp.path_id,
+                )
+                .order_by(VersionHistoryModel.version_number)
                 .all()
             )
-            assert len(fps) == 1
-            assert fps[0].virtual_path == "/test/file.txt"
+            assert len(vhs) == 2
+            assert vhs[0].version_number == 1
+            assert vhs[1].version_number == 2
+            # Version 2 should have parent link to version 1
+            assert vhs[1].parent_version_id == vhs[0].version_id
 
-    def test_single_transaction_atomicity(self, session_factory, engine) -> None:
-        """If VersionRecorder fails, OperationLog should also be rolled back."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+
+class TestOnDeleteHappyPath:
+    """Test on_delete() soft-deletes FilePathModel."""
+
+    def test_delete_soft_deletes(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        # Create file first
+        m = _make_metadata("/del.txt", etag="delhash")
+        syncer.on_write(m, is_new=True, path="/del.txt", zone_id="default")
+
+        # Delete it
+        syncer.on_delete(path="/del.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            # Should be soft-deleted (deleted_at set)
+            fp = (
+                session.query(FilePathModel)
+                .filter(
+                    FilePathModel.virtual_path == "/del.txt",
+                )
+                .one()
+            )
+            assert fp.deleted_at is not None
+
+            # Operation log should have delete entry
+            ops = (
+                session.query(OperationLogModel)
+                .filter(
+                    OperationLogModel.operation_type == "delete",
+                )
+                .all()
+            )
+            assert len(ops) == 1
+
+    def test_delete_nonexistent_is_noop(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """Deleting a file that doesn't exist in RecordStore should not raise."""
+        syncer.on_delete(path="/nonexistent.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = (
+                session.query(OperationLogModel)
+                .filter(
+                    OperationLogModel.operation_type == "delete",
+                )
+                .all()
+            )
+            assert len(ops) == 1  # Operation logged even if file didn't exist
+
+
+class TestOnRenameHappyPath:
+    """Test on_rename() logs the rename operation."""
+
+    def test_rename_logged(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        syncer.on_rename(
+            old_path="/old.txt",
+            new_path="/new.txt",
+            zone_id="default",
+            agent_id="agent1",
+        )
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 1
+            assert ops[0].operation_type == "rename"
+            assert ops[0].path == "/old.txt"
+            assert ops[0].new_path == "/new.txt"
+
+
+class TestOnWriteBatchHappyPath:
+    """Test on_write_batch() handles multiple items in one transaction."""
+
+    def test_batch_creates_all_records(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        items = [
+            (_make_metadata("/a.txt", etag="ha"), True),
+            (_make_metadata("/b.txt", etag="hb"), True),
+            (_make_metadata("/c.txt", etag="hc"), True),
+        ]
+        syncer.on_write_batch(items, zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 3
+
+            fps = session.query(FilePathModel).filter(FilePathModel.deleted_at.is_(None)).all()
+            assert len(fps) == 3
+
+            paths = {fp.virtual_path for fp in fps}
+            assert paths == {"/a.txt", "/b.txt", "/c.txt"}
+
+
+# =========================================================================
+# Failure injection tests
+# =========================================================================
+
+
+class TestSQLFailure:
+    """Test behavior when SQL operations fail."""
+
+    def test_session_commit_failure_raises(self, record_store: SQLAlchemyRecordStore) -> None:
+        """When session.commit() fails, the exception should propagate."""
+        mock_session = MagicMock()
+        mock_session.commit.side_effect = OperationalError("connection lost", {}, None)
+
+        def failing_session_factory():
+            return mock_session
+
+        # RecordStoreSyncer uses context manager protocol
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+
+        syncer = RecordStoreSyncer(failing_session_factory)
+        metadata = _make_metadata()
+
+        with pytest.raises(OperationalError):
+            syncer.on_write(metadata, is_new=True, path="/test.txt")
+
+    def test_delete_with_session_failure_raises(self, record_store: SQLAlchemyRecordStore) -> None:
+        mock_session = MagicMock()
+        mock_session.commit.side_effect = OperationalError("connection lost", {}, None)
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+
+        syncer = RecordStoreSyncer(lambda: mock_session)
+
+        with pytest.raises(OperationalError):
+            syncer.on_delete(path="/test.txt")
+
+
+class TestPartialFailure:
+    """Test behavior when one sub-component fails mid-transaction."""
+
+    def test_version_recorder_failure_prevents_commit(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """If VersionRecorder raises, the entire transaction should fail."""
+        syncer = RecordStoreSyncer(record_store.session_factory)
         metadata = _make_metadata()
 
         with (
             patch(
                 "nexus.storage.version_recorder.VersionRecorder.record_write",
-                side_effect=RuntimeError("Simulated failure"),
+                side_effect=ValueError("simulated version recorder failure"),
             ),
-            pytest.raises(RuntimeError, match="Simulated failure"),
+            pytest.raises(ValueError, match="simulated version recorder failure"),
         ):
-            syncer.on_write(
-                metadata=metadata,
-                is_new=True,
-                path="/test/file.txt",
-            )
+            syncer.on_write(metadata, is_new=True, path="/test.txt")
 
-        # Both should be empty due to rollback
-        with session_factory() as session:
-            ops = session.execute(select(OperationLogModel)).scalars().all()
-            fps = session.execute(select(FilePathModel)).scalars().all()
-            # Note: with context manager, failed session doesn't commit
-            # so no records should persist
+        # Verify nothing was committed (transaction rolled back)
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
             assert len(ops) == 0
+
+            fps = session.query(FilePathModel).all()
+            assert len(fps) == 0
+
+    def test_operation_logger_failure_prevents_commit(
+        self, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """If OperationLogger raises, nothing should be committed."""
+        syncer = RecordStoreSyncer(record_store.session_factory)
+        metadata = _make_metadata()
+
+        with (
+            patch(
+                "nexus.storage.operation_logger.OperationLogger.log_operation",
+                side_effect=ValueError("simulated logger failure"),
+            ),
+            pytest.raises(ValueError, match="simulated logger failure"),
+        ):
+            syncer.on_write(metadata, is_new=True, path="/test.txt")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 0
+
+            fps = session.query(FilePathModel).all()
             assert len(fps) == 0
 
 
-class TestOnWriteBatchIntegration:
-    """Integration tests for batch writes."""
+class TestSessionFactoryFailure:
+    """Test behavior when session factory itself fails."""
 
-    def test_batch_creates_all_records(self, session_factory) -> None:
-        """Batch should create operation logs and file paths for all items."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+    def test_session_factory_raises(self) -> None:
+        """If the session factory raises, the exception propagates."""
+
+        def failing_factory():
+            raise ConnectionError("database unavailable")
+
+        syncer = RecordStoreSyncer(failing_factory)
+        metadata = _make_metadata()
+
+        with pytest.raises(ConnectionError, match="database unavailable"):
+            syncer.on_write(metadata, is_new=True, path="/test.txt")
+
+
+class TestBatchPartialFailure:
+    """Test batch operations with mid-batch failures."""
+
+    def test_batch_failure_rolls_back_all(self, record_store: SQLAlchemyRecordStore) -> None:
+        """If batch write fails partway through, no items should be committed."""
+        syncer = RecordStoreSyncer(record_store.session_factory)
+
         items = [
-            (_make_metadata(path=f"/test/file{i}.txt", etag=f"hash-{i}"), True) for i in range(3)
+            (_make_metadata("/a.txt", etag="ha"), True),
+            (_make_metadata("/b.txt", etag="hb"), True),
         ]
 
-        syncer.on_write_batch(items, zone_id="default", agent_id="agent-1")
+        call_count = 0
+        original_record_write = None
 
-        with session_factory() as session:
-            ops = session.execute(select(OperationLogModel)).scalars().all()
-            assert len(ops) == 3
+        def failing_on_second_call(self_inner, metadata, *, is_new):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise ValueError("simulated failure on second item")
+            return original_record_write(self_inner, metadata, is_new=is_new)
 
-            fps = (
-                session.execute(select(FilePathModel).where(FilePathModel.deleted_at.is_(None)))
-                .scalars()
-                .all()
-            )
-            assert len(fps) == 3
+        from nexus.storage.version_recorder import VersionRecorder
 
-    def test_batch_single_transaction(self, session_factory) -> None:
-        """All batch items should be in a single transaction (all or nothing)."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
+        original_record_write = VersionRecorder.record_write
 
-        # Create items where the 3rd will fail
-        items = [
-            (_make_metadata(path="/test/file1.txt", etag="hash-1"), True),
-            (_make_metadata(path="/test/file2.txt", etag="hash-2"), True),
-            (_make_metadata(path="/test/file1.txt", etag="hash-dup"), True),  # duplicate path
-        ]
-
-        # The duplicate path may or may not raise depending on unique constraint timing
-        # But the key test is that partial commits don't happen
-        try:
+        with (
+            patch.object(VersionRecorder, "record_write", failing_on_second_call),
+            pytest.raises(ValueError, match="simulated failure on second item"),
+        ):
             syncer.on_write_batch(items, zone_id="default")
-        except Exception:
-            pass
 
-        # If any error occurred, nothing should have been committed
-        # (This test verifies transactional behavior)
-
-
-class TestOnRenameIntegration:
-    """Integration tests for rename operations."""
-
-    def test_rename_creates_operation_log(self, session_factory) -> None:
-        """on_rename should create an audit log entry."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
-
-        syncer.on_rename(
-            old_path="/test/old.txt",
-            new_path="/test/new.txt",
-            zone_id="default",
-            agent_id="agent-1",
-        )
-
-        with session_factory() as session:
-            ops = session.execute(select(OperationLogModel)).scalars().all()
-            assert len(ops) == 1
-            assert ops[0].operation_type == "rename"
-            assert ops[0].path == "/test/old.txt"
-            assert ops[0].new_path == "/test/new.txt"
-
-
-class TestOnDeleteIntegration:
-    """Integration tests for delete operations."""
-
-    def test_delete_creates_log_and_soft_deletes(self, session_factory) -> None:
-        """on_delete should create audit log AND soft-delete the file."""
-        syncer = RecordStoreSyncer(session_factory=session_factory)
-
-        # First create the file
-        syncer.on_write(
-            metadata=_make_metadata(),
-            is_new=True,
-            path="/test/file.txt",
-        )
-
-        # Then delete
-        syncer.on_delete(path="/test/file.txt", zone_id="default")
-
-        with session_factory() as session:
-            # Should have 2 operation logs (write + delete)
-            ops = (
-                session.execute(select(OperationLogModel).order_by(OperationLogModel.created_at))
-                .scalars()
-                .all()
-            )
-            assert len(ops) == 2
-            assert ops[0].operation_type == "write"
-            assert ops[1].operation_type == "delete"
-
-            # File should be soft-deleted
-            fp = session.execute(
-                select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
-            ).scalar_one()
-            assert fp.deleted_at is not None
+        # Nothing committed
+        with record_store.session_factory() as session:
+            fps = session.query(FilePathModel).all()
+            assert len(fps) == 0

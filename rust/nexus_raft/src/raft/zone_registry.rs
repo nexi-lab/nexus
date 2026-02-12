@@ -17,7 +17,7 @@
 //! ```
 
 use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage};
-use crate::storage::SledStore;
+use crate::storage::RedbStore;
 use crate::transport::{NodeAddress, RaftClientPool, TransportError, TransportLoop};
 use dashmap::DashMap;
 use std::collections::HashMap;
@@ -110,7 +110,7 @@ impl ZoneRaftRegistry {
         let raft_path = zone_path.join("raft");
 
         // Open sled + state machine
-        let store = SledStore::open(&sm_path)
+        let store = RedbStore::open(&sm_path)
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
 
         let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {

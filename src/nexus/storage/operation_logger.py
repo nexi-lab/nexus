@@ -86,6 +86,7 @@ class OperationLogger:
         metadata_snapshot: dict[str, Any] | None = None,
         status: str = "success",
         error_message: str | None = None,
+        flush: bool = True,
     ) -> str:
         """Log a filesystem operation.
 
@@ -99,6 +100,8 @@ class OperationLogger:
             metadata_snapshot: Previous file metadata (owner, group, mode, etc.)
             status: Operation status (success/failure)
             error_message: Error message if operation failed
+            flush: Whether to flush the session immediately (default True).
+                Set to False in batch operations to defer the flush until commit.
 
         Returns:
             operation_id: UUID of logged operation
@@ -118,7 +121,8 @@ class OperationLogger:
 
         operation.validate()
         self.session.add(operation)
-        self.session.flush()  # Get the operation_id
+        if flush:
+            self.session.flush()  # Get the operation_id
 
         return operation.operation_id
 

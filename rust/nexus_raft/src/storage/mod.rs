@@ -1,39 +1,41 @@
 //! Storage module for Nexus Raft.
 //!
-//! Embedded key-value storage with pluggable backends:
-//! - **sled 0.34** (default): Battle-tested in this codebase
-//! - **redb 2.x** (opt-in via `storage-redb` feature): 1.0 stable since June 2023
+//! This module provides embedded storage capabilities that can be reused
+//! across Nexus for various purposes:
 //!
-//! Both backends export identical types (`SledStore`, `SledTree`, etc.)
-//! for seamless switching. See `docs/rfcs/adr-raft-sled-strategy.md`.
+//! - **Raft Log**: Persistent storage for Raft consensus log entries
+//! - **Local Cache**: Fast local cache that survives restarts
+//! - **Task Queues**: Persistent task/event queues
+//! - **Session Storage**: Persistent session state
 //!
-//! # Usage
+//! # Storage Backends
 //!
-//! - **Metadata cache**: Fast local reads (~5μs) for file metadata
-//! - **Lock store**: Distributed lock state with TTL support
-//! - **Raft log**: Persistent storage for consensus log entries
+//! Currently, we provide:
 //!
-//! # Storage Backend
-//!
-//! - [`SledStore`]: Pure Rust embedded KV database.
-//!   Default uses sled; enable `storage-redb` feature for redb.
+//! - [`SledStore`]: Pure Rust embedded key-value database (like SQLite for KV)
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! use nexus_raft::storage::{SledStore, SledTree, SledBatch};
 //!
+//! // Open a database
 //! let store = SledStore::open("/var/lib/nexus/data").unwrap();
+//!
+//! // Use named trees for different data
+//! let raft_log = store.tree("raft_log").unwrap();
 //! let cache = store.tree("cache").unwrap();
-//! cache.set(b"key", b"value").unwrap();
+//!
+//! // Basic operations
+//! raft_log.set(b"entry:1", b"data").unwrap();
+//! cache.set(b"item:1", b"cached_value").unwrap();
 //! ```
 
-#[cfg(feature = "storage-redb")]
+pub mod migration;
 mod redb_store;
-#[cfg(feature = "storage-redb")]
-pub use redb_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};
-
-#[cfg(not(feature = "storage-redb"))]
 mod sled_store;
-#[cfg(not(feature = "storage-redb"))]
+
+pub use redb_store::{
+    RedbBatch, RedbStore, RedbTree, RedbTreeBatch, StorageError as RedbStorageError,
+};
 pub use sled_store::{Result, SledBatch, SledStore, SledTree, StorageError, TreeBatch};

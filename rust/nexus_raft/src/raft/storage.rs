@@ -6,7 +6,7 @@
 use raft::eraftpb::{ConfState, Entry, HardState, Snapshot};
 use raft::{Error as RaftCoreError, RaftState, Storage, StorageError as RaftStorageError};
 
-use crate::storage::{SledStore, SledTree};
+use crate::storage::{RedbStore, RedbTree};
 
 use super::{RaftError, Result};
 
@@ -20,7 +20,7 @@ const KEY_CONF_STATE: &[u8] = b"conf_state";
 const KEY_SNAPSHOT: &[u8] = b"snapshot";
 const KEY_FIRST_INDEX: &[u8] = b"first_index";
 
-/// Raft storage backed by sled.
+/// Raft storage backed by redb.
 ///
 /// This implements the `raft::Storage` trait, providing persistent storage
 /// for Raft log entries, hard state, and snapshots.
@@ -28,7 +28,7 @@ const KEY_FIRST_INDEX: &[u8] = b"first_index";
 /// # Storage Layout
 ///
 /// ```text
-/// sled database
+/// redb database
 /// ├── raft_entries/     # Log entries (key: index as bytes)
 /// │   ├── 1 -> Entry
 /// │   ├── 2 -> Entry
@@ -40,20 +40,20 @@ const KEY_FIRST_INDEX: &[u8] = b"first_index";
 ///     └── first_index -> u64
 /// ```
 pub struct RaftStorage {
-    /// Underlying sled store.
-    store: SledStore,
+    /// Underlying redb store.
+    store: RedbStore,
     /// Tree for log entries.
-    entries: SledTree,
+    entries: RedbTree,
     /// Tree for raft state.
-    state: SledTree,
+    state: RedbTree,
 }
 
 impl RaftStorage {
     /// Create a new Raft storage instance.
     ///
     /// # Arguments
-    /// * `store` - The sled store to use for persistence
-    pub fn new(store: SledStore) -> Result<Self> {
+    /// * `store` - The redb store to use for persistence
+    pub fn new(store: RedbStore) -> Result<Self> {
         let entries = store.tree(TREE_ENTRIES)?;
         let state = store.tree(TREE_STATE)?;
 
@@ -72,8 +72,11 @@ impl RaftStorage {
     }
 
     /// Create Raft storage from a path.
+    ///
+    /// Appends `raft.redb` to the path so callers can pass a directory
+    /// (sled used the path as a directory; redb uses it as a file).
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        let store = SledStore::open(path)?;
+        let store = RedbStore::open(path.as_ref().join("raft.redb"))?;
         Self::new(store)
     }
 

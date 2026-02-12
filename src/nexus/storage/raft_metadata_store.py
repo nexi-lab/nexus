@@ -606,6 +606,38 @@ class RaftMetadataStore(FileMetadataProtocol):
             pass
 
     # =========================================================================
+    # Revision Counter (Issue #1330 Phase 4.2)
+    # =========================================================================
+
+    def increment_revision(self, zone_id: str) -> int:
+        """Atomically increment and return the new revision for a zone.
+
+        Uses redb's dedicated REVISIONS_TABLE — no Python lock needed.
+
+        Args:
+            zone_id: The zone to increment revision for
+
+        Returns:
+            The new revision number after incrementing
+        """
+        if self._is_local:
+            return self._local.increment_revision(zone_id)
+        raise NotImplementedError("Remote revision counter requires async")
+
+    def get_revision(self, zone_id: str) -> int:
+        """Get the current revision for a zone without incrementing.
+
+        Args:
+            zone_id: The zone to get revision for
+
+        Returns:
+            The current revision number (0 if not found)
+        """
+        if self._is_local:
+            return self._local.get_revision(zone_id)
+        raise NotImplementedError("Remote revision counter requires async")
+
+    # =========================================================================
     # Batch Operations
     # =========================================================================
 

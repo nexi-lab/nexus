@@ -35,7 +35,7 @@ use crate::raft::{
     Command, CommandResult, FullStateMachine, HolderInfo as RustHolderInfo,
     LockInfo as RustLockInfo, LockState as RustLockState, StateMachine,
 };
-use crate::storage::SledStore;
+use crate::storage::RedbStore;
 
 /// Python-compatible holder info.
 #[pyclass(name = "HolderInfo")]
@@ -109,15 +109,15 @@ impl From<RustLockInfo> for PyLockInfo {
     }
 }
 
-/// Embedded metastore driver — direct sled state machine access.
+/// Embedded metastore driver — direct redb state machine access.
 ///
-/// Provides FFI access to the sled KV store without Raft consensus.
+/// Provides FFI access to the redb KV store without Raft consensus.
 /// Used for embedded mode and as the base layer for EC mode (future).
 ///
 /// Performance: ~5μs per operation.
 #[pyclass(name = "Metastore")]
 pub struct PyMetastore {
-    store: SledStore,
+    store: RedbStore,
     sm: FullStateMachine,
     next_index: u64,
 }
@@ -127,7 +127,7 @@ impl PyMetastore {
     /// Create a new Metastore instance.
     ///
     /// Args:
-    ///     path: Path to the sled database directory.
+    ///     path: Path to the redb database directory.
     ///
     /// Returns:
     ///     Metastore instance.
@@ -136,8 +136,8 @@ impl PyMetastore {
     ///     RuntimeError: If the database cannot be opened.
     #[new]
     pub fn new(path: &str) -> PyResult<Self> {
-        let store = SledStore::open(path)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open sled: {}", e)))?;
+        let store = RedbStore::open(path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open redb: {}", e)))?;
         let sm = FullStateMachine::new(&store).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to create state machine: {}", e))
         })?;
@@ -414,6 +414,39 @@ impl PyMetastore {
     }
 
     // =========================================================================
+    // Revision Counter Operations (Issue #1330, Phase 4.2)
+    // =========================================================================
+
+    /// Atomically increment and return the new revision for a zone.
+    ///
+    /// Uses redb's dedicated REVISIONS_TABLE with single-writer transactions.
+    /// No Python lock needed — redb's write transaction provides atomicity.
+    ///
+    /// Args:
+    ///     zone_id: The zone to increment revision for.
+    ///
+    /// Returns:
+    ///     The new revision number after incrementing.
+    pub fn increment_revision(&self, zone_id: &str) -> PyResult<u64> {
+        self.store
+            .increment_revision(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to increment revision: {}", e)))
+    }
+
+    /// Get the current revision for a zone without incrementing.
+    ///
+    /// Args:
+    ///     zone_id: The zone to get revision for.
+    ///
+    /// Returns:
+    ///     The current revision number (0 if not found).
+    pub fn get_revision(&self, zone_id: &str) -> PyResult<u64> {
+        self.store
+            .get_revision(zone_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get revision: {}", e)))
+    }
+
+    // =========================================================================
     // Snapshot Operations
     // =========================================================================
 
@@ -510,7 +543,7 @@ impl PyRaftConsensus {
     ///
     /// Args:
     ///     node_id: Unique node ID within the cluster (1-indexed).
-    ///     db_path: Path to the sled database directory.
+    ///     db_path: Path to the redb database directory.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
     ///     peers: List of peer addresses in "id@host:port" format.
     ///     lazy: If True, metadata writes use EC (lazy consensus). Default: False (SC).
@@ -789,7 +822,7 @@ impl PyRaftConsensus {
 
     /// Flush all pending writes to disk.
     pub fn flush(&self) -> PyResult<()> {
-        // State machine flush is handled by sled internally
+        // State machine flush is handled by redb internally (commits are durable)
         Ok(())
     }
 }

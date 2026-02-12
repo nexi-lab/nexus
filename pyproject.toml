@@ -495,6 +495,7 @@ module = [
     "nexus.core.permission_boundary_cache",
     "nexus.core.agent_registry",
     "nexus.identity.key_service",
+    "nexus.core.reputation_service",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]

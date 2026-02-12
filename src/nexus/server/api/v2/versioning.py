@@ -156,6 +156,26 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import async files router: %s", e)
 
+    # ---- Identity router (Issue #1355) ----
+    try:
+        from nexus.server.api.v2.routers.identity import router as identity_router
+
+        registry.add(
+            RouterEntry(router=identity_router, name="identity", endpoint_count=4)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Identity routes: %s", e)
+
+    # ---- Reputation router (Issue #1356) ----
+    try:
+        from nexus.server.api.v2.routers.reputation import router as reputation_router
+
+        registry.add(
+            RouterEntry(router=reputation_router, name="reputation", endpoint_count=7)
+        )
+    except ImportError as e:
+        logger.warning("Failed to import Reputation routes: %s", e)
+
     return registry
 
 

@@ -314,3 +314,79 @@ async def get_exchange_audit_logger(
 
     session_factory = nexus_fs.SessionLocal
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
+
+
+# =============================================================================
+# Identity dependencies (Issue #1355)
+# =============================================================================
+
+
+async def get_identity_context(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Get AgentKeyService + AgentRegistry + auth context.
+
+    Returns:
+        Tuple of (AgentKeyService, AgentRegistry, auth_context dict).
+    """
+    from nexus.core.agent_key_service import AgentKeyService
+    from nexus.server.auth.oauth_crypto import OAuthCrypto
+
+    session_factory = nexus_fs.SessionLocal
+    crypto = OAuthCrypto()
+    key_service = AgentKeyService(
+        session_factory=session_factory,
+        crypto=crypto,
+        cache_maxsize=10_000,
+        cache_ttl=300,
+    )
+    agent_registry = nexus_fs.agent_registry
+
+    context = _get_operation_context(auth_result)
+    auth_ctx = {
+        "user_id": context.user_id or context.user or "",
+        "subject_id": getattr(context, "subject_id", ""),
+        "subject_type": getattr(context, "subject_type", ""),
+        "is_admin": getattr(context, "is_admin", False),
+        "zone_id": context.zone_id,
+    }
+
+    return key_service, agent_registry, auth_ctx
+
+
+# =============================================================================
+# Reputation & Trust dependencies (Issue #1356)
+# =============================================================================
+
+
+async def get_reputation_context(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Get ReputationService + DisputeService + auth context.
+
+    Returns:
+        Tuple of (ReputationService, DisputeService, auth_context dict).
+    """
+    from nexus.core.dispute_service import DisputeService
+    from nexus.core.reputation_service import ReputationService
+
+    session_factory = nexus_fs.SessionLocal
+    reputation_service = ReputationService(
+        session_factory=session_factory,
+        cache_maxsize=10_000,
+        cache_ttl=60,
+    )
+    dispute_service = DisputeService(session_factory=session_factory)
+
+    context = _get_operation_context(auth_result)
+    auth_ctx = {
+        "user_id": context.user_id or context.user or "",
+        "subject_id": getattr(context, "subject_id", ""),
+        "subject_type": getattr(context, "subject_type", ""),
+        "is_admin": getattr(context, "is_admin", False),
+        "zone_id": context.zone_id,
+    }
+
+    return reputation_service, dispute_service, auth_ctx

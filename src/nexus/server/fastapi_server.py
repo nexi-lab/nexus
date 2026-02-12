@@ -796,25 +796,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Issue #1239: Create namespace manager for per-subject visibility
-                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 if enforce_permissions and hasattr(_app_state, "nexus_fs"):
                     sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            engine=rebac_engine,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
-                            "using sync rebac_manager for mount table queries)"
+                            "(using sync rebac_manager, L3=%s)",
+                            "enabled" if rebac_engine else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -1226,19 +1223,17 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Get NamespaceManager if available (best-effort)
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            engine=rebac_engine,
                         )
                     except Exception as e:
                         logger.info(

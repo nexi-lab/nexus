@@ -143,6 +143,7 @@ class AgentRegistry:
         zone_id: str | None = None,
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        capabilities: list[str] | None = None,
     ) -> AgentRecord:
         """Register a new agent. Returns existing record if agent_id already exists.
 
@@ -155,6 +156,8 @@ class AgentRegistry:
             zone_id: Zone/organization ID for multi-zone isolation.
             name: Human-readable display name.
             metadata: Arbitrary agent metadata.
+            capabilities: Optional list of agent capabilities for discovery
+                (e.g. ["search", "analyze", "code"]). Stored in metadata.
 
         Returns:
             AgentRecord snapshot of the registered agent.
@@ -166,6 +169,11 @@ class AgentRegistry:
             raise ValueError("agent_id is required")
         if not owner_id:
             raise ValueError("owner_id is required")
+
+        # Merge capabilities into metadata (Issue #1210)
+        if capabilities:
+            metadata = dict(metadata) if metadata else {}
+            metadata["capabilities"] = list(capabilities)
 
         with self._get_session() as session:
             # Check for existing

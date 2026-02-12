@@ -138,3 +138,14 @@ class AgentRecord:
     metadata: types.MappingProxyType[str, Any]
     created_at: datetime
     updated_at: datetime
+
+    @property
+    def capabilities(self) -> list[str]:
+        """Agent capabilities for discovery (stored in metadata).
+
+        Returns:
+            List of capability strings (e.g. ["search", "analyze", "code"]).
+            Empty list if no capabilities are set.
+        """
+        caps = self.metadata.get("capabilities", [])
+        return list(caps) if isinstance(caps, (list, tuple)) else []

@@ -3960,6 +3960,25 @@ class NexusFS(  # type: ignore[misc]
             except Exception as reg_err:
                 logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
 
+        # Issue #1355: Provision cryptographic identity (Ed25519 keypair + DID)
+        agent_did: str | None = None
+        if hasattr(self, "_key_service") and self._key_service:
+            try:
+                key_record = self._key_service.ensure_keypair(agent_id)
+                agent_did = key_record.did
+                agent = {**agent, "did": agent_did, "key_id": key_record.key_id}
+                logger.info(
+                    "[KYA] Provisioned identity for agent %s (did=%s)",
+                    agent_id,
+                    agent_did,
+                )
+            except Exception as kya_err:
+                logger.warning(
+                    "[KYA] Failed to provision identity for agent %s: %s",
+                    agent_id,
+                    kya_err,
+                )
+
         # Create initial config data
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
@@ -3994,6 +4013,28 @@ class NexusFS(  # type: ignore[misc]
             logger.info(f"Granted viewer permission to agent {agent_id} on {agent_dir}")
         except Exception as e:
             logger.warning(f"Failed to grant viewer permission to agent: {e}")
+
+        # Issue #1355: Write public identity document to agent namespace
+        if agent_did:
+            try:
+                from nexus.identity.did import create_did_document
+
+                key_record = self._key_service.get_active_keys(agent_id)[0]
+                public_key = self._key_service._crypto.public_key_from_bytes(
+                    key_record.public_key_bytes
+                )
+                did_doc = create_did_document(agent_did, public_key)
+                identity_dir = f"{agent_dir}/.identity"
+                ctx = self._parse_context(context)
+                self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+                self.write(
+                    f"{identity_dir}/did.json",
+                    json.dumps(did_doc, indent=2),
+                    context=ctx,
+                )
+                logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
+            except Exception as did_err:
+                logger.warning("[KYA] Failed to write DID document: %s", did_err)
 
         # Optionally generate API key
         if generate_api_key:

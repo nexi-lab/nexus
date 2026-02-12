@@ -407,6 +407,8 @@ class AppState:
         self.reactive_subscription_manager: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Issue #1355: Agent identity KeyService
+        self.key_service: Any = None
 
 
 # Global state (set during app creation)
@@ -1116,6 +1118,40 @@ async def lifespan(_app: FastAPI) -> Any:
             _app_state.agent_registry = None
     else:
         _app_state.agent_registry = None
+
+    # Issue #1355: Initialize KeyService for agent identity
+    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.identity.crypto import IdentityCrypto
+            from nexus.identity.key_service import KeyService
+            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
+            from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.storage.models import Base
+
+            # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
+            # after SQLAlchemyRecordStore.create_all already ran)
+            _nx_engine = getattr(_app_state.nexus_fs, "_sql_engine", None)
+            if _nx_engine is not None:
+                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
+
+            # Reuse OAuthCrypto for Fernet encryption of private keys
+            _db_url = _app_state.database_url or "sqlite:///nexus.db"
+            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
+
+            _app_state.key_service = KeyService(
+                session_factory=_app_state.nexus_fs.SessionLocal,
+                crypto=_identity_crypto,
+            )
+            # Inject into NexusFS for register_agent integration
+            _app_state.nexus_fs._key_service = _app_state.key_service
+
+            logger.info("[KYA] KeyService initialized and wired")
+        except Exception as e:
+            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            _app_state.key_service = None
+    else:
+        _app_state.key_service = None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
@@ -3584,6 +3620,97 @@ def _register_routes(app: FastAPI) -> None:
             expires_at=expires_at_iso,
             fence_token=fence_token,
         )
+
+    # ========================================================================
+    # Agent Identity Endpoints (Issue #1355)
+    # ========================================================================
+
+    @app.get("/api/agents/{agent_id}/identity", tags=["identity"])
+    async def get_agent_identity(
+        agent_id: str,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Get an agent's public identity (DID, public key, key_id).
+
+        Returns the agent's active signing key information for verification.
+        """
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+        if not keys:
+            raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
+
+        newest = keys[0]
+        return {
+            "agent_id": agent_id,
+            "key_id": newest.key_id,
+            "did": newest.did,
+            "algorithm": newest.algorithm,
+            "public_key_hex": newest.public_key_bytes.hex(),
+            "created_at": newest.created_at.isoformat() if newest.created_at else None,
+            "expires_at": newest.expires_at.isoformat() if newest.expires_at else None,
+        }
+
+    @app.post("/api/agents/{agent_id}/verify", tags=["identity"])
+    async def verify_agent_signature(
+        agent_id: str,
+        request: Request,
+        _auth_result: dict[str, Any] = Depends(require_auth),
+    ) -> dict:
+        """Verify a signature produced by an agent's signing key.
+
+        Request body:
+            {
+                "message": "<base64-encoded message>",
+                "signature": "<base64-encoded signature>",
+                "key_id": "<optional key_id, uses newest active key if omitted>"
+            }
+        """
+        import base64
+
+        if not _app_state.key_service:
+            raise HTTPException(status_code=503, detail="Identity service not available")
+
+        body = await request.json()
+        message_b64 = body.get("message")
+        signature_b64 = body.get("signature")
+        key_id = body.get("key_id")
+
+        if not message_b64 or not signature_b64:
+            raise HTTPException(status_code=400, detail="'message' and 'signature' are required (base64)")
+
+        try:
+            message = base64.b64decode(message_b64)
+            signature = base64.b64decode(signature_b64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding")
+
+        # Resolve public key
+        resolved_key_id = key_id
+        if key_id:
+            record = await asyncio.to_thread(
+                _app_state.key_service.get_public_key, key_id
+            )
+            if record is None:
+                raise HTTPException(status_code=404, detail="Key not found or not active")
+            if record.agent_id != agent_id:
+                raise HTTPException(status_code=403, detail="Key does not belong to this agent")
+            from nexus.identity.crypto import IdentityCrypto
+            public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
+        else:
+            keys = await asyncio.to_thread(
+                _app_state.key_service.get_active_keys, agent_id
+            )
+            if not keys:
+                raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
+            resolved_key_id = keys[0].key_id
+            from nexus.identity.crypto import IdentityCrypto
+            public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
+
+        valid = _app_state.key_service._crypto.verify(message, signature, public_key)
+
+        return {"valid": valid, "agent_id": agent_id, "key_id": resolved_key_id}
 
     # ========================================================================
     # WebSocket Endpoint for Real-Time Events (Issue #1116)

@@ -1703,6 +1703,7 @@ def _register_routes(app: FastAPI) -> None:
     # API v2 routes - Memory & ACE endpoints (Issue #1193)
     try:
         from nexus.server.api.v2.routers import (
+            audit,
             conflicts,
             consolidation,
             curate,
@@ -1725,7 +1726,8 @@ def _register_routes(app: FastAPI) -> None:
         app.include_router(mobile_search.router)
         app.include_router(conflicts.router)
         app.include_router(operations.router)
-        logger.info("API v2 routes registered (42 endpoints)")
+        app.include_router(audit.router)
+        logger.info("API v2 routes registered (48 endpoints)")
     except ImportError as e:
         logger.warning(
             f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."

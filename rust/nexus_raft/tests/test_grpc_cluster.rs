@@ -155,7 +155,6 @@ mod grpc_cluster {
                 .create_zone(
                     "default",
                     all_peers[i].clone(),
-                    false,
                     &tokio::runtime::Handle::current(),
                 )
                 .expect("Failed to create zone");

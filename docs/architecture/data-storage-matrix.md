@@ -1,6 +1,6 @@
 # Data-to-Storage Properties Matrix
 
-**Date:** 2026-02-09
+**Date:** 2026-02-12 (updated: sled → redb throughout)
 **Status:** Steps 1-3 COMPLETE — All Data-Storage Affinity Decisions Resolved
 **Purpose:** Catalog ALL data types in Nexus and determine optimal storage for each
 
@@ -49,15 +49,15 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
-| **FilePathModel** | High | Med | SC (multi) / Local (single) | Relational (JOIN on zone_id, FK lookups) | Small | Very High | Persistent | Zone | Map virtual path → backend location; support multi-backend | SQLAlchemy | ~~Keep SQLAlchemy~~ → **MERGE into FileMetadata (sled)** | ✅ DECIDED: MERGE + DEPRECATE |
-| **FileMetadata** (proto) | High | Med | SC (multi) / Local (single) | KV (by path) | Small | Very High | Persistent | Zone | Core file attributes (size, etag, timestamps) | Generated proto → Python dataclass | **sled via Raft** (KV-friendly, SC via Raft) | ✅ MIGRATE |
+| **FilePathModel** | High | Med | SC (multi) / Local (single) | Relational (JOIN on zone_id, FK lookups) | Small | Very High | Persistent | Zone | Map virtual path → backend location; support multi-backend | SQLAlchemy | ~~Keep SQLAlchemy~~ → **MERGE into FileMetadata (redb)** | ✅ DECIDED: MERGE + DEPRECATE |
+| **FileMetadata** (proto) | High | Med | SC (multi) / Local (single) | KV (by path) | Small | Very High | Persistent | Zone | Core file attributes (size, etag, timestamps) | Generated proto → Python dataclass | **redb via Raft** (KV-friendly, SC via Raft) | ✅ MIGRATE |
 | **CompactFileMetadata** | Critical | Med | SC | KV | Tiny | Very High | Session | Zone | Memory-optimized metadata for L1 cache | In-memory (string interning) | **In-memory only** (cache layer) | ✅ KEEP |
 
 **Analysis (Step 1 DECIDED):**
 - **FilePathModel → FileMetadata**: ✅ **MERGE CONFIRMED**. Deprecate relational model long-term.
   - FilePathModel has 17 columns but only 2 JOINs in codebase (cache invalidation + Tiger predicate pushdown)
-  - Both JOINs replaceable: cache invalidation → sled prefix scan, Tiger → direct sled query
-  - FK to FileMetadataModel (custom KV) → sled prefix-keyed entries (`meta:{path_id}:{key}`)
+  - Both JOINs replaceable: cache invalidation → redb prefix scan, Tiger → direct redb query
+  - FK to FileMetadataModel (custom KV) → redb prefix-keyed entries (`meta:{path_id}:{key}`)
   - No irreplaceable relational query exists on FilePathModel
 - **CompactFileMetadata**: ✅ **KEEP** — Same 13 fields as FileMetadata but all strings interned to int IDs (cache-tier projection, ~64-100 bytes vs ~200-300 bytes at 1M+ scale). Already auto-generated from proto via `gen_metadata.py`.
 - **FileMetadataModel (custom KV)**: ✅ **KEEP SEPARATE** — Arbitrary `{path_id, key, value}` pairs, fundamentally different from FileMetadata's fixed schema. Should NOT inherit from FileMetadata.
@@ -66,24 +66,24 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
-| **DirectoryEntryModel** | High | Low | SC | KV (by parent_path) | Small | High | Persistent | Zone | Sparse directory index for O(1) non-recursive `ls` | SQLAlchemy | ~~Separate sled entry~~ → **MERGE into FileMetadata** | ✅ DECIDED: MERGE |
+| **DirectoryEntryModel** | High | Low | SC | KV (by parent_path) | Small | High | Persistent | Zone | Sparse directory index for O(1) non-recursive `ls` | SQLAlchemy | ~~Separate redb entry~~ → **MERGE into FileMetadata** | ✅ DECIDED: MERGE |
 
 **Analysis (Step 1+3 DECIDED):**
 - Currently uses SQLAlchemy but access pattern is pure KV (lookup by parent_path)
-- No JOINs needed → Metastore (sled)
-- **Step 3 merge decision**: In sled's ordered KV, directory listing = prefix scan on FileMetadata keys under `{parent_path}/`. One less data type. sled at ~14μs/op handles 1000-entry dirs in ~14ms.
+- No JOINs needed → Metastore (redb)
+- **Step 3 merge decision**: In redb's ordered KV, directory listing = prefix scan on FileMetadata keys under `{parent_path}/`. One less data type. redb at ~14μs/op handles 1000-entry dirs in ~14ms.
 - If future profiling shows large-directory bottleneck, re-introduce sparse index as Metastore-internal optimization (not a separate data type)
 
 ### 1.3 Custom Metadata
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|-----|-------|------------|----------------|-----------------|--------|
-| **FileMetadataModel** (KV) | Med | Low | EC | KV (by path_id + key) | Small | Med | Persistent | Zone | Arbitrary user-defined metadata (tags, custom fields) | SQLAlchemy | **sled via Raft** (KV) | ✅ MIGRATE |
+| **FileMetadataModel** (KV) | Med | Low | EC | KV (by path_id + key) | Small | Med | Persistent | Zone | Arbitrary user-defined metadata (tags, custom fields) | SQLAlchemy | **redb via Raft** (KV) | ✅ MIGRATE |
 
 **Analysis:**
 - Pure KV access (lookup by path_id + key)
 - No relational queries
-- **Action**: Migrate to sled
+- **Action**: Migrate to redb
 
 ---
 
@@ -91,12 +91,12 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
-| **ContentChunkModel** | Med | Low | EC | KV (by content_hash) | Small | High | Persistent | System | CAS (Content-Addressed Storage) for deduplication; track refcount | SQLAlchemy | **sled** (KV by hash, no Raft needed for CAS) | ✅ MIGRATE |
+| **ContentChunkModel** | Med | Low | EC | KV (by content_hash) | Small | High | Persistent | System | CAS (Content-Addressed Storage) for deduplication; track refcount | SQLAlchemy | **redb** (KV by hash, no Raft needed for CAS) | ✅ MIGRATE |
 | **File Content (blobs)** | Med | Low | EC | Blob (by path) | Huge | Very High | Persistent | Zone | Actual file data | Disk / S3 / GCS | **Keep Disk/S3** (blob storage) | ✅ KEEP |
 | **ContentCacheModel** | Med | Low | EC | KV (by path_id) | Large | High | Session | Zone | Parsed content cache (avoid re-parsing) | SQLAlchemy + Disk | **Disk only** (binary cache, no DB metadata needed) | ✅ DECIDED: ELIMINATE DB |
 
 **Analysis (Step 1 DECIDED):**
-- **ContentChunkModel**: ✅ Pure CAS, immutable → move to sled (no Raft, just local KV)
+- **ContentChunkModel**: ✅ Pure CAS, immutable → move to redb (no Raft, just local KV)
 - **ContentCacheModel**: ✅ **ELIMINATE DB metadata**, simplify to pure disk cache with TTL. No DB model needed.
 
 ---
@@ -120,14 +120,14 @@ Map **data requiring properties** ↔ **storage providing properties**.
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
 | **MemoryModel** | Med | Med | EC | Relational + Vector (embedding search, entity/relationship queries, decay tracking) | Medium | Very High | Persistent | User/Agent | AI agent memory with identity-based 3-layer permissions; supports semantic search, entity extraction, temporal refs, ACE consolidation | SQLAlchemy with BRIN + vector index (pgvector/sqlite-vec) | **Keep SQLAlchemy** (complex relational + vector queries) | ✅ KEEP |
-| **MemoryConfig** | Low | Low | EC | KV (by path) | Tiny | Low | Persistent | Zone | Memory directory configuration | In-memory + SQLAlchemy | ~~sled~~ → **Keep RecordStore** (co-existence with MemoryModel) | ✅ DECIDED: STAY RecordStore |
+| **MemoryConfig** | Low | Low | EC | KV (by path) | Tiny | Low | Persistent | Zone | Memory directory configuration | In-memory + SQLAlchemy | ~~redb~~ → **Keep RecordStore** (co-existence with MemoryModel) | ✅ DECIDED: STAY RecordStore |
 | **TrajectoryModel** | Low | Med | EC | Relational (FK to agent, task) | Small | High | Persistent | Agent | Task execution traces for ACE learning | Inferred (implicit in memory system) | **Keep SQLAlchemy** (relational) | ✅ KEEP |
 | **TrajectoryFeedbackModel** | Low | Low | EC | Relational (FK to trajectory) | Small | Med | Persistent | Agent | Feedback on trajectories | SQLAlchemy | **Keep SQLAlchemy** (FK to trajectory) | ✅ KEEP |
 | **PlaybookModel** | Low | Low | EC | Relational (FK to strategies) | Medium | Med | Persistent | Agent | Strategy playbooks | Inferred (API models) | **Keep SQLAlchemy** (relational) | ✅ KEEP |
 
 **Analysis (Step 1 DECIDED):**
 - **MemoryModel**: ✅ KEEP RecordStore — complex relational + vector queries (pgvector)
-- **MemoryConfig**: ✅ **KEEP RecordStore** (was: migrate to sled). **Cross-pillar co-existence principle**: MemoryConfig is meaningless without MemoryModel. If RecordStore is not injected, orphaned MemoryConfig entries in Metastore would point to non-functional memory. Configs that only serve RecordStore data belong in RecordStore.
+- **MemoryConfig**: ✅ **KEEP RecordStore** (was: migrate to redb). **Cross-pillar co-existence principle**: MemoryConfig is meaningless without MemoryModel. If RecordStore is not injected, orphaned MemoryConfig entries in Metastore would point to non-functional memory. Configs that only serve RecordStore data belong in RecordStore.
 - Trajectory/Playbook: ✅ KEEP RecordStore — relational FK
 - **No merges needed** within this part — all serve distinct purposes
 
@@ -138,7 +138,7 @@ Map **data requiring properties** ↔ **storage providing properties**.
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
 | **ReBACTupleModel** | Critical | Low | SC | Relational (composite index on subject/relation/object) | Tiny | Very High | Persistent | Zone | Zanzibar-style relationship tuples (user:alice#member@group:eng) | SQLAlchemy with composite indexes | **RecordStore** (SSOT) + **CacheStore** (hot path) | ✅ DECIDED |
-| **ReBACNamespaceModel** | Med | Low | EC | KV (by namespace_id) | Small | Low | Persistent | System | Permission expansion rules (namespace config) | SQLAlchemy | **sled** (KV, low cardinality) | ✅ MIGRATE |
+| **ReBACNamespaceModel** | Med | Low | EC | KV (by namespace_id) | Small | Low | Persistent | System | Permission expansion rules (namespace config) | SQLAlchemy | **redb** (KV, low cardinality) | ✅ MIGRATE |
 | **ReBACGroupClosureModel** | Critical | Low | SC | Relational (composite index on member/group) | Tiny | Very High | Persistent | Zone | Leopard-style transitive closure for O(1) group membership | SQLAlchemy with composite indexes | **Keep SQLAlchemy** (critical path, materialized view) | ✅ KEEP |
 | **ReBACChangelogModel** | Low | Med | EC | Relational (BRIN index on created_at) | Small | High | Archive | Zone | Audit log for tuple modifications | SQLAlchemy with BRIN | **Keep SQLAlchemy** (append-only, BRIN optimized) | ✅ KEEP |
 
@@ -260,12 +260,12 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
-| **SystemSettingsModel** | Med | Low | SC | KV (by key) | Small | Low | Persistent | System | System-wide settings (OAuth encryption key, feature flags) | SQLAlchemy | **sled** (KV, low cardinality) | ✅ MIGRATE |
+| **SystemSettingsModel** | Med | Low | SC | KV (by key) | Small | Low | Persistent | System | System-wide settings (OAuth encryption key, feature flags) | SQLAlchemy | **redb** (KV, low cardinality) | ✅ MIGRATE |
 | ~~**Cluster Topology**~~ | ~~Med~~ | ~~Low~~ | ~~SC~~ | ~~???~~ | ~~Small~~ | ~~Low~~ | ~~Persistent~~ | ~~System~~ | ~~Raft cluster membership, node addresses~~ | ~~???~~ | N/A | ✅ DECIDED: ELIMINATE |
 
 **Analysis (Step 1 DECIDED):**
-- **SystemSettingsModel**: ✅ Pure KV → keep in Metastore (sled). No merge needed.
-- **Cluster Topology**: ✅ **ELIMINATED** as standalone data type. Raft node membership is inherent in the Raft consensus layer's own log (sled). If no Raft service → doesn't exist. Not application-level data.
+- **SystemSettingsModel**: ✅ Pure KV → keep in Metastore (redb). No merge needed.
+- **Cluster Topology**: ✅ **ELIMINATED** as standalone data type. Raft node membership is inherent in the Raft consensus layer's own log (redb). If no Raft service → doesn't exist. Not application-level data.
 
 ---
 
@@ -314,7 +314,7 @@ Relational queries, FK, unique constraints, vector search, encryption, BRIN inde
 | **Sandboxes** | SandboxMetadataModel | Relational queries |
 | **Path Registration** | **PathRegistrationModel** (NEW: WorkspaceConfig + MemoryConfig merged) | Co-exists with SnapshotModel/MemoryModel |
 
-### ✅ **Metastore (Ordered KV — sled via Raft)** — 4 surviving types
+### ✅ **Metastore (Ordered KV — redb via Raft)** — 4 surviving types
 KV access pattern, strong consistency needed (multi-node)
 
 | Data Type | Current | Reason |
@@ -324,7 +324,7 @@ KV access pattern, strong consistency needed (multi-node)
 | ReBACNamespaceModel | SQLAlchemy | KV by namespace_id, low cardinality |
 | SystemSettingsModel | SQLAlchemy | KV by key, low cardinality |
 
-### ✅ **Migrate to sled (local, no Raft)** - 1 type
+### ✅ **Migrate to redb (local, no Raft)** - 1 type
 CAS (content-addressed), immutable
 
 | Data Type | Current | Reason |
@@ -376,8 +376,8 @@ Performance cache, TTL, pub/sub
 
 ### ✅ Confirmed MERGES:
 
-1. **FilePathModel + FileMetadata** → ✅ **MERGE into FileMetadata (sled)**
-   - FilePathModel 17 columns, only 2 JOINs (both replaceable with sled prefix scan)
+1. **FilePathModel + FileMetadata** → ✅ **MERGE into FileMetadata (redb)**
+   - FilePathModel 17 columns, only 2 JOINs (both replaceable with redb prefix scan)
    - Deprecate relational model long-term
 
 2. **WorkspaceConfig + WorkspaceConfigModel + MemoryConfig + MemoryConfigModel** → ✅ **MERGE into PathRegistrationModel (RecordStore)**
@@ -422,7 +422,7 @@ This collapses 9 listed implementations → **4 storage mediums** (1:1 with Four
 
 | Pillar | Storage Medium | Unique Properties | Drivers (interchangeable via ABC) |
 |--------|---------------|-------------------|-----------------------------------|
-| **Metastore** | Ordered KV | Persistent, ordered prefix scan, optional Raft SC, ~14μs ops | sled (local PyO3), sled (gRPC Raft) |
+| **Metastore** | Ordered KV | Persistent, ordered prefix scan, optional Raft SC, ~14μs ops | redb (local PyO3), redb (gRPC Raft) |
 | **RecordStore** | Relational ACID | JOINs, FK, unique constraints, vector search, BRIN indexes | PostgreSQL (networked, multi-writer), SQLite (embedded, single-writer) |
 | **ObjectStore** | Blob | Streaming I/O, petabyte scale, content-addressed | S3, GCS, Azure Blob (cloud), Local Disk (embedded) |
 | **CacheStore** | Ephemeral KV + Pub/Sub | TTL, pub/sub, no persistence guarantee | Dragonfly (networked), In-Memory (process-local: Python dict / DashMap) |
@@ -433,10 +433,10 @@ With kernel-only (Metastore required + ObjectStore required, no services):
 
 | Kernel need | Provided by | Storage property used |
 |-------------|------------|----------------------|
-| File metadata (inode) | Metastore (sled) | KV by path |
-| Directory index (dentry) | Metastore (sled) | Ordered prefix scan |
-| Zone revision tracking | Metastore (sled) | `/__sys__/` KV entries |
-| System settings | Metastore (sled) | KV by key |
+| File metadata (inode) | Metastore (redb) | KV by path |
+| Directory index (dentry) | Metastore (redb) | Ordered prefix scan |
+| Zone revision tracking | Metastore (redb) | `/__sys__/` KV entries |
+| System settings | Metastore (redb) | KV by key |
 | File content (bytes) | ObjectStore (Backend) | Blob by path |
 
 Kernel does NOT need: JOINs, FK, vector search, BRIN, TTL, pub/sub, composite indexes.
@@ -493,7 +493,7 @@ CompactFileMetadata (DashMap L1 cache) is process-internal optimization, not a s
 
 | Medium | Read Perf | Write Perf | Consistency | Query Patterns | Durability | Unique Capability |
 |--------|-----------|------------|-------------|----------------|------------|-------------------|
-| **Ordered KV** | Critical (~14μs) | Critical (~14μs) | Linearizable (Raft) / Local | Ordered KV, prefix scan, range queries | Persistent (LSM) | **Ordered iteration** for user root localization (first key = `/` in chroot) |
+| **Ordered KV** | Critical (~14μs) | Critical (~14μs) | Linearizable (Raft) / Local | Ordered KV, prefix scan, range queries | Persistent (B+ tree) | **Ordered iteration** for user root localization (first key = `/` in chroot) |
 | **Relational ACID** | Med (~1ms) | Med (~1ms) | Serializable (ACID) | JOIN, FK, vector (pgvector), BRIN | Persistent (WAL) | **Complex queries** — JOINs, referential integrity, vector similarity search |
 | **Blob** | Med (variable) | Med (variable) | Eventual / Local | By-key only, streaming I/O | Persistent (11-nines) | **Unbounded size** — petabyte-scale object storage |
 | **Ephemeral KV** | Critical (<1μs) | Critical (<1μs) | Eventual / Local | KV + pub/sub + TTL | Ephemeral (lost on restart) | **TTL + pub/sub** — cache invalidation, event bus, session management |
@@ -502,9 +502,9 @@ CompactFileMetadata (DashMap L1 cache) is process-internal optimization, not a s
 
 | Deployment Mode | RecordStore driver | Metastore driver | ObjectStore driver | CacheStore driver |
 |-----------------|-------------------|------------------|-------------------|-------------------|
-| **Dev (single-node)** | SQLite | sled (local) | Local Disk | In-Memory (dict/DashMap) |
-| **Production (single-node)** | PostgreSQL | sled (local) | S3 / Local | Dragonfly |
-| **Production (multi-node)** | PostgreSQL | sled (Raft) | S3 | Dragonfly |
+| **Dev (single-node)** | SQLite | redb (local) | Local Disk | In-Memory (dict/DashMap) |
+| **Production (single-node)** | PostgreSQL | redb (local) | S3 / Local | Dragonfly |
+| **Production (multi-node)** | PostgreSQL | redb (Raft) | S3 | Dragonfly |
 
 ### Key Insights
 
@@ -536,7 +536,7 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 
 | Pillar | ABC | Role | Backing Drivers | Kernel Status |
 |--------|-----|------|-----------------|---------------|
-| **Metastore** | `MetastoreABC` | "The Structure" — inodes, dentries, config, topology | sled (local PyO3 / gRPC Raft) | **Required** init param |
+| **Metastore** | `MetastoreABC` | "The Structure" — inodes, dentries, config, topology | redb (local PyO3 / gRPC Raft) | **Required** init param |
 | **RecordStore** | `RecordStoreABC` | "The Truth" — entities, relationships, logs, vectors | PostgreSQL (prod), SQLite (dev) | **Optional** — injected for Services |
 | **ObjectStore** | `ObjectStoreABC` (= current `Backend`) | "The Content" — raw file bytes, immutable objects | S3, GCS, Local Disk | **Mounted** dynamically (like Linux `mount`) |
 | **CacheStore** | `CacheStoreABC` (future) | "The Reflexes" — sessions, signals, ephemeral data | Dragonfly (prod), In-Memory (dev) | **Future** — optional |
@@ -547,7 +547,7 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 ### Complete Data Type → Pillar Mapping
 
-**Metastore** (Ordered KV — sled):
+**Metastore** (Ordered KV — redb):
 | Data Type | From Part | Rationale |
 |-----------|-----------|-----------|
 | **FileMetadata** (+ merged FilePathModel, DirectoryEntryModel) | Part 1 | Core file attributes, KV by path. Dir listing = prefix scan. |

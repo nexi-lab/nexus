@@ -35,6 +35,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
     "owner_id": "posix_uid",
+    "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }
 
 # Fields that exist in FilePathModel but NOT in FileMetadata (PG-only concerns)
@@ -120,7 +121,7 @@ class TestRoundtripConsistency:
 
     def _metadata_to_file_path_values(self, metadata: FileMetadata) -> dict:
         """Map FileMetadata to FilePathModel column values via MetadataMapper."""
-        from nexus.storage.metadata_mapper import MetadataMapper
+        from nexus.storage._metadata_mapper_generated import MetadataMapper
 
         return MetadataMapper.to_file_path_values(metadata)
 
@@ -185,8 +186,8 @@ class TestRoundtripConsistency:
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
         # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"created_by", "entry_type", "target_zone_id"}, (
-            f"Expected only created_by, entry_type, and target_zone_id to be unmapped, "
+        assert none_mapped == {"created_by", "entry_type", "target_zone_id", "i_links_count"}, (
+            f"Expected only created_by, entry_type, target_zone_id, and i_links_count to be unmapped, "
             f"but got: {none_mapped}. "
             f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
         )

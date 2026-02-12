@@ -65,4 +65,12 @@ message FileMetadata {
   // Target zone ID for DT_MOUNT entries. Only set when entry_type == DT_MOUNT.
   // Contains the zone_id of the mounted zone for cross-zone path resolution.
   string target_zone_id = 14;
+
+  // Reference count — number of DT_MOUNT entries pointing to this zone.
+  // Follows POSIX i_nlink semantics (cf. shared_ptr reference counting):
+  //   zone create  → i_links_count = 0   (no references yet)
+  //   mount        → i_links_count++     (like link() / shared_ptr copy)
+  //   unmount      → i_links_count--     (like unlink() / shared_ptr dtor)
+  //   count == 0   → zone is destroyable (like free inode / shared_ptr delete)
+  int32 i_links_count = 15;
 }

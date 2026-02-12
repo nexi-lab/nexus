@@ -70,7 +70,8 @@ dependencies = [
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth
-    "cryptography>=41.0.0", # OAuth token encryption (Fernet)
+    "cryptography>=41.0.0", # OAuth token encryption (Fernet) + Ed25519 identity signing
+    "PyJWT>=2.8.0", # JWT-VC issuance/verification for agent identity (Issue #1355)
     # Cloud Storage Backends
     "boto3>=1.42.4", # AWS SDK for Python (S3 connector)
     "google-cloud-storage>=3.6.0",
@@ -143,6 +144,7 @@ dev = [
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.8.0",  # Parallel test execution
     "freezegun>=1.4.0",  # Time mocking for tests
+    "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
 
     # Code Quality
     "ruff>=0.14.0",
@@ -270,6 +272,7 @@ addopts = [
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml
 testpaths = ["tests"]
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
@@ -490,6 +493,8 @@ module = [
     "nexus.core.rebac_iterator_cache",
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
+    "nexus.core.agent_registry",
+    "nexus.identity.key_service",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -533,6 +538,7 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [
+    "nexus",
     "nexus.cli.commands.work",
     "nexus.cli.commands.search",
     "nexus.core.nexus_fs",
@@ -548,7 +554,7 @@ module = [
     "nexus.storage.database",
     "nexus.core.distributed_lock",
 ]
-# RaftMetadataStore (PyO3) - Rust methods not visible to mypy (Issue #1159)
+# Raft module uses follow_imports=skip (PyO3), so callers get Any - suppress no-any-return
 disable_error_code = ["attr-defined", "union-attr", "no-any-return"]
 warn_unused_ignores = false
 
@@ -606,4 +612,5 @@ line-ending = "auto"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "types-protobuf>=6.32.1.20251210",
 ]

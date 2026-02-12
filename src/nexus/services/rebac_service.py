@@ -1303,7 +1303,16 @@ class ReBACService:
             # For non-file resources, we need to check ReBAC permissions
             # This ensures groups, workspaces, and other resources are also protected
             # Check if user has ownership (execute permission) via ReBAC
-            has_permission = self.rebac_check(
+            # NOTE: Use self._rebac_manager.rebac_check() directly (sync) instead of
+            # self.rebac_check() (async). This method is called from sync contexts
+            # (e.g., _create_sync in asyncio.to_thread), so we cannot await.
+            # Using the async version without await would return a truthy coroutine,
+            # silently bypassing the permission check.
+            if not self._rebac_manager:
+                raise RuntimeError(
+                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+                )
+            has_permission = self._rebac_manager.rebac_check(
                 subject=self._get_subject_from_context(context) or ("user", op_context.user),
                 permission="owner",  # Only owners can manage permissions
                 object=resource,

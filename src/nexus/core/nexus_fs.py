@@ -585,7 +585,7 @@ class NexusFS(  # type: ignore[misc]
         # LLMService: LLM integration operations (4 methods)
         # Issue #1287 Phase B: Wrapped in LLMSubsystem for lifecycle management
         self.llm_service = LLMService(nexus_fs=self)
-        from nexus.core.subsystems.llm_subsystem import LLMSubsystem
+        from nexus.services.subsystems.llm_subsystem import LLMSubsystem
 
         self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 
@@ -1223,6 +1223,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
+        file_metadata: FileMetadata | None = None,
     ) -> None:
         """Check if operation is permitted.
 
@@ -1230,6 +1231,8 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path
             permission: Permission to check (READ, WRITE, EXECUTE)
             context: Optional operation context (defaults to self._default_context)
+            file_metadata: Pre-fetched metadata for owner fast-path (avoids redundant
+                metadata lookup when caller already has it)
 
         Raises:
             PermissionError: If access is denied
@@ -1307,7 +1310,13 @@ class NexusFS(  # type: ignore[misc]
         # Issue #920: O(1) owner fast-path check
         # If the file has posix_uid set and it matches the requesting user, skip ReBAC
         # This avoids expensive graph traversal for owner accessing their own files
-        file_meta = self.metadata.get(permission_path)
+        # Use pre-fetched metadata when available (avoids redundant FFI call)
+        # Use pre-fetched metadata when path wasn't redirected to a virtual view's original
+        file_meta = (
+            file_metadata
+            if (file_metadata is not None and permission_path == path)
+            else self.metadata.get(permission_path)
+        )
         if file_meta and file_meta.owner_id:
             subject_id = ctx.subject_id or ctx.user
             if file_meta.owner_id == subject_id:
@@ -3963,6 +3972,25 @@ class NexusFS(  # type: ignore[misc]
             except Exception as reg_err:
                 logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
 
+        # Issue #1355: Provision cryptographic identity (Ed25519 keypair + DID)
+        agent_did: str | None = None
+        if hasattr(self, "_key_service") and self._key_service:
+            try:
+                key_record = self._key_service.ensure_keypair(agent_id)
+                agent_did = key_record.did
+                agent = {**agent, "did": agent_did, "key_id": key_record.key_id}
+                logger.info(
+                    "[KYA] Provisioned identity for agent %s (did=%s)",
+                    agent_id,
+                    agent_did,
+                )
+            except Exception as kya_err:
+                logger.warning(
+                    "[KYA] Failed to provision identity for agent %s: %s",
+                    agent_id,
+                    kya_err,
+                )
+
         # Create initial config data
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
@@ -3997,6 +4025,28 @@ class NexusFS(  # type: ignore[misc]
             logger.info(f"Granted viewer permission to agent {agent_id} on {agent_dir}")
         except Exception as e:
             logger.warning(f"Failed to grant viewer permission to agent: {e}")
+
+        # Issue #1355: Write public identity document to agent namespace
+        if agent_did:
+            try:
+                from nexus.identity.did import create_did_document
+
+                key_record = self._key_service.get_active_keys(agent_id)[0]
+                public_key = self._key_service._crypto.public_key_from_bytes(
+                    key_record.public_key_bytes
+                )
+                did_doc = create_did_document(agent_did, public_key)
+                identity_dir = f"{agent_dir}/.identity"
+                ctx = self._parse_context(context)
+                self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+                self.write(
+                    f"{identity_dir}/did.json",
+                    json.dumps(did_doc, indent=2),
+                    context=ctx,
+                )
+                logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
+            except Exception as did_err:
+                logger.warning("[KYA] Failed to write DID document: %s", did_err)
 
         # Optionally generate API key
         if generate_api_key:
@@ -5982,11 +6032,10 @@ class NexusFS(  # type: ignore[misc]
             from nexus.sandbox.sandbox_manager import SandboxManager
 
             # Initialize sandbox manager with E2B credentials and config for Docker provider
-            session = self.SessionLocal()
             # Pass config if available (needed for Docker provider initialization)
             config = getattr(self, "_config", None)
             self._sandbox_manager = SandboxManager(
-                db_session=session,
+                session_factory=self.SessionLocal,
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),

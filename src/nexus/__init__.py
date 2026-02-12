@@ -41,6 +41,8 @@ nexus.skills, nexus.core.nexus_fs, and nexus.remote are only loaded when
 first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 """
 
+from __future__ import annotations
+
 __version__ = "0.7.1.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
@@ -62,6 +64,7 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
+    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.exceptions import (
         BackendError,
         InvalidPathError,
@@ -162,8 +165,8 @@ def __getattr__(name: str) -> Any:
 
 
 def connect(
-    config: "str | Path | dict | NexusConfig | None" = None,
-) -> "NexusFilesystem":
+    config: str | Path | dict | NexusConfig | None = None,
+) -> NexusFilesystem:
     """
     Connect to Nexus filesystem.
 
@@ -300,14 +303,37 @@ def connect(
                 for ns in cfg.namespaces
             ]
 
-        def _create_metadata_store(metadata_path: str) -> RaftMetadataStore:
-            """Create metadata store, auto-detecting cluster mode from env."""
+        def _create_metadata_store(metadata_path: str) -> FileMetadataProtocol:
+            """Create metadata store, auto-detecting zone/cluster mode from env.
+
+            Uses the same envvars as CLI (SSOT):
+              NEXUS_NODE_ID, NEXUS_DATA_DIR, NEXUS_BIND_ADDR, NEXUS_PEERS
+            """
             nexus_peers = os.environ.get("NEXUS_PEERS", "")
+            node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
+            bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+            zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+
+            # Try ZoneManager (multi-zone capable, requires --features full)
+            try:
+                from nexus.raft import ZoneAwareMetadataStore
+                from nexus.raft.zone_manager import ZoneManager
+
+                peers = (
+                    [p.strip() for p in nexus_peers.split(",") if p.strip()]
+                    if nexus_peers
+                    else None
+                )
+                zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
+                zone_mgr.bootstrap(root_zone_id="root", peers=peers)
+                return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
+            except (ImportError, RuntimeError):
+                pass
+
+            # Fallback: single-zone (basic PyO3 or embedded)
             if nexus_peers:
-                node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-                bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
                 peers = [p.strip() for p in nexus_peers.split(",") if p.strip()]
-                return RaftMetadataStore.sc(
+                return RaftMetadataStore.consensus(
                     node_id=node_id,
                     db_path=metadata_path,
                     bind_address=bind_addr,

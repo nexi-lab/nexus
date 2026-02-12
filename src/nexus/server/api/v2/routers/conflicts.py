@@ -23,10 +23,20 @@ from nexus.server.api.v2.models import (
     ConflictResolveRequest,
     ConflictResolveResponse,
 )
+from nexus.services.conflict_resolution import ConflictStatus
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/sync/conflicts", tags=["sync-conflicts"])
+
+
+async def _require_admin(
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Require admin role for conflict management endpoints."""
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin role required for conflict management")
+    return auth_result
 
 
 def _record_to_response(record: Any) -> ConflictDetailResponse:
@@ -57,7 +67,7 @@ async def list_conflicts(
     zone_id: str | None = Query(None, description="Filter by zone ID"),
     limit: int = Query(50, ge=1, le=200, description="Max results"),
     offset: int = Query(0, ge=0, description="Number to skip"),
-    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    _auth_result: dict[str, Any] = Depends(_require_admin),
     store: Any = Depends(get_conflict_log_store),
 ) -> ConflictListResponse:
     """List conflict records with optional filtering and pagination."""
@@ -69,9 +79,15 @@ async def list_conflicts(
             limit=limit,
             offset=offset,
         )
+        total = store.count_conflicts(
+            status=status,
+            backend_name=backend_name,
+            zone_id=zone_id,
+        )
         return ConflictListResponse(
             conflicts=[_record_to_response(r) for r in records],
-            total=len(records),
+            total=total,
+            has_more=(offset + len(records)) < total,
         )
     except Exception as e:
         logger.error(f"List conflicts error: {e}", exc_info=True)
@@ -81,7 +97,7 @@ async def list_conflicts(
 @router.get("/{conflict_id}", response_model=ConflictDetailResponse)
 async def get_conflict(
     conflict_id: str,
-    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    _auth_result: dict[str, Any] = Depends(_require_admin),
     store: Any = Depends(get_conflict_log_store),
 ) -> ConflictDetailResponse:
     """Get a conflict record by ID."""
@@ -101,7 +117,7 @@ async def get_conflict(
 async def resolve_conflict(
     conflict_id: str,
     request: ConflictResolveRequest,
-    _auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    _auth_result: dict[str, Any] = Depends(_require_admin),
     store: Any = Depends(get_conflict_log_store),
 ) -> ConflictResolveResponse:
     """Manually resolve a pending conflict."""
@@ -124,7 +140,7 @@ async def resolve_conflict(
             )
         return ConflictResolveResponse(
             conflict_id=conflict_id,
-            status="manually_resolved",
+            status=ConflictStatus.MANUALLY_RESOLVED,
         )
     except HTTPException:
         raise

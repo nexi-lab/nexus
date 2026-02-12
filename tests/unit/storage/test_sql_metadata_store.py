@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core._metadata_generated import DT_DIR, DT_REG, FileMetadata
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.sql_metadata_store import SqlMetadataStore
@@ -61,7 +61,7 @@ def _make_metadata(
         zone_id=zone_id,
         created_by=created_by,
         owner_id=owner_id,
-        is_directory=is_directory,
+        entry_type=DT_DIR if is_directory else DT_REG,
     )
 
 
@@ -94,7 +94,7 @@ class TestGet:
 
         result = store.get("/mydir")
         assert result is not None
-        assert result.is_directory is True
+        assert result.is_dir is True
         assert result.mime_type is None
 
 

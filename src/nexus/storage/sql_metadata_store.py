@@ -32,7 +32,13 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select, update
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core._metadata_generated import (
+    DT_DIR,
+    DT_REG,
+    FileMetadata,
+    FileMetadataProtocol,
+    PaginatedResult,
+)
 from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistoryModel
 
 if TYPE_CHECKING:
@@ -71,7 +77,7 @@ def _row_to_metadata(row: FilePathModel) -> FileMetadata:
         version=row.current_version,
         zone_id=row.zone_id,
         created_by=None,  # Not stored in FilePathModel; available via VersionHistory
-        is_directory=is_dir,
+        entry_type=DT_DIR if is_dir else DT_REG,
         owner_id=row.posix_uid,
     )
 
@@ -150,7 +156,7 @@ class SqlMetadataStore(FileMetadataProtocol):
                 )
             ).scalar_one_or_none()
 
-            file_type = _DIR_FILE_TYPE if metadata.is_directory else metadata.mime_type
+            file_type = _DIR_FILE_TYPE if metadata.is_dir else metadata.mime_type
 
             if existing is None:
                 self._create_file(session, metadata, file_type)
@@ -384,7 +390,7 @@ class SqlMetadataStore(FileMetadataProtocol):
             existing_map = {r.virtual_path: r for r in existing_rows}
 
             for metadata in metadata_list:
-                file_type = _DIR_FILE_TYPE if metadata.is_directory else metadata.mime_type
+                file_type = _DIR_FILE_TYPE if metadata.is_dir else metadata.mime_type
                 existing = existing_map.get(metadata.path)
                 if existing is None:
                     self._create_file(session, metadata, file_type)

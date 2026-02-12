@@ -592,6 +592,7 @@ ignore = [
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
+"src/nexus/storage/sql_metadata_store.py" = ["ARG002"]  # Interface consistency param for API compatibility
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 
 [tool.ruff.lint.isort]

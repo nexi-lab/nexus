@@ -308,6 +308,65 @@ def create_mcp_server(
         annotations={
             "readOnlyHint": False,
             "destructiveHint": True,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def nexus_edit_file(
+        path: str,
+        edits: list[dict],
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+        if_match: str | None = None,
+        ctx: Context | None = None,
+    ) -> str:
+        """Apply surgical search/replace edits to an existing file.
+
+        More reliable than nexus_write_file for partial changes:
+        - Fuzzy matching if exact match fails
+        - Returns diff of changes
+        - Supports optimistic concurrency via if_match
+
+        Args:
+            path: File path (e.g., "/workspace/src/main.py")
+            edits: List of {"old_str": "text to find", "new_str": "replacement"}
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0-1.0, default: 0.85)
+            preview: If True, return preview without writing (default: False)
+            if_match: Optional etag for optimistic concurrency control
+            ctx: FastMCP Context (automatically injected, optional for backward compatibility)
+
+        Returns:
+            JSON string with edit result (success, diff, matches, errors)
+
+        Example:
+            nexus_edit_file(
+                path="/workspace/src/main.py",
+                edits=[{"old_str": "print('hello')", "new_str": "print('world')"}]
+            )
+        """
+        try:
+            nx_instance = _get_nexus_instance(ctx)
+            result = nx_instance.edit(
+                path,
+                edits,
+                fuzzy_threshold=fuzzy_threshold,
+                preview=preview,
+                if_match=if_match,
+            )
+            return json.dumps(result, indent=2)
+        except FileNotFoundError:
+            return (
+                f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
+            )
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check write permissions."
+        except Exception as e:
+            return f"Error editing file: {str(e)}"
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
             "idempotentHint": True,  # Deleting already-deleted file is idempotent
             "openWorldHint": True,
         }
@@ -1109,6 +1168,7 @@ def create_mcp_server(
     _nexus_tools = [
         ToolInfo("nexus_read_file", "Read the contents of a file", "nexus"),
         ToolInfo("nexus_write_file", "Write content to a file", "nexus"),
+        ToolInfo("nexus_edit_file", "Apply surgical search/replace edits to a file", "nexus"),
         ToolInfo("nexus_list_files", "List files in a directory", "nexus"),
         ToolInfo("nexus_delete_file", "Delete a file", "nexus"),
         ToolInfo("nexus_mkdir", "Create a directory", "nexus"),

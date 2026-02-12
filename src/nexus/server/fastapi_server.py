@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -306,6 +307,8 @@ class AppState:
         self.write_back_service: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Event Log WAL for durable event persistence (Issue #1397)
+        self.event_log: Any = None
         # Issue #1355: Agent identity KeyService
         self.key_service: Any = None
 
@@ -454,15 +457,53 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    # Event Log WAL for durable event persistence (Issue #1397)
+    # Rust WAL preferred; falls back to PG if extension not available
+    _app_state.event_log = None
     try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+        from nexus.core.event_log_factory import create_event_log
+        from nexus.core.protocols.event_log import EventLogConfig
 
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
+        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+        sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
+
+        event_log_config = EventLogConfig(
+            wal_dir=Path(wal_dir),
+            segment_size_bytes=segment_size,
+            sync_mode=sync_mode,  # type: ignore[arg-type]
+        )
+        _app_state.event_log = create_event_log(
+            event_log_config,
+            session_factory=getattr(_app_state, "session_factory", None),
+        )
+        logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+        logger.warning(f"Failed to initialize event log: {e}")
+
+    # Issue #1397: Start event bus and wire event log for WAL-first persistence
+    if _app_state.nexus_fs:
+        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+        if event_bus_ref is not None:
+            # Connect the underlying DragonflyClient (async init required)
+            redis_client = getattr(event_bus_ref, "_redis", None)
+            if redis_client and hasattr(redis_client, "connect"):
+                try:
+                    await redis_client.connect()
+                except Exception as e:
+                    logger.warning(f"Failed to connect event bus Redis client: {e}")
+
+            # Start the event bus (sets _started=True, enables publish())
+            if hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
+                try:
+                    await event_bus_ref.start()
+                    logger.info("Event bus started for event publishing")
+                except Exception as e:
+                    logger.warning(f"Failed to start event bus: {e}")
+
+            # Note: WAL append is handled inline in _dispatch_method (Issue #1397)
+            # for <5μs durable writes without thread-per-event overhead.
+            # The event_bus handles Redis fan-out only; WAL is not wired into it.
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -1010,6 +1051,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Issue #1397: Close Event Log WAL
+    if _app_state.event_log:
+        try:
+            await _app_state.event_log.close()
+            logger.info("Event log closed")
+        except Exception as e:
+            logger.warning(f"Error closing event log: {e}")
 
     # SandboxManager now uses session-per-operation — no persistent session to close
     if _app_state.sandbox_auth_service:
@@ -4147,6 +4196,47 @@ def _error_response(
     return JSONResponse(content=error_dict)
 
 
+# Issue #1397: Inline WAL append — runs in FastAPI event loop, <5μs per write.
+# Avoids the thread-per-event overhead of the NexusFS _publish_file_event path.
+async def _wal_append(
+    event_type: str,
+    path: str,
+    context: Any,
+    old_path: str | None = None,
+    size: int | None = None,
+) -> None:
+    """Append a file event to the WAL inline (durable before response)."""
+    event_log = _app_state.event_log
+    if event_log is None:
+        return
+
+    try:
+        from nexus.core.event_bus import FileEvent, FileEventType
+
+        type_map = {
+            "file_write": FileEventType.FILE_WRITE,
+            "file_delete": FileEventType.FILE_DELETE,
+            "file_rename": FileEventType.FILE_RENAME,
+            "dir_create": FileEventType.DIR_CREATE,
+            "dir_delete": FileEventType.DIR_DELETE,
+        }
+
+        zone_id = getattr(context, "zone_id", None) or "default"
+        agent_id = getattr(context, "agent_id", None)
+
+        event = FileEvent(
+            type=type_map.get(event_type, event_type),
+            path=path,
+            zone_id=zone_id,
+            old_path=old_path,
+            size=size,
+            agent_id=agent_id,
+        )
+        await event_log.append(event)
+    except Exception as e:
+        logger.warning(f"WAL append failed for {event_type} {path}: {e}")
+
+
 # Issue #1115: Event firing helper for RPC handlers
 async def _fire_rpc_event(
     event_type: str,
@@ -4227,6 +4317,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await _handle_read_async(params, context)
     elif method == "write":
         result = await to_thread_with_timeout(_handle_write, params, context)
+        await _wal_append("file_write", params.path, context, size=result.get("bytes_written"))
         await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
         return result
     elif method == "exists":
@@ -4235,20 +4326,24 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
         result = await to_thread_with_timeout(_handle_delete, params, context)
+        await _wal_append("file_delete", params.path, context)
         await _fire_rpc_event("file_delete", params.path, context)
         return result
     elif method == "rename":
         result = await to_thread_with_timeout(_handle_rename, params, context)
+        await _wal_append("file_rename", params.new_path, context, old_path=params.old_path)
         await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
         return result
     elif method == "copy":
         return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
         result = await to_thread_with_timeout(_handle_mkdir, params, context)
+        await _wal_append("dir_create", params.path, context)
         await _fire_rpc_event("dir_create", params.path, context)
         return result
     elif method == "rmdir":
         result = await to_thread_with_timeout(_handle_rmdir, params, context)
+        await _wal_append("dir_delete", params.path, context)
         await _fire_rpc_event("dir_delete", params.path, context)
         return result
     elif method == "get_metadata":

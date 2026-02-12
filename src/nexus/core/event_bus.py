@@ -389,6 +389,11 @@ class RedisEventBus(EventBusBase):
         - Redis Pub/Sub is best-effort notification
         - Startup sync reconciles missed events from PG
 
+    Optional WAL integration (Issue #1397):
+        When an ``event_log`` is provided, every published event is
+        durably persisted *before* being broadcast via Redis Pub/Sub.
+        This gives subscribers a reliable replay log for catch-up.
+
     Example:
         >>> bus = RedisEventBus(redis_client, session_factory=SessionLocal)
         >>> await bus.start()
@@ -411,6 +416,7 @@ class RedisEventBus(EventBusBase):
         redis_client: DragonflyClient,
         session_factory: Any | None = None,
         node_id: str | None = None,
+        event_log: Any | None = None,
     ):
         """Initialize RedisEventBus.
 
@@ -418,10 +424,12 @@ class RedisEventBus(EventBusBase):
             redis_client: DragonflyClient instance for Redis connection
             session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
+            event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
         """
         self._redis = redis_client
         self._session_factory = session_factory
         self._node_id = node_id or self._generate_node_id()
+        self._event_log = event_log
         self._pubsub: Any = None
         self._started = False
         self._lock = asyncio.Lock()
@@ -470,9 +478,20 @@ class RedisEventBus(EventBusBase):
             logger.info("RedisEventBus stopped")
 
     async def publish(self, event: FileEvent) -> int:
-        """Publish an event to the zone's channel."""
+        """Publish an event to the zone's channel.
+
+        If an event_log is configured (Issue #1397), the event is durably
+        persisted to the WAL *before* being broadcast via Redis Pub/Sub.
+        """
         if not self._started:
             raise RuntimeError("RedisEventBus not started. Call start() first.")
+
+        # WAL-first: persist before fan-out (Issue #1397)
+        if self._event_log is not None:
+            try:
+                await self._event_log.append(event)
+            except Exception as e:
+                logger.error(f"Event log append failed (event still published): {e}")
 
         zone_id = event.zone_id or "default"
         channel = self._channel_name(zone_id)

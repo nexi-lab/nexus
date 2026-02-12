@@ -472,7 +472,8 @@ class NexusFS(  # type: ignore[misc]
 
                     # Reuse coordination client if same URL, otherwise create new
                     if (
-                        coordination_url_resolved
+                        self._coordination_client is not None
+                        and coordination_url_resolved
                         and event_url_resolved == coordination_url_resolved
                     ):
                         self._event_client = self._coordination_client

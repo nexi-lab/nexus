@@ -37,6 +37,26 @@ use crate::raft::{
 };
 use crate::storage::RedbStore;
 
+// =========================================================================
+// Consistency mode constants (SSOT for all PyO3 bindings)
+// =========================================================================
+
+/// Strong Consistency — wait for Raft commit before returning.
+const CONSISTENCY_SC: &str = "sc";
+/// Eventual Consistency — fire-and-forget (propose + return immediately).
+const CONSISTENCY_EC: &str = "ec";
+
+/// Validate consistency mode string. Returns Ok(()) for "sc"/"ec", Err otherwise.
+fn validate_consistency(consistency: &str) -> PyResult<()> {
+    match consistency {
+        CONSISTENCY_SC | CONSISTENCY_EC => Ok(()),
+        _ => Err(PyRuntimeError::new_err(format!(
+            "Invalid consistency mode '{}': expected '{}' or '{}'",
+            consistency, CONSISTENCY_SC, CONSISTENCY_EC
+        ))),
+    }
+}
+
 /// Python-compatible holder info.
 #[pyclass(name = "HolderInfo")]
 #[derive(Clone)]
@@ -169,10 +189,19 @@ impl PyMetastore {
     /// Args:
     ///     path: The file path (key).
     ///     value: Serialized metadata bytes.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously,
+    ///                  but accepts the parameter for API uniformity with RaftConsensus.
     ///
     /// Returns:
     ///     True if successful.
-    pub fn set_metadata(&mut self, path: &str, value: Vec<u8>) -> PyResult<bool> {
+    #[pyo3(signature = (path, value, consistency="sc"))]
+    pub fn set_metadata(
+        &mut self,
+        path: &str,
+        value: Vec<u8>,
+        consistency: &str,
+    ) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
@@ -197,10 +226,14 @@ impl PyMetastore {
     ///
     /// Args:
     ///     path: The file path.
+    ///     consistency: "sc" (default) or "ec". Embedded mode always applies synchronously,
+    ///                  but accepts the parameter for API uniformity with RaftConsensus.
     ///
     /// Returns:
     ///     True if successful.
-    pub fn delete_metadata(&mut self, path: &str) -> PyResult<bool> {
+    #[pyo3(signature = (path, consistency="sc"))]
+    pub fn delete_metadata(&mut self, path: &str, consistency: &str) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
@@ -643,12 +676,13 @@ impl PyRaftConsensus {
         value: Vec<u8>,
         consistency: &str,
     ) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            "ec" => {
+            CONSISTENCY_EC => {
                 self.propose_command_ec(py, cmd)?;
                 Ok(true)
             }
@@ -676,11 +710,12 @@ impl PyRaftConsensus {
     ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
     #[pyo3(signature = (path, consistency="sc"))]
     pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
         match consistency {
-            "ec" => {
+            CONSISTENCY_EC => {
                 self.propose_command_ec(py, cmd)?;
                 Ok(true)
             }
@@ -1126,12 +1161,13 @@ impl PyZoneHandle {
         value: Vec<u8>,
         consistency: &str,
     ) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::SetMetadata {
             key: path.to_string(),
             value,
         };
         match consistency {
-            "ec" => {
+            CONSISTENCY_EC => {
                 self.propose_command_ec(py, cmd)?;
                 Ok(true)
             }
@@ -1159,11 +1195,12 @@ impl PyZoneHandle {
     ///     consistency: "sc" (default, wait for commit) or "ec" (fire-and-forget).
     #[pyo3(signature = (path, consistency="sc"))]
     pub fn delete_metadata(&self, py: Python<'_>, path: &str, consistency: &str) -> PyResult<bool> {
+        validate_consistency(consistency)?;
         let cmd = Command::DeleteMetadata {
             key: path.to_string(),
         };
         match consistency {
-            "ec" => {
+            CONSISTENCY_EC => {
                 self.propose_command_ec(py, cmd)?;
                 Ok(true)
             }

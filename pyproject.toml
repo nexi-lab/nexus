@@ -493,6 +493,7 @@ module = [
     "nexus.core.rebac_iterator_cache",
     "nexus.core.rebac_cache",
     "nexus.core.permission_boundary_cache",
+    "nexus.core.agent_registry",
     "nexus.identity.key_service",
 ]
 # cachetools returns Any from generic cache

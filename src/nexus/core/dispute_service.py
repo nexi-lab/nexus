@@ -83,15 +83,11 @@ class DisputeService(SessionMixin):
         with self._get_session() as session:
             # Check for existing dispute
             existing = session.execute(
-                select(DisputeModel).where(
-                    DisputeModel.exchange_id == exchange_id
-                )
+                select(DisputeModel).where(DisputeModel.exchange_id == exchange_id)
             ).scalar_one_or_none()
 
             if existing is not None:
-                raise DuplicateDisputeError(
-                    f"Dispute already exists for exchange {exchange_id}"
-                )
+                raise DuplicateDisputeError(f"Dispute already exists for exchange {exchange_id}")
 
             model = DisputeModel(
                 id=_generate_uuid(),
@@ -161,9 +157,7 @@ class DisputeService(SessionMixin):
             model.resolution = resolution
             model.resolution_evidence_hash = evidence_hash
             model.resolved_at = datetime.now(UTC)
-            model.appeal_deadline = datetime.now(UTC) + timedelta(
-                days=_APPEAL_WINDOW_DAYS
-            )
+            model.appeal_deadline = datetime.now(UTC) + timedelta(days=_APPEAL_WINDOW_DAYS)
             session.flush()
             return self._model_to_record(model)
 

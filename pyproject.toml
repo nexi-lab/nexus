@@ -562,7 +562,12 @@ warn_unused_ignores = false
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["benchmarks/"]
+exclude = [
+    "benchmarks/",
+    "src/nexus/core/_metadata_generated.py",  # Generated at install time
+    "src/nexus/core/_compact_generated.py",    # Generated at install time
+    "src/nexus/core/protocols/",               # Generated at install time
+]
 
 [tool.ruff.lint]
 select = [
@@ -599,8 +604,6 @@ ignore = [
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
 "src/nexus/storage/sql_metadata_store.py" = ["ARG002"]  # Interface consistency param for API compatibility
-"src/nexus/core/_metadata_generated.py" = ["ARG002", "W292"]  # Generated code
-"src/nexus/core/protocols/__init__.py" = ["W292"]  # Generated code
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 
 [tool.ruff.lint.isort]

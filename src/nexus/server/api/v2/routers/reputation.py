@@ -255,12 +255,8 @@ def get_leaderboard(
     """Get reputation leaderboard for a zone."""
     reputation_service, _dispute_service, _auth_ctx = deps
 
-    entries = reputation_service.get_leaderboard(
-        zone_id=zone_id, context=context, limit=limit
-    )
-    return ReputationLeaderboardResponse(
-        entries=[_score_to_response(e) for e in entries]
-    )
+    entries = reputation_service.get_leaderboard(zone_id=zone_id, context=context, limit=limit)
+    return ReputationLeaderboardResponse(entries=[_score_to_response(e) for e in entries])
 
 
 @router.post("/api/v2/exchanges/{exchange_id}/feedback")
@@ -306,9 +302,7 @@ def get_exchange_feedback(
     reputation_service, _dispute_service, _auth_ctx = deps
 
     events = reputation_service.get_feedback_for_exchange(exchange_id)
-    return FeedbackListResponse(
-        feedback=[_event_to_response(e) for e in events]
-    )
+    return FeedbackListResponse(feedback=[_event_to_response(e) for e in events])
 
 
 @router.post("/api/v2/exchanges/{exchange_id}/dispute")

@@ -31,9 +31,7 @@ class ReputationScoreModel(Base):
     __tablename__ = "reputation_scores"
 
     # Composite primary key
-    agent_id: Mapped[str] = mapped_column(
-        String(255), primary_key=True, nullable=False
-    )
+    agent_id: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)
     context: Mapped[str] = mapped_column(
         String(100), primary_key=True, nullable=False, default="general"
     )

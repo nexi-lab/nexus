@@ -53,15 +53,11 @@ class DisputeModel(Base):
     # Dispute details
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
-    resolution_evidence_hash: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
+    resolution_evidence_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Escrow
     escrow_amount: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    escrow_released: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    escrow_released: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Timestamps
     filed_at: Mapped[datetime] = mapped_column(
@@ -69,12 +65,8 @@ class DisputeModel(Base):
         nullable=False,
         default=lambda: datetime.now(UTC),
     )
-    resolved_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    appeal_deadline: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    appeal_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         # 1. Unique: one dispute per exchange
@@ -90,7 +82,4 @@ class DisputeModel(Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Dispute(id={self.id!r}, exchange={self.exchange_id!r}, "
-            f"status={self.status!r})>"
-        )
+        return f"<Dispute(id={self.id!r}, exchange={self.exchange_id!r}, status={self.status!r})>"

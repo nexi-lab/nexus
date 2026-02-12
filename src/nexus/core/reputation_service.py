@@ -374,18 +374,10 @@ class ReputationService(SessionMixin):
         alpha_inc, beta_inc = _OUTCOME_INCREMENTS.get(outcome, (0.5, 0.5))
 
         # Update per-dimension parameters using dimension scores if provided
-        self._update_dimension(
-            model, "reliability", reliability_score, alpha_inc, beta_inc
-        )
-        self._update_dimension(
-            model, "quality", quality_score, alpha_inc, beta_inc
-        )
-        self._update_dimension(
-            model, "timeliness", timeliness_score, alpha_inc, beta_inc
-        )
-        self._update_dimension(
-            model, "fairness", fairness_score, alpha_inc, beta_inc
-        )
+        self._update_dimension(model, "reliability", reliability_score, alpha_inc, beta_inc)
+        self._update_dimension(model, "quality", quality_score, alpha_inc, beta_inc)
+        self._update_dimension(model, "timeliness", timeliness_score, alpha_inc, beta_inc)
+        self._update_dimension(model, "fairness", fairness_score, alpha_inc, beta_inc)
 
         # Update interaction counts
         model.total_interactions += 1
@@ -401,9 +393,7 @@ class ReputationService(SessionMixin):
             "timeliness": (model.timeliness_alpha, model.timeliness_beta),
             "fairness": (model.fairness_alpha, model.fairness_beta),
         }
-        model.composite_score, model.composite_confidence = compute_composite_score(
-            dimensions
-        )
+        model.composite_score, model.composite_confidence = compute_composite_score(dimensions)
         model.updated_at = datetime.now(UTC)
 
         session.flush()

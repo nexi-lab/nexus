@@ -169,18 +169,14 @@ class TestInvalidTransitions:
         """filed → filed is invalid (no self-transition)."""
         dispute = _file_dispute(dispute_service, "exchange-inv-2")
         with pytest.raises(InvalidTransitionError):
-            dispute_service._transition(
-                dispute_service._session_factory(), dispute.id, "filed"
-            )
+            dispute_service._transition(dispute_service._session_factory(), dispute.id, "filed")
 
     def test_auto_mediating_to_filed_invalid(self, dispute_service):
         """auto_mediating → filed is invalid."""
         dispute = _file_dispute(dispute_service, "exchange-inv-3")
         dispute_service.auto_mediate(dispute.id)
         with pytest.raises(InvalidTransitionError):
-            dispute_service._transition(
-                dispute_service._session_factory(), dispute.id, "filed"
-            )
+            dispute_service._transition(dispute_service._session_factory(), dispute.id, "filed")
 
     def test_auto_mediating_to_auto_mediating_invalid(self, dispute_service):
         """auto_mediating → auto_mediating is invalid."""
@@ -195,9 +191,7 @@ class TestInvalidTransitions:
         dispute_service.auto_mediate(dispute.id)
         dispute_service.resolve(dispute.id, "Done")
         with pytest.raises(InvalidTransitionError):
-            dispute_service._transition(
-                dispute_service._session_factory(), dispute.id, "filed"
-            )
+            dispute_service._transition(dispute_service._session_factory(), dispute.id, "filed")
 
     def test_resolved_to_auto_mediating_invalid(self, dispute_service):
         """resolved → auto_mediating is invalid (terminal state)."""
@@ -228,9 +222,7 @@ class TestInvalidTransitions:
         dispute = _file_dispute(dispute_service, "exchange-inv-9")
         dispute_service.dismiss(dispute.id, "No merit")
         with pytest.raises(InvalidTransitionError):
-            dispute_service._transition(
-                dispute_service._session_factory(), dispute.id, "filed"
-            )
+            dispute_service._transition(dispute_service._session_factory(), dispute.id, "filed")
 
     def test_dismissed_to_auto_mediating_invalid(self, dispute_service):
         """dismissed → auto_mediating is invalid (terminal state)."""

@@ -6,7 +6,7 @@ import dataclasses
 
 import pytest
 
-from nexus.core.protocols.hook_engine import (
+from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
     POST_MKDIR,

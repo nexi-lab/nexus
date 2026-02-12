@@ -420,6 +420,24 @@ class TestStopSandbox:
 
         mock_registry.transition.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_stop_succeeds_when_transition_fails(
+        self, auth_service, mock_registry, mock_sandbox_manager
+    ):
+        """stop_sandbox still returns result even if agent transition to IDLE fails."""
+        mock_registry.transition.side_effect = InvalidTransitionError(
+            "agent-1", AgentState.UNKNOWN, AgentState.IDLE
+        )
+
+        result = await auth_service.stop_sandbox(
+            sandbox_id="sb-123",
+            agent_id="agent-1",
+        )
+
+        # Stop still succeeded — transition failure is best-effort
+        assert result["status"] == "stopped"
+        mock_sandbox_manager.stop_sandbox.assert_called_once_with("sb-123")
+
 
 # ---------------------------------------------------------------------------
 # Connect Sandbox

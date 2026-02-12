@@ -16,6 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from nexus.services.conflict_log_store import ConflictLogStore
 from nexus.services.conflict_resolution import (
     ConflictRecord,
+    ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
@@ -34,7 +35,7 @@ def _make_record(
     zone_id: str = "default",
     strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
     outcome: ResolutionOutcome = ResolutionOutcome.NEXUS_WINS,
-    status: str = "auto_resolved",
+    status: ConflictStatus = ConflictStatus.AUTO_RESOLVED,
     resolved_at: datetime | None = None,
 ) -> ConflictRecord:
     now = resolved_at or _now()
@@ -103,7 +104,7 @@ class TestLogConflict:
             backend_mtime=now - timedelta(minutes=30),
             backend_size=600,
             conflict_copy_path="/deep/path/file.sync-conflict-20260211-s3.txt",
-            status="auto_resolved",
+            status=ConflictStatus.AUTO_RESOLVED,
             resolved_at=now,
         )
         store.log_conflict(record)
@@ -146,11 +147,13 @@ class TestListConflicts:
         assert len(page3) == 1
 
     def test_list_filter_by_status(self, store: ConflictLogStore):
-        store.log_conflict(_make_record(record_id="auto-1", status="auto_resolved"))
-        store.log_conflict(_make_record(record_id="pending-1", status="manual_pending"))
+        store.log_conflict(_make_record(record_id="auto-1", status=ConflictStatus.AUTO_RESOLVED))
+        store.log_conflict(
+            _make_record(record_id="pending-1", status=ConflictStatus.MANUAL_PENDING)
+        )
 
-        auto = store.list_conflicts(status="auto_resolved")
-        pending = store.list_conflicts(status="manual_pending")
+        auto = store.list_conflicts(status=ConflictStatus.AUTO_RESOLVED)
+        pending = store.list_conflicts(status=ConflictStatus.MANUAL_PENDING)
 
         assert len(auto) == 1
         assert auto[0].id == "auto-1"
@@ -207,7 +210,9 @@ class TestResolveConflictManually:
     """Tests for resolve_conflict_manually()."""
 
     def test_resolve_updates_status(self, store: ConflictLogStore):
-        store.log_conflict(_make_record(record_id="pending-1", status="manual_pending"))
+        store.log_conflict(
+            _make_record(record_id="pending-1", status=ConflictStatus.MANUAL_PENDING)
+        )
 
         result = store.resolve_conflict_manually("pending-1", ResolutionOutcome.NEXUS_WINS)
         assert result is True
@@ -218,7 +223,7 @@ class TestResolveConflictManually:
         assert fetched.outcome == ResolutionOutcome.NEXUS_WINS
 
     def test_resolve_returns_false_for_non_pending(self, store: ConflictLogStore):
-        store.log_conflict(_make_record(record_id="auto-1", status="auto_resolved"))
+        store.log_conflict(_make_record(record_id="auto-1", status=ConflictStatus.AUTO_RESOLVED))
 
         result = store.resolve_conflict_manually("auto-1", ResolutionOutcome.BACKEND_WINS)
         assert result is False
@@ -269,9 +274,9 @@ class TestGetStats:
     """Tests for get_stats()."""
 
     def test_stats_counts_by_status(self, store: ConflictLogStore):
-        store.log_conflict(_make_record(record_id="a1", status="auto_resolved"))
-        store.log_conflict(_make_record(record_id="a2", status="auto_resolved"))
-        store.log_conflict(_make_record(record_id="p1", status="manual_pending"))
+        store.log_conflict(_make_record(record_id="a1", status=ConflictStatus.AUTO_RESOLVED))
+        store.log_conflict(_make_record(record_id="a2", status=ConflictStatus.AUTO_RESOLVED))
+        store.log_conflict(_make_record(record_id="p1", status=ConflictStatus.MANUAL_PENDING))
 
         stats = store.get_stats()
         assert stats["auto_resolved"] == 2

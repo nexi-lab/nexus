@@ -75,6 +75,38 @@ class SandboxAuthService:
         self._event_log = event_log
         self._budget_enforcement = budget_enforcement
 
+    async def _record_event(
+        self,
+        agent_id: str,
+        event_type: str,
+        zone_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Record an audit event (best-effort, never raises).
+
+        Args:
+            agent_id: Agent identifier.
+            event_type: Event type string (e.g. "sandbox.created").
+            zone_id: Optional zone ID.
+            payload: Optional event payload dict.
+        """
+        if self._event_log is None:
+            return
+        try:
+            kwargs: dict[str, Any] = {"agent_id": agent_id, "event_type": event_type}
+            if zone_id is not None:
+                kwargs["zone_id"] = zone_id
+            if payload is not None:
+                kwargs["payload"] = payload
+            await asyncio.to_thread(self._event_log.record, **kwargs)
+        except Exception:
+            logger.warning(
+                "[SANDBOX-AUTH] Failed to record %s event for agent %s",
+                event_type,
+                agent_id,
+                exc_info=True,
+            )
+
     async def create_sandbox(
         self,
         agent_id: str,
@@ -172,26 +204,17 @@ class SandboxAuthService:
         )
 
         # Step 7: Record lifecycle event (best-effort)
-        if self._event_log is not None:
-            try:
-                await asyncio.to_thread(
-                    self._event_log.record,
-                    agent_id=agent_id,
-                    event_type="sandbox.created",
-                    zone_id=zone_id,
-                    payload={
-                        "sandbox_id": sandbox.get("sandbox_id"),
-                        "name": name,
-                        "provider": sandbox.get("provider"),
-                        "mount_paths": [getattr(m, "virtual_path", str(m)) for m in mount_table],
-                    },
-                )
-            except Exception:
-                logger.warning(
-                    "[SANDBOX-AUTH] Failed to record sandbox.created event for agent %s",
-                    agent_id,
-                    exc_info=True,
-                )
+        await self._record_event(
+            agent_id=agent_id,
+            event_type="sandbox.created",
+            zone_id=zone_id,
+            payload={
+                "sandbox_id": sandbox.get("sandbox_id"),
+                "name": name,
+                "provider": sandbox.get("provider"),
+                "mount_paths": [getattr(m, "virtual_path", str(m)) for m in mount_table],
+            },
+        )
 
         return SandboxAuthResult(
             sandbox=sandbox,
@@ -228,20 +251,11 @@ class SandboxAuthService:
             )
 
         # Record event (best-effort)
-        if self._event_log is not None:
-            try:
-                await asyncio.to_thread(
-                    self._event_log.record,
-                    agent_id=agent_id,
-                    event_type="sandbox.stopped",
-                    payload={"sandbox_id": sandbox_id},
-                )
-            except Exception:
-                logger.warning(
-                    "[SANDBOX-AUTH] Failed to record sandbox.stopped event for agent %s",
-                    agent_id,
-                    exc_info=True,
-                )
+        await self._record_event(
+            agent_id=agent_id,
+            event_type="sandbox.stopped",
+            payload={"sandbox_id": sandbox_id},
+        )
 
         return result
 
@@ -275,22 +289,13 @@ class SandboxAuthService:
         )
 
         # Record event (best-effort)
-        if self._event_log is not None:
-            try:
-                await asyncio.to_thread(
-                    self._event_log.record,
-                    agent_id=agent_id,
-                    event_type="sandbox.connected",
-                    payload={
-                        "sandbox_id": sandbox_id,
-                        "mount_path": mount_path,
-                    },
-                )
-            except Exception:
-                logger.warning(
-                    "[SANDBOX-AUTH] Failed to record sandbox.connected event for agent %s",
-                    agent_id,
-                    exc_info=True,
-                )
+        await self._record_event(
+            agent_id=agent_id,
+            event_type="sandbox.connected",
+            payload={
+                "sandbox_id": sandbox_id,
+                "mount_path": mount_path,
+            },
+        )
 
         return result

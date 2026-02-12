@@ -16,6 +16,7 @@ from nexus.services.conflict_resolution import (
     ConflictAbortError,
     ConflictContext,
     ConflictRecord,
+    ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
     detect_conflict,
@@ -374,7 +375,7 @@ class TestConflictRecord:
             backend_mtime=now,
             backend_size=200,
             conflict_copy_path=None,
-            status="auto_resolved",
+            status=ConflictStatus.AUTO_RESOLVED,
             resolved_at=now,
         )
         with pytest.raises(AttributeError):

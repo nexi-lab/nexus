@@ -49,6 +49,14 @@ class ResolutionOutcome(StrEnum):
     RENAME_CONFLICT = "rename_conflict"
 
 
+class ConflictStatus(StrEnum):
+    """Status of a conflict record in the audit log."""
+
+    AUTO_RESOLVED = "auto_resolved"
+    MANUAL_PENDING = "manual_pending"
+    MANUALLY_RESOLVED = "manually_resolved"
+
+
 @dataclass(frozen=True)
 class ConflictContext:
     """All metadata needed for conflict resolution — replaces positional args."""
@@ -81,7 +89,7 @@ class ConflictRecord:
     backend_mtime: datetime | None
     backend_size: int | None
     conflict_copy_path: str | None  # For RENAME_CONFLICT
-    status: str  # "auto_resolved", "manual_pending", "manually_resolved"
+    status: ConflictStatus
     resolved_at: datetime
 
 

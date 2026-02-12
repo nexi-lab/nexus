@@ -111,6 +111,7 @@ def mock_backlog_store():
     store = MagicMock()
     store.enqueue.return_value = True
     store.fetch_pending.return_value = []
+    store.fetch_distinct_backend_zones.return_value = []
     store.mark_in_progress.return_value = True
     store.mark_completed.return_value = True
     store.mark_failed.return_value = True
@@ -720,12 +721,46 @@ class TestPollLoop:
     ):
         """Poll loop fetches and processes pending entries."""
         entry = _make_entry()
+        mock_backlog_store.fetch_distinct_backend_zones.return_value = [("gcs", "default")]
         mock_backlog_store.fetch_pending.return_value = [entry]
 
         await service._process_all_backends()
 
-        mock_backlog_store.fetch_pending.assert_called()
+        mock_backlog_store.fetch_distinct_backend_zones.assert_called_once()
+        mock_backlog_store.fetch_pending.assert_called_once_with("gcs", "default", limit=50)
         mock_backlog_store.mark_in_progress.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_poll_processes_multiple_zones(self, service, mock_backlog_store, mock_event_bus):
+        """Poll loop processes entries across multiple zones concurrently."""
+        entry_default = _make_entry(zone_id="default")
+        entry_staging = _make_entry(zone_id="staging")
+        mock_backlog_store.fetch_distinct_backend_zones.return_value = [
+            ("gcs", "default"),
+            ("gcs", "staging"),
+            ("s3", "us-east"),
+        ]
+        mock_backlog_store.fetch_pending.side_effect = [
+            [entry_default],
+            [entry_staging],
+            [],  # s3/us-east has no pending entries
+        ]
+
+        await service._process_all_backends()
+
+        assert mock_backlog_store.fetch_pending.call_count == 3
+        mock_backlog_store.fetch_pending.assert_any_call("gcs", "default", limit=50)
+        mock_backlog_store.fetch_pending.assert_any_call("gcs", "staging", limit=50)
+        mock_backlog_store.fetch_pending.assert_any_call("s3", "us-east", limit=50)
+
+    @pytest.mark.asyncio
+    async def test_poll_no_pending_backends(self, service, mock_backlog_store):
+        """Poll loop is a no-op when no backends have pending work."""
+        mock_backlog_store.fetch_distinct_backend_zones.return_value = []
+
+        await service._process_all_backends()
+
+        mock_backlog_store.fetch_pending.assert_not_called()
 
 
 # =============================================================================
@@ -742,6 +777,30 @@ class TestStats:
         assert stats["running"] is False
         assert stats["default_strategy"] == "keep_newer"
         assert "backlog_stats" in stats
+
+
+# =============================================================================
+# Read Nexus Content Failure Tests (#11A)
+# =============================================================================
+
+
+class TestReadNexusContent:
+    """Tests for _read_nexus_content failure paths."""
+
+    def test_returns_none_when_metadata_is_none(self, service, mock_gateway):
+        """Returns None when metadata_get returns None (file not found)."""
+        mock_gateway.metadata_get.return_value = None
+        assert service._read_nexus_content("/mnt/gcs/missing.txt") is None
+
+    def test_returns_none_when_content_hash_is_none(self, service, mock_gateway):
+        """Returns None when file exists but has no content hash."""
+        mock_gateway.metadata_get.return_value = MagicMock(content_hash=None)
+        assert service._read_nexus_content("/mnt/gcs/empty.txt") is None
+
+    def test_returns_none_on_exception(self, service, mock_gateway):
+        """Returns None and logs warning when gateway.read raises."""
+        mock_gateway.metadata_get.side_effect = RuntimeError("DB gone")
+        assert service._read_nexus_content("/mnt/gcs/broken.txt") is None
 
 
 # =============================================================================

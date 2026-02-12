@@ -312,14 +312,33 @@ def test_list_conflicts_with_filters(
     assert body["conflicts"] == []
 
 
-def test_normal_user_can_access_conflicts(
+def test_non_admin_list_conflicts_returns_403(
     base_url: str, client: httpx.Client, alice_headers: dict
 ) -> None:
-    """Normal (non-admin) authenticated user can list conflicts."""
+    """Non-admin authenticated user gets 403 on list conflicts."""
     resp = client.get(f"{base_url}/api/v2/sync/conflicts", headers=alice_headers)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert "conflicts" in body
+    assert resp.status_code == 403
+    assert "Admin role required" in resp.json()["detail"]
+
+
+def test_non_admin_get_conflict_returns_403(
+    base_url: str, client: httpx.Client, alice_headers: dict
+) -> None:
+    """Non-admin authenticated user gets 403 on get conflict."""
+    resp = client.get(f"{base_url}/api/v2/sync/conflicts/some-id", headers=alice_headers)
+    assert resp.status_code == 403
+
+
+def test_non_admin_resolve_conflict_returns_403(
+    base_url: str, client: httpx.Client, alice_headers: dict
+) -> None:
+    """Non-admin authenticated user gets 403 on resolve conflict."""
+    resp = client.post(
+        f"{base_url}/api/v2/sync/conflicts/some-id/resolve",
+        json={"outcome": "nexus_wins"},
+        headers=alice_headers,
+    )
+    assert resp.status_code == 403
 
 
 def test_resolve_invalid_outcome_returns_422(

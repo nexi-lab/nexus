@@ -59,6 +59,9 @@ use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
 use super::{Command, CommandResult, RaftError, Result};
 
+#[cfg(all(feature = "grpc", has_protos))]
+use crate::transport::{NodeAddress, SharedPeerMap};
+
 /// Configuration for a Raft node.
 #[derive(Debug, Clone)]
 pub struct RaftConfig {
@@ -191,9 +194,10 @@ pub enum RaftMsg {
         tx: oneshot::Sender<Result<CommandResult>>,
     },
     /// Propose a configuration change (add/remove node).
+    /// The tx resolves after the ConfChange is **committed and applied** (not just enqueued).
     ProposeConfChange {
         change: ConfChange,
-        tx: oneshot::Sender<Result<()>>,
+        tx: oneshot::Sender<Result<ConfState>>,
     },
     /// Campaign to become leader.
     Campaign { tx: oneshot::Sender<Result<()>> },
@@ -265,6 +269,9 @@ pub struct RaftNodeDriver<S: StateMachine + 'static> {
     config: RaftConfig,
     /// Pending proposals waiting for commit, keyed by proposal ID.
     pending: HashMap<u64, PendingProposal>,
+    /// Pending ConfChanges waiting for commit, keyed by target node_id.
+    /// Resolved in `apply_entries` when the ConfChange is committed.
+    pending_conf_changes: HashMap<u64, oneshot::Sender<Result<ConfState>>>,
     /// Proposal ID counter (shared with handle for ID generation).
     proposal_id: Arc<AtomicU64>,
     /// Last tick time.
@@ -277,6 +284,10 @@ pub struct RaftNodeDriver<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term (shared with handle for reads).
     cached_term: Arc<AtomicU64>,
+    /// Shared peer map — updated when ConfChange adds/removes nodes.
+    /// Set by `set_peer_map()` before the transport loop starts.
+    #[cfg(all(feature = "grpc", has_protos))]
+    peer_map: Option<SharedPeerMap>,
 }
 
 // ---------------------------------------------------------------------------
@@ -288,6 +299,9 @@ const ROLE_FOLLOWER: u8 = 0;
 const ROLE_CANDIDATE: u8 = 1;
 const ROLE_LEADER: u8 = 2;
 const ROLE_PRE_CANDIDATE: u8 = 3;
+
+/// Timeout for proposals and conf changes waiting for commit.
+const PROPOSAL_TIMEOUT_SECS: u64 = 10;
 
 impl NodeRole {
     fn to_u8(self) -> u8 {
@@ -375,12 +389,15 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             state_machine,
             config,
             pending: HashMap::new(),
+            pending_conf_changes: HashMap::new(),
             proposal_id,
             last_tick: Instant::now(),
             msg_rx,
             cached_role,
             cached_leader_id,
             cached_term,
+            #[cfg(all(feature = "grpc", has_protos))]
+            peer_map: None,
         };
 
         Ok((handle, driver))
@@ -458,8 +475,6 @@ impl<S: StateMachine + 'static> RaftNode<S> {
     /// # Timeout
     /// Proposals time out after 10 seconds.
     pub async fn propose(&self, command: Command) -> Result<CommandResult> {
-        const PROPOSAL_TIMEOUT_SECS: u64 = 10;
-
         if !self.is_leader() {
             return Err(RaftError::NotLeader {
                 leader_hint: self.leader_id(),
@@ -497,12 +512,16 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         }
     }
 
-    /// Propose a configuration change.
+    /// Propose a configuration change and wait for it to be committed.
+    ///
+    /// `context` carries the new node's gRPC address (etcd pattern).
+    /// Returns the resulting `ConfState` after the change is applied.
     pub async fn propose_conf_change(
         &self,
         change_type: ConfChangeType,
         node_id: u64,
-    ) -> Result<()> {
+        context: Vec<u8>,
+    ) -> Result<ConfState> {
         if !self.is_leader() {
             return Err(RaftError::NotLeader {
                 leader_hint: self.leader_id(),
@@ -512,13 +531,23 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         let mut cc = ConfChange::default();
         cc.set_change_type(change_type);
         cc.node_id = node_id;
+        cc.context = context.into();
 
         let (tx, rx) = oneshot::channel();
         self.msg_tx
             .send(RaftMsg::ProposeConfChange { change: cc, tx })
             .map_err(|_| RaftError::ChannelClosed)?;
 
-        rx.await.map_err(|_| RaftError::ProposalDropped)?
+        match tokio::time::timeout(
+            Duration::from_secs(PROPOSAL_TIMEOUT_SECS),
+            rx,
+        )
+        .await
+        {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(RaftError::ProposalDropped),
+            Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
+        }
     }
 
     /// Process a message from another node (sends through channel to driver).
@@ -546,6 +575,13 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
     /// Get the node configuration.
     pub fn config(&self) -> &RaftConfig {
         &self.config
+    }
+
+    /// Set the shared peer map so ConfChange can update peers at runtime.
+    /// Must be called before the transport loop starts.
+    #[cfg(all(feature = "grpc", has_protos))]
+    pub fn set_peer_map(&mut self, peer_map: SharedPeerMap) {
+        self.peer_map = Some(peer_map);
     }
 
     /// Drain all pending messages from the channel and process them.
@@ -587,12 +623,20 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                     }
                 }
                 RaftMsg::ProposeConfChange { change, tx } => {
-                    tracing::debug!(node_id = change.node_id, "raft.driver.propose_conf_change");
-                    let result = self
+                    let target_node_id = change.node_id;
+                    tracing::debug!(node_id = target_node_id, "raft.driver.propose_conf_change");
+                    match self
                         .raw_node
                         .propose_conf_change(vec![], change)
-                        .map_err(|e| RaftError::Raft(e.to_string()));
-                    let _ = tx.send(result);
+                    {
+                        Ok(()) => {
+                            // Store tx — will be resolved in apply_entries when committed
+                            self.pending_conf_changes.insert(target_node_id, tx);
+                        }
+                        Err(e) => {
+                            let _ = tx.send(Err(RaftError::Raft(e.to_string())));
+                        }
+                    }
                 }
                 RaftMsg::Campaign { tx } => {
                     tracing::debug!("raft.driver.campaign");
@@ -759,6 +803,26 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                         .set_conf_state(&cs)
                         .map_err(|e| RaftError::Storage(e.to_string()))?;
 
+                    // Update peer map from ConfChange context (etcd pattern)
+                    #[cfg(all(feature = "grpc", has_protos))]
+                    if let Some(ref peer_map) = self.peer_map {
+                        match cc.get_change_type() {
+                            ConfChangeType::AddNode | ConfChangeType::AddLearnerNode => {
+                                if !cc.context.is_empty() {
+                                    let address =
+                                        String::from_utf8_lossy(&cc.context).to_string();
+                                    peer_map.write().unwrap().insert(
+                                        cc.node_id,
+                                        NodeAddress::new(cc.node_id, address),
+                                    );
+                                }
+                            }
+                            ConfChangeType::RemoveNode => {
+                                peer_map.write().unwrap().remove(&cc.node_id);
+                            }
+                        }
+                    }
+
                     tracing::info!(
                         index = entry.index,
                         change_type = ?cc.get_change_type(),
@@ -766,6 +830,11 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
                         voters = ?cs.voters,
                         "raft.conf_change.applied",
                     );
+
+                    // Notify waiting JoinZone caller (if any)
+                    if let Some(tx) = self.pending_conf_changes.remove(&cc.node_id) {
+                        let _ = tx.send(Ok(cs));
+                    }
                 }
             }
         }

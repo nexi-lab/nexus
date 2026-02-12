@@ -945,6 +945,7 @@ class RegisterAgentParams:
     generate_api_key: bool = False
     inherit_permissions: bool = False  # v0.5.1: Default False (zero permissions)
     metadata: dict | None = None  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
+    capabilities: list[str] | None = None  # Issue #1210: Agent capabilities for discovery
     context: dict | None = None  # For compatibility with NexusFS signature
 
 

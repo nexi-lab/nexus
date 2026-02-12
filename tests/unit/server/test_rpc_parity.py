@@ -248,11 +248,11 @@ def test_all_public_methods_are_exposed_or_excluded():
         "amcp_list_tools",  # Delegates to mcp_service.mcp_list_tools()
         "amcp_sync",  # Delegates to mcp_service.mcp_sync()
         "amcp_connect",  # Delegates to mcp_service.mcp_connect()
-        # LLMService delegation (4 methods)
-        "acreate_llm_reader",  # Delegates to llm_service.create_llm_reader()
-        "allm_read",  # Delegates to llm_service.llm_read()
-        "allm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
-        "allm_read_stream",  # Delegates to llm_service.llm_read_stream()
+        # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
+        "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
+        "llm_read",  # Delegates to llm_service.llm_read()
+        "llm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
+        "llm_read_stream",  # Delegates to llm_service.llm_read_stream()
         # OAuthService delegation (7 methods)
         "aoauth_list_providers",  # Delegates to oauth_service.oauth_list_providers()
         "aoauth_get_auth_url",  # Delegates to oauth_service.oauth_get_auth_url()
@@ -303,6 +303,11 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
+        # Issue #1287 Phase B: backward-compat aliases for LLM methods (primary names have @rpc_expose)
+        "allm_read",  # Alias for llm_read
+        "allm_read_detailed",  # Alias for llm_read_detailed
+        "allm_read_stream",  # Alias for llm_read_stream
+        "acreate_llm_reader",  # Alias for create_llm_reader
     }
 
     # Get all public methods

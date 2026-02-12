@@ -66,6 +66,11 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     auth_provider: Any = None
     exposed_methods: dict[str, Any] = {}
     event_loop: Any = None
+    _method_context_params: dict[str, str | None] = {}
+    # Per-request auth cache. Thread-safe: ThreadingHTTPServer creates a new
+    # handler instance per request, so do_POST/do_GET sets an instance attribute
+    # that shadows this class default. Each thread has its own handler.
+    _cached_auth_result: Any = None
 
     # Shared ThreadPoolExecutor for async operations (avoids per-call overhead)
     # Issue: Creating new ThreadPoolExecutor + event loop per call adds ~5-15ms latency
@@ -91,6 +96,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle POST requests (all RPC methods)."""
+        # Clear per-request auth cache (avoids double authenticate() call)
+        self._cached_auth_result = None
         try:
             # Parse URL
             parsed = urlparse(self.path)
@@ -153,6 +160,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         """Handle GET requests (health check, status)."""
+        self._cached_auth_result = None
         try:
             parsed = urlparse(self.path)
 
@@ -284,6 +292,9 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     def _validate_auth(self) -> bool:
         """Validate API key authentication.
 
+        Caches the auth result on self._cached_auth_result so that
+        _get_operation_context() can reuse it without a second authenticate() call.
+
         Returns:
             True if authentication is valid or not required
         """
@@ -312,6 +323,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             result = self._run_async_safe(self.auth_provider.authenticate(token))
             if result is None:
                 return False
+            # Cache auth result to avoid double authenticate() call
+            self._cached_auth_result = result
             return cast(bool, result.authenticated)
 
         # Fall back to static API key (backward compatibility)
@@ -336,14 +349,15 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         if self.auth_provider:
             auth_header = self.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-
-                # PERFORMANCE FIX: Use persistent event loop instead of creating new ones
-                if self.event_loop is None:
-                    logger.error("Event loop not initialized on request handler")
-                    return None
-
-                result = self._run_async_safe(self.auth_provider.authenticate(token))
+                # Reuse cached auth result from _validate_auth() to avoid
+                # a second authenticate() call (~10-30ms saved per request)
+                result = getattr(self, "_cached_auth_result", None)
+                if result is None:
+                    token = auth_header[7:]
+                    if self.event_loop is None:
+                        logger.error("Event loop not initialized on request handler")
+                        return None
+                    result = self._run_async_safe(self.auth_provider.authenticate(token))
                 if result is None:
                     return None
                 if result.authenticated and result.subject_type and result.subject_id:
@@ -1061,25 +1075,12 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             "get_available_namespaces",
         }
 
-        has_exposed = hasattr(self, "exposed_methods")
-        is_dict = isinstance(self.exposed_methods, dict) if has_exposed else False
-        in_exposed = method in self.exposed_methods if is_dict else False
-        not_manual = method not in MANUAL_DISPATCH_METHODS
-
-        logger.debug(
-            f"[DISPATCH-DEBUG] method={method}, has_exposed={has_exposed}, is_dict={is_dict}, in_exposed={in_exposed}, not_manual={not_manual}"
-        )
-
         if (
-            hasattr(self, "exposed_methods")
-            and isinstance(self.exposed_methods, dict)
+            isinstance(self.exposed_methods, dict)
             and method in self.exposed_methods
             and method not in MANUAL_DISPATCH_METHODS
         ):
-            logger.debug(f"[DISPATCH-DEBUG] Using AUTO-DISPATCH for {method}")
             return self._auto_dispatch(method, params)
-
-        logger.debug(f"[DISPATCH-DEBUG] Using MANUAL-DISPATCH for {method}")
 
         # Extract authentication context for manual dispatch
         context = self._get_operation_context()
@@ -1535,7 +1536,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Serialized method result
         """
-        logger.warning(f"[CONTEXT-DEBUG] _auto_dispatch ENTRY: method={method}")
+        logger.debug(f"[AUTO-DISPATCH] method={method}")
         fn = self.exposed_methods[method]
 
         # Convert params dataclass to kwargs dict
@@ -1544,27 +1545,16 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         else:
             kwargs = {}
 
-        # BUGFIX: Extract authentication context for auto-dispatched methods
-        # Only add context if the method signature accepts it
-        import inspect
-
-        sig = inspect.signature(fn)
-        # Check for both "context" and "_context" parameter names
-        # Skills methods use "_context" to avoid Python shadowing issues
-        context_param_name = None
-        if "context" in sig.parameters:
-            context_param_name = "context"
-        elif "_context" in sig.parameters:
-            context_param_name = "_context"
+        # Use cached signature analysis (populated during _discover_exposed_methods)
+        # to avoid calling inspect.signature() on every request
+        context_param_name = self._method_context_params.get(method)
 
         if context_param_name:
             context = self._get_operation_context()
-            logger.warning(
-                f"[CONTEXT-DEBUG] _auto_dispatch: method={method}, context_param={context_param_name}, context={context}"
+            logger.debug(
+                f"[AUTO-DISPATCH] method={method}, context_param={context_param_name}"
             )
             if context is not None:
-                # Pass the OperationContext object directly
-                # Most methods expect OperationContext, not dict
                 kwargs[context_param_name] = context
 
         # Call the method
@@ -1763,17 +1753,21 @@ class NexusRPCServer:
     def _discover_exposed_methods(self) -> dict[str, Any]:
         """Discover all methods marked with @rpc_expose decorator.
 
+        Also pre-caches which methods accept a context parameter, so that
+        _auto_dispatch() avoids calling inspect.signature() on every request.
+
         Returns:
             Dictionary mapping method names to callable methods
         """
+        import inspect
+
         exposed = {}
+        context_params: dict[str, str | None] = {}
 
         logger.debug(f"Starting method discovery on {type(self.nexus_fs).__name__}")
-        logger.debug(f"NexusFS type: {type(self.nexus_fs)}")
 
         # Iterate through all attributes of the NexusFS instance
         dir_names = dir(self.nexus_fs)
-        logger.debug(f"Total attributes to check: {len(dir_names)}")
 
         for name in dir_names:
             # Skip private methods
@@ -1783,22 +1777,27 @@ class NexusRPCServer:
             try:
                 attr = getattr(self.nexus_fs, name)
 
-                # Log rebac methods specifically
-                if name.startswith("rebac"):
-                    logger.debug(
-                        f"Checking {name}: callable={callable(attr)}, has_marker={hasattr(attr, '_rpc_exposed')}"
-                    )
-
                 # Check if it's callable and has the _rpc_exposed marker
                 if callable(attr) and hasattr(attr, "_rpc_exposed"):
                     method_name = getattr(attr, "_rpc_name", name)
                     exposed[method_name] = attr
+
+                    # Cache context parameter name for this method
+                    sig = inspect.signature(attr)
+                    if "context" in sig.parameters:
+                        context_params[method_name] = "context"
+                    elif "_context" in sig.parameters:
+                        context_params[method_name] = "_context"
+
                     logger.debug(f"Discovered RPC method: {method_name}")
 
             except Exception as e:
-                # Some attributes might raise exceptions when accessed
                 logger.debug(f"Skipping attribute {name}: {e}")
                 continue
+
+        # Store context param cache on the handler CLASS for _auto_dispatch
+        # (this method runs on NexusRPCServer, but the cache is read by RPCRequestHandler)
+        RPCRequestHandler._method_context_params = context_params
 
         logger.debug(f"Auto-discovered {len(exposed)} RPC methods")
         return exposed

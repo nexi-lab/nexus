@@ -29,8 +29,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.context_utils import get_user_identity, get_zone_id
+from nexus.core.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
+from nexus.services.permission_utils import check_permission
 
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
@@ -831,6 +832,9 @@ class SyncService:
         Also cleans up stale BackendChangeLogModel entries to prevent
         false skips when files are re-created (Issue #1127).
 
+        Uses batch deletion for change log entries to reduce O(N) DB
+        sessions to O(1).
+
         Args:
             ctx: SyncContext
             backend: Backend instance (for backend_name in change log cleanup)
@@ -842,7 +846,7 @@ class SyncService:
 
         try:
             # Get other mount points to exclude
-            other_mount_points = set()
+            other_mount_points: set[str] = set()
             try:
                 all_mounts = self._gw.list_mounts()
                 for m in all_mounts:
@@ -861,6 +865,9 @@ class SyncService:
 
             sorted_mounts = sorted(other_mount_points)
 
+            # Collect paths to delete, then batch-delete change logs
+            paths_to_delete: list[str] = []
+
             for existing_path in existing_by_path:
                 # Skip the mount point itself
                 if existing_path == ctx.mount_point:
@@ -874,7 +881,7 @@ class SyncService:
                 if _belongs_to_other_mount(existing_path, sorted_mounts):
                     continue
 
-                # Delete from metadata
+                # Delete from metadata (sled store - fast per-item access)
                 try:
                     meta = existing_by_path[existing_path]
                     if meta:
@@ -883,14 +890,16 @@ class SyncService:
                         )
                         self._gw.metadata_delete(existing_path)
                         result.files_deleted += 1
-
-                        # Issue #1127: Clean up stale change log entry
-                        self._change_log.delete_change_log(
-                            existing_path, backend.name, zone_id or "default"
-                        )
+                        paths_to_delete.append(existing_path)
                 except Exception as e:
                     result.errors.append(f"Failed to delete {existing_path}: {e}")
                     logger.warning(f"Failed to delete {existing_path}: {e}")
+
+            # Issue #1127: Batch-delete stale change log entries (single DB session)
+            if paths_to_delete:
+                self._change_log.delete_change_logs_batch(
+                    paths_to_delete, backend.name, zone_id or "default"
+                )
 
         except Exception as e:
             result.errors.append(f"Failed to check for deletions: {e}")
@@ -1163,36 +1172,7 @@ class SyncService:
     ) -> bool:
         """Check if user has permission on path.
 
-        Args:
-            path: Virtual path to check
-            permission: Permission to check ("read", "write")
-            context: Operation context
-
-        Returns:
-            True if user has permission
+        Delegates to shared permission_utils.check_permission.
+        Raises PermissionCheckError on infrastructure failures.
         """
-        if not context:
-            # No context = allow (backward compatibility)
-            return True
-
-        try:
-            # Admin users bypass permission checks
-            is_admin = getattr(context, "is_admin", False)
-            if is_admin:
-                return True
-
-            subject_type, subject_id = get_user_identity(context)
-            if not subject_id:
-                return False
-
-            zone_id = get_zone_id(context)
-
-            return self._gw.rebac_check(
-                subject=(subject_type, subject_id),
-                permission=permission,
-                object=("file", path),
-                zone_id=zone_id,
-            )
-        except Exception as e:
-            logger.error(f"Permission check failed for {path}: {e}")
-            return False
+        return check_permission(self._gw, path, permission, context)

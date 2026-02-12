@@ -2,13 +2,16 @@
 
 Coordinates sandbox lifecycle management using providers (E2B, Docker, etc.)
 and database metadata storage. Handles creation, TTL tracking, and cleanup.
+
+Uses session-per-operation pattern: each DB operation gets a fresh session
+from the session_factory, preventing stale identity maps and connection leaks.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
@@ -53,12 +56,12 @@ class SandboxManager:
     - Handle lifecycle operations (pause/resume/stop)
     - Clean up expired sandboxes
 
-    Note: Providers are async. Database operations use sync sessions.
+    Note: Providers are async. Database operations use sync sessions (session-per-op).
     """
 
     def __init__(
         self,
-        db_session: Session,
+        session_factory: Callable[[], Session],
         e2b_api_key: str | None = None,
         e2b_team_id: str | None = None,
         e2b_template_id: str | None = None,
@@ -67,13 +70,13 @@ class SandboxManager:
         """Initialize sandbox manager.
 
         Args:
-            db_session: Database session for metadata (sync)
+            session_factory: Factory that creates fresh DB sessions
             e2b_api_key: E2B API key
             e2b_team_id: E2B team ID
             e2b_template_id: Default E2B template ID
             config: Nexus configuration (for Docker templates)
         """
-        self.db = db_session
+        self._session_factory = session_factory
 
         # Initialize providers
         self.providers: dict[str, SandboxProvider] = {}
@@ -105,6 +108,121 @@ class SandboxManager:
                 logger.warning(f"Failed to initialize Docker provider: {e}")
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
+
+    @contextmanager
+    def _get_session(self) -> Generator[Session, None, None]:
+        """Create a fresh session for a single DB operation."""
+        session = self._session_factory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def _execute_with_retry(
+        self, operation: Callable[[Session], _T], context: str = "query"
+    ) -> _T:
+        """Execute a database operation with one retry on PendingRollbackError.
+
+        Each attempt gets a fresh session from the factory.
+
+        Args:
+            operation: Callable that accepts a Session and returns a value.
+            context: Human-readable label for log messages.
+
+        Returns:
+            Whatever ``operation`` returns.
+
+        Raises:
+            SQLAlchemyError: If the retry also fails.
+        """
+        try:
+            with self._get_session() as session:
+                return operation(session)
+        except (PendingRollbackError, SQLAlchemyError) as exc:
+            logger.warning("Database error during %s: %s", context, exc)
+            try:
+                with self._get_session() as session:
+                    return operation(session)
+            except SQLAlchemyError as retry_exc:
+                logger.error("Database error persisted after retry: %s", retry_exc)
+                raise
+
+    def _get_metadata(self, sandbox_id: str) -> dict[str, Any]:
+        """Get sandbox metadata from database as a dict.
+
+        Returns a dict to avoid detached ORM object issues across sessions.
+
+        Args:
+            sandbox_id: Sandbox ID
+
+        Returns:
+            Sandbox metadata dict with all fields
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+        """
+
+        def _query(session: Session) -> SandboxMetadataModel | None:
+            result = session.execute(
+                select(SandboxMetadataModel).where(
+                    SandboxMetadataModel.sandbox_id == sandbox_id
+                )
+            )
+            return result.scalar_one_or_none()
+
+        metadata = self._execute_with_retry(_query, context="metadata lookup")
+
+        if not metadata:
+            raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
+
+        return self._metadata_to_dict(metadata)
+
+    def _get_metadata_field(self, sandbox_id: str, field: str) -> Any:
+        """Get a single field from sandbox metadata."""
+
+        def _query(session: Session) -> Any:
+            result = session.execute(
+                select(SandboxMetadataModel).where(
+                    SandboxMetadataModel.sandbox_id == sandbox_id
+                )
+            )
+            metadata = result.scalar_one_or_none()
+            if not metadata:
+                raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
+            return getattr(metadata, field)
+
+        return self._execute_with_retry(_query, context=f"metadata field {field}")
+
+    def _update_metadata(self, sandbox_id: str, **updates: Any) -> dict[str, Any]:
+        """Re-query and update metadata fields in a fresh session.
+
+        Args:
+            sandbox_id: Sandbox ID
+            **updates: Field name -> value pairs to update
+
+        Returns:
+            Updated metadata dict
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+        """
+        with self._get_session() as session:
+            metadata = session.execute(
+                select(SandboxMetadataModel).where(
+                    SandboxMetadataModel.sandbox_id == sandbox_id
+                )
+            ).scalar_one_or_none()
+            if not metadata:
+                raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
+            for key, value in updates.items():
+                setattr(metadata, key, value)
+            session.flush()
+            session.refresh(metadata)
+            return self._metadata_to_dict(metadata)
 
     async def create_sandbox(
         self,
@@ -154,9 +272,8 @@ class SandboxManager:
             )
 
         # Check name uniqueness for active sandboxes only
-        # Allow reusing name if existing sandbox is stopped/paused
-        def _check_name() -> SandboxMetadataModel | None:
-            result = self.db.execute(
+        def _check_name(session: Session) -> SandboxMetadataModel | None:
+            result = session.execute(
                 select(SandboxMetadataModel).where(
                     SandboxMetadataModel.user_id == user_id,
                     SandboxMetadataModel.name == name,
@@ -190,8 +307,6 @@ class SandboxManager:
         )
 
         # OPTIMIZATION: Start pre-warming Python imports in background
-        # This runs while we do DB operations and return to user
-        # By the time connect() is called, imports should be cached
         if hasattr(provider_obj, "prewarm_imports"):
             try:
                 await provider_obj.prewarm_imports(sandbox_id)
@@ -202,30 +317,30 @@ class SandboxManager:
         now = datetime.now(UTC)
         expires_at = now + timedelta(minutes=ttl_minutes)
 
-        # Create database record
-        metadata = SandboxMetadataModel(
-            sandbox_id=sandbox_id,
-            name=name,
-            user_id=user_id,
-            agent_id=agent_id,
-            zone_id=zone_id,
-            provider=provider,
-            template_id=template_id,
-            status="active",
-            created_at=now,
-            last_active_at=now,
-            ttl_minutes=ttl_minutes,
-            expires_at=expires_at,
-            auto_created=1,  # PostgreSQL integer type
-        )
-
-        self.db.add(metadata)
+        # Create database record in a fresh session
         try:
-            self.db.commit()
-            self.db.refresh(metadata)
+            with self._get_session() as session:
+                metadata = SandboxMetadataModel(
+                    sandbox_id=sandbox_id,
+                    name=name,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    zone_id=zone_id,
+                    provider=provider,
+                    template_id=template_id,
+                    status="active",
+                    created_at=now,
+                    last_active_at=now,
+                    ttl_minutes=ttl_minutes,
+                    expires_at=expires_at,
+                    auto_created=1,  # PostgreSQL integer type
+                )
+                session.add(metadata)
+                session.flush()
+                session.refresh(metadata)
+                result_dict = self._metadata_to_dict(metadata)
         except SQLAlchemyError as e:
             logger.error(f"Failed to commit new sandbox metadata: {e}")
-            self.db.rollback()
             # Cleanup orphaned container to prevent resource leak (#1307)
             try:
                 await provider_obj.destroy(sandbox_id)
@@ -238,7 +353,7 @@ class SandboxManager:
             f"Created sandbox {sandbox_id} (name={name}, user={user_id}, provider={provider})"
         )
 
-        return self._metadata_to_dict(metadata)
+        return result_dict
 
     async def run_code(
         self,
@@ -264,23 +379,22 @@ class SandboxManager:
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        # Get metadata
-        metadata = self._get_metadata(sandbox_id)
+        # Get metadata (provider name and TTL)
+        meta_dict = self._get_metadata(sandbox_id)
+        provider_name = meta_dict["provider"]
+        ttl = meta_dict["ttl_minutes"]
 
         # Run code via provider
-        provider = self.providers[metadata.provider]
+        provider = self.providers[provider_name]
         result = await provider.run_code(sandbox_id, language, code, timeout, as_script=as_script)
 
         # Update last_active_at and expires_at
         now = datetime.now(UTC)
-        metadata.last_active_at = now
-        metadata.expires_at = now + timedelta(minutes=metadata.ttl_minutes)
-        try:
-            self.db.commit()
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to commit sandbox activity update: {e}")
-            self.db.rollback()
-            raise
+        self._update_metadata(
+            sandbox_id,
+            last_active_at=now,
+            expires_at=now + timedelta(minutes=ttl),
+        )
 
         logger.debug(f"Executed {language} code in sandbox {sandbox_id}")
 
@@ -304,26 +418,23 @@ class SandboxManager:
             SandboxNotFoundError: If sandbox doesn't exist
             UnsupportedOperationError: If provider doesn't support pause
         """
-        metadata = self._get_metadata(sandbox_id)
+        meta_dict = self._get_metadata(sandbox_id)
+        provider_name = meta_dict["provider"]
 
         # Pause via provider
-        provider = self.providers[metadata.provider]
+        provider = self.providers[provider_name]
         await provider.pause(sandbox_id)
 
         # Update metadata
-        metadata.status = "paused"
-        metadata.paused_at = datetime.now(UTC)
-        metadata.expires_at = None  # Don't expire while paused
-        try:
-            self.db.commit()
-            self.db.refresh(metadata)
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to commit sandbox pause: {e}")
-            self.db.rollback()
-            raise
+        result = self._update_metadata(
+            sandbox_id,
+            status="paused",
+            paused_at=datetime.now(UTC),
+            expires_at=None,
+        )
 
         logger.info(f"Paused sandbox {sandbox_id}")
-        return self._metadata_to_dict(metadata)
+        return result
 
     async def resume_sandbox(self, sandbox_id: str) -> dict[str, Any]:
         """Resume paused sandbox.
@@ -338,28 +449,26 @@ class SandboxManager:
             SandboxNotFoundError: If sandbox doesn't exist
             UnsupportedOperationError: If provider doesn't support resume
         """
-        metadata = self._get_metadata(sandbox_id)
+        meta_dict = self._get_metadata(sandbox_id)
+        provider_name = meta_dict["provider"]
+        ttl = meta_dict["ttl_minutes"]
 
         # Resume via provider
-        provider = self.providers[metadata.provider]
+        provider = self.providers[provider_name]
         await provider.resume(sandbox_id)
 
         # Update metadata
         now = datetime.now(UTC)
-        metadata.status = "active"
-        metadata.last_active_at = now
-        metadata.expires_at = now + timedelta(minutes=metadata.ttl_minutes)
-        metadata.paused_at = None
-        try:
-            self.db.commit()
-            self.db.refresh(metadata)
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to commit sandbox resume: {e}")
-            self.db.rollback()
-            raise
+        result = self._update_metadata(
+            sandbox_id,
+            status="active",
+            last_active_at=now,
+            expires_at=now + timedelta(minutes=ttl),
+            paused_at=None,
+        )
 
         logger.info(f"Resumed sandbox {sandbox_id}")
-        return self._metadata_to_dict(metadata)
+        return result
 
     async def stop_sandbox(self, sandbox_id: str) -> dict[str, Any]:
         """Stop and destroy sandbox.
@@ -373,26 +482,23 @@ class SandboxManager:
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        metadata = self._get_metadata(sandbox_id)
+        meta_dict = self._get_metadata(sandbox_id)
+        provider_name = meta_dict["provider"]
 
         # Destroy via provider
-        provider = self.providers[metadata.provider]
+        provider = self.providers[provider_name]
         await provider.destroy(sandbox_id)
 
         # Update metadata
-        metadata.status = "stopped"
-        metadata.stopped_at = datetime.now(UTC)
-        metadata.expires_at = None
-        try:
-            self.db.commit()
-            self.db.refresh(metadata)
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to commit sandbox stop: {e}")
-            self.db.rollback()
-            raise
+        result = self._update_metadata(
+            sandbox_id,
+            status="stopped",
+            stopped_at=datetime.now(UTC),
+            expires_at=None,
+        )
 
         logger.info(f"Stopped sandbox {sandbox_id}")
-        return self._metadata_to_dict(metadata)
+        return result
 
     async def list_sandboxes(
         self,
@@ -425,82 +531,74 @@ class SandboxManager:
         if status:
             query = query.where(SandboxMetadataModel.status == status)
 
-        def _list_query() -> list[SandboxMetadataModel]:
-            return list(self.db.execute(query).scalars().all())
+        def _list_query(session: Session) -> list[dict[str, Any]]:
+            sandboxes = list(session.execute(query).scalars().all())
+            return [
+                {**self._metadata_to_dict(sb), "_sandbox_id": sb.sandbox_id, "_provider": sb.provider, "_status": sb.status}
+                for sb in sandboxes
+            ]
 
-        sandboxes = self._execute_with_retry(_list_query, context="sandbox list")
+        sandbox_dicts = self._execute_with_retry(_list_query, context="sandbox list")
 
-        # Convert to dicts
-        sandbox_dicts = [self._metadata_to_dict(sb) for sb in sandboxes]
+        # Strip internal fields and optionally verify status
+        result_dicts = []
+        for sb_dict in sandbox_dicts:
+            sb_id = sb_dict.pop("_sandbox_id")
+            sb_provider = sb_dict.pop("_provider")
+            sb_status = sb_dict.pop("_status")
+            result_dicts.append(sb_dict)
 
-        # Verify status with provider if requested
-        if verify_status:
-            for i, metadata in enumerate(sandboxes):
-                try:
-                    # Get provider for this sandbox
-                    provider = self.providers.get(metadata.provider)
-                    if not provider:
-                        logger.warning(
-                            f"Provider '{metadata.provider}' not available for sandbox {metadata.sandbox_id}"
-                        )
-                        sandbox_dicts[i]["verified"] = False
-                        continue
+            if not verify_status:
+                continue
 
-                    # Get actual status from provider
-                    provider_info = await provider.get_info(metadata.sandbox_id)
-                    actual_status = provider_info.status
-
-                    # Update dict with verified status
-                    sandbox_dicts[i]["verified"] = True
-                    sandbox_dicts[i]["provider_status"] = actual_status
-
-                    # Update database if status has changed
-                    if actual_status != metadata.status:
-                        logger.info(
-                            f"Status mismatch for {metadata.sandbox_id}: "
-                            f"DB={metadata.status}, Provider={actual_status}. Updating DB."
-                        )
-                        metadata.status = actual_status
-                        # Update stopped_at if provider shows stopped
-                        if actual_status == "stopped" and not metadata.stopped_at:
-                            metadata.stopped_at = datetime.now(UTC)
-                            metadata.expires_at = None
-                        try:
-                            self.db.commit()
-                        except SQLAlchemyError as e:
-                            logger.error(f"Failed to commit sandbox status update: {e}")
-                            self.db.rollback()
-                            raise
-                        sandbox_dicts[i]["status"] = actual_status
-
-                except SandboxNotFoundError:
-                    # Sandbox doesn't exist in provider anymore
+            try:
+                provider = self.providers.get(sb_provider)
+                if not provider:
                     logger.warning(
-                        f"Sandbox {metadata.sandbox_id} not found in provider. Marking as stopped."
+                        f"Provider '{sb_provider}' not available for sandbox {sb_id}"
                     )
-                    sandbox_dicts[i]["verified"] = True
-                    sandbox_dicts[i]["provider_status"] = "stopped"
+                    sb_dict["verified"] = False
+                    continue
 
-                    if metadata.status != "stopped":
-                        metadata.status = "stopped"
-                        metadata.stopped_at = datetime.now(UTC)
-                        metadata.expires_at = None
-                        try:
-                            self.db.commit()
-                        except SQLAlchemyError as e:
-                            logger.error(f"Failed to commit sandbox status update: {e}")
-                            self.db.rollback()
-                            raise
-                        sandbox_dicts[i]["status"] = "stopped"
+                provider_info = await provider.get_info(sb_id)
+                actual_status = provider_info.status
 
-                except Exception as e:
-                    logger.warning(f"Failed to verify status for {metadata.sandbox_id}: {e}")
-                    sandbox_dicts[i]["verified"] = False
-                    # Rollback any pending transaction on error
-                    with contextlib.suppress(Exception):
-                        self.db.rollback()
+                sb_dict["verified"] = True
+                sb_dict["provider_status"] = actual_status
 
-        return sandbox_dicts
+                if actual_status != sb_status:
+                    logger.info(
+                        f"Status mismatch for {sb_id}: "
+                        f"DB={sb_status}, Provider={actual_status}. Updating DB."
+                    )
+                    updates: dict[str, Any] = {"status": actual_status}
+                    if actual_status == "stopped":
+                        updates["stopped_at"] = datetime.now(UTC)
+                        updates["expires_at"] = None
+                    self._update_metadata(sb_id, **updates)
+                    sb_dict["status"] = actual_status
+
+            except SandboxNotFoundError:
+                logger.warning(
+                    f"Sandbox {sb_id} not found in provider. Marking as stopped."
+                )
+                sb_dict["verified"] = True
+                sb_dict["provider_status"] = "stopped"
+
+                if sb_status != "stopped":
+                    self._update_metadata(
+                        sb_id,
+                        status="stopped",
+                        stopped_at=datetime.now(UTC),
+                        expires_at=None,
+                    )
+                    sb_dict["status"] = "stopped"
+
+            except Exception as e:
+                logger.warning(f"Failed to verify status for {sb_id}: {e}")
+                sb_dict["verified"] = False
+
+        return result_dicts
 
     async def get_sandbox_status(self, sandbox_id: str) -> dict[str, Any]:
         """Get sandbox status and metadata.
@@ -514,8 +612,7 @@ class SandboxManager:
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
         """
-        metadata = self._get_metadata(sandbox_id)
-        return self._metadata_to_dict(metadata)
+        return self._get_metadata(sandbox_id)
 
     async def get_or_create_sandbox(
         self,
@@ -553,85 +650,78 @@ class SandboxManager:
         """
 
         # OPTIMIZATION: Query directly for exact name match instead of listing all
-        # This avoids verifying unrelated sandboxes (saves ~18s)
-        def _find_active() -> SandboxMetadataModel | None:
-            result = self.db.execute(
+        def _find_active(session: Session) -> dict[str, Any] | None:
+            result = session.execute(
                 select(SandboxMetadataModel).where(
                     SandboxMetadataModel.user_id == user_id,
                     SandboxMetadataModel.name == name,
                     SandboxMetadataModel.status == "active",
                 )
             )
-            return result.scalar_one_or_none()
+            metadata = result.scalar_one_or_none()
+            if metadata:
+                return {
+                    **self._metadata_to_dict(metadata),
+                    "_sandbox_id": metadata.sandbox_id,
+                    "_provider": metadata.provider,
+                }
+            return None
 
         existing = self._execute_with_retry(_find_active, context="sandbox lookup")
 
         if existing:
-            sandbox_dict = self._metadata_to_dict(existing)
+            sb_id = existing.pop("_sandbox_id")
+            sb_provider = existing.pop("_provider")
 
             if verify_status:
-                # Verify ONLY this specific sandbox with provider
                 try:
-                    provider_obj = self.providers.get(existing.provider)
+                    provider_obj = self.providers.get(sb_provider)
                     if provider_obj:
-                        provider_info = await provider_obj.get_info(existing.sandbox_id)
+                        provider_info = await provider_obj.get_info(sb_id)
                         actual_status = provider_info.status
 
                         if actual_status == "active":
-                            # Sandbox is alive, return it
-                            sandbox_dict["verified"] = True
-                            sandbox_dict["provider_status"] = actual_status
+                            existing["verified"] = True
+                            existing["provider_status"] = actual_status
                             logger.info(
-                                f"Found and verified existing sandbox {existing.sandbox_id} "
+                                f"Found and verified existing sandbox {sb_id} "
                                 f"(name={name}, user={user_id})"
                             )
-                            return sandbox_dict
+                            return existing
                         else:
-                            # Sandbox is dead, update DB and create new
                             logger.warning(
-                                f"Sandbox {existing.sandbox_id} status mismatch: "
+                                f"Sandbox {sb_id} status mismatch: "
                                 f"DB=active, Provider={actual_status}. Creating new."
                             )
-                            existing.status = "stopped"
-                            existing.stopped_at = datetime.now(UTC)
-                            existing.expires_at = None
-                            try:
-                                self.db.commit()
-                            except SQLAlchemyError as e:
-                                logger.error(f"Failed to commit sandbox status update: {e}")
-                                self.db.rollback()
-                                raise
+                            self._update_metadata(
+                                sb_id,
+                                status="stopped",
+                                stopped_at=datetime.now(UTC),
+                                expires_at=None,
+                            )
                     else:
                         logger.warning(
-                            f"Provider '{existing.provider}' not available for verification"
+                            f"Provider '{sb_provider}' not available for verification"
                         )
                 except SandboxNotFoundError:
-                    # Sandbox doesn't exist in provider, mark as stopped
                     logger.warning(
-                        f"Sandbox {existing.sandbox_id} not found in provider. "
+                        f"Sandbox {sb_id} not found in provider. "
                         f"Marking as stopped and creating new."
                     )
-                    existing.status = "stopped"
-                    existing.stopped_at = datetime.now(UTC)
-                    existing.expires_at = None
-                    try:
-                        self.db.commit()
-                    except SQLAlchemyError as e:
-                        logger.error(f"Failed to commit sandbox status update: {e}")
-                        self.db.rollback()
-                        raise
+                    self._update_metadata(
+                        sb_id,
+                        status="stopped",
+                        stopped_at=datetime.now(UTC),
+                        expires_at=None,
+                    )
                 except Exception as e:
-                    logger.warning(f"Failed to verify sandbox {existing.sandbox_id}: {e}")
-                    # Rollback any pending transaction on error
-                    with contextlib.suppress(Exception):
-                        self.db.rollback()
+                    logger.warning(f"Failed to verify sandbox {sb_id}: {e}")
             else:
-                # No verification requested - use cached status
                 logger.info(
-                    f"Found existing sandbox {existing.sandbox_id} "
+                    f"Found existing sandbox {sb_id} "
                     f"(name={name}, user={user_id}) - not verified"
                 )
-                return sandbox_dict
+                return existing
 
         # No active sandbox found - create new one
         logger.info(
@@ -653,26 +743,22 @@ class SandboxManager:
                 # Race condition: sandbox was created between check and create
                 logger.warning("Sandbox name conflict detected. Cleaning up stale sandbox...")
                 try:
-                    result = self.db.execute(
-                        select(SandboxMetadataModel).where(
-                            SandboxMetadataModel.user_id == user_id,
-                            SandboxMetadataModel.name == name,
+                    def _cleanup_stale(session: Session) -> None:
+                        result = session.execute(
+                            select(SandboxMetadataModel).where(
+                                SandboxMetadataModel.user_id == user_id,
+                                SandboxMetadataModel.name == name,
+                            )
                         )
-                    )
-                    stale = result.scalar_one_or_none()
-                    if stale:
-                        stale.status = "stopped"
-                        stale.stopped_at = datetime.now(UTC)
-                        try:
-                            self.db.commit()
-                        except SQLAlchemyError as e:
-                            logger.error(f"Failed to commit stale sandbox update: {e}")
-                            self.db.rollback()
-                            raise
-                        logger.info(f"Marked stale sandbox {stale.sandbox_id} as stopped")
-                except (PendingRollbackError, SQLAlchemyError) as e:
-                    logger.error(f"Database error during stale sandbox cleanup: {e}")
-                    self.db.rollback()
+                        stale = result.scalar_one_or_none()
+                        if stale:
+                            stale.status = "stopped"
+                            stale.stopped_at = datetime.now(UTC)
+                            logger.info(f"Marked stale sandbox {stale.sandbox_id} as stopped")
+
+                    self._execute_with_retry(_cleanup_stale, context="stale sandbox cleanup")
+                except SQLAlchemyError as db_err:
+                    logger.error(f"Database error during stale sandbox cleanup: {db_err}")
                     raise
 
                 # Retry create with modified name
@@ -741,21 +827,17 @@ class SandboxManager:
         provider_obj = self.providers[provider]
 
         # OPTIMIZATION: Auto-detect skip_dependency_checks based on template
-        # Known templates with pre-installed dependencies don't need checks (saves ~10s)
         if skip_dependency_checks is None:
-            # Check if this sandbox uses a known template with pre-installed deps
             try:
-                metadata = self._get_metadata(sandbox_id)
-                template_id = metadata.template_id
-                # Templates known to have nexus/fusepy pre-installed
+                meta_dict = self._get_metadata(sandbox_id)
+                tid = meta_dict.get("template_id")
                 preinstalled_templates = {"nexus-sandbox", "nexus-fuse", "aquarius-worker"}
-                if template_id and any(t in template_id for t in preinstalled_templates):
+                if tid and any(t in tid for t in preinstalled_templates):
                     skip_dependency_checks = True
-                    logger.info(f"Auto-skipping dependency checks for template '{template_id}'")
+                    logger.info(f"Auto-skipping dependency checks for template '{tid}'")
                 else:
                     skip_dependency_checks = False
             except SandboxNotFoundError:
-                # External sandbox, can't determine template - be safe and check deps
                 skip_dependency_checks = False
 
         logger.info(
@@ -763,9 +845,6 @@ class SandboxManager:
             f"skip_checks={skip_dependency_checks})"
         )
 
-        # Mount Nexus in the sandbox
-        # The provider's mount_nexus will handle connecting to the sandbox
-        # (either from cache for Nexus-managed, or reconnecting for user-managed)
         mount_result = await provider_obj.mount_nexus(
             sandbox_id=sandbox_id,
             mount_path=mount_path,
@@ -850,10 +929,9 @@ class SandboxManager:
         """
         now = datetime.now(UTC)
 
-        # Find expired sandboxes
-        def _find_expired() -> list[SandboxMetadataModel]:
-            result = self.db.execute(
-                select(SandboxMetadataModel).where(
+        def _find_expired(session: Session) -> list[str]:
+            result = session.execute(
+                select(SandboxMetadataModel.sandbox_id).where(
                     SandboxMetadataModel.status == "active",
                     SandboxMetadataModel.expires_at < now,
                 )
@@ -861,80 +939,27 @@ class SandboxManager:
             return list(result.scalars().all())
 
         try:
-            expired = self._execute_with_retry(_find_expired, context="expired sandbox query")
+            expired_ids = self._execute_with_retry(_find_expired, context="expired sandbox query")
         except SQLAlchemyError:
             return 0
 
         count = 0
-        for metadata in expired:
+        for sb_id in expired_ids:
             try:
-                await self.stop_sandbox(metadata.sandbox_id)
+                await self.stop_sandbox(sb_id)
                 count += 1
             except Exception as e:
-                logger.error(f"Failed to cleanup sandbox {metadata.sandbox_id}: {e}")
+                logger.error(f"Failed to cleanup sandbox {sb_id}: {e}")
 
         if count > 0:
             logger.info(f"Cleaned up {count} expired sandboxes")
 
         return count
 
-    def _execute_with_retry(self, operation: Callable[[], _T], context: str = "query") -> _T:
-        """Execute a database operation with one retry on PendingRollbackError.
-
-        Pattern: try operation → on DB error, rollback and retry once → on
-        second failure, rollback and raise.  Eliminates 5 duplicate try/except
-        blocks across SandboxManager methods (Issue #1307 DRY fix).
-
-        Args:
-            operation: Zero-arg callable that performs the DB work and returns a value.
-            context: Human-readable label for log messages.
-
-        Returns:
-            Whatever ``operation`` returns.
-
-        Raises:
-            SQLAlchemyError: If the retry also fails.
-        """
-        try:
-            return operation()
-        except (PendingRollbackError, SQLAlchemyError) as exc:
-            logger.warning("Database error during %s, rolling back: %s", context, exc)
-            self.db.rollback()
-            try:
-                return operation()
-            except SQLAlchemyError as retry_exc:
-                logger.error("Database error persisted after rollback: %s", retry_exc)
-                self.db.rollback()
-                raise
-
-    def _get_metadata(self, sandbox_id: str) -> SandboxMetadataModel:
-        """Get sandbox metadata from database.
-
-        Args:
-            sandbox_id: Sandbox ID
-
-        Returns:
-            Sandbox metadata
-
-        Raises:
-            SandboxNotFoundError: If sandbox doesn't exist
-        """
-
-        def _query() -> SandboxMetadataModel | None:
-            result = self.db.execute(
-                select(SandboxMetadataModel).where(SandboxMetadataModel.sandbox_id == sandbox_id)
-            )
-            return result.scalar_one_or_none()
-
-        metadata = self._execute_with_retry(_query, context="metadata lookup")
-
-        if not metadata:
-            raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found")
-
-        return metadata
-
     def _metadata_to_dict(self, metadata: SandboxMetadataModel) -> dict[str, Any]:
         """Convert metadata model to dict.
+
+        Must be called while the session that loaded the model is still open.
 
         Args:
             metadata: Sandbox metadata model

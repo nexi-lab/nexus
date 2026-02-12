@@ -8,45 +8,46 @@ This module contains the auth cache, authentication dependency functions
 from __future__ import annotations
 
 import hashlib
+import hmac
 import logging
-import time
 from typing import Any
 
+from cachetools import TTLCache
 from fastapi import Depends, Header, HTTPException
+
+from nexus.server.token_utils import parse_sk_token
 
 logger = logging.getLogger(__name__)
 
-# Auth cache: token_hash -> (result, expiry_time)
+# Auth cache: token_hash -> auth result dict
 # TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
-_AUTH_CACHE: dict[str, tuple[dict[str, Any], float]] = {}
-_AUTH_CACHE_TTL = 900  # 15 minutes in seconds
-_AUTH_CACHE_MAX_SIZE = 1000  # Prevent unbounded growth
+# Max 1000 entries - cachetools handles eviction automatically (LRU when full)
+_AUTH_CACHE_TTL = 900
+_AUTH_CACHE_MAX_SIZE = 1000
+_AUTH_CACHE: TTLCache[str, dict[str, Any]] = TTLCache(
+    maxsize=_AUTH_CACHE_MAX_SIZE, ttl=_AUTH_CACHE_TTL
+)
 
 
 def _get_cached_auth(token: str) -> dict[str, Any] | None:
-    """Get cached auth result if valid."""
+    """Get cached auth result if valid. Returns a copy to prevent mutation."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
     cached = _AUTH_CACHE.get(token_hash)
-    if cached:
-        result, expiry = cached
-        if time.time() < expiry:
-            return result
-        # Expired, remove from cache
-        _AUTH_CACHE.pop(token_hash, None)
+    if cached is not None:
+        # Return a shallow copy to prevent callers from mutating the cached entry
+        return dict(cached)
     return None
 
 
 def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
     """Cache auth result with TTL."""
-    # Simple size limit: remove oldest if too large
-    if len(_AUTH_CACHE) >= _AUTH_CACHE_MAX_SIZE:
-        # Remove ~10% of entries (oldest first by expiry)
-        to_remove = sorted(_AUTH_CACHE.items(), key=lambda x: x[1][1])[: _AUTH_CACHE_MAX_SIZE // 10]
-        for key, _ in to_remove:
-            _AUTH_CACHE.pop(key, None)
-
     token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
-    _AUTH_CACHE[token_hash] = (result, time.time() + _AUTH_CACHE_TTL)
+    _AUTH_CACHE[token_hash] = result
+
+
+def _reset_auth_cache() -> None:
+    """Reset the auth cache. Used by tests for isolation."""
+    _AUTH_CACHE.clear()
 
 
 async def get_auth_result(
@@ -93,17 +94,11 @@ async def get_auth_result(
             subject_type, subject_id = st, sid
         elif authorization and authorization.startswith("Bearer "):
             token = authorization[7:]
-            # Best-effort: infer zone/user from DatabaseAPIKeyAuth format
-            # Format: sk-<zone>_<user>_<id>_<random-hex>
-            if token.startswith("sk-"):
-                remainder = token[len("sk-") :]
-                parts = remainder.split("_")
-                if len(parts) >= 2:
-                    inferred_zone = parts[0] or None
-                    inferred_user = parts[1] or None
-                    zone_id = zone_id or inferred_zone
-                    subject_type = "user"
-                    subject_id = inferred_user
+            parsed = parse_sk_token(token)
+            if parsed is not None:
+                zone_id = zone_id or parsed.zone
+                subject_type = "user"
+                subject_id = parsed.user
 
         return {
             "authenticated": True,
@@ -136,6 +131,7 @@ async def get_auth_result(
         cached_result = _get_cached_auth(token)
         if cached_result:
             # Update x_agent_id and timing for this request
+            # Safe: cached_result is already a copy from _get_cached_auth
             cached_result["x_agent_id"] = x_agent_id
             cached_result["_auth_time_ms"] = 0.0  # Cache hit = no auth time
             cached_result["_auth_cached"] = True
@@ -163,13 +159,16 @@ async def get_auth_result(
             "_auth_time_ms": _auth_elapsed,  # Pass to RPC for logging
             "_auth_cached": False,
         }
-        # Cache successful auth result
-        _set_cached_auth(token, auth_result.copy())
+        # Cache a copy without per-request fields (x_agent_id, timing)
+        cache_entry = {
+            k: v for k, v in auth_result.items() if k not in ("x_agent_id", "_auth_time_ms", "_auth_cached")
+        }
+        _set_cached_auth(token, cache_entry)
         return auth_result
 
-    # Fall back to static API key
+    # Fall back to static API key (constant-time comparison to prevent timing attacks)
     if _app_state.api_key:
-        if token == _app_state.api_key:
+        if hmac.compare_digest(token, _app_state.api_key):
             return {
                 "authenticated": True,
                 "is_admin": True,

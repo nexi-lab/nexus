@@ -465,26 +465,6 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize reactive subscription manager: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
-    try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
-
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
-
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
-    try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
-
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
-
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
     try:
@@ -813,7 +793,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # (separate from NexusFS's lazy sandbox manager — different layers)
                 sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
-                    db_session=session_factory(),
+                    session_factory=session_factory,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
                     e2b_team_id=os.getenv("E2B_TEAM_ID"),
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
@@ -1001,15 +981,9 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
-    # Issue #1307: Close SandboxAuthService database session
+    # SandboxManager now uses session-per-operation — no persistent session to close
     if _app_state.sandbox_auth_service:
-        try:
-            sandbox_mgr = _app_state.sandbox_auth_service._sandbox_manager
-            if hasattr(sandbox_mgr, "db") and sandbox_mgr.db:
-                sandbox_mgr.db.close()
-            logger.info("[SANDBOX-AUTH] SandboxAuthService session closed")
-        except Exception as e:
-            logger.warning(f"[SANDBOX-AUTH] Error closing session: {e}")
+        logger.info("[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)")
 
     # Cancel Tiger Cache task
     if tiger_task:

@@ -1218,6 +1218,7 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         permission: Permission,
         context: OperationContext | None = None,
+        file_metadata: FileMetadata | None = None,
     ) -> None:
         """Check if operation is permitted.
 
@@ -1225,6 +1226,8 @@ class NexusFS(  # type: ignore[misc]
             path: Virtual file path
             permission: Permission to check (READ, WRITE, EXECUTE)
             context: Optional operation context (defaults to self._default_context)
+            file_metadata: Pre-fetched metadata for owner fast-path (avoids redundant
+                metadata lookup when caller already has it)
 
         Raises:
             PermissionError: If access is denied
@@ -1302,7 +1305,13 @@ class NexusFS(  # type: ignore[misc]
         # Issue #920: O(1) owner fast-path check
         # If the file has posix_uid set and it matches the requesting user, skip ReBAC
         # This avoids expensive graph traversal for owner accessing their own files
-        file_meta = self.metadata.get(permission_path)
+        # Use pre-fetched metadata when available (avoids redundant FFI call)
+        # Use pre-fetched metadata when path wasn't redirected to a virtual view's original
+        file_meta = (
+            file_metadata
+            if (file_metadata is not None and permission_path == path)
+            else self.metadata.get(permission_path)
+        )
         if file_meta and file_meta.owner_id:
             subject_id = ctx.subject_id or ctx.user
             if file_meta.owner_id == subject_id:

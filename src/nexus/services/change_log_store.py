@@ -376,3 +376,60 @@ class ChangeLogStore(SyncStoreBase):
             return False
         finally:
             session.close()
+
+    def delete_change_logs_batch(
+        self, paths: list[str], backend_name: str, zone_id: str = "default"
+    ) -> bool:
+        """Delete change log entries for multiple paths in a single transaction.
+
+        Batch version of delete_change_log() that opens ONE session, deletes
+        all matching entries with DELETE WHERE path IN (...), and commits once.
+        Reduces O(N) DB sessions to O(1) for deletion sync.
+
+        Args:
+            paths: List of virtual file paths to delete
+            backend_name: Backend identifier
+            zone_id: Zone ID
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not paths:
+            return True
+
+        from nexus.storage.models import BackendChangeLogModel
+
+        session = self._get_session()
+        if session is None:
+            return False
+
+        try:
+            # SQLite has a variable limit (~999), so chunk to be safe
+            chunk_size = 500
+            total_deleted = 0
+
+            for i in range(0, len(paths), chunk_size):
+                chunk = paths[i : i + chunk_size]
+                deleted = (
+                    session.query(BackendChangeLogModel)
+                    .filter(
+                        BackendChangeLogModel.path.in_(chunk),
+                        BackendChangeLogModel.backend_name == backend_name,
+                        BackendChangeLogModel.zone_id == zone_id,
+                    )
+                    .delete(synchronize_session="fetch")
+                )
+                total_deleted += deleted
+
+            session.commit()
+            logger.debug(
+                f"[DELTA_SYNC] Batch deleted {total_deleted} change log entries "
+                f"for {len(paths)} paths"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to batch-delete {len(paths)} change logs: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()

@@ -406,6 +406,76 @@ class TestFastAPIServerHandlers:
         with pytest.raises(ConflictError):
             fas._handle_write(params, ctx)
 
+    def test_handle_write_with_lock(self):
+        """Test write handler forwards lock=True to nexus_fs.write()."""
+        calls: list[dict] = []
+
+        class FS:
+            def write(self, path, content, **kwargs):
+                calls.append(kwargs)
+                return {"etag": "etag123", "size": len(content)}
+
+        fas._app_state.nexus_fs = FS()
+
+        ctx = OperationContext(
+            user="admin",
+            groups=[],
+            subject_type="user",
+            subject_id="admin",
+            zone_id="default",
+            is_admin=True,
+        )
+        params = SimpleNamespace(
+            path="/test.txt",
+            content=b"hello",
+            if_match=None,
+            if_none_match=False,
+            force=False,
+            lock=True,
+            lock_timeout=5.0,
+        )
+
+        result = fas._handle_write(params, ctx)
+
+        assert "bytes_written" in result
+        assert calls[0]["lock"] is True
+        assert calls[0]["lock_timeout"] == 5.0
+
+    def test_handle_write_without_lock_backward_compat(self):
+        """Test write handler omits lock/lock_timeout when absent from params (old clients)."""
+        calls: list[dict] = []
+
+        class FS:
+            def write(self, path, content, **kwargs):
+                calls.append(kwargs)
+                return {"etag": "etag123", "size": len(content)}
+
+        fas._app_state.nexus_fs = FS()
+
+        ctx = OperationContext(
+            user="admin",
+            groups=[],
+            subject_type="user",
+            subject_id="admin",
+            zone_id="default",
+            is_admin=True,
+        )
+        # No lock param at all (backward compat - old clients)
+        params = SimpleNamespace(
+            path="/test.txt",
+            content=b"hello",
+            if_match=None,
+            if_none_match=False,
+            force=False,
+        )
+
+        result = fas._handle_write(params, ctx)
+
+        assert "bytes_written" in result
+        # lock and lock_timeout should NOT be in kwargs when absent from params
+        assert "lock" not in calls[0]
+        assert "lock_timeout" not in calls[0]
+
     def test_handle_list(self):
         """Test list handler."""
 

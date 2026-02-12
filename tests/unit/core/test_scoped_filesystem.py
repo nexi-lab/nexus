@@ -168,6 +168,47 @@ class TestCoreFileOperations:
         )
         assert result["path"] == "/workspace/file.txt"
 
+    def test_write_forwards_lock_param(
+        self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
+    ) -> None:
+        """Test write forwards lock=True to inner filesystem."""
+        mock_fs.write.return_value = {
+            "path": "/zones/team_12/users/user_1/workspace/file.txt",
+            "etag": "abc",
+        }
+        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True)
+        mock_fs.write.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/file.txt",
+            b"content",
+            None,
+            None,
+            False,
+            False,
+            lock=True,
+        )
+        assert result["path"] == "/workspace/file.txt"
+
+    def test_write_forwards_lock_timeout(
+        self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock
+    ) -> None:
+        """Test write forwards lock_timeout to inner filesystem."""
+        mock_fs.write.return_value = {
+            "path": "/zones/team_12/users/user_1/workspace/file.txt",
+            "etag": "abc",
+        }
+        result = scoped_fs.write("/workspace/file.txt", b"content", lock=True, lock_timeout=5.0)
+        mock_fs.write.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/file.txt",
+            b"content",
+            None,
+            None,
+            False,
+            False,
+            lock=True,
+            lock_timeout=5.0,
+        )
+        assert result["path"] == "/workspace/file.txt"
+
     def test_write_batch(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test write_batch with path scoping."""
         mock_fs.write_batch.return_value = [

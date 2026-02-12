@@ -346,6 +346,8 @@ class WriteParams:
     if_match: str | None = None  # Optimistic concurrency control
     if_none_match: bool = False  # Create-only mode
     force: bool = False  # Skip version check
+    lock: bool = False  # Acquire distributed lock before writing (#1143)
+    lock_timeout: float = 30.0  # Max seconds to wait for lock
 
 
 @dataclass

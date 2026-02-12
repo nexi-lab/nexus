@@ -313,6 +313,59 @@ class TestWriteWithLock:
 
         asyncio.run(try_write_with_lock())
 
+    def test_write_with_lock_timeout_raises(self, nx_sync_with_lock: NexusFS):
+        """Test that write(lock=True, lock_timeout=0.1) raises LockTimeout when contended."""
+        import threading
+
+        from nexus.core.exceptions import LockTimeout
+
+        # First, acquire a lock on the file manually so write(lock=True) will contend
+        nx_sync_with_lock.write("/contended.txt", b"initial")
+
+        barrier = threading.Barrier(2, timeout=10)
+
+        def hold_lock():
+            """Hold a lock on the file for a while."""
+            import asyncio
+
+            async def _hold():
+                async with nx_sync_with_lock.locked("/contended.txt", timeout=10.0):
+                    barrier.wait()  # Signal that lock is held
+                    import time
+
+                    time.sleep(2)  # Hold lock for 2 seconds
+
+            asyncio.run(_hold())
+
+        t = threading.Thread(target=hold_lock)
+        t.start()
+
+        try:
+            barrier.wait()  # Wait for lock to be held
+            # Now try to write with a very short timeout — should fail
+            with pytest.raises(LockTimeout):
+                nx_sync_with_lock.write(
+                    "/contended.txt", b"should fail", lock=True, lock_timeout=0.1
+                )
+        finally:
+            t.join(timeout=10)
+
+    def test_write_with_lock_and_etag(self, nx_sync_with_lock: NexusFS):
+        """Test write(lock=True, if_match=etag) — lock + OCC combination."""
+        result = nx_sync_with_lock.write("/occ.txt", b"v1", lock=True)
+        etag = result["etag"]
+
+        # Write with matching etag + lock should succeed
+        result2 = nx_sync_with_lock.write("/occ.txt", b"v2", lock=True, if_match=etag)
+        assert result2["version"] == 2
+        assert nx_sync_with_lock.read("/occ.txt") == b"v2"
+
+        # Write with stale etag + lock should fail with ConflictError
+        from nexus.core.exceptions import ConflictError
+
+        with pytest.raises(ConflictError):
+            nx_sync_with_lock.write("/occ.txt", b"v3", lock=True, if_match=etag)
+
     def test_write_lock_mutual_exclusion(self, temp_dir, isolated_db, tmp_path):
         """Test that write(lock=True) provides TRUE mutual exclusion.
 

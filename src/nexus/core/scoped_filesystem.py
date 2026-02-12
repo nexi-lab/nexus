@@ -157,10 +157,30 @@ class ScopedFilesystem:
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
+        lock: bool = False,
+        lock_timeout: float = 30.0,
     ) -> dict[str, Any]:
-        """Write content to a file."""
+        """Write content to a file.
+
+        Args:
+            lock: If True, acquire distributed lock before writing.
+                Adds ~2-10ms latency for lock acquire/release.
+                For read-modify-write patterns, use locked() context manager instead.
+            lock_timeout: Max time to wait for lock in seconds (only used if lock=True).
+        """
+        kwargs: dict[str, Any] = {}
+        if lock:
+            kwargs["lock"] = lock
+        if lock_timeout != 30.0:
+            kwargs["lock_timeout"] = lock_timeout
         result = self._fs.write(
-            self._scope_path(path), content, context, if_match, if_none_match, force
+            self._scope_path(path),
+            content,
+            context,
+            if_match,
+            if_none_match,
+            force,
+            **kwargs,
         )
         return self._unscope_dict(result, ["path"])
 

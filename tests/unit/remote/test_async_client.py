@@ -655,6 +655,58 @@ class TestAsyncRemoteNexusFSFileOperations:
         )
 
     @pytest.mark.asyncio
+    async def test_write_with_lock(self, async_client):
+        """Test write operation with lock=True sends lock in RPC params."""
+        async_client._call_rpc = AsyncMock(return_value={"etag": "etag789", "size": 11})
+
+        result = await async_client.write("/test.txt", b"hello world", lock=True)
+
+        assert result["etag"] == "etag789"
+        async_client._call_rpc.assert_called_once_with(
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": None,
+                "if_none_match": False,
+                "force": False,
+                "lock": True,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_write_with_lock_timeout(self, async_client):
+        """Test write operation with lock=True and custom lock_timeout."""
+        async_client._call_rpc = AsyncMock(return_value={"etag": "etag789", "size": 11})
+
+        result = await async_client.write("/test.txt", b"hello world", lock=True, lock_timeout=5.0)
+
+        assert result["etag"] == "etag789"
+        async_client._call_rpc.assert_called_once_with(
+            "write",
+            {
+                "path": "/test.txt",
+                "content": b"hello world",
+                "if_match": None,
+                "if_none_match": False,
+                "force": False,
+                "lock": True,
+                "lock_timeout": 5.0,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_write_without_lock_omits_lock_params(self, async_client):
+        """Test write operation without lock does not include lock params."""
+        async_client._call_rpc = AsyncMock(return_value={"etag": "etag123", "size": 11})
+
+        await async_client.write("/test.txt", b"hello world")
+
+        call_params = async_client._call_rpc.call_args[0][1]
+        assert "lock" not in call_params
+        assert "lock_timeout" not in call_params
+
+    @pytest.mark.asyncio
     async def test_list(self, async_client):
         """Test list operation."""
         async_client._call_rpc = AsyncMock(return_value={"files": ["/file1.txt", "/file2.txt"]})

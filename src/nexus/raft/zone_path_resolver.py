@@ -9,7 +9,7 @@ Architecture:
     2. Look up "/shared" in root zone → DT_MOUNT(target=zone-beta) → switch zone
     3. Look up "/docs/file.txt" in zone-beta → DT_DIR + DT_REG → found
 
-Because All-Voters model means every zone has a local sled replica,
+Because All-Voters model means every zone has a local redb replica,
 all reads are local (~5μs). No network hop for path resolution.
 """
 
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core.zone_manager import ZoneManager
+    from nexus.raft.zone_manager import ZoneManager
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 logger = logging.getLogger(__name__)

@@ -1,10 +1,13 @@
-"""Agent registry kernel protocol (Nexus Lego Architecture, Issue #1383).
+"""Agent registry service protocol (Nexus Lego Architecture, Issue #1383).
 
 Defines the contract for agent identity and lifecycle management.
 Existing implementation: ``nexus.core.agent_registry.AgentRegistry`` (sync).
 
+Storage Affinity: **RecordStore** — relational agent identity and lifecycle state.
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
@@ -40,7 +43,7 @@ class AgentInfo:
 
 @runtime_checkable
 class AgentRegistryProtocol(Protocol):
-    """Kernel contract for agent identity and lifecycle management.
+    """Service contract for agent identity and lifecycle management.
 
     All methods are async.  The existing ``AgentRegistry`` (sync) conforms
     once wrapped with an async adapter.

@@ -1,4 +1,4 @@
-"""Namespace manager kernel protocol (Nexus Lego Architecture, Issue #1383).
+"""Namespace manager service protocol (Nexus Lego Architecture, Issue #1383).
 
 Defines the contract for per-subject namespace visibility.
 Existing implementation: ``nexus.core.namespace_manager.NamespaceManager`` (sync).
@@ -6,8 +6,12 @@ Existing implementation: ``nexus.core.namespace_manager.NamespaceManager`` (sync
 No ``mount()`` / ``unmount()`` — the existing implementation rebuilds from
 ReBAC grants, not explicit mount calls (pragmatic 5A decision).
 
+Storage Affinity: **RecordStore + CacheStore** — ReBAC views from RecordStore,
+    mount-table cache in CacheStore for fast lookups.
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
@@ -39,7 +43,7 @@ class NamespaceMount:
 
 @runtime_checkable
 class NamespaceManagerProtocol(Protocol):
-    """Kernel contract for per-subject namespace visibility.
+    """Service contract for per-subject namespace visibility.
 
     All methods are async.  The existing ``NamespaceManager`` (sync) conforms
     once wrapped with an async adapter.

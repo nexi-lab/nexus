@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.subsystem import Subsystem
+from nexus.services.subsystem import Subsystem
 
 if TYPE_CHECKING:
     from nexus.services.llm_service import LLMService

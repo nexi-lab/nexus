@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.core.subsystem import ContextIdentity, extract_context_identity
+from nexus.services.subsystem import ContextIdentity, extract_context_identity
 
 
 class TestContextIdentity:

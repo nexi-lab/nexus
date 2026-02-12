@@ -6,17 +6,15 @@ Provides 1 endpoint for reflection analysis:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from nexus.server.api.v2.dependencies import get_llm_provider, get_reflector
+from nexus.server.api.v2.error_handling import api_error_handler
 from nexus.server.api.v2.models import ReflectionResponse, ReflectRequest
 
-logger = logging.getLogger(__name__)
-
-router = APIRouter(tags=["reflection"])
+router = APIRouter(prefix="/api/v2/reflect", tags=["reflection"])
 
 
 # =============================================================================
@@ -24,7 +22,8 @@ router = APIRouter(tags=["reflection"])
 # =============================================================================
 
 
-@router.post("/api/v2/reflect", response_model=ReflectionResponse)
+@router.post("", response_model=ReflectionResponse)
+@api_error_handler(context="perform reflection")
 async def reflect_on_trajectory(
     request: ReflectRequest,
     reflector: Any = Depends(get_reflector),
@@ -45,24 +44,17 @@ async def reflect_on_trajectory(
             detail="LLM provider not configured. Reflection requires an LLM.",
         )
 
-    try:
-        result = await reflector.reflect_async(
-            trajectory_id=request.trajectory_id,
-            context=request.context,
-            reflection_prompt=request.reflection_prompt,
-        )
+    result = await reflector.reflect_async(
+        trajectory_id=request.trajectory_id,
+        context=request.context,
+        reflection_prompt=request.reflection_prompt,
+    )
 
-        return ReflectionResponse(
-            memory_id=result.get("memory_id", ""),
-            trajectory_id=result.get("trajectory_id", request.trajectory_id),
-            helpful_strategies=result.get("helpful_strategies", []),
-            harmful_patterns=result.get("harmful_patterns", []),
-            observations=result.get("observations", []),
-            confidence=result.get("confidence", 0.0),
-        )
-
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except Exception as e:
-        logger.error(f"Reflection error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to perform reflection") from e
+    return ReflectionResponse(
+        memory_id=result.get("memory_id", ""),
+        trajectory_id=result.get("trajectory_id", request.trajectory_id),
+        helpful_strategies=result.get("helpful_strategies", []),
+        harmful_patterns=result.get("harmful_patterns", []),
+        observations=result.get("observations", []),
+        confidence=result.get("confidence", 0.0),
+    )

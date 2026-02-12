@@ -76,6 +76,11 @@ jobs:
           cd rust/nexus_raft
           cargo fmt --check
 
+      - name: Check Rust formatting (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo fmt --check
+
       - name: Run Clippy (nexus_tasks)
         run: |
           cd rust/nexus_tasks
@@ -91,6 +96,11 @@ jobs:
           cd rust/nexus_raft
           cargo clippy --all-features -- -D warnings
 
+      - name: Run Clippy (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo clippy -- -D warnings
+
       - name: Run Rust tests (nexus_tasks)
         run: |
           cd rust/nexus_tasks
@@ -105,3 +115,8 @@ jobs:
         run: |
           cd rust/nexus_raft
           cargo test --all-features
+
+      - name: Run Rust tests (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo test

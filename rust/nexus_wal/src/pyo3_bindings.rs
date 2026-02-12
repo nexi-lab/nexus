@@ -37,8 +37,8 @@ impl PyWAL {
                 "invalid sync_mode: '{sync_mode}' (expected 'every' or 'none')"
             ))
         })?;
-        let engine =
-            WalEngine::open(std::path::Path::new(wal_dir), segment_size, mode).map_err(to_py_err)?;
+        let engine = WalEngine::open(std::path::Path::new(wal_dir), segment_size, mode)
+            .map_err(to_py_err)?;
         Ok(Self { engine })
     }
 
@@ -63,7 +63,10 @@ impl PyWAL {
         limit: usize,
         zone_id: Option<&[u8]>,
     ) -> PyResult<Vec<(u64, Vec<u8>, Vec<u8>)>> {
-        let records = self.engine.read_from(seq, limit, zone_id).map_err(to_py_err)?;
+        let records = self
+            .engine
+            .read_from(seq, limit, zone_id)
+            .map_err(to_py_err)?;
         Ok(records
             .into_iter()
             .map(|r| (r.seq, r.zone_id, r.payload))

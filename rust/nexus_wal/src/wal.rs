@@ -163,10 +163,7 @@ impl WalEngine {
     }
 
     /// Append a batch of records atomically. Returns assigned sequence numbers.
-    pub fn append_batch(
-        &self,
-        events: &[(Vec<u8>, Vec<u8>)],
-    ) -> Result<Vec<u64>, WalError> {
+    pub fn append_batch(&self, events: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<u64>, WalError> {
         let mut inner = self.inner.lock();
         if inner.closed {
             return Err(WalError::Closed);
@@ -238,11 +235,7 @@ impl WalEngine {
                 break;
             }
             let reader = SegmentReader::open(&seg.path)?;
-            let records = reader.read_from(
-                seq,
-                remaining - results.len(),
-                zone_id_filter,
-            )?;
+            let records = reader.read_from(seq, remaining - results.len(), zone_id_filter)?;
             results.extend(records);
         }
 
@@ -263,10 +256,7 @@ impl WalEngine {
         for (i, seg) in inner.segments.iter().enumerate() {
             // Check if this segment's records are all < before_seq
             let reader = SegmentReader::open(&seg.path)?;
-            let records: Vec<Record> = reader
-                .iter()?
-                .filter_map(|r| r.ok())
-                .collect();
+            let records: Vec<Record> = reader.iter()?.filter_map(|r| r.ok()).collect();
 
             let all_below = records.iter().all(|r| r.seq < before_seq);
             if all_below && !records.is_empty() {
@@ -569,10 +559,7 @@ mod tests {
                 let mut seqs = Vec::new();
                 for i in 0..50 {
                     let seq = wal
-                        .append(
-                            format!("t{t}").as_bytes(),
-                            format!("t{t}-{i}").as_bytes(),
-                        )
+                        .append(format!("t{t}").as_bytes(), format!("t{t}-{i}").as_bytes())
                         .unwrap();
                     seqs.push(seq);
                 }

@@ -10,7 +10,7 @@ name = "_nexus_wal"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.27.2", features = ["extension-module"] }
+pyo3 = { version = "0.27.2", features = ["extension-module"], optional = true }
 crc32fast = "1.4"
 parking_lot = "0.12"
 serde = { version = "1.0", features = ["derive"] }
@@ -19,6 +19,10 @@ thiserror = "2.0"
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = []
+python = ["pyo3"]
 
 [[bench]]
 name = "wal_bench"

@@ -52,9 +52,7 @@ pub fn recover(dir: &Path) -> Result<RecoveryResult, SegmentError> {
                     last_sequence = record.seq;
                     last_valid_offset += record.wire_size();
                 }
-                Err(
-                    SegmentError::CrcMismatch { .. } | SegmentError::TruncatedRecord(_),
-                ) => {
+                Err(SegmentError::CrcMismatch { .. } | SegmentError::TruncatedRecord(_)) => {
                     // Truncate segment at the last valid record boundary
                     let file_len = fs::metadata(seg_path)?.len();
                     if last_valid_offset < file_len {

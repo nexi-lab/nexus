@@ -378,9 +378,7 @@ mod tests {
     fn write_read_single_record() {
         let dir = TempDir::new().unwrap();
         let mut writer = SegmentWriter::new(dir.path(), 1, 1000).unwrap();
-        writer
-            .append(1, b"zone-a", b"hello world")
-            .unwrap();
+        writer.append(1, b"zone-a", b"hello world").unwrap();
         writer.sync().unwrap();
 
         let reader = SegmentReader::open(writer.path()).unwrap();

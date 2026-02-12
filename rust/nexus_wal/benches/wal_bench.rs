@@ -12,8 +12,11 @@ fn bench_append_single(c: &mut Criterion) {
 
     c.bench_function("append_single", |b| {
         b.iter(|| {
-            wal.append(b"zone-1", b"{\"type\":\"file_write\",\"path\":\"/test.txt\"}")
-                .unwrap();
+            wal.append(
+                b"zone-1",
+                b"{\"type\":\"file_write\",\"path\":\"/test.txt\"}",
+            )
+            .unwrap();
         });
     });
 }

@@ -2,7 +2,7 @@
 
 Issue #1287 Phase B: This mixin has been replaced by:
 - ``nexus.services.llm_service.LLMService`` (business logic)
-- ``nexus.core.subsystems.llm_subsystem.LLMSubsystem`` (lifecycle management)
+- ``nexus.services.subsystems.llm_subsystem.LLMSubsystem`` (lifecycle management)
 
 NexusFS no longer inherits from this mixin. The delegation methods with
 ``@rpc_expose`` are now directly on the NexusFS class.

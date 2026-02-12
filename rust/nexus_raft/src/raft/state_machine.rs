@@ -233,6 +233,21 @@ pub trait StateMachine: Send + Sync {
     /// when the node is far behind or just joined the cluster).
     fn restore_snapshot(&mut self, data: &[u8]) -> Result<()>;
 
+    /// Apply a command locally for EC (eventual consistency) writes.
+    ///
+    /// Unlike [`apply`], this bypasses Raft index tracking — the write
+    /// is not associated with any Raft log entry. Only metadata operations
+    /// (SetMetadata, DeleteMetadata) are supported; lock operations require
+    /// linearizability and must use SC (Raft consensus).
+    ///
+    /// Default implementation returns an error (not all state machines
+    /// support local writes — e.g., witness nodes).
+    fn apply_local(&mut self, _command: &Command) -> Result<CommandResult> {
+        Err(super::RaftError::InvalidState(
+            "Local EC writes not supported on this state machine".into(),
+        ))
+    }
+
     /// Get the last applied log index.
     ///
     /// Used to determine which log entries need to be applied after restart.
@@ -640,14 +655,13 @@ struct Snapshot {
     last_applied: u64,
 }
 
-impl StateMachine for FullStateMachine {
-    fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
-        // Skip if already applied (idempotent)
-        if index <= self.last_applied {
-            return Ok(CommandResult::Success);
-        }
-
-        let result = match command {
+impl FullStateMachine {
+    /// Shared command dispatch — the actual redb operations.
+    ///
+    /// Both `apply()` (SC/Raft) and `apply_local()` (EC) delegate here.
+    /// This is the SSOT for command→operation mapping.
+    fn execute(&self, command: &Command) -> Result<CommandResult> {
+        match command {
             Command::SetMetadata { key, value } => self.apply_set_metadata(key, value),
             Command::DeleteMetadata { key } => self.apply_delete_metadata(key),
             Command::AcquireLock {
@@ -664,7 +678,29 @@ impl StateMachine for FullStateMachine {
                 new_ttl_secs,
             } => self.apply_extend_lock(path, lock_id, *new_ttl_secs),
             Command::Noop => Ok(CommandResult::Success),
-        };
+        }
+    }
+}
+
+impl StateMachine for FullStateMachine {
+    fn apply_local(&mut self, command: &Command) -> Result<CommandResult> {
+        match command {
+            Command::SetMetadata { .. } | Command::DeleteMetadata { .. } => {
+                self.execute(command)
+            }
+            _ => Err(super::RaftError::InvalidState(
+                "Only metadata operations (set/delete) support EC local writes".into(),
+            )),
+        }
+    }
+
+    fn apply(&mut self, index: u64, command: &Command) -> Result<CommandResult> {
+        // Skip if already applied (idempotent)
+        if index <= self.last_applied {
+            return Ok(CommandResult::Success);
+        }
+
+        let result = self.execute(command);
 
         // Update last_applied
         self.last_applied = index;

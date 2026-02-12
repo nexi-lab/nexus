@@ -740,9 +740,10 @@ impl WitnessServerState {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
         let config = RaftConfig::witness(node_id, peer_ids);
 
-        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
-            TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
-        })?;
+        let (handle, driver) =
+            RaftNode::new(config, raft_storage, state_machine, None).map_err(|e| {
+                TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
+            })?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 

@@ -32,6 +32,7 @@ from urllib.parse import urljoin
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.services.llm_service import LLMService
 
 import httpx
 from tenacity import (
@@ -46,7 +47,8 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
 )
 from nexus.core.filesystem import NexusFilesystem
-from nexus.core.nexus_fs_llm import NexusFSLLMMixin
+
+# NexusFSLLMMixin removed — replaced by LLMService (Issue #1287 Phase B)
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.server.protocol import (
     RPCRequest,
@@ -631,11 +633,11 @@ class RemoteTimeoutError(RemoteFilesystemError):
     pass
 
 
-class RemoteNexusFS(NexusFSLLMMixin, BaseRemoteNexusFS, NexusFilesystem):
+class RemoteNexusFS(BaseRemoteNexusFS, NexusFilesystem):
     """Remote Nexus filesystem client.
 
     Implements NexusFilesystem interface by making RPC calls to a remote server.
-    Includes LLM-powered document reading capabilities via NexusFSLLMMixin.
+    LLM capabilities provided by LLMService (Issue #1287 Phase B).
     """
 
     def __init__(
@@ -6373,6 +6375,105 @@ class RemoteNexusFS(NexusFSLLMMixin, BaseRemoteNexusFS, NexusFilesystem):
             {"lock_id": lock_id, "path": path},
         )
         return bool(result.get("released", False)) if result else False
+
+    # -------------------------------------------------------------------------
+    # LLM methods (Issue #1287 Phase B: replaced NexusFSLLMMixin with delegation)
+    # -------------------------------------------------------------------------
+
+    @property
+    def _llm_service(self) -> LLMService:
+        """Lazy-init LLMService for client-side LLM operations."""
+        if not hasattr(self, "_llm_service_instance"):
+            from nexus.services.llm_service import LLMService as _LLMService
+
+            self._llm_service_instance = _LLMService(nexus_fs=self)
+        return self._llm_service_instance
+
+    async def llm_read(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> str:
+        """Read document with LLM and return answer."""
+        return await self._llm_service.llm_read(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def llm_read_detailed(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Read document with LLM and return detailed result."""
+        return await self._llm_service.llm_read_detailed(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    async def llm_read_stream(
+        self,
+        path: str,
+        prompt: str,
+        model: str = "claude-sonnet-4",
+        max_tokens: int = 1000,
+        api_key: str | None = None,
+        use_search: bool = True,
+        search_mode: str = "semantic",
+        provider: Any = None,
+    ) -> Any:
+        """Stream LLM response."""
+        return self._llm_service.llm_read_stream(
+            path=path,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            api_key=api_key,
+            use_search=use_search,
+            search_mode=search_mode,
+            provider=provider,
+        )
+
+    def create_llm_reader(
+        self,
+        provider: Any = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        system_prompt: str | None = None,
+        max_context_tokens: int = 3000,
+    ) -> Any:
+        """Create an LLM document reader."""
+        return self._llm_service.create_llm_reader(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            system_prompt=system_prompt,
+            max_context_tokens=max_context_tokens,
+        )
 
     def close(self) -> None:
         """Close the client and release resources."""

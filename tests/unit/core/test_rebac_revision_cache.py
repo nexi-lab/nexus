@@ -44,9 +44,29 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def engine():
-    """Create PostgreSQL engine for testing."""
+    """Create PostgreSQL engine for testing.
+
+    Drops and recreates rebac tables to handle schema drift (e.g. tenant_id → zone_id
+    rename). Base.metadata.create_all() won't alter existing tables, so stale schemas
+    cause column-not-found errors.
+    """
     db_url = os.getenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus")
     engine = create_engine(db_url)
+
+    # Drop stale rebac tables so create_all recreates them with current schema
+    # (handles tenant_id → zone_id rename and other schema drift)
+    with engine.connect() as conn:
+        for table in [
+            "rebac_version_sequences",
+            "rebac_tuples",
+            "rebac_changelog",
+            "rebac_group_closure",
+            "rebac_check_cache",
+            "rebac_namespaces",
+        ]:
+            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+        conn.commit()
+
     Base.metadata.create_all(engine)
     return engine
 

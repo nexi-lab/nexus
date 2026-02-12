@@ -74,9 +74,10 @@ class ZoneManager:
     ) -> RaftMetadataStore:
         """Create a new zone and return its RaftMetadataStore.
 
-        Creates the zone's root "/" entry with i_links_count=0.
-        The count starts at 0 because no DT_MOUNT references exist yet.
-        The first mount() call will increment it to 1.
+        Only creates the Raft group + redb database. Does NOT create a
+        root "/" entry — that's the responsibility of:
+        - Node bootstrap (root zone, i_links_count=1)
+        - mount() via _increment_links (lazy-creates "/" on first mount)
 
         Args:
             zone_id: Unique zone identifier.
@@ -90,17 +91,6 @@ class ZoneManager:
         handle = self._py_mgr.create_zone(zone_id, peers or [])
         store = RaftMetadataStore(engine=handle, zone_id=zone_id)
         self._stores[zone_id] = store
-
-        # Create root "/" entry with i_links_count=0 (no DT_MOUNT refs yet)
-        root_entry = FileMetadata(
-            path="/",
-            backend_name="virtual",
-            physical_path="",
-            size=0,
-            entry_type=DT_DIR,
-            zone_id=zone_id,
-        )
-        store.put(root_entry)
 
         logger.info(
             "Zone '%s' created (peers=%d)",

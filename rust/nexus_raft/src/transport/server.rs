@@ -348,7 +348,7 @@ impl RaftService for RaftServiceImpl {
                 }
             };
 
-            match node.apply_ec_from_peer(command).await {
+            match node.apply_ec_from_peer(command, entry.timestamp).await {
                 Ok(_) => {
                     max_applied = max_applied.max(entry.seq);
                     tracing::trace!(

@@ -248,6 +248,21 @@ pub trait StateMachine: Send + Sync {
         ))
     }
 
+    /// Apply an EC command with LWW (Last Writer Wins) conflict resolution.
+    ///
+    /// Used by the peer-receive path to reject stale writes. Compares the
+    /// incoming entry's timestamp against the existing metadata's `modified_at`.
+    ///
+    /// Default: delegates to [`apply_local`] (no LWW check). Override in
+    /// state machines that store FileMetadata (i.e., [`FullStateMachine`]).
+    fn apply_ec_with_lww(
+        &mut self,
+        command: &Command,
+        _entry_timestamp: u64,
+    ) -> Result<CommandResult> {
+        self.apply_local(command)
+    }
+
     /// Get the last applied log index.
     ///
     /// Used to determine which log entries need to be applied after restart.
@@ -376,6 +391,51 @@ impl StateMachine for WitnessStateMachine {
 const TREE_METADATA: &str = "sm_metadata";
 const TREE_LOCKS: &str = "sm_locks";
 const KEY_LAST_APPLIED: &[u8] = b"__last_applied__";
+
+// ---------------------------------------------------------------------------
+// LWW (Last Writer Wins) helpers for EC conflict resolution
+// ---------------------------------------------------------------------------
+
+/// Decode a serialized FileMetadata protobuf and extract the `modified_at` field.
+///
+/// Used for LWW comparison on `SetMetadata`: both incoming and existing values
+/// are decoded and their `modified_at` ISO 8601 strings compared lexicographically.
+///
+/// Returns empty string on decode failure (sorts before any real timestamp,
+/// meaning corrupted data always gets overwritten).
+#[cfg(feature = "grpc")]
+fn decode_modified_at(bytes: &[u8]) -> String {
+    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+    use prost::Message as ProstMessage;
+
+    ProtoFileMetadata::decode(bytes)
+        .map(|fm| fm.modified_at)
+        .unwrap_or_default()
+}
+
+/// Decode a serialized FileMetadata protobuf and parse `modified_at` to Unix seconds.
+///
+/// Used for LWW comparison on `DeleteMetadata`: the entry's u64 timestamp is
+/// compared against the existing value's parsed `modified_at`.
+///
+/// Returns 0 on decode/parse failure (treat as infinitely old).
+#[cfg(feature = "grpc")]
+fn decode_modified_at_unix(bytes: &[u8]) -> u64 {
+    use crate::transport::proto::nexus::core::FileMetadata as ProtoFileMetadata;
+    use prost::Message as ProstMessage;
+
+    ProtoFileMetadata::decode(bytes)
+        .ok()
+        .and_then(|fm| {
+            time::OffsetDateTime::parse(
+                &fm.modified_at,
+                &time::format_description::well_known::Rfc3339,
+            )
+            .ok()
+        })
+        .map(|dt| dt.unix_timestamp() as u64)
+        .unwrap_or(0)
+}
 
 /// Full state machine for STRONG_HA zones.
 ///
@@ -688,6 +748,52 @@ impl StateMachine for FullStateMachine {
             Command::SetMetadata { .. } | Command::DeleteMetadata { .. } => self.execute(command),
             _ => Err(super::RaftError::InvalidState(
                 "Only metadata operations (set/delete) support EC local writes".into(),
+            )),
+        }
+    }
+
+    #[cfg(feature = "grpc")]
+    fn apply_ec_with_lww(
+        &mut self,
+        command: &Command,
+        entry_timestamp: u64,
+    ) -> Result<CommandResult> {
+        match command {
+            Command::SetMetadata { key, value } => {
+                // LWW: compare incoming vs existing modified_at (ISO 8601 lexicographic)
+                if let Some(existing) = self.metadata.get(key.as_bytes())? {
+                    let incoming_ts = decode_modified_at(value);
+                    let existing_ts = decode_modified_at(&existing);
+                    if incoming_ts < existing_ts {
+                        tracing::trace!(
+                            key,
+                            incoming = incoming_ts.as_str(),
+                            existing = existing_ts.as_str(),
+                            "LWW: skipping stale SetMetadata from peer"
+                        );
+                        return Ok(CommandResult::Success);
+                    }
+                }
+                self.apply_set_metadata(key, value)
+            }
+            Command::DeleteMetadata { key } => {
+                // LWW: compare entry timestamp (u64) vs existing modified_at (parsed to u64)
+                if let Some(existing) = self.metadata.get(key.as_bytes())? {
+                    let existing_unix = decode_modified_at_unix(&existing);
+                    if entry_timestamp < existing_unix {
+                        tracing::trace!(
+                            key,
+                            entry_ts = entry_timestamp,
+                            existing_ts = existing_unix,
+                            "LWW: skipping stale DeleteMetadata from peer"
+                        );
+                        return Ok(CommandResult::Success);
+                    }
+                }
+                self.apply_delete_metadata(key)
+            }
+            _ => Err(super::RaftError::InvalidState(
+                "Only metadata operations support EC writes".into(),
             )),
         }
     }

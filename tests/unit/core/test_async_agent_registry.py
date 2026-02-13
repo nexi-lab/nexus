@@ -13,10 +13,10 @@ from nexus.core.async_agent_registry import AsyncAgentRegistry, _to_agent_info
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_record(**overrides: object) -> AgentRecord:
     """Create a test AgentRecord with sensible defaults."""
@@ -96,11 +96,19 @@ class TestToAgentInfo:
 
 class TestRegister:
     @pytest.mark.asyncio()
-    async def test_delegates_and_converts(self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock) -> None:
+    async def test_delegates_and_converts(
+        self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock
+    ) -> None:
         mock_inner.register.return_value = _make_record()
-        info = await wrapper.register("agent-1", "user-1", zone_id="z", name="A", metadata={"k": "v"})
+        info = await wrapper.register(
+            "agent-1", "user-1", zone_id="z", name="A", metadata={"k": "v"}
+        )
         mock_inner.register.assert_called_once_with(
-            "agent-1", "user-1", zone_id="z", name="A", metadata={"k": "v"},
+            "agent-1",
+            "user-1",
+            zone_id="z",
+            name="A",
+            metadata={"k": "v"},
         )
         assert isinstance(info, AgentInfo)
         assert info.agent_id == "agent-1"
@@ -129,7 +137,9 @@ class TestTransition:
         mock_inner.transition.return_value = _make_record(state=AgentState.IDLE)
         info = await wrapper.transition("agent-1", "IDLE", expected_generation=1)
         mock_inner.transition.assert_called_once_with(
-            "agent-1", AgentState.IDLE, expected_generation=1,
+            "agent-1",
+            AgentState.IDLE,
+            expected_generation=1,
         )
         assert info.state == "IDLE"
 

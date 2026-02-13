@@ -1993,7 +1993,7 @@ class Memory:
             >>> # ... execute task ...
             >>> memory.complete_trajectory(traj_id, "success", success_score=0.95)
         """
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         traj_mgr = TrajectoryManager(
             self.session,
@@ -2019,7 +2019,7 @@ class Memory:
             description: Step description
             result: Optional result data
         """
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         traj_mgr = TrajectoryManager(
             self.session,
@@ -2078,7 +2078,7 @@ class Memory:
             ...     metrics={"rows_processed": 1000, "duration_ms": 2500}
             ... )
         """
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         traj_mgr = TrajectoryManager(
             self.session,
@@ -2126,7 +2126,7 @@ class Memory:
             ...     message="Error rate spiked to 15%",
             ... )
         """
-        from nexus.core.ace.feedback import FeedbackManager
+        from nexus.services.ace.feedback import FeedbackManager
 
         feedback_mgr = FeedbackManager(self.session)
         return feedback_mgr.add_feedback(
@@ -2159,7 +2159,7 @@ class Memory:
             >>> for f in feedback_list:
             ...     print(f"{f['created_at']}: {f['message']}")
         """
-        from nexus.core.ace.feedback import FeedbackManager
+        from nexus.services.ace.feedback import FeedbackManager
 
         feedback_mgr = FeedbackManager(self.session)
         return feedback_mgr.get_trajectory_feedback(trajectory_id)
@@ -2187,7 +2187,7 @@ class Memory:
             >>> score = memory.get_effective_score(traj_id, strategy="weighted")
             >>> print(f"Effective score: {score:.2f}")
         """
-        from nexus.core.ace.feedback import FeedbackManager
+        from nexus.services.ace.feedback import FeedbackManager
 
         feedback_mgr = FeedbackManager(self.session)
         return feedback_mgr.get_effective_score(trajectory_id, strategy)
@@ -2217,7 +2217,7 @@ class Memory:
             ...     priority=9
             ... )
         """
-        from nexus.core.ace.feedback import FeedbackManager
+        from nexus.services.ace.feedback import FeedbackManager
 
         feedback_mgr = FeedbackManager(self.session)
         feedback_mgr.mark_for_relearning(trajectory_id, reason, priority)
@@ -2258,7 +2258,7 @@ class Memory:
             ... ]
             >>> feedback_ids = memory.batch_add_feedback(feedback_items)
         """
-        from nexus.core.ace.feedback import FeedbackManager
+        from nexus.services.ace.feedback import FeedbackManager
 
         feedback_mgr = FeedbackManager(self.session)
         return feedback_mgr.batch_add_feedback(feedback_items)
@@ -2286,8 +2286,8 @@ class Memory:
             >>> for strategy in reflection['helpful_strategies']:
             ...     print(f"✓ {strategy['description']}")
         """
-        from nexus.core.ace.reflection import Reflector
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.reflection import Reflector
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         traj_mgr = TrajectoryManager(
             self.session,
@@ -2362,8 +2362,8 @@ class Memory:
         """
         from datetime import datetime
 
-        from nexus.core.ace.reflection import Reflector
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.reflection import Reflector
+        from nexus.services.ace.trajectory import TrajectoryManager
         from nexus.storage.models import TrajectoryModel
 
         target_agent_id = agent_id or self.agent_id
@@ -2508,7 +2508,7 @@ class Memory:
             ...     for strategy in playbook['content']['strategies']:
             ...         print(f"  {strategy['type']}: {strategy['description']}")
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         playbook_mgr = PlaybookManager(
             self.session,
@@ -2559,7 +2559,7 @@ class Memory:
             ...     }
             ... ])
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         playbook_mgr = PlaybookManager(
             self.session,
@@ -2622,8 +2622,8 @@ class Memory:
             ... )
             >>> print(f"Added {result['strategies_added']} new strategies")
         """
-        from nexus.core.ace.curation import Curator
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.curation import Curator
+        from nexus.services.ace.playbook import PlaybookManager
 
         playbook_mgr = PlaybookManager(
             self.session,
@@ -2687,7 +2687,7 @@ class Memory:
             ...     importance_threshold=0.5
             ... )
         """
-        from nexus.core.ace.consolidation import ConsolidationEngine
+        from nexus.services.ace.consolidation import ConsolidationEngine
 
         consolidation_engine = ConsolidationEngine(
             self.session,
@@ -2794,7 +2794,7 @@ class Memory:
             ...     filename="orders.csv"
             ... )
         """
-        from nexus.core.ace.learning_loop import LearningLoop
+        from nexus.services.ace.learning_loop import LearningLoop
 
         learning_loop = LearningLoop(
             self.session,
@@ -2884,7 +2884,7 @@ class Memory:
             >>> for traj in trajectories:
             ...     print(f"{traj['trajectory_id']}: {traj['task_description']}")
         """
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         target_agent_id = agent_id or self.agent_id
 
@@ -2923,7 +2923,7 @@ class Memory:
             >>> for pb in playbooks:
             ...     print(f"{pb['name']}: v{pb['version']}")
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         target_agent_id = agent_id or self.agent_id
 
@@ -2962,7 +2962,7 @@ class Memory:
             ...     if result['success']:
             ...         print(f"Re-learned {result['trajectory_id']}")
         """
-        from nexus.core.ace.learning_loop import LearningLoop
+        from nexus.services.ace.learning_loop import LearningLoop
 
         # Initialize learning loop
         learning_loop = LearningLoop(

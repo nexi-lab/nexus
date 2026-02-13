@@ -849,7 +849,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        getattr(_app_state.nexus_fs, "_chunked_upload_service", None)
+        _app_state.nexus_fs._service_extras.get("chunked_upload_service")
         if _app_state.nexus_fs
         else None
     )

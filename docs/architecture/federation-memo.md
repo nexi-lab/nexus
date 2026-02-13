@@ -717,6 +717,45 @@ No `cache_sled` or Dragonfly needed for metadata caching.
 | 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
 | Multi-Raft sharding | N/A | Future: Issue #1327 (when single zone too large) |
 
+### 6.9 Federation as Optional DI Subsystem (DECIDED 2026-02-13)
+
+Federation is **NOT kernel**. It is an optional, DI-injected subsystem at the same
+level as CacheStore and RecordStore. NexusFS without federation gracefully degrades
+to client-server mode (via RemoteNexusFS) or single-node embedded mode.
+
+**Degradation path:**
+```
+Full (Federation + Remote + RecordStore + CacheStore)
+  ↓ remove Federation
+Client-Server (RemoteNexusFS ↔ NexusFS server)
+  ↓ remove RemoteNexusFS
+Single-node embedded (NexusFS kernel: Metastore + ObjectStore only)
+```
+
+**Layering:**
+```
+                NexusFS (kernel)           Federation (optional subsystem)
+User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymmetric)
+Kernel/Service: NexusFS                    NexusFederation (orchestration)
+HAL:            FileMetadataProtocol       ZoneManager (wraps PyO3)
+Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
+Comms:          —                          RaftClient (gRPC to peers)
+```
+
+Federation does NOT need a remote implementation (unlike NexusFS → RemoteNexusFS)
+because zone operations are inherently asymmetric: you always operate locally on
+your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
+
+**`NexusFederation` class** (`nexus.raft.federation`):
+- Orchestrates ZoneManager (local ops) + RaftClient (peer gRPC)
+- Dependencies injected: `ZoneManager`, client factory
+- Exposes `share()` and `join()` as high-level async workflows
+- CLI and future REST/MCP endpoints are thin wrappers over this class
+
+**CLI `nexus mount`** (merged with FUSE mount via argument detection):
+- 1 arg → FUSE mount (existing)
+- 2 args with `peer:path` syntax → federation share/join (new)
+
 ---
 
 ## 7. Open Questions & Future Design Work

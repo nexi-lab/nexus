@@ -132,7 +132,7 @@ class SandboxAuthService:
         Args:
             agent_id: Agent identifier (required — validated against registry).
             owner_id: User who owns the agent.
-            zone_id: Zone for multi-tenant isolation.
+            zone_id: Zone for multi-zone isolation.
             name: User-friendly sandbox name.
             ttl_minutes: Idle timeout in minutes.
             provider: Sandbox provider ("docker", "e2b").

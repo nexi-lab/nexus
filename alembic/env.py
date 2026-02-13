@@ -32,10 +32,20 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+
+def _run_with_connection(connection):
+    """Configure context and run migrations against the given connection.
+
+    render_as_batch=True enables batch mode for ALTER operations on SQLite
+    (uses copy-table strategy). No effect on PostgreSQL.
+    """
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 def run_migrations_offline() -> None:
@@ -56,6 +66,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=True,
     )
 
     with context.begin_transaction():
@@ -68,18 +79,29 @@ def run_migrations_online() -> None:
     In this scenario we need to create an Engine
     and associate a connection with the context.
 
+    When called via pytest-alembic, the test fixture passes the engine
+    through config.attributes["connection"] so migrations run against the
+    test database (e.g. in-memory SQLite) instead of the alembic.ini URL.
     """
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = config.attributes.get("connection", None)
 
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+    if connectable is not None:
+        # Engine or connection provided by pytest-alembic — use the test DB
+        if hasattr(connectable, "connect"):
+            with connectable.connect() as connection:
+                _run_with_connection(connection)
+        else:
+            _run_with_connection(connectable)
+    else:
+        # Normal CLI usage — create engine from config
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
 
-        with context.begin_transaction():
-            context.run_migrations()
+        with connectable.connect() as connection:
+            _run_with_connection(connection)
 
 
 if context.is_offline_mode():

@@ -357,6 +357,35 @@ def create_nexus_services(
     # Gracefully no-ops if tigerbeetle package is not installed.
     wallet_provisioner = _create_wallet_provisioner()
 
+    # --- Manifest Resolver (Issue #1427) ---
+    # Only create FileGlobExecutor when backend has local storage.
+    # For non-local backends (GCS/S3), file_glob sources are skipped.
+    import logging as _logging
+
+    _factory_logger = _logging.getLogger(__name__)
+    manifest_resolver: Any = None
+
+    try:
+        from nexus.core.context_manifest import ManifestResolver
+        from nexus.core.context_manifest.executors.file_glob import FileGlobExecutor
+
+        executors: dict[str, Any] = {}
+        root_path = getattr(backend, "root_path", None)
+        if isinstance(root_path, str):
+            from pathlib import Path
+
+            executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+
+        manifest_resolver = ManifestResolver(
+            executors=executors,
+            max_resolve_seconds=5.0,
+        )
+        _factory_logger.debug(
+            "[FACTORY] ManifestResolver created with %d executors", len(executors)
+        )
+    except ImportError as _e:
+        _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -373,6 +402,7 @@ def create_nexus_services(
         "observability_subsystem": observability_subsystem,
         "wallet_provisioner": wallet_provisioner,
         "chunked_upload_service": chunked_upload_service,
+        "manifest_resolver": manifest_resolver,
     }
 
     return result
@@ -474,6 +504,10 @@ def create_nexus_fs(
     # attach after construction. The FastAPI lifespan reads it from NexusFS.
     chunked_upload_service = services.pop("chunked_upload_service", None)
 
+    # ManifestResolver is not a NexusFS constructor param — pop it
+    # and attach after construction for API access (Issue #1427).
+    manifest_resolver_svc = services.pop("manifest_resolver", None)
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -511,5 +545,8 @@ def create_nexus_fs(
 
     if chunked_upload_service is not None:
         nx._chunked_upload_service = chunked_upload_service  # type: ignore[attr-defined]
+
+    if manifest_resolver_svc is not None:
+        nx.manifest_resolver = manifest_resolver_svc  # type: ignore[attr-defined]
 
     return nx

@@ -184,6 +184,14 @@ def build_v2_registry(
         except ImportError as e:
             logger.warning("Failed to import tus uploads router: %s", e)
 
+    # ---- Manifest router (Issue #1427) ----
+    try:
+        from nexus.server.api.v2.routers.manifest import router as manifest_router
+
+        registry.add(RouterEntry(router=manifest_router, name="manifest", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Manifest routes: %s", e)
+
     return registry
 
 

@@ -1,7 +1,6 @@
 """Kernel protocol interfaces for the Nexus architecture.
 
 VFSRouterProtocol and ContextManifestProtocol live here — they are kernel concerns.
-
 Service-layer protocols (EventLogProtocol, etc.) live in nexus.services/
 per the Four Pillars architecture (data-storage-matrix.md).
 

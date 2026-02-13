@@ -111,7 +111,7 @@ class MessageSender:
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
         await self._vfs.write(msg_path, data, self._zone_id)
 
-        # 5. Copy to sender's outbox (audit trail, best-effort)
+        # 6. Copy to sender's outbox (audit trail, best-effort)
         try:
             outbox_dir = outbox_path(envelope.sender)
             if await self._vfs.exists(outbox_dir, self._zone_id):
@@ -127,7 +127,7 @@ class MessageSender:
                 exc_info=True,
             )
 
-        # 6. Publish EventBus notification (best-effort)
+        # 7. Publish EventBus notification (best-effort)
         if self._publisher is not None:
             try:
                 await self._publisher.publish(
@@ -176,6 +176,13 @@ class MessageSender:
         if envelope.sender == envelope.recipient:
             raise EnvelopeValidationError("Sender and recipient must be different")
 
+        # Sender/recipient must not contain path separators (prevents path traversal)
+        for field_name, value in [("sender", envelope.sender), ("recipient", envelope.recipient)]:
+            if "/" in value or "\\" in value:
+                raise EnvelopeValidationError(
+                    f"{field_name} must not contain path separators: '{value}'"
+                )
+
         # Payload size check
         payload_size = serialized_size if serialized_size is not None else len(envelope.to_bytes())
         if payload_size > self._max_payload_bytes:
@@ -188,13 +195,6 @@ class MessageSender:
             raise EnvelopeValidationError(
                 f"Messages of type '{envelope.type.value}' require a correlation_id"
             )
-
-        # Sender/recipient must not contain path separators (prevents path traversal)
-        for field_name, value in [("sender", envelope.sender), ("recipient", envelope.recipient)]:
-            if "/" in value or "\\" in value:
-                raise EnvelopeValidationError(
-                    f"{field_name} must not contain path separators: '{value}'"
-                )
 
 
 class MessageProcessor:

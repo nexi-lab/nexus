@@ -73,7 +73,7 @@ jobs:
 
       - name: Build Rust extension (nexus_fast)
         run: |
-          cd rust/nexus_fast
+          cd rust/nexus_pyo3
           pip install maturin
           maturin develop --release
         if: matrix.os != 'windows-latest'
@@ -135,3 +135,75 @@ jobs:
           flags: unittests
           name: codecov-umbrella
           fail_ci_if_error: false
+
+  migration-test:
+    name: Migration Tests (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run migration tests (SQLite)
+        run: |
+          uv run pytest tests/integration/migrations/ -v -o "addopts="
+
+  migration-test-pg:
+    name: Migration Tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nexus_test
+          POSTGRES_PASSWORD: nexus_test
+          POSTGRES_DB: nexus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NEXUS_DATABASE_URL: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test,postgres]"
+
+      - name: Run migration tests (PostgreSQL)
+        run: |
+          uv run pytest tests/integration/migrations/ -v -o "addopts="

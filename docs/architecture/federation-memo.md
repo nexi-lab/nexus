@@ -1,6 +1,6 @@
 # Federation Architecture Memo
 
-**Date:** 2026-02-09 (Last updated)
+**Date:** 2026-02-13 (Last updated)
 **Status:** Working memo (not a design doc)
 **Author:** Engineering notes from federation recovery work
 
@@ -11,11 +11,11 @@
 ### What Works
 - **Raft consensus core** (Rust): 100% complete
   - `ZoneConsensus` wrapping tikv/raft-rs `RawNode` with async propose API
-  - `RaftStorage` backed by sled (persistent log, hard state, snapshots, compaction)
+  - `RaftStorage` backed by redb (persistent log, hard state, snapshots, compaction)
   - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
   - `WitnessStateMachineInMemory` for testing
   - All tests pass, clippy clean with `--all-features`
-- **PyO3 FFI bindings**: `Metastore` class for same-box Python→Rust sled access (~5μs/op) ✅ **CI complete (#1234)**
+- **PyO3 FFI bindings**: `Metastore` class for same-box Python→Rust redb access (~5μs/op) ✅ **CI complete (#1234)**
   - Metadata ops: set/get/delete/list
   - Lock ops: acquire/release/extend (mutex + semaphore)
   - Snapshot/restore
@@ -51,7 +51,7 @@
   │ │  ├─ meta     │     │  │  ├─ meta     │  │          │  │  │
   │ │  └─ locks    │     │  │  └─ locks    │  │          │  │  │
   │ │              │     │  │              │  │          │  │  │
-  │ │ sled (data)  │     │  │ sled (data)  │  │ sled(log)│  │  │
+  │ │ redb (data)  │     │  │ redb (data)  │  │ redb(log)│  │  │
   │ └──────────────┘     │  └──────────────┘  └──────────┘  │  │
   └──────────────────────┼──────────────────────────────────┘  │
                          │                                      │
@@ -71,7 +71,7 @@ Every non-witness node runs in a single process:
 1. **NexusFS** — filesystem operations, backend connectors, caching
 2. **RPC Server** — FastAPI (HTTP) + gRPC (Raft transport)
 3. **ZoneConsensus** — consensus participant (Leader or Follower, code-wise identical)
-4. **StateMachine** — metadata + locks, persisted in sled
+4. **StateMachine** — metadata + locks, persisted in redb
 5. **SQLAlchemy** — relational data (users, permissions, ReBAC)
 
 Leader and Follower run the same binary. Role is determined by Raft election.
@@ -100,50 +100,42 @@ Leader and Follower run the same binary. Role is determined by Raft election.
 
 ### 3.2 Storage Layer Decisions
 
-#### ✅ **Keep SQLAlchemy (PostgreSQL/SQLite)** - 20 types
+#### ✅ **Keep SQLAlchemy (PostgreSQL/SQLite) = RecordStore** - 22 types
 **Use Cases**: Relational queries, FK, unique constraints, vector search, encryption, BRIN indexes
 
 | Category | Data Types | Rationale |
 |----------|-----------|-----------|
 | **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Relational queries, FK, unique constraints, encryption |
-| **ReBAC (Partial)** | ReBACGroupClosureModel, ReBACChangelogModel | Materialized view (Leopard transitive closure), append-only BRIN |
-| **Memory System** | MemoryModel, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Complex relational + vector search (pgvector for embeddings) |
+| **ReBAC** | ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Composite indexes (SSOT), materialized view, append-only BRIN |
+| **Memory System** | MemoryModel, **MemoryConfig**, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Complex relational + vector search; MemoryConfig co-exists with MemoryModel |
 | **Versioning** | VersionHistoryModel, WorkspaceSnapshotModel | Parent FK, BRIN time-series, zero-copy via CAS |
 | **Semantic Search** | DocumentChunkModel | Vector index (pgvector/sqlite-vec) for embeddings |
 | **Workflows** | WorkflowModel, WorkflowExecutionModel | Version tracking, FK, BRIN |
 | **Zones** | ZoneModel, EntityRegistryModel, ExternalUserServiceModel | Unique constraints, hierarchical FK, encryption |
 | **Audit** | OperationLogModel | Append-only BRIN |
 | **Sandboxes** | SandboxMetadataModel | Relational queries |
+| **Path Registration** | **PathRegistrationModel** (merged WorkspaceConfig + MemoryConfig) | Co-exists with SnapshotModel/MemoryModel |
 
-#### ✅ **Migrate to sled via Raft (Strong Consistency)** - 8 types
-**Use Cases**: KV access pattern, linearizable reads/writes in multi-node deployments
+#### ✅ **Metastore (Ordered KV — redb)** — 5 types
+**Use Cases**: KV access pattern, redb via Raft (multi-node SC) or local-only
 
 | Data Type | Current Storage | Migration Rationale |
 |-----------|----------------|---------------------|
-| **FileMetadata** (proto) | Generated dataclass | Core metadata, KV by path, SC via Raft |
-| **DirectoryEntryModel** | SQLAlchemy | KV by parent_path, no JOINs needed |
-| **FileMetadataModel** (KV) | SQLAlchemy | Arbitrary user-defined KV metadata |
+| **FileMetadata** (+ merged FilePathModel, DirectoryEntryModel) | Generated dataclass / SQLAlchemy | Core metadata, KV by path, SC via Raft. Dir listing = prefix scan. |
+| **FileMetadataModel** (custom KV) | SQLAlchemy | Arbitrary user-defined KV metadata |
 | **ReBACNamespaceModel** | SQLAlchemy | KV by namespace_id, low cardinality |
 | **SystemSettingsModel** | SQLAlchemy | KV by key, low cardinality |
-| **WorkspaceConfig** | In-memory + SQLAlchemy | KV by path (merge duplicates, Task #4) |
-| **MemoryConfig** | In-memory + SQLAlchemy | KV by path (merge duplicates, Task #5) |
-| **Cluster Topology** | MISSING | Raft bootstrap info (merge with metadata, Task #6, #13) |
+| **ContentChunkModel** | SQLAlchemy | CAS dedup index, KV by content_hash, immutable (local only, no Raft) |
 
-#### ✅ **Migrate to sled (Local, no Raft)** - 1 type
-**Use Cases**: Content-addressed storage (CAS), immutable data
-
-| Data Type | Current Storage | Rationale |
-|-----------|----------------|-----------|
-| **ContentChunkModel** | SQLAlchemy | KV by content_hash, immutable (no SC needed) |
-
-#### ✅ **Keep Dragonfly (In-Memory Cache)** - 3 types
+#### ✅ **CacheStore (Ephemeral KV + Pub/Sub)** — 4 types
 **Use Cases**: Performance cache with TTL, pub/sub
 
 | Data Type | Current Storage | Rationale |
 |-----------|----------------|-----------|
 | **PermissionCacheProtocol** | Dragonfly/PostgreSQL/In-memory | Permission check cache, TTL |
 | **TigerCacheProtocol** | Dragonfly/PostgreSQL | Pre-materialized bitmaps, TTL |
-| **FileEvent** (pub/sub) | Dragonfly pub/sub | ⚠️ **NEEDS DECISION** (Task #7): Raft event log OR keep Dragonfly? |
+| **UserSessionModel** | SQLAlchemy | Pure KV with TTL, no relational features needed |
+| **FileEvent** (pub/sub) | Dragonfly pub/sub | **CacheStore** (pub/sub, ephemeral) — ✅ Decided (Task #7) |
 
 ### 3.3 Resolved Items (formerly open)
 
@@ -158,7 +150,7 @@ All data architecture decisions completed:
 
 - **Subscription/Delivery DB models** (Task #12): Pydantic models exist, but no SQLAlchemy storage found — needs investigation
 
-**Full analysis**: See `docs/architecture/data-storage-matrix.md` (374 lines, 50+ types cataloged)
+**Full analysis**: See `docs/architecture/data-storage-matrix.md` (50+ types cataloged)
 
 ---
 
@@ -176,8 +168,8 @@ All data architecture decisions completed:
                            ↓ syscall-like interface
 ┌─────────────────────────────────────────────────────────────┐
 │                      KERNEL SPACE                            │  ← Interface Contracts
-│  (ABCs: MetadataStore, TransportProtocol, StorageDriver,    │
-│   CacheProtocol, TimerScheduler, MemoryAllocator, etc.)     │
+│  (ABCs: MetastoreABC, RecordStoreABC, ObjectStoreABC,       │
+│   CacheStoreABC, TransportProtocol, TimerScheduler, etc.)   │
 └─────────────────────────────────────────────────────────────┘
                            ↓ driver registration
 ┌─────────────────────────────────────────────────────────────┐
@@ -219,11 +211,7 @@ All data architecture decisions completed:
 ┌─────────────────────────────────────────────────────────┐
 │ DRIVER LAYER                                            │
 │                                                         │
-│  SQLAlchemyMetadataStore (PostgreSQL/SQLite)           │
-│    - Relational queries, FK, BRIN indexes              │
-│    - Serializable isolation                            │
-│                                                         │
-│  RaftMetadataStore (sled + Raft)                       │
+│  RaftMetadataStore (redb + Raft)    [MetastoreABC]     │
 │    - Local mode: PyO3 FFI (~5μs latency)               │
 │    - Remote mode: gRPC to leader                       │
 │    - Linearizable reads/writes                         │
@@ -232,8 +220,8 @@ All data architecture decisions completed:
 
 **Config-Based Selection**:
 ```bash
-NEXUS_METADATA_STORE=raft        # Use Raft (SC mode)
-NEXUS_METADATA_STORE=sqlalchemy  # Use PostgreSQL (current)
+NEXUS_METASTORE=raft             # Use Raft (SC mode, multi-node)
+NEXUS_METASTORE=local            # Use redb (local PyO3, single-node)
 ```
 
 #### 4.2.2 Network Layer (Transport)
@@ -307,7 +295,7 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 
 | Pillar | Role | Capability | Backing Driver | Kernel Status |
 |--------|------|------------|----------------|---------------|
-| **MetastoreABC** | "The Structure" (Brain/Skeleton) | Ordered KV, SC (Raft), CAS, Range Scan | sled (embedded/Raft) | **Required** init param |
+| **MetastoreABC** | "The Structure" (Brain/Skeleton) | Ordered KV, SC (Raft), CAS, Range Scan | redb (local PyO3 / gRPC Raft) | **Required** init param |
 | **RecordStoreABC** | "The Truth" (Memory/Library) | Relational (JOINs), ACID, Vector Search | PostgreSQL (prod) / SQLite (dev) | **Optional** — injected for Services (ReBAC, Auth, Audit, etc.) |
 | **ObjectStoreABC** | "The Content" (Flesh/Warehouse) | Streaming I/O, Immutable Objects, Petabyte Scale | S3 / GCS / Local Disk | **Mounted** dynamically (= current `Backend` ABC) |
 | **CacheStoreABC** | "The Reflexes" (Nerves/Signals) | Ephemeral KV, Pub/Sub, TTL | Dragonfly (prod) / In-Memory (dev) | ✅ **Implemented** (optional, graceful degrade) |
@@ -322,7 +310,7 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 
 **Data Type → Pillar Mapping** (see `data-storage-matrix.md` for full details):
 
-- **Metastore**: FileMetadata (inodes), DirectoryEntry (dentries), CustomMetadata, SystemSettings, WorkspaceConfig, ContentChunkModel (CAS), ClusterTopology
+- **Metastore**: FileMetadata (inodes + merged FilePathModel + DirectoryEntry), FileMetadataModel (custom KV), ReBACNamespaceModel, SystemSettings, ContentChunkModel (CAS, local only)
 - **RecordStore**: Users, ReBAC (Graph), Memory (Vector), Audit, Workflows, Versioning, Zones, Sandboxes, Search
 - **ObjectStore**: File content (actual bytes on disk/cloud) — mounted via `router.add_mount()`
 - **CacheStore**: UserSession, PermissionCache, TigerCache, FileEvent (pub/sub)
@@ -339,7 +327,7 @@ class NexusFS:
     def __init__(
         self,
         # Required: Kernel core
-        metastore: MetastoreABC,                    # sled: inodes, dentries, config, topology
+        metastore: MetastoreABC,                    # redb: inodes, dentries, config, topology
 
         # Optional: Services layer (not kernel core)
         record_store: RecordStoreABC | None = None, # PG/SQLite: users, ReBAC, audit, vectors
@@ -365,12 +353,12 @@ class NexusFS:
 
 **Deployment-Time Driver Selection** (config-driven, no recompile):
 ```bash
-# Production: sled + PostgreSQL + S3 + Dragonfly
+# Production: redb + PostgreSQL + S3 + Dragonfly
 NEXUS_METASTORE=raft
 NEXUS_RECORD_STORE=postgresql://...
 NEXUS_OBJECT_STORE=s3://my-bucket
 
-# Development: sled + SQLite + Local Disk (no Dragonfly)
+# Development: redb + SQLite + Local Disk (no Dragonfly)
 NEXUS_METASTORE=local
 NEXUS_RECORD_STORE=sqlite:///dev.db
 NEXUS_OBJECT_STORE=local:./nexus-data
@@ -389,10 +377,10 @@ Same binary, different drivers loaded at **startup**.
 
 | Mode | Metastore | RecordStore | ObjectStore (mounted) | CacheStore | Use Case |
 |------|-----------|-------------|----------------------|------------|----------|
-| **Single-Node (Dev)** | sled (local PyO3) | SQLite | LocalBackend | In-Memory (future) | Development, testing |
-| **Single-Node (Prod)** | sled (local PyO3) | PostgreSQL | LocalBackend / S3 | Dragonfly (future) | Small-scale production |
-| **Multi-Node (Raft SC)** | sled (gRPC, Raft consensus) | PostgreSQL | S3 | Dragonfly (future) | HA, strong consistency |
-| **Multi-Node (Raft EC)** | sled (async replication) | PostgreSQL | S3 | Dragonfly (future) | High throughput, geo-distributed (#1180) |
+| **Single-Node (Dev)** | redb (local PyO3) | SQLite | LocalBackend | In-Memory | Development, testing |
+| **Single-Node (Prod)** | redb (local PyO3) | PostgreSQL | LocalBackend / S3 | Dragonfly | Small-scale production |
+| **Multi-Node (Raft SC)** | redb (gRPC, Raft consensus) | PostgreSQL | S3 | Dragonfly | HA, strong consistency |
+| **Multi-Node (Raft EC)** | redb (async replication) | PostgreSQL | S3 | Dragonfly | High throughput, geo-distributed (#1180) |
 
 ### 4.5 Raft Dual Mode: Strong vs Eventual Consistency (Issue #1180)
 
@@ -405,7 +393,7 @@ Same binary, different drivers loaded at **startup**.
 **Eventual Consistency (EC) Mode** (opt-in):
 - Writes replicate asynchronously (Leader ACK only)
 - Reads may observe stale data (bounded staleness)
-- Latency: ~1-2ms (local sled read)
+- Latency: ~1-2ms (local redb read)
 - Use case: Media, content delivery, high-throughput ingestion
 
 **Configuration**: Per-zone setting in `ZoneModel.consistency_mode` (SC/EC).
@@ -444,7 +432,7 @@ Client → NexusFS.write() → SQLAlchemyMetadataStore → SQLite/PostgreSQL
 Client → NexusFS.write() → RaftMetadataStore (local mode)
                               → PyO3 FFI (~5μs)
                               → FullStateMachine.apply()
-                              → sled persist
+                              → redb persist
                          → Backend.write() → local/S3/GCS/...
 ```
 
@@ -455,7 +443,7 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
                               → gRPC replicate to followers
                               → Majority ACK (2/3 or 2/2+witness)
                               → StateMachine.apply() on all nodes
-                              → sled persist on all nodes
+                              → redb persist on all nodes
                          → Backend.write() → local/S3/GCS/...
 ```
 
@@ -468,14 +456,14 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
 ### 6.1 Core Decision: Zone = Consensus Domain (DECIDED 2026-02-10)
 
 A Zone is both a **logical namespace** and a **consensus boundary**:
-- Each Zone has its own **independent Raft group** with its own sled database
-- Zones do NOT share metadata — different zones have **separate, non-replicated** sled stores
+- Each Zone has its own **independent Raft group** with its own redb database
+- Zones do NOT share metadata — different zones have **separate, non-replicated** redb stores
 - Cross-zone access requires **gRPC** calls (DT_MOUNT resolution)
 - Visibility is enforced at the zone boundary, not by application-layer filtering
 
 **Why not replicate all metadata to all nodes?**
 1. **Security**: CN nodes should not have EU user metadata (GDPR, data sovereignty)
-2. **Space**: Millions of users × thousands of files = sled cannot hold global metadata
+2. **Space**: Millions of users × thousands of files = redb cannot hold global metadata
 3. **Latency**: Cross-continent Raft consensus adds 200ms+ per write
 
 **Comparison with Google Spanner**:
@@ -528,16 +516,16 @@ nexus mount /my-project bob:/my-project
 | Aspect | Behavior |
 |--------|----------|
 | Mount = | Create new zone + all participants join as **Voters** |
-| Read latency | ~5μs (local sled, page cache) — **always local** |
+| Read latency | ~5μs (local redb, page cache) — **always local** |
 | Write latency | Raft propose → commit (~ms same region, ~200ms cross-continent) |
 | Consistency | Linearizable (Raft guarantees) — **no cache invalidation needed** |
-| Data locality | Full metadata replica in local sled (Voter has complete copy) |
-| Unmount = | Node leaves Raft group, local sled data can be cleaned up |
+| Data locality | Full metadata replica in local redb (Voter has complete copy) |
+| Unmount = | Node leaves Raft group, local redb data can be cleaned up |
 
 **Authentication**: Reuse existing mechanisms — gRPC mutual TLS or SSH-style key exchange
 at mount time. Same as NFS mount authentication. No new auth system needed.
 
-**No redirect-only mode**: Every participant has a local sled replica through Raft.
+**No redirect-only mode**: Every participant has a local redb replica through Raft.
 If a zone owner doesn't want you to access their data, they don't grant mount permission.
 "贡献 storage 的一方有绝对主动权" — the zone owner controls who can join.
 
@@ -561,10 +549,10 @@ Scenario: Alice, Bob, and Charlie want to collaborate.
 2. Zone_MyProject Raft group membership:
    Voters: [alice-node, bob-node, charlie-node]   ← all equal participants
 
-3. All three have local sled replicas of Zone_MyProject:
-   Alice:   /my-project → DT_MOUNT → Zone_MyProject      (local sled, ~5μs reads)
-   Bob:     /collab/alice → DT_MOUNT → Zone_MyProject     (local sled, ~5μs reads)
-   Charlie: /shared/project → DT_MOUNT → Zone_MyProject   (local sled, ~5μs reads)
+3. All three have local redb replicas of Zone_MyProject:
+   Alice:   /my-project → DT_MOUNT → Zone_MyProject      (local redb, ~5μs reads)
+   Bob:     /collab/alice → DT_MOUNT → Zone_MyProject     (local redb, ~5μs reads)
+   Charlie: /shared/project → DT_MOUNT → Zone_MyProject   (local redb, ~5μs reads)
 
 4. Alice writes /my-project/new.txt:
    → Raft propose → committed by majority (2/3) → replicated to all
@@ -586,7 +574,7 @@ ReBAC permission can replicate the Raft log but gets rejected when proposing wri
 
 **Implicit share (`nexus share /path`)** internally:
 1. Creates a new zone for the subtree
-2. Migrates metadata from parent zone's sled → new zone's sled (like `git subtree split`)
+2. Migrates metadata from parent zone's redb → new zone's redb (like `git subtree split`)
 3. Replaces original path with DT_MOUNT in parent zone
 4. Creator's node becomes Voter in new zone's Raft group
 5. Invited users' nodes join as **Voters** (All-Voter model — no Learner asymmetry)
@@ -614,7 +602,7 @@ peer discovery scenarios. **No custom NexusFS-level discovery mechanism needed.*
 
 **Why no custom DNS?** Mounting = joining a Raft group as Voter. By the time a DT_MOUNT
 entry exists, the node has already joined the target zone (via `JoinZone` RPC) and has
-a local sled replica. Path resolution is always local (~5μs). There is no scenario where
+a local redb replica. Path resolution is always local (~5μs). There is no scenario where
 path resolution encounters an "unknown" zone — if you can see the DT_MOUNT, you're
 already a Voter in that zone.
 
@@ -637,9 +625,9 @@ already a Voter in that zone.
 ```
 Path: /company/engineering/team1/file.txt
 
-  Step 1: Root Zone (local sled) → /company is DT_MOUNT → Zone_Company
-  Step 2: Zone_Company (local sled) → /engineering is DT_MOUNT → Zone_Eng
-  Step 3: Zone_Eng (local sled) → /team1/file.txt → return FileMetadata
+  Step 1: Root Zone (local redb) → /company is DT_MOUNT → Zone_Company
+  Step 2: Zone_Company (local redb) → /engineering is DT_MOUNT → Zone_Eng
+  Step 3: Zone_Eng (local redb) → /team1/file.txt → return FileMetadata
 
   All reads are local (~5μs) because mounting = Voter = full local replica.
   No "DNS resolution" on the read path. Ever.
@@ -675,13 +663,14 @@ class DT_MOUNT:
     name: str               # Mount point name in parent directory
     entry_type: "DT_MOUNT"  # Alongside DT_DIR, DT_REG
     target_zone_id: str     # Target zone UUID
-    # No target_address needed: mounting node is a Raft Learner,
-    # so it has local sled replica. Address is resolved at mount time
+    # No target_address needed: mounting node is a Raft Voter (All-Voter model),
+    # so it has local redb replica. Address is resolved at mount time
     # and stored in Raft group membership, not in the DT_MOUNT entry.
 ```
 
-**Mount conflict**: Reject if path already exists as DT_DIR or DT_REG (NFS-style,
-no shadow). See Issue #1326 for shadow discussion.
+**Mount conflict**: NFS-compliant with controlled DT_DIR shadow — if path exists as
+DT_DIR, mount shadows it (existing dir becomes inaccessible until unmount).
+DT_REG conflict is rejected. See Issue #1326 for implementation.
 
 **Reference counting**: `i_links_count` tracks DT_MOUNT refs to a zone.
 New zone starts at 1 (owner reference). Each DT_MOUNT adds 1. Drop to 0 is impossible
@@ -690,20 +679,20 @@ New zone starts at 1 (owner reference). Each DT_MOUNT adds 1. Drop to 0 is impos
 ### 6.7 Metastore as Cache Backing Store
 
 Since mounting = joining Raft group (All-Voter model), every mounted zone has a
-**local sled replica**. The existing `Metastore` serves dual purpose:
+**local redb replica**. The existing `Metastore` serves dual purpose:
 
-| Use case | sled instance | Raft? | Data |
+| Use case | redb instance | Raft? | Data |
 |----------|--------------|-------|------|
 | **Own zone** | RaftConsensus (SC/EC) | Yes (Voter) | This zone's metadata |
 | **Mounted zone** | RaftConsensus | Yes (Voter) | Shared zone's metadata |
 
-Both use sled's built-in page cache (~5μs for hot data). **No separate cache layer needed.**
+Both use redb's built-in page cache (~5μs for hot data). **No separate cache layer needed.**
 Raft log replication IS the cache invalidation mechanism.
 
-**Note (2026-02-11)**: An earlier design discussed a separate `cache_sled` (local-only,
+**Note (2026-02-11)**: An earlier design discussed a separate `cache_redb` (local-only,
 no Raft) for caching remote zone metadata. This is **superseded** by the All-Voter model —
-since every participant has a full local replica via Raft, the authoritative sled IS the cache.
-No `cache_sled` or Dragonfly needed for metadata caching.
+since every participant has a full local replica via Raft, the authoritative redb IS the cache.
+No `cache_redb` or Dragonfly needed for metadata caching.
 
 ### 6.8 Implications for Current Code
 
@@ -711,11 +700,50 @@ No `cache_sled` or Dragonfly needed for metadata caching.
 |-----------|-------------------|------------------------|
 | `_create_metadata_store()` | 1 RaftMetadataStore | 1 per zone the node participates in |
 | Mount operation | N/A | Create new zone, all participants join as Voters |
-| Read path | Local sled | Local sled (always, Voter has full replica) |
+| Read path | Local redb | Local redb (always, Voter has full replica) |
 | Write path | Raft propose | Raft propose to target zone's leader |
 | Node discovery | `NEXUS_PEERS` (static) | OS DNS + `NEXUS_PEERS` + `JoinZoneResponse.ClusterConfig` |
 | 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
 | Multi-Raft sharding | N/A | Future: Issue #1327 (when single zone too large) |
+
+### 6.9 Federation as Optional DI Subsystem (DECIDED 2026-02-13)
+
+Federation is **NOT kernel**. It is an optional, DI-injected subsystem at the same
+level as CacheStore and RecordStore. NexusFS without federation gracefully degrades
+to client-server mode (via RemoteNexusFS) or single-node embedded mode.
+
+**Degradation path:**
+```
+Full (Federation + Remote + RecordStore + CacheStore)
+  ↓ remove Federation
+Client-Server (RemoteNexusFS ↔ NexusFS server)
+  ↓ remove RemoteNexusFS
+Single-node embedded (NexusFS kernel: Metastore + ObjectStore only)
+```
+
+**Layering:**
+```
+                NexusFS (kernel)           Federation (optional subsystem)
+User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymmetric)
+Kernel/Service: NexusFS                    NexusFederation (orchestration)
+HAL:            FileMetadataProtocol       ZoneManager (wraps PyO3)
+Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
+Comms:          —                          RaftClient (gRPC to peers)
+```
+
+Federation does NOT need a remote implementation (unlike NexusFS → RemoteNexusFS)
+because zone operations are inherently asymmetric: you always operate locally on
+your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
+
+**`NexusFederation` class** (`nexus.raft.federation`):
+- Orchestrates ZoneManager (local ops) + RaftClient (peer gRPC)
+- Dependencies injected: `ZoneManager`, client factory
+- Exposes `share()` and `join()` as high-level async workflows
+- CLI and future REST/MCP endpoints are thin wrappers over this class
+
+**CLI `nexus mount`** (merged with FUSE mount via argument detection):
+- 1 arg → FUSE mount (existing)
+- 2 args with `peer:path` syntax → federation share/join (new)
 
 ---
 
@@ -760,8 +788,8 @@ A new entry type alongside `DT_DIR` and `DT_REG`:
 Since mounting = creating a new zone where all participants are Voters, cross-zone reads
 are **always local**:
 
-1. Node has local sled replicas for ALL zones it participates in (Voter)
-2. `ls -R /company/` → Zone A sled (local) → sees DT_MOUNT → Zone B sled (also local)
+1. Node has local redb replicas for ALL zones it participates in (Voter)
+2. `ls -R /company/` → Zone A redb (local) → sees DT_MOUNT → Zone B redb (also local)
 3. All reads are ~5μs — no gRPC needed for data access
 4. gRPC is only used for Raft log replication (background, async)
 
@@ -824,7 +852,7 @@ hide upper directories — the namespace boundary is the zone boundary.
 
 **Status**: Known bottleneck, not yet addressed.
 
-**Symptoms**: Writing 1000 files takes ~30 seconds (30ms per write). sled itself is ~0.014ms/op, so 99.95% of time is in Python/NexusFS overhead.
+**Symptoms**: Writing 1000 files takes ~30 seconds (30ms per write). redb itself is ~0.014ms/op, so 99.95% of time is in Python/NexusFS overhead.
 
 **Suspected bottleneck breakdown**:
 - CAS (content-addressable storage) hash computation
@@ -838,7 +866,7 @@ hide upper directories — the namespace boundary is the zone boundary.
 - Batch write API (single transaction for N files)
 - Async permission checks
 - Deferred directory index updates
-- sled-native metadata (bypass SQLAlchemy entirely when using Raft)
+- redb-native metadata (bypass SQLAlchemy entirely when using Raft)
 
 ### 7c. Multi-Node Deployment & Testing
 
@@ -858,7 +886,7 @@ hide upper directories — the namespace boundary is the zone boundary.
 - NexusFS (filesystem ops, backend connectors, caching)
 - FastAPI (HTTP API)
 - RPC Server (client-facing RPC)
-- ZoneConsensus + sled (consensus + embedded storage)
+- ZoneConsensus + redb (consensus + embedded storage)
 - gRPC transport (inter-node Raft replication)
 - SQLAlchemy (users, permissions, ReBAC)
 
@@ -868,21 +896,15 @@ This "full node" image will serve as the unit for `docker-compose.cross-platform
 
 ### 7d. Dragonfly Status Post-Raft Migration
 
-**Status**: ⚠️ **POTENTIALLY BROKEN** (needs clarification)
+**Status**: ✅ **RESOLVED** (see data-storage-matrix.md Step 2)
 
-**Current usage**:
-- RedisLockManager (distributed locks via Dragonfly)
-- PermissionCacheProtocol (permission check cache)
-- TigerCacheProtocol (pre-materialized permission bitmaps)
-- FileEvent pub/sub (file change notifications)
-
-**Post-Raft considerations**:
-- **Distributed locks**: Raft now provides consensus-based locks (mutex, semaphore) via `FullStateMachine`
-  - **Question**: Should RedisLockManager be deprecated? Or keep for cross-platform (non-Raft) scenarios?
-- **Permission caches**: Can stay in Dragonfly (performance cache, not SSOT)
-- **FileEvent pub/sub**: See Task #7 (Raft event log vs Dragonfly pub/sub decision)
-
-**Action needed**: Clarify if Dragonfly becomes optional or remains required for caching.
+**Decisions**:
+- **Redis deprecated** → Dragonfly only (drop-in replacement, 25x memory efficiency)
+- **Distributed locks**: Raft provides consensus-based locks via `FullStateMachine`. RedisLockManager can be deprecated for Raft-enabled deployments.
+- **Permission/Tiger caches**: Stay in CacheStore (Dragonfly prod / In-Memory dev). Performance cache, not SSOT.
+- **FileEvent pub/sub**: → CacheStore (Task #7 decided). Ephemeral, fire-and-forget.
+- **UserSession**: → CacheStore (pure KV with TTL)
+- **Dragonfly is optional**: CacheStore gracefully degrades (NullCacheStore fallback). See Task #22.
 
 ### 7e. Cross-Zone Federation (Plan B: Spanner-like 2PC)
 
@@ -938,7 +960,7 @@ Constructor injection + backward compatibility via `db_path` fallback. See Task 
 
 | Layer | Location | Pattern | Technology | Latency |
 |-------|----------|---------|------------|---------|
-| **L0** | Kernel internal | Decorator (`#[cached]`) | sled | ~50ns |
+| **L0** | Kernel internal | Decorator (`#[cached]`) | redb | ~50ns |
 | **L1** | User-mode driver | ABC (HAL) | Dragonfly `/dev/mem/hot` | ~1ms |
 | **L2** | User-mode driver | ABC (HAL) | PostgreSQL `/dev/mem/vector` | ~5ms |
 
@@ -1059,7 +1081,7 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 | Component | File | Notes |
 |-----------|------|-------|
 | Raft node | `rust/nexus_raft/src/raft/node.rs` | RawNode wrapper, propose API |
-| Raft storage | `rust/nexus_raft/src/raft/storage.rs` | sled-backed Storage trait impl |
+| Raft storage | `rust/nexus_raft/src/raft/storage.rs` | redb-backed Storage trait impl |
 | State machine | `rust/nexus_raft/src/raft/state_machine.rs` | Full + Witness + InMemory |
 | PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | Metastore + RaftConsensus Python classes |
 | Raft proto | `rust/nexus_raft/proto/raft.proto` | gRPC transport definitions |

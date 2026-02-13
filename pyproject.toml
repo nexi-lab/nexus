@@ -171,6 +171,7 @@ test = [
     "pytest-mock>=3.12.0",
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.5.0",  # Parallel test execution
+    "pytest-alembic>=0.11.0",  # Alembic migration test harness (#1296)
     "freezegun>=1.4.0",  # Time mocking for tests
     # LangGraph integration tests
     "langchain-core>=0.3.0",
@@ -250,14 +251,11 @@ Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 nexus = "nexus.cli:main"
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.maturin]
-python-source = "src"
-module-name = "nexus._nexus_fast"
-# Build Rust extension as optional - pure Python wheel will work without it
-features = ["pyo3/extension-module"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

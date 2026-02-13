@@ -90,8 +90,14 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove posix_uid column from file_paths table."""
-    # Drop index first
-    op.drop_index("idx_file_paths_posix_uid", table_name="file_paths")
+    from contextlib import suppress
 
-    # Drop column
-    op.drop_column("file_paths", "posix_uid")
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    # Index may have been lost during batch_alter_table operations in later
+    # migrations that recreate the file_paths table.
+    with suppress(OperationalError, ProgrammingError):
+        op.drop_index("idx_file_paths_posix_uid", table_name="file_paths")
+
+    with op.batch_alter_table("file_paths") as batch_op:
+        batch_op.drop_column("posix_uid")

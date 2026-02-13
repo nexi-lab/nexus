@@ -253,70 +253,46 @@ impl Iterator for SegmentIter {
 
         // Read seq
         let mut seq_buf = [0u8; 8];
-        if let Err(e) = self.reader.read_exact(&mut seq_buf) {
-            return if e.kind() == io::ErrorKind::UnexpectedEof {
-                Some(Err(SegmentError::TruncatedRecord(record_start)))
-            } else {
-                Some(Err(e.into()))
-            };
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut seq_buf, record_start) {
+            return Some(Err(e));
         }
         let seq = u64::from_le_bytes(seq_buf);
         self.offset += 8;
 
         // Read zone_id_len
         let mut zlen_buf = [0u8; 2];
-        if let Err(e) = self.reader.read_exact(&mut zlen_buf) {
-            return Some(if e.kind() == io::ErrorKind::UnexpectedEof {
-                Err(SegmentError::TruncatedRecord(record_start))
-            } else {
-                Err(e.into())
-            });
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut zlen_buf, record_start) {
+            return Some(Err(e));
         }
         let zone_id_len = u16::from_le_bytes(zlen_buf) as usize;
         self.offset += 2;
 
         // Read zone_id
         let mut zone_id = vec![0u8; zone_id_len];
-        if let Err(e) = self.reader.read_exact(&mut zone_id) {
-            return Some(if e.kind() == io::ErrorKind::UnexpectedEof {
-                Err(SegmentError::TruncatedRecord(record_start))
-            } else {
-                Err(e.into())
-            });
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut zone_id, record_start) {
+            return Some(Err(e));
         }
         self.offset += zone_id_len as u64;
 
         // Read payload_len
         let mut plen_buf = [0u8; 4];
-        if let Err(e) = self.reader.read_exact(&mut plen_buf) {
-            return Some(if e.kind() == io::ErrorKind::UnexpectedEof {
-                Err(SegmentError::TruncatedRecord(record_start))
-            } else {
-                Err(e.into())
-            });
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut plen_buf, record_start) {
+            return Some(Err(e));
         }
         let payload_len = u32::from_le_bytes(plen_buf) as usize;
         self.offset += 4;
 
         // Read payload
         let mut payload = vec![0u8; payload_len];
-        if let Err(e) = self.reader.read_exact(&mut payload) {
-            return Some(if e.kind() == io::ErrorKind::UnexpectedEof {
-                Err(SegmentError::TruncatedRecord(record_start))
-            } else {
-                Err(e.into())
-            });
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut payload, record_start) {
+            return Some(Err(e));
         }
         self.offset += payload_len as u64;
 
         // Read CRC
         let mut crc_buf = [0u8; 4];
-        if let Err(e) = self.reader.read_exact(&mut crc_buf) {
-            return Some(if e.kind() == io::ErrorKind::UnexpectedEof {
-                Err(SegmentError::TruncatedRecord(record_start))
-            } else {
-                Err(e.into())
-            });
+        if let Err(e) = read_exact_or_truncated(&mut self.reader, &mut crc_buf, record_start) {
+            return Some(Err(e));
         }
         let stored_crc = u32::from_le_bytes(crc_buf);
         self.offset += 4;
@@ -342,6 +318,21 @@ impl Iterator for SegmentIter {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Read exactly `buf.len()` bytes, mapping `UnexpectedEof` to `TruncatedRecord`.
+fn read_exact_or_truncated(
+    reader: &mut BufReader<File>,
+    buf: &mut [u8],
+    record_start: u64,
+) -> Result<(), SegmentError> {
+    reader.read_exact(buf).map_err(|e| {
+        if e.kind() == io::ErrorKind::UnexpectedEof {
+            SegmentError::TruncatedRecord(record_start)
+        } else {
+            e.into()
+        }
+    })
+}
 
 /// Compute CRC32 over seq + zone_id + payload.
 fn compute_crc(seq: u64, zone_id: &[u8], payload: &[u8]) -> u32 {

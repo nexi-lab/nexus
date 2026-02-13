@@ -357,6 +357,35 @@ def create_nexus_services(
     # Gracefully no-ops if tigerbeetle package is not installed.
     wallet_provisioner = _create_wallet_provisioner()
 
+    # --- Manifest Resolver (Issue #1427) ---
+    # Only create FileGlobExecutor when backend has local storage.
+    # For non-local backends (GCS/S3), file_glob sources are skipped.
+    import logging as _logging
+
+    _factory_logger = _logging.getLogger(__name__)
+    manifest_resolver: Any = None
+
+    try:
+        from nexus.services.context_manifest import ManifestResolver
+        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+
+        executors: dict[str, Any] = {}
+        root_path = getattr(backend, "root_path", None)
+        if isinstance(root_path, str):
+            from pathlib import Path
+
+            executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+
+        manifest_resolver = ManifestResolver(
+            executors=executors,
+            max_resolve_seconds=5.0,
+        )
+        _factory_logger.debug(
+            "[FACTORY] ManifestResolver created with %d executors", len(executors)
+        )
+    except ImportError as _e:
+        _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -373,6 +402,7 @@ def create_nexus_services(
         "observability_subsystem": observability_subsystem,
         "wallet_provisioner": wallet_provisioner,
         "chunked_upload_service": chunked_upload_service,
+        "manifest_resolver": manifest_resolver,
     }
 
     return result
@@ -466,13 +496,13 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
         )
 
-    # ObservabilitySubsystem is not a NexusFS constructor param — pop it
-    # and attach after construction for lifecycle access (health_check, cleanup).
-    observability_subsystem = services.pop("observability_subsystem", None)
-
-    # ChunkedUploadService is not a NexusFS constructor param — pop it and
-    # attach after construction. The FastAPI lifespan reads it from NexusFS.
-    chunked_upload_service = services.pop("chunked_upload_service", None)
+    # Pop services that NexusFS doesn't accept as constructor params.
+    # These are stored in nx._service_extras for server-layer access.
+    service_extras: dict[str, Any] = {}
+    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver"):
+        val = services.pop(key, None)
+        if val is not None:
+            service_extras[key] = val
 
     nx = NexusFS(
         backend=backend,
@@ -506,10 +536,6 @@ def create_nexus_fs(
         **services,
     )
 
-    if observability_subsystem is not None:
-        nx._observability_subsystem = observability_subsystem  # type: ignore[attr-defined]
-
-    if chunked_upload_service is not None:
-        nx._chunked_upload_service = chunked_upload_service  # type: ignore[attr-defined]
+    nx._service_extras = service_extras
 
     return nx

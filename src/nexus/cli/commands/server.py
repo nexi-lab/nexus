@@ -89,39 +89,198 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
     ).start()
 
 
+def _is_federation_syntax(source: str, target: str | None) -> bool:
+    """Detect federation mount: 2 args with at least one containing ':'."""
+    if target is None:
+        return False
+    return ":" in source or ":" in target
+
+
 @click.command(name="mount")
-@click.argument("mount_point", type=click.Path())
+@click.argument("source", type=str)
+@click.argument("target", type=str, required=False, default=None)
+# --- FUSE options ---
 @click.option(
     "--mode",
     type=click.Choice(["binary", "text", "smart"]),
     default="smart",
-    help="Mount mode: binary (raw), text (parsed), smart (auto-detect)",
+    help="[FUSE] Mount mode: binary (raw), text (parsed), smart (auto-detect)",
     show_default=True,
 )
 @click.option(
     "--daemon",
     is_flag=True,
-    help="Run in background (daemon mode)",
+    help="[FUSE] Run in background (daemon mode)",
 )
 @click.option(
     "--allow-other",
     is_flag=True,
-    help="Allow other users to access the mount",
+    help="[FUSE] Allow other users to access the mount",
 )
 @click.option(
     "--debug",
     is_flag=True,
-    help="Enable FUSE debug output",
+    help="Enable debug output",
 )
 @click.option(
     "--agent-id",
     type=str,
     default=None,
-    help="Agent ID for version attribution (e.g., 'my-agent'). "
-    "When set, file modifications will be attributed to this agent.",
+    help="[FUSE] Agent ID for version attribution",
+)
+# --- Federation options ---
+@click.option(
+    "--node-id",
+    type=int,
+    envvar="NEXUS_NODE_ID",
+    default=1,
+    show_default=True,
+    help="[Federation] This node's unique Raft ID",
+)
+@click.option(
+    "--data-dir",
+    type=click.Path(),
+    envvar="NEXUS_DATA_DIR",
+    default="./nexus-data/zones",
+    show_default=True,
+    help="[Federation] Base directory for zone databases",
+)
+@click.option(
+    "--bind",
+    type=str,
+    envvar="NEXUS_BIND_ADDR",
+    default="0.0.0.0:2126",
+    show_default=True,
+    help="[Federation] gRPC bind address",
+)
+@click.option(
+    "--tls-cert",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_CERT",
+    default=None,
+    help="[Federation] TLS certificate PEM file (mTLS)",
+)
+@click.option(
+    "--tls-key",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_KEY",
+    default=None,
+    help="[Federation] TLS private key PEM file (mTLS)",
+)
+@click.option(
+    "--tls-ca",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_CA",
+    default=None,
+    help="[Federation] TLS CA certificate PEM file (mTLS)",
 )
 @add_backend_options
 def mount(
+    source: str,
+    target: str | None,
+    mode: str,
+    daemon: bool,
+    allow_other: bool,
+    debug: bool,
+    agent_id: str | None,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+    tls_cert: str | None,
+    tls_key: str | None,
+    tls_ca: str | None,
+    backend_config: BackendConfig,
+) -> None:
+    """Mount Nexus filesystem (FUSE or federation).
+
+    \b
+    FUSE mode (1 argument):
+        nexus mount /mnt/nexus
+        nexus mount /mnt/nexus --mode=binary --daemon
+
+    \b
+    Federation mode (2 arguments with peer:path):
+        nexus mount /local peer:/remote       # share subtree with peer
+        nexus mount peer:/remote /local       # join peer's shared subtree
+    """
+    if _is_federation_syntax(source, target):
+        _mount_federation(source, target, node_id, data_dir, bind, tls_cert, tls_key, tls_ca)
+    else:
+        _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, backend_config)
+
+
+def _mount_federation(
+    source: str,
+    target: str | None,
+    node_id: int,
+    data_dir: str,
+    bind: str,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
+    tls_ca: str | None = None,
+) -> None:
+    """Federation mount — lazy imports nexus.raft to stay decoupled from FUSE."""
+    import asyncio
+
+    assert target is not None
+
+    # Parse: which arg has the colon?
+    if ":" in source and ":" not in target:
+        # nexus mount peer:/remote /local → join
+        peer_addr, remote_path = source.split(":", 1)
+        local_path = target
+        flow = "join"
+    elif ":" in target and ":" not in source:
+        # nexus mount /local peer:/remote → share
+        peer_addr, remote_path = target.split(":", 1)
+        local_path = source
+        flow = "share"
+    else:
+        console.print("[red]Error:[/red] Exactly one argument must use peer:path syntax")
+        console.print("  Share: nexus mount /local peer:/remote")
+        console.print("  Join:  nexus mount peer:/remote /local")
+        sys.exit(1)
+
+    try:
+        from nexus.raft.federation import NexusFederation
+        from nexus.raft.zone_manager import ZoneManager
+
+        mgr = ZoneManager(
+            node_id=node_id,
+            base_path=data_dir,
+            bind_addr=bind,
+            tls_cert_path=tls_cert,
+            tls_key_path=tls_key,
+            tls_ca_path=tls_ca,
+        )
+        mgr.bootstrap()
+
+        fed = NexusFederation(zone_manager=mgr)
+
+        if flow == "share":
+            console.print(f"[cyan]Sharing[/cyan] {local_path} → {peer_addr}:{remote_path}")
+            zone_id = asyncio.run(fed.share(local_path, peer_addr, remote_path))
+            console.print(f"[green]Shared as zone '{zone_id}'[/green]")
+            console.print(f"  Local:  {local_path} → DT_MOUNT → {zone_id}")
+            console.print(f"  Remote: {peer_addr}:{remote_path} → DT_MOUNT → {zone_id}")
+        else:
+            console.print(f"[cyan]Joining[/cyan] {peer_addr}:{remote_path} → {local_path}")
+            zone_id = asyncio.run(fed.join(peer_addr, remote_path, local_path))
+            console.print(f"[green]Joined zone '{zone_id}'[/green]")
+            console.print(f"  Mounted at: {local_path}")
+
+        mgr.shutdown()
+    except ImportError:
+        console.print(
+            "[red]Error:[/red] Federation requires PyO3 build with --features full.\n"
+            "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+        )
+        sys.exit(1)
+    except Exception as e:
+        handle_error(e)
+
+
+def _mount_fuse(
     mount_point: str,
     mode: str,
     daemon: bool,
@@ -130,40 +289,7 @@ def mount(
     agent_id: str | None,
     backend_config: BackendConfig,
 ) -> None:
-    """Mount Nexus filesystem to a local path.
-
-    Mounts the Nexus filesystem using FUSE, allowing standard Unix tools
-    to work seamlessly with Nexus files.
-
-    Mount Modes:
-    - binary: Return raw file content (no parsing)
-    - text: Parse all files and return text representation
-    - smart (default): Auto-detect file type and return appropriate format
-
-    Virtual File Views:
-    - .raw/ directory: Access original binary content
-    - _parsed.{ext}.md suffix: View parsed markdown (e.g., file_parsed.xlsx.md)
-
-    Examples:
-        # Mount in smart mode (default)
-        nexus mount /mnt/nexus
-
-        # Mount in binary mode (raw files only)
-        nexus mount /mnt/nexus --mode=binary
-
-        # Mount in background
-        nexus mount /mnt/nexus --daemon
-
-        # Mount with debug output
-        nexus mount /mnt/nexus --debug
-
-        # Use standard Unix tools
-        ls /mnt/nexus
-        cat /mnt/nexus/workspace/document.xlsx      # Binary content
-        cat /mnt/nexus/workspace/document_parsed.xlsx.md  # Parsed markdown
-        grep "TODO" /mnt/nexus/workspace/**/*.py
-        vim /mnt/nexus/workspace/file.txt
-    """
+    """FUSE mount — lazy imports nexus.fuse to stay decoupled from federation."""
     try:
         from nexus.fuse import mount_nexus
 

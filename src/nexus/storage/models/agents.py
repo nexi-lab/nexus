@@ -31,6 +31,7 @@ class AgentRecordModel(Base):
     generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     agent_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_manifest: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )

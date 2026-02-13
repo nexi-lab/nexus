@@ -55,7 +55,7 @@ class MessageSender:
     Args:
         vfs: VFS operations for file read/write.
         event_publisher: EventBus publisher for notifications. Optional.
-        zone_id: Zone ID for multi-tenant isolation.
+        zone_id: Zone ID for multi-zone isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
     """
 
@@ -170,7 +170,7 @@ class MessageProcessor:
         vfs: VFS operations for file read/write/rename.
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
-        zone_id: Zone ID for multi-tenant isolation.
+        zone_id: Zone ID for multi-zone isolation.
         max_dedup_size: Maximum size of the in-memory dedup set.
     """
 

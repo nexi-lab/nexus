@@ -29,7 +29,7 @@ class TTLSweeper:
 
     Args:
         vfs: VFS operations for file listing, reading, and renaming.
-        zone_id: Zone ID for multi-tenant isolation.
+        zone_id: Zone ID for multi-zone isolation.
         interval: Seconds between sweep cycles.
     """
 

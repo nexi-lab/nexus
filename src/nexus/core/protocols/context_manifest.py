@@ -4,7 +4,7 @@ Defines the contract for resolving context manifests — deterministic
 pre-execution of sources before agent reasoning starts.
 
 The kernel knows *that* manifests get resolved, but not *how*.
-The ``ManifestResolver`` in ``nexus.core.context_manifest.resolver``
+The ``ManifestResolver`` in ``nexus.services.context_manifest.resolver``
 is the current implementation.
 
 References:
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     ContextSourceProtocol,
     ManifestResult,
 )

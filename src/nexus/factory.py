@@ -366,8 +366,8 @@ def create_nexus_services(
     manifest_resolver: Any = None
 
     try:
-        from nexus.core.context_manifest import ManifestResolver
-        from nexus.core.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.services.context_manifest import ManifestResolver
+        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
 
         executors: dict[str, Any] = {}
         root_path = getattr(backend, "root_path", None)

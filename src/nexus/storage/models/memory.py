@@ -133,7 +133,8 @@ class MemoryModel(Base):
         Index("idx_memory_superseded_by", "superseded_by_id"),
         Index(
             "idx_memory_namespace_key",
-            "namespace", "path_key",
+            "namespace",
+            "path_key",
             unique=True,
             sqlite_where=text("path_key IS NOT NULL"),
         ),
@@ -306,8 +307,19 @@ class EntityModel(Base):
                 f"canonical_name must be 512 characters or less, got {len(self.canonical_name)}"
             )
         valid_types = [
-            "PERSON", "ORG", "LOCATION", "DATE", "TIME", "NUMBER",
-            "CONCEPT", "EVENT", "PRODUCT", "TECHNOLOGY", "EMAIL", "URL", "OTHER",
+            "PERSON",
+            "ORG",
+            "LOCATION",
+            "DATE",
+            "TIME",
+            "NUMBER",
+            "CONCEPT",
+            "EVENT",
+            "PRODUCT",
+            "TECHNOLOGY",
+            "EMAIL",
+            "URL",
+            "OTHER",
         ]
         if self.entity_type is not None and self.entity_type not in valid_types:
             raise ValidationError(
@@ -363,7 +375,10 @@ class RelationshipModel(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "zone_id", "source_entity_id", "target_entity_id", "relationship_type",
+            "zone_id",
+            "source_entity_id",
+            "target_entity_id",
+            "relationship_type",
             name="uq_relationship_tuple",
         ),
         Index("idx_relationships_source", "source_entity_id"),
@@ -387,9 +402,22 @@ class RelationshipModel(Base):
         if not self.relationship_type:
             raise ValidationError("relationship_type is required")
         valid_types = [
-            "WORKS_WITH", "MANAGES", "REPORTS_TO", "CREATES", "MODIFIES", "OWNS",
-            "DEPENDS_ON", "BLOCKS", "RELATES_TO", "MENTIONS", "REFERENCES",
-            "LOCATED_IN", "PART_OF", "HAS", "USES", "OTHER",
+            "WORKS_WITH",
+            "MANAGES",
+            "REPORTS_TO",
+            "CREATES",
+            "MODIFIES",
+            "OWNS",
+            "DEPENDS_ON",
+            "BLOCKS",
+            "RELATES_TO",
+            "MENTIONS",
+            "REFERENCES",
+            "LOCATED_IN",
+            "PART_OF",
+            "HAS",
+            "USES",
+            "OTHER",
         ]
         if self.relationship_type not in valid_types:
             raise ValidationError(

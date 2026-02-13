@@ -15,7 +15,8 @@ import pytest
     subprocess.run(
         [sys.executable, "-m", "alembic", "--help"],
         capture_output=True,
-    ).returncode != 0
+    ).returncode
+    != 0
     and False,  # Always try; skip handled by inner logic
     reason="alembic not installed",
 )
@@ -47,8 +48,7 @@ class TestAlembicCheck:
                 ]
             ):
                 pytest.skip(
-                    f"Alembic not configured for test: "
-                    f"{(result.stdout + result.stderr).strip()}"
+                    f"Alembic not configured for test: {(result.stdout + result.stderr).strip()}"
                 )
 
             pytest.fail(

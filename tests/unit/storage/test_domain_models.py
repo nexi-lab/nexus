@@ -27,7 +27,9 @@ class TestMemoryModelValidate:
     def test_invalid_scope(self) -> None:
         from nexus.storage.models.memory import MemoryModel
 
-        m = MemoryModel(content_hash="a" * 64, scope="invalid", visibility="private", state="active")
+        m = MemoryModel(
+            content_hash="a" * 64, scope="invalid", visibility="private", state="active"
+        )
         with pytest.raises(Exception, match="scope must be one of"):
             m.validate()
 
@@ -49,7 +51,11 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64, scope="agent", visibility="private", state="active", importance=1.5
+            content_hash="a" * 64,
+            scope="agent",
+            visibility="private",
+            state="active",
+            importance=1.5,
         )
         with pytest.raises(Exception, match="importance must be between"):
             m.validate()
@@ -58,7 +64,11 @@ class TestMemoryModelValidate:
         from nexus.storage.models.memory import MemoryModel
 
         m = MemoryModel(
-            content_hash="a" * 64, scope="agent", visibility="private", state="active", importance=None
+            content_hash="a" * 64,
+            scope="agent",
+            visibility="private",
+            state="active",
+            importance=None,
         )
         m.validate()  # should not raise
 
@@ -92,8 +102,13 @@ class TestShareLinkModelIsValid:
         from nexus.storage.models.sharing import ShareLinkModel
 
         link = ShareLinkModel(
-            resource_type="file", resource_id="f1", created_by="u1",
-            revoked_at=None, expires_at=None, max_access_count=None, access_count=0,
+            resource_type="file",
+            resource_id="f1",
+            created_by="u1",
+            revoked_at=None,
+            expires_at=None,
+            max_access_count=None,
+            access_count=0,
         )
         assert link.is_valid() is True
 
@@ -101,7 +116,9 @@ class TestShareLinkModelIsValid:
         from nexus.storage.models.sharing import ShareLinkModel
 
         link = ShareLinkModel(
-            resource_type="file", resource_id="f1", created_by="u1",
+            resource_type="file",
+            resource_id="f1",
+            created_by="u1",
             revoked_at=datetime.now(UTC),
         )
         assert link.is_valid() is False
@@ -110,7 +127,9 @@ class TestShareLinkModelIsValid:
         from nexus.storage.models.sharing import ShareLinkModel
 
         link = ShareLinkModel(
-            resource_type="file", resource_id="f1", created_by="u1",
+            resource_type="file",
+            resource_id="f1",
+            created_by="u1",
             expires_at=datetime.now(UTC) - timedelta(hours=1),
         )
         assert link.is_valid() is False
@@ -119,8 +138,11 @@ class TestShareLinkModelIsValid:
         from nexus.storage.models.sharing import ShareLinkModel
 
         link = ShareLinkModel(
-            resource_type="file", resource_id="f1", created_by="u1",
-            max_access_count=5, access_count=5,
+            resource_type="file",
+            resource_id="f1",
+            created_by="u1",
+            max_access_count=5,
+            access_count=5,
         )
         assert link.is_valid() is False
 
@@ -128,8 +150,11 @@ class TestShareLinkModelIsValid:
         from nexus.storage.models.sharing import ShareLinkModel
 
         link = ShareLinkModel(
-            resource_type="file", resource_id="f1", created_by="u1",
-            max_access_count=5, access_count=4,
+            resource_type="file",
+            resource_id="f1",
+            created_by="u1",
+            max_access_count=5,
+            access_count=4,
         )
         assert link.is_valid() is True
 
@@ -141,8 +166,10 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
-            encrypted_access_token="enc", expires_at=None,
+            provider="google",
+            user_email="a@b.com",
+            encrypted_access_token="enc",
+            expires_at=None,
         )
         assert cred.is_expired() is False
 
@@ -150,7 +177,8 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
+            provider="google",
+            user_email="a@b.com",
             encrypted_access_token="enc",
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
@@ -160,7 +188,8 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
+            provider="google",
+            user_email="a@b.com",
             encrypted_access_token="enc",
             expires_at=datetime.now(UTC) - timedelta(hours=1),
         )
@@ -171,7 +200,8 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
+            provider="google",
+            user_email="a@b.com",
             encrypted_access_token="enc",
             expires_at=datetime(2000, 1, 1),  # naive, in the past
         )
@@ -181,8 +211,10 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
-            encrypted_access_token="enc", revoked=0,
+            provider="google",
+            user_email="a@b.com",
+            encrypted_access_token="enc",
+            revoked=0,
             expires_at=datetime.now(UTC) + timedelta(hours=1),
         )
         assert cred.is_valid() is True
@@ -191,8 +223,10 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
-            encrypted_access_token="enc", revoked=1,
+            provider="google",
+            user_email="a@b.com",
+            encrypted_access_token="enc",
+            revoked=1,
         )
         assert cred.is_valid() is False
 
@@ -200,7 +234,8 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="invalid", user_email="a@b.com",
+            provider="invalid",
+            user_email="a@b.com",
             encrypted_access_token="enc",
         )
         with pytest.raises(Exception, match="provider must be one of"):
@@ -210,8 +245,10 @@ class TestOAuthCredentialModel:
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="google", user_email="a@b.com",
-            encrypted_access_token="enc", scopes="not json",
+            provider="google",
+            user_email="a@b.com",
+            encrypted_access_token="enc",
+            scopes="not json",
         )
         with pytest.raises(Exception, match="scopes must be valid JSON"):
             cred.validate()
@@ -246,8 +283,11 @@ class TestSyncJobModelToDict:
         from nexus.storage.models.sync import SyncJobModel
 
         job = SyncJobModel(
-            id="j1", mount_point="/mnt/test", status="completed",
-            progress_pct=100, created_at=datetime(2025, 1, 1, tzinfo=UTC),
+            id="j1",
+            mount_point="/mnt/test",
+            status="completed",
+            progress_pct=100,
+            created_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         d = job.to_dict()
         assert d["id"] == "j1"
@@ -260,7 +300,9 @@ class TestSyncJobModelToDict:
         from nexus.storage.models.sync import SyncJobModel
 
         job = SyncJobModel(
-            id="j2", mount_point="/mnt/test", status="running",
+            id="j2",
+            mount_point="/mnt/test",
+            status="running",
             progress_pct=50,
             progress_detail='{"files_scanned": 50}',
             sync_params='{"path": "/inbox"}',
@@ -280,7 +322,8 @@ class TestSubscriptionModelMethods:
         from nexus.storage.models.infrastructure import SubscriptionModel
 
         sub = SubscriptionModel(
-            zone_id="z1", url="https://example.com/webhook",
+            zone_id="z1",
+            url="https://example.com/webhook",
             event_types='["file_write", "file_delete"]',
         )
         assert sub.get_event_types() == ["file_write", "file_delete"]
@@ -289,7 +332,8 @@ class TestSubscriptionModelMethods:
         from nexus.storage.models.infrastructure import SubscriptionModel
 
         sub = SubscriptionModel(
-            zone_id="z1", url="https://example.com/webhook",
+            zone_id="z1",
+            url="https://example.com/webhook",
             patterns='["*.txt", "docs/*"]',
         )
         assert sub.get_patterns() == ["*.txt", "docs/*"]
@@ -298,7 +342,8 @@ class TestSubscriptionModelMethods:
         from nexus.storage.models.infrastructure import SubscriptionModel
 
         sub = SubscriptionModel(
-            zone_id="z1", url="https://example.com/webhook",
+            zone_id="z1",
+            url="https://example.com/webhook",
             custom_metadata='{"team": "eng"}',
         )
         assert sub.get_metadata() == {"team": "eng"}
@@ -307,7 +352,8 @@ class TestSubscriptionModelMethods:
         from nexus.storage.models.infrastructure import SubscriptionModel
 
         sub = SubscriptionModel(
-            zone_id="z1", url="https://example.com/webhook",
+            zone_id="z1",
+            url="https://example.com/webhook",
             patterns=None,
         )
         assert sub.get_patterns() == []
@@ -320,7 +366,9 @@ class TestUsageEventMetadata:
         from nexus.storage.models.payments import UsageEvent
 
         evt = UsageEvent(
-            agent_id="a1", event_type="api_call", amount=1,
+            agent_id="a1",
+            event_type="api_call",
+            amount=1,
             metadata_json='{"model": "gpt-4"}',
         )
         assert evt.get_metadata() == {"model": "gpt-4"}
@@ -359,7 +407,7 @@ class TestZoneModelParsedSettings:
     def test_parsed_settings_json(self) -> None:
         from nexus.storage.models.auth import ZoneModel
 
-        z = ZoneModel(zone_id="z1", name="Test", settings='{}')
+        z = ZoneModel(zone_id="z1", name="Test", settings="{}")
         settings = z.parsed_settings
         assert settings is not None
 
@@ -371,8 +419,10 @@ class TestTrajectoryModelValidate:
         from nexus.storage.models.ace import TrajectoryModel
 
         t = TrajectoryModel(
-            user_id="u1", task_description="Test task",
-            trace_hash="a" * 64, status="success",
+            user_id="u1",
+            task_description="Test task",
+            trace_hash="a" * 64,
+            status="success",
         )
         t.validate()
 
@@ -380,7 +430,10 @@ class TestTrajectoryModelValidate:
         from nexus.storage.models.ace import TrajectoryModel
 
         t = TrajectoryModel(
-            user_id="", task_description="Test", trace_hash="a" * 64, status="success",
+            user_id="",
+            task_description="Test",
+            trace_hash="a" * 64,
+            status="success",
         )
         with pytest.raises(Exception, match="user_id is required"):
             t.validate()
@@ -389,7 +442,10 @@ class TestTrajectoryModelValidate:
         from nexus.storage.models.ace import TrajectoryModel
 
         t = TrajectoryModel(
-            user_id="u1", task_description="Test", trace_hash="a" * 64, status="invalid",
+            user_id="u1",
+            task_description="Test",
+            trace_hash="a" * 64,
+            status="invalid",
         )
         with pytest.raises(Exception, match="status must be one of"):
             t.validate()
@@ -398,8 +454,11 @@ class TestTrajectoryModelValidate:
         from nexus.storage.models.ace import TrajectoryModel
 
         t = TrajectoryModel(
-            user_id="u1", task_description="Test", trace_hash="a" * 64,
-            status="success", success_score=2.0,
+            user_id="u1",
+            task_description="Test",
+            trace_hash="a" * 64,
+            status="success",
+            success_score=2.0,
         )
         with pytest.raises(Exception, match="success_score must be between"):
             t.validate()
@@ -412,8 +471,13 @@ class TestPlaybookModelValidate:
         from nexus.storage.models.ace import PlaybookModel
 
         p = PlaybookModel(
-            user_id="u1", name="Test", content_hash="a" * 64,
-            scope="agent", visibility="private", success_rate=0.5, usage_count=0,
+            user_id="u1",
+            name="Test",
+            content_hash="a" * 64,
+            scope="agent",
+            visibility="private",
+            success_rate=0.5,
+            usage_count=0,
         )
         p.validate()
 
@@ -421,8 +485,13 @@ class TestPlaybookModelValidate:
         from nexus.storage.models.ace import PlaybookModel
 
         p = PlaybookModel(
-            user_id="u1", name="Test", content_hash="a" * 64,
-            scope="bad", visibility="private", success_rate=0.5, usage_count=0,
+            user_id="u1",
+            name="Test",
+            content_hash="a" * 64,
+            scope="bad",
+            visibility="private",
+            success_rate=0.5,
+            usage_count=0,
         )
         with pytest.raises(Exception, match="scope must be one of"):
             p.validate()
@@ -431,9 +500,14 @@ class TestPlaybookModelValidate:
         from nexus.storage.models.ace import PlaybookModel
 
         p = PlaybookModel(
-            user_id="u1", name="Test", content_hash="a" * 64,
-            scope="agent", visibility="private", success_rate=0.5,
-            usage_count=0, version=0,
+            user_id="u1",
+            name="Test",
+            content_hash="a" * 64,
+            scope="agent",
+            visibility="private",
+            success_rate=0.5,
+            usage_count=0,
+            version=0,
         )
         with pytest.raises(Exception, match="version must be >= 1"):
             p.validate()
@@ -477,7 +551,9 @@ class TestContentChunkModelValidate:
         from nexus.storage.models.filesystem import ContentChunkModel
 
         c = ContentChunkModel(
-            content_hash="a" * 64, size_bytes=100, storage_path="/data/chunks/a",
+            content_hash="a" * 64,
+            size_bytes=100,
+            storage_path="/data/chunks/a",
         )
         c.validate()
 
@@ -522,7 +598,9 @@ class TestEntityRegistryModelValidate:
     def test_parent_consistency(self) -> None:
         from nexus.storage.models.memory import EntityRegistryModel
 
-        e = EntityRegistryModel(entity_type="user", entity_id="u1", parent_type="zone", parent_id=None)
+        e = EntityRegistryModel(
+            entity_type="user", entity_id="u1", parent_type="zone", parent_id=None
+        )
         with pytest.raises(Exception, match="parent_type and parent_id must both"):
             e.validate()
 
@@ -534,7 +612,9 @@ class TestMountConfigModelValidate:
         from nexus.storage.models.infrastructure import MountConfigModel
 
         m = MountConfigModel(
-            mount_point="/mnt/test", backend_type="local", backend_config='{}',
+            mount_point="/mnt/test",
+            backend_type="local",
+            backend_config="{}",
         )
         m.validate()
 
@@ -542,7 +622,9 @@ class TestMountConfigModelValidate:
         from nexus.storage.models.infrastructure import MountConfigModel
 
         m = MountConfigModel(
-            mount_point="mnt/test", backend_type="local", backend_config='{}',
+            mount_point="mnt/test",
+            backend_type="local",
+            backend_config="{}",
         )
         with pytest.raises(Exception, match="mount_point must start with '/'"):
             m.validate()
@@ -551,7 +633,9 @@ class TestMountConfigModelValidate:
         from nexus.storage.models.infrastructure import MountConfigModel
 
         m = MountConfigModel(
-            mount_point="/mnt/test", backend_type="local", backend_config="not json",
+            mount_point="/mnt/test",
+            backend_type="local",
+            backend_config="not json",
         )
         with pytest.raises(Exception, match="backend_config must be valid JSON"):
             m.validate()
@@ -598,8 +682,12 @@ class TestSandboxMetadataValidate:
         from nexus.storage.models.infrastructure import SandboxMetadataModel
 
         s = SandboxMetadataModel(
-            sandbox_id="sb_1", name="test", user_id="u1", zone_id="z1",
-            provider="e2b", status="active",
+            sandbox_id="sb_1",
+            name="test",
+            user_id="u1",
+            zone_id="z1",
+            provider="e2b",
+            status="active",
         )
         s.validate()
 
@@ -607,8 +695,12 @@ class TestSandboxMetadataValidate:
         from nexus.storage.models.infrastructure import SandboxMetadataModel
 
         s = SandboxMetadataModel(
-            sandbox_id="sb_1", name="test", user_id="u1", zone_id="z1",
-            provider="invalid", status="active",
+            sandbox_id="sb_1",
+            name="test",
+            user_id="u1",
+            zone_id="z1",
+            provider="invalid",
+            status="active",
         )
         with pytest.raises(Exception, match="provider must be one of"):
             s.validate()
@@ -617,8 +709,12 @@ class TestSandboxMetadataValidate:
         from nexus.storage.models.infrastructure import SandboxMetadataModel
 
         s = SandboxMetadataModel(
-            sandbox_id="sb_1", name="test", user_id="u1", zone_id="z1",
-            provider="e2b", status="invalid",
+            sandbox_id="sb_1",
+            name="test",
+            user_id="u1",
+            zone_id="z1",
+            provider="e2b",
+            status="invalid",
         )
         with pytest.raises(Exception, match="status must be one of"):
             s.validate()

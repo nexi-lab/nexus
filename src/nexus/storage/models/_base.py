@@ -80,9 +80,7 @@ class TimestampMixin:
 class ZoneIsolationMixin:
     """Mixin providing a zone_id column for multi-zone isolation."""
 
-    zone_id: Mapped[str] = mapped_column(
-        String(255), nullable=False, default="default"
-    )
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
 
 
 class ResourceConfigMixin:
@@ -93,9 +91,7 @@ class ResourceConfigMixin:
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    scope: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="persistent"
-    )
+    scope: Mapped[str] = mapped_column(String(20), nullable=False, default="persistent")
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)

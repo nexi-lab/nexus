@@ -151,7 +151,10 @@ class SyncBacklogModel(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "path", "backend_name", "zone_id", "status",
+            "path",
+            "backend_name",
+            "zone_id",
+            "status",
             name="uq_sync_backlog_pending",
         ),
         Index("idx_sb_status_created", "status", "created_at"),

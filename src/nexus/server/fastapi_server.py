@@ -505,7 +505,6 @@ async def lifespan(_app: FastAPI) -> Any:
             # for <5μs durable writes without thread-per-event overhead.
             # The event_bus handles Redis fan-out only; WAL is not wired into it.
 
-
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
     try:

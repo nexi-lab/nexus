@@ -38,9 +38,7 @@ class UserModel(Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    primary_auth_method: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="password"
-    )
+    primary_auth_method: Mapped[str] = mapped_column(String(50), nullable=False, default="password")
 
     external_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     external_user_service: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -333,9 +331,7 @@ class ExternalUserServiceModel(Base):
         String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
-    service_name: Mapped[str] = mapped_column(
-        String(100), nullable=False, unique=True, index=True
-    )
+    service_name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)
 
     auth_endpoint: Mapped[str] = mapped_column(Text, nullable=False)
     user_lookup_endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)

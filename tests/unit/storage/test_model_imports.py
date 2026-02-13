@@ -80,6 +80,8 @@ EXPECTED_MODELS = [
     "BackendChangeLogModel",
     "SyncBacklogModel",
     "ConflictLogModel",
+    # Namespace
+    "PersistentNamespaceViewModel",
 ]
 
 
@@ -122,13 +124,18 @@ class TestModelReExports:
         assert isinstance(ResourceConfigMixin, type)
 
     def test_all_subclasses_re_exported(self) -> None:
-        """Every Base subclass should be re-exported from __init__.py."""
+        """Every Base subclass in nexus.storage.models should be re-exported."""
         import nexus.storage.models as models_pkg
 
         # Force all domain modules to be imported (they're imported by __init__)
         _ = models_pkg.Base
 
-        registered_names = {cls.__name__ for cls in Base.__subclasses__()}
+        # Only check subclasses defined in nexus.storage.models, not other packages
+        registered_names = {
+            cls.__name__
+            for cls in Base.__subclasses__()
+            if cls.__module__.startswith("nexus.storage.models")
+        }
         exported_names = set(EXPECTED_MODELS)
 
         missing = registered_names - exported_names

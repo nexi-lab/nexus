@@ -208,6 +208,32 @@ class NexusFSCoreMixin:
             else:
                 task_name = f"event_bus:{event_type}:{path}"
 
+            # Ensure event bus is started (lazy init for NATS JetStream)
+            if not getattr(self._event_bus, "_started", False):
+
+                async def _start_and_publish() -> None:
+                    await self._event_bus.start()
+                    await self._event_bus.publish(event)
+
+                try:
+                    asyncio.get_running_loop()
+                    self._create_tracked_event_task(
+                        _start_and_publish(),
+                        name=task_name,
+                    )
+                    return
+                except RuntimeError:
+                    # No running loop — schedule on main loop if available
+                    main_loop = getattr(self, "_main_event_loop", None)
+                    if main_loop is not None and main_loop.is_running():
+                        asyncio.run_coroutine_threadsafe(_start_and_publish(), main_loop)
+                    else:
+                        threading.Thread(
+                            target=lambda: asyncio.run(_start_and_publish()),
+                            daemon=True,
+                        ).start()
+                    return
+
             # Fire event asynchronously
             try:
                 asyncio.get_running_loop()
@@ -216,14 +242,29 @@ class NexusFSCoreMixin:
                     name=task_name,
                 )
             except RuntimeError:
-                # No event loop - run in background thread
-                def publish_in_thread() -> None:
-                    try:
-                        asyncio.run(self._event_bus.publish(event))
-                    except Exception as e:
-                        logger.warning(f"Failed to publish {event_type} event: {e}")
+                # No running loop in this thread (e.g. RPC handler in thread pool).
+                # Schedule on the main event loop if available, to reuse the NATS connection.
+                main_loop = getattr(self, "_main_event_loop", None)
+                if main_loop is not None and main_loop.is_running():
+                    import concurrent.futures
 
-                threading.Thread(target=publish_in_thread, daemon=True).start()
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._event_bus.publish(event), main_loop
+                    )
+
+                    def _on_publish_done(f: concurrent.futures.Future) -> None:
+                        exc = f.exception()
+                        if exc is not None:
+                            logger.warning(
+                                f"Failed to publish {event_type} event for {path}: {exc}"
+                            )
+
+                    future.add_done_callback(_on_publish_done)
+                else:
+                    logger.warning(
+                        f"No event loop available, dropping {event_type} event for {path}. "
+                        "Event bus should be started via lifespan."
+                    )
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
 

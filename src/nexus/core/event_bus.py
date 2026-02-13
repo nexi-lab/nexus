@@ -185,6 +185,14 @@ class FileEvent:
             old_path=getattr(change, "old_path", None),
         )
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, FileEvent):
+            return NotImplemented
+        return self.event_id == other.event_id
+
+    def __hash__(self) -> int:
+        return hash(self.event_id)
+
     def matches_path_pattern(self, pattern: str) -> bool:
         """Check if this event matches a path pattern.
 
@@ -235,6 +243,36 @@ class FileEvent:
                 return True
 
         return False
+
+
+@dataclass
+class AckableEvent:
+    """Wrapper around FileEvent with acknowledgment semantics.
+
+    Used by durable subscribers (e.g., NATS JetStream pull consumers) to
+    explicitly acknowledge or reject event processing. For backends without
+    native ack support (e.g., Redis pub/sub), ack/nack are no-ops.
+    """
+
+    event: FileEvent
+    _ack_fn: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+    _nack_fn: Callable[[float | None], Awaitable[None]] | None = field(default=None, repr=False)
+    _in_progress_fn: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
+
+    async def ack(self) -> None:
+        """Acknowledge the event (prevent redelivery)."""
+        if self._ack_fn:
+            await self._ack_fn()
+
+    async def nack(self, delay: float | None = None) -> None:
+        """Negative acknowledge (trigger redelivery after optional delay)."""
+        if self._nack_fn:
+            await self._nack_fn(delay)
+
+    async def in_progress(self) -> None:
+        """Signal that processing is ongoing (extend ack deadline)."""
+        if self._in_progress_fn:
+            await self._in_progress_fn()
 
 
 # =============================================================================
@@ -302,13 +340,54 @@ class EventBusProtocol(Protocol):
         """Subscribe to all events for a zone (async generator)."""
         ...
 
+    def subscribe_durable(
+        self,
+        zone_id: str,
+        consumer_name: str,
+        deliver_policy: str = "all",
+    ) -> AsyncIterator[AckableEvent]:
+        """Subscribe with durable consumer semantics.
+
+        Args:
+            zone_id: Zone ID to subscribe to
+            consumer_name: Durable consumer name (survives reconnects)
+            deliver_policy: Delivery policy ("all", "last", "new")
+
+        Yields:
+            AckableEvent objects with ack/nack support
+        """
+        ...
+
 
 class EventBusBase(ABC):
     """Abstract base class for event bus implementations.
 
     Provides common functionality and enforces the interface contract.
     Subclasses must implement all abstract methods.
+
+    Shared logic (node ID, checkpoints, startup sync) lives here so
+    every backend gets it for free.
     """
+
+    CHECKPOINT_KEY_PREFIX = "node_sync_checkpoint"
+
+    def __init__(
+        self,
+        session_factory: Any | None = None,
+        node_id: str | None = None,
+    ) -> None:
+        self._session_factory = session_factory
+        self._node_id = node_id or self._generate_node_id()
+
+    @staticmethod
+    def _generate_node_id() -> str:
+        """Generate a unique node ID based on hostname and process."""
+        import os
+        import socket
+
+        hostname = socket.gethostname()
+        pid = os.getpid()
+        return f"{hostname}-{pid}"
 
     @abstractmethod
     async def start(self) -> None:
@@ -365,6 +444,25 @@ class EventBusBase(ABC):
         """
         pass
 
+    @abstractmethod
+    def subscribe_durable(
+        self,
+        zone_id: str,
+        consumer_name: str,
+        deliver_policy: str = "all",
+    ) -> AsyncIterator[AckableEvent]:
+        """Subscribe with durable consumer semantics.
+
+        Args:
+            zone_id: Zone ID to subscribe to
+            consumer_name: Durable consumer name (survives reconnects)
+            deliver_policy: Delivery policy ("all", "last", "new")
+
+        Yields:
+            AckableEvent objects with ack/nack support
+        """
+        pass
+
     async def get_stats(self) -> dict[str, Any]:
         """Get event bus statistics. Override in subclasses for more details."""
         return {
@@ -372,277 +470,8 @@ class EventBusBase(ABC):
             "status": "running" if await self.health_check() else "stopped",
         }
 
-
-# =============================================================================
-# Redis Pub/Sub Implementation
-# =============================================================================
-
-
-class RedisEventBus(EventBusBase):
-    """Redis Pub/Sub implementation of the event bus with PG SSOT.
-
-    Uses per-zone channels for efficient event routing.
-    Channel format: nexus:events:{zone_id}
-
-    SSOT Architecture:
-        - PostgreSQL (operation_log) is the source of truth
-        - Redis Pub/Sub is best-effort notification
-        - Startup sync reconciles missed events from PG
-
-    Example:
-        >>> bus = RedisEventBus(redis_client, session_factory=SessionLocal)
-        >>> await bus.start()
-        >>> await bus.startup_sync()  # Sync missed events from PG
-        >>>
-        >>> # Publish event
-        >>> event = FileEvent(
-        ...     type=FileEventType.FILE_WRITE,
-        ...     path="/inbox/test.txt",
-        ...     zone_id="default",
-        ... )
-        >>> await bus.publish(event)
-    """
-
-    CHANNEL_PREFIX = "nexus:events"
-    CHECKPOINT_KEY_PREFIX = "node_sync_checkpoint"
-
-    def __init__(
-        self,
-        redis_client: DragonflyClient,
-        session_factory: Any | None = None,
-        node_id: str | None = None,
-    ):
-        """Initialize RedisEventBus.
-
-        Args:
-            redis_client: DragonflyClient instance for Redis connection
-            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
-            node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
-        """
-        self._redis = redis_client
-        self._session_factory = session_factory
-        self._node_id = node_id or self._generate_node_id()
-        self._pubsub: Any = None
-        self._started = False
-        self._lock = asyncio.Lock()
-
-    @staticmethod
-    def _generate_node_id() -> str:
-        """Generate a unique node ID based on hostname and process."""
-        import os
-        import socket
-
-        hostname = socket.gethostname()
-        pid = os.getpid()
-        return f"{hostname}-{pid}"
-
-    def _channel_name(self, zone_id: str) -> str:
-        """Get Redis channel name for a zone."""
-        return f"{self.CHANNEL_PREFIX}:{zone_id}"
-
-    async def start(self) -> None:
-        """Start the event bus listener."""
-        if self._started:
-            return
-
-        async with self._lock:
-            if self._started:
-                return
-
-            self._pubsub = self._redis.client.pubsub()
-            self._started = True
-            logger.info("RedisEventBus started")
-
-    async def stop(self) -> None:
-        """Stop the event bus listener and clean up."""
-        if not self._started:
-            return
-
-        async with self._lock:
-            if not self._started:
-                return
-
-            if self._pubsub:
-                await self._pubsub.aclose()
-                self._pubsub = None
-
-            self._started = False
-            logger.info("RedisEventBus stopped")
-
-    async def publish(self, event: FileEvent) -> int:
-        """Publish an event to the zone's channel."""
-        if not self._started:
-            raise RuntimeError("RedisEventBus not started. Call start() first.")
-
-        zone_id = event.zone_id or "default"
-        channel = self._channel_name(zone_id)
-        message = event.to_json()
-
-        try:
-            num_subscribers: int = await self._redis.client.publish(channel, message)
-            logger.debug(
-                f"Published {event.type} event for {event.path} to {channel} "
-                f"({num_subscribers} subscribers)"
-            )
-            return num_subscribers
-        except Exception as e:
-            logger.error(f"Failed to publish event: {e}")
-            raise
-
-    async def wait_for_event(
-        self,
-        zone_id: str,
-        path_pattern: str,
-        timeout: float = 30.0,
-        since_revision: int | None = None,
-    ) -> FileEvent | None:
-        """Wait for an event matching the path pattern.
-
-        Args:
-            zone_id: Zone ID to subscribe to
-            path_pattern: Path pattern to match
-            timeout: Maximum time to wait in seconds
-            since_revision: Only return events with revision > this value (Issue #1187).
-                           Events with revision <= since_revision are skipped.
-
-        Returns:
-            FileEvent if matched, None on timeout
-        """
-        if not self._started:
-            raise RuntimeError("RedisEventBus not started. Call start() first.")
-
-        channel = self._channel_name(zone_id)
-        pubsub = self._redis.client.pubsub()
-
-        try:
-            await pubsub.subscribe(channel)
-            logger.debug(f"Subscribed to {channel} for pattern {path_pattern}")
-
-            deadline = asyncio.get_event_loop().time() + timeout
-
-            while True:
-                remaining = deadline - asyncio.get_event_loop().time()
-                if remaining <= 0:
-                    logger.debug(f"Timeout waiting for event on {channel}")
-                    return None
-
-                try:
-                    message = await asyncio.wait_for(
-                        pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
-                        timeout=min(remaining, 1.0),
-                    )
-
-                    if message is None:
-                        continue
-
-                    if message["type"] != "message":
-                        continue
-
-                    try:
-                        event = FileEvent.from_json(message["data"])
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Invalid event message: {e}")
-                        continue
-
-                    if event.matches_path_pattern(path_pattern):
-                        # Issue #1187: Filter by revision if specified
-                        if since_revision is not None and (
-                            event.revision is None or event.revision <= since_revision
-                        ):
-                            logger.debug(
-                                f"Skipping event {event.type} on {event.path}: "
-                                f"revision {event.revision} <= since_revision {since_revision}"
-                            )
-                            continue
-                        logger.debug(f"Matched event: {event.type} on {event.path}")
-                        return event
-
-                except TimeoutError:
-                    if asyncio.get_event_loop().time() >= deadline:
-                        return None
-                    continue
-
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
-
-    async def subscribe(
-        self,
-        zone_id: str,
-    ) -> AsyncIterator[FileEvent]:
-        """Subscribe to all events for a zone.
-
-        This is an async generator that yields FileEvent objects as they are received.
-        Use this for background listeners like cache invalidation.
-
-        Args:
-            zone_id: Zone ID to subscribe to
-
-        Yields:
-            FileEvent objects as they are received
-
-        Example:
-            >>> async for event in bus.subscribe("zone1"):
-            ...     print(f"Received {event.type} on {event.path}")
-            ...     # Handle event (e.g., invalidate cache)
-        """
-        if not self._started:
-            raise RuntimeError("RedisEventBus not started. Call start() first.")
-
-        channel = self._channel_name(zone_id)
-        pubsub = self._redis.client.pubsub()
-
-        try:
-            await pubsub.subscribe(channel)
-            logger.debug(f"Subscribed to {channel} for cache invalidation")
-
-            while True:
-                try:
-                    message = await pubsub.get_message(
-                        ignore_subscribe_messages=True,
-                        timeout=1.0,
-                    )
-
-                    if message is None:
-                        # Yield control to allow cancellation
-                        await asyncio.sleep(0)
-                        continue
-
-                    if message["type"] != "message":
-                        continue
-
-                    try:
-                        event = FileEvent.from_json(message["data"])
-                        yield event
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Invalid event message: {e}")
-                        continue
-
-                except asyncio.CancelledError:
-                    logger.debug(f"Subscription to {channel} cancelled")
-                    raise
-                except Exception as e:
-                    logger.warning(f"Error receiving message: {e}")
-                    await asyncio.sleep(1.0)  # Back off on errors
-                    continue
-
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
-
-    async def health_check(self) -> bool:
-        """Check if the event bus is healthy."""
-        if not self._started:
-            return False
-
-        try:
-            return await self._redis.health_check()
-        except Exception as e:
-            logger.warning(f"Event bus health check failed: {e}")
-            return False
-
     # =========================================================================
-    # SSOT: Startup Sync (Phase E)
+    # SSOT: Checkpoint & Startup Sync (shared across backends)
     # =========================================================================
 
     def _get_checkpoint_key(self) -> str:
@@ -650,49 +479,75 @@ class RedisEventBus(EventBusBase):
         return f"{self.CHECKPOINT_KEY_PREFIX}:{self._node_id}"
 
     async def _get_checkpoint(self) -> datetime | None:
-        """Get the last sync checkpoint from PG."""
+        """Get the last sync checkpoint from the database.
+
+        Runs synchronous SQLAlchemy in a thread executor to avoid blocking
+        the event loop. Handles missing system_settings table gracefully
+        (e.g. SQLite embedded mode).
+        """
         if not self._session_factory:
             return None
 
-        from sqlalchemy import select
+        session_factory = self._session_factory  # bind for mypy narrowing
 
-        from nexus.storage.models import SystemSettingsModel
+        def _query() -> datetime | None:
+            from sqlalchemy import select
+            from sqlalchemy.exc import OperationalError, ProgrammingError
 
-        with self._session_factory() as session:
-            stmt = select(SystemSettingsModel).where(
-                SystemSettingsModel.key == self._get_checkpoint_key()
-            )
-            setting = session.execute(stmt).scalar_one_or_none()
+            from nexus.storage.models import SystemSettingsModel
 
-            if setting:
-                return datetime.fromisoformat(setting.value)
-            return None
+            try:
+                with session_factory() as session:
+                    stmt = select(SystemSettingsModel).where(
+                        SystemSettingsModel.key == self._get_checkpoint_key()
+                    )
+                    setting = session.execute(stmt).scalar_one_or_none()
+
+                    if setting:
+                        return datetime.fromisoformat(setting.value)
+                    return None
+            except (OperationalError, ProgrammingError):
+                # Table may not exist in SQLite embedded mode
+                return None
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _query)
 
     async def _update_checkpoint(self, timestamp: datetime) -> None:
-        """Update the sync checkpoint in PG."""
+        """Update the sync checkpoint in the database.
+
+        Runs synchronous SQLAlchemy in a thread executor to avoid blocking
+        the event loop.
+        """
         if not self._session_factory:
             return
 
-        from sqlalchemy import select
+        session_factory = self._session_factory  # bind for mypy narrowing
 
-        from nexus.storage.models import SystemSettingsModel
+        def _update() -> None:
+            from sqlalchemy import select
 
-        with self._session_factory() as session:
-            key = self._get_checkpoint_key()
-            stmt = select(SystemSettingsModel).where(SystemSettingsModel.key == key)
-            setting = session.execute(stmt).scalar_one_or_none()
+            from nexus.storage.models import SystemSettingsModel
 
-            if setting:
-                setting.value = timestamp.isoformat()
-            else:
-                setting = SystemSettingsModel(
-                    key=key,
-                    value=timestamp.isoformat(),
-                    description=f"Event sync checkpoint for node {self._node_id}",
-                )
-                session.add(setting)
+            with session_factory() as session:
+                key = self._get_checkpoint_key()
+                stmt = select(SystemSettingsModel).where(SystemSettingsModel.key == key)
+                setting = session.execute(stmt).scalar_one_or_none()
 
-            session.commit()
+                if setting:
+                    setting.value = timestamp.isoformat()
+                else:
+                    setting = SystemSettingsModel(
+                        key=key,
+                        value=timestamp.isoformat(),
+                        description=f"Event sync checkpoint for node {self._node_id}",
+                    )
+                    session.add(setting)
+
+                session.commit()
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _update)
 
     async def startup_sync(
         self,
@@ -795,6 +650,278 @@ class RedisEventBus(EventBusBase):
         }
         return mapping.get(op_type, op_type)
 
+
+# =============================================================================
+# Redis Pub/Sub Implementation
+# =============================================================================
+
+
+class RedisEventBus(EventBusBase):
+    """Redis Pub/Sub implementation of the event bus with PG SSOT.
+
+    Uses per-zone channels for efficient event routing.
+    Channel format: nexus:events:{zone_id}
+
+    SSOT Architecture:
+        - PostgreSQL (operation_log) is the source of truth
+        - Redis Pub/Sub is best-effort notification
+        - Startup sync reconciles missed events from PG
+
+    Example:
+        >>> bus = RedisEventBus(redis_client, session_factory=SessionLocal)
+        >>> await bus.start()
+        >>> await bus.startup_sync()  # Sync missed events from PG
+        >>>
+        >>> # Publish event
+        >>> event = FileEvent(
+        ...     type=FileEventType.FILE_WRITE,
+        ...     path="/inbox/test.txt",
+        ...     zone_id="default",
+        ... )
+        >>> await bus.publish(event)
+    """
+
+    CHANNEL_PREFIX = "nexus:events"
+
+    def __init__(
+        self,
+        redis_client: DragonflyClient,
+        session_factory: Any | None = None,
+        node_id: str | None = None,
+    ):
+        """Initialize RedisEventBus.
+
+        Args:
+            redis_client: DragonflyClient instance for Redis connection
+            session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
+            node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
+        """
+        super().__init__(session_factory=session_factory, node_id=node_id)
+        self._redis = redis_client
+        self._pubsub: Any = None
+        self._started = False
+        self._lock = asyncio.Lock()
+
+    def _channel_name(self, zone_id: str) -> str:
+        """Get Redis channel name for a zone."""
+        return f"{self.CHANNEL_PREFIX}:{zone_id}"
+
+    async def start(self) -> None:
+        """Start the event bus listener."""
+        if self._started:
+            return
+
+        async with self._lock:
+            if self._started:
+                return
+
+            self._pubsub = self._redis.client.pubsub()
+            self._started = True
+            logger.info("RedisEventBus started")
+
+    async def stop(self) -> None:
+        """Stop the event bus listener and clean up."""
+        if not self._started:
+            return
+
+        async with self._lock:
+            if not self._started:
+                return
+
+            if self._pubsub:
+                await self._pubsub.aclose()
+                self._pubsub = None
+
+            self._started = False
+            logger.info("RedisEventBus stopped")
+
+    async def publish(self, event: FileEvent) -> int:
+        """Publish an event to the zone's channel."""
+        if not self._started:
+            raise RuntimeError("RedisEventBus not started. Call start() first.")
+
+        zone_id = event.zone_id or "default"
+        channel = self._channel_name(zone_id)
+        message = event.to_json()
+
+        try:
+            num_subscribers: int = await self._redis.client.publish(channel, message)
+            logger.debug(
+                f"Published {event.type} event for {event.path} to {channel} "
+                f"({num_subscribers} subscribers)"
+            )
+            return num_subscribers
+        except Exception as e:
+            logger.error(f"Failed to publish event: {e}")
+            raise
+
+    async def wait_for_event(
+        self,
+        zone_id: str,
+        path_pattern: str,
+        timeout: float = 30.0,
+        since_revision: int | None = None,
+    ) -> FileEvent | None:
+        """Wait for an event matching the path pattern.
+
+        Args:
+            zone_id: Zone ID to subscribe to
+            path_pattern: Path pattern to match
+            timeout: Maximum time to wait in seconds
+            since_revision: Only return events with revision > this value (Issue #1187).
+                           Events with revision <= since_revision are skipped.
+
+        Returns:
+            FileEvent if matched, None on timeout
+        """
+        if not self._started:
+            raise RuntimeError("RedisEventBus not started. Call start() first.")
+
+        channel = self._channel_name(zone_id)
+        pubsub = self._redis.client.pubsub()
+
+        try:
+            await pubsub.subscribe(channel)
+            logger.debug(f"Subscribed to {channel} for pattern {path_pattern}")
+
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + timeout
+
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    logger.debug(f"Timeout waiting for event on {channel}")
+                    return None
+
+                try:
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                        timeout=min(remaining, 1.0),
+                    )
+
+                    if message is None:
+                        continue
+
+                    if message["type"] != "message":
+                        continue
+
+                    try:
+                        event = FileEvent.from_json(message["data"])
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Invalid event message: {e}")
+                        continue
+
+                    if event.matches_path_pattern(path_pattern):
+                        # Issue #1187: Filter by revision if specified
+                        if since_revision is not None and (
+                            event.revision is None or event.revision <= since_revision
+                        ):
+                            logger.debug(
+                                f"Skipping event {event.type} on {event.path}: "
+                                f"revision {event.revision} <= since_revision {since_revision}"
+                            )
+                            continue
+                        logger.debug(f"Matched event: {event.type} on {event.path}")
+                        return event
+
+                except TimeoutError:
+                    if loop.time() >= deadline:
+                        return None
+                    continue
+
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
+
+    async def subscribe(
+        self,
+        zone_id: str,
+    ) -> AsyncIterator[FileEvent]:
+        """Subscribe to all events for a zone.
+
+        This is an async generator that yields FileEvent objects as they are received.
+        Use this for background listeners like cache invalidation.
+
+        Args:
+            zone_id: Zone ID to subscribe to
+
+        Yields:
+            FileEvent objects as they are received
+
+        Example:
+            >>> async for event in bus.subscribe("zone1"):
+            ...     print(f"Received {event.type} on {event.path}")
+            ...     # Handle event (e.g., invalidate cache)
+        """
+        if not self._started:
+            raise RuntimeError("RedisEventBus not started. Call start() first.")
+
+        channel = self._channel_name(zone_id)
+        pubsub = self._redis.client.pubsub()
+
+        try:
+            await pubsub.subscribe(channel)
+            logger.debug(f"Subscribed to {channel} for cache invalidation")
+
+            while True:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=1.0,
+                    )
+
+                    if message is None:
+                        # Yield control to allow cancellation
+                        await asyncio.sleep(0)
+                        continue
+
+                    if message["type"] != "message":
+                        continue
+
+                    try:
+                        event = FileEvent.from_json(message["data"])
+                        yield event
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Invalid event message: {e}")
+                        continue
+
+                except asyncio.CancelledError:
+                    logger.debug(f"Subscription to {channel} cancelled")
+                    raise
+                except Exception as e:
+                    logger.warning(f"Error receiving message: {e}")
+                    await asyncio.sleep(1.0)  # Back off on errors
+                    continue
+
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
+
+    async def health_check(self) -> bool:
+        """Check if the event bus is healthy."""
+        if not self._started:
+            return False
+
+        try:
+            return await self._redis.health_check()
+        except Exception as e:
+            logger.warning(f"Event bus health check failed: {e}")
+            return False
+
+    async def subscribe_durable(
+        self,
+        zone_id: str,
+        consumer_name: str,  # noqa: ARG002
+        deliver_policy: str = "all",  # noqa: ARG002
+    ) -> AsyncIterator[AckableEvent]:
+        """Subscribe with durable semantics (Redis compat wrapper).
+
+        Redis pub/sub has no native durability, so this wraps subscribe()
+        and yields AckableEvents with no-op ack/nack callbacks.
+        """
+        async for event in self.subscribe(zone_id):
+            yield AckableEvent(event=event)
+
     async def get_stats(self) -> dict[str, Any]:
         """Get event bus statistics."""
         redis_info = await self._redis.get_info()
@@ -822,34 +949,34 @@ GlobalEventBus = RedisEventBus
 def create_event_bus(
     backend: str = "redis",
     redis_client: DragonflyClient | None = None,
-    **kwargs: Any,  # noqa: ARG001 - Reserved for future backends
+    nats_url: str | None = None,
+    **kwargs: Any,
 ) -> EventBusBase:
     """Factory function to create an event bus instance.
 
     Args:
-        backend: Backend type ("redis", future: "etcd", "zookeeper", "p2p")
+        backend: Backend type ("redis" or "nats")
         redis_client: DragonflyClient for Redis backend
-        **kwargs: Additional backend-specific arguments
+        nats_url: NATS server URL for NATS backend
+        **kwargs: Additional backend-specific arguments (session_factory, node_id, etc.)
 
     Returns:
         EventBusBase implementation
 
     Raises:
-        ValueError: If backend is not supported
-        ValueError: If required arguments are missing
+        ValueError: If backend is not supported or required arguments are missing
     """
+    if backend == "nats":
+        if nats_url is None:
+            raise ValueError("nats_url is required for NATS backend")
+        from nexus.core.event_bus_nats import NatsEventBus
+
+        return NatsEventBus(nats_url=nats_url, **kwargs)
+
     if backend == "redis":
         if redis_client is None:
             raise ValueError("redis_client is required for Redis backend")
-        return RedisEventBus(redis_client)
-
-    # Future backends
-    # elif backend == "etcd":
-    #     return EtcdEventBus(...)
-    # elif backend == "zookeeper":
-    #     return ZooKeeperEventBus(...)
-    # elif backend == "p2p":
-    #     return P2PEventBus(...)
+        return RedisEventBus(redis_client, **kwargs)
 
     raise ValueError(f"Unsupported event bus backend: {backend}")
 
@@ -865,6 +992,21 @@ def get_global_event_bus() -> EventBusBase | None:
         EventBusBase instance if initialized, None otherwise
     """
     return _global_event_bus
+
+
+def require_global_event_bus() -> EventBusBase:
+    """Get the global event bus, raising if not initialized.
+
+    Returns:
+        The global EventBusBase instance.
+
+    Raises:
+        RuntimeError: If no global event bus has been set.
+    """
+    bus = _global_event_bus
+    if bus is None:
+        raise RuntimeError("Global event bus not initialized. Call set_global_event_bus() first.")
+    return bus
 
 
 def set_global_event_bus(bus: EventBusBase | None) -> None:

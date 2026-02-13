@@ -67,6 +67,7 @@ dependencies = [
     # Caching
     "cachetools>=6.2.2",
     "redis>=7.0.0",  # Redis/Dragonfly client (async support)
+    "nats-py>=2.9.0",  # NATS JetStream event bus (Issue #1331)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth

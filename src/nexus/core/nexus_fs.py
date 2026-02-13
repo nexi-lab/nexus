@@ -461,8 +461,26 @@ class NexusFS(  # type: ignore[misc]
                             "Lock manager will not be initialized."
                         )
 
-                # Initialize event bus if enabled (can use evictable dragonfly)
-                if enable_distributed_events and event_url_resolved:
+                # Initialize event bus if enabled
+                import os as _os
+
+                event_bus_backend = _os.environ.get("NEXUS_EVENT_BUS_BACKEND", "redis")
+
+                if event_bus_backend == "nats":
+                    # NATS JetStream event bus (Issue #1331)
+                    from nexus.core.event_bus import create_event_bus, set_global_event_bus
+
+                    nats_url = _os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
+                    self._event_bus = create_event_bus(
+                        backend="nats",
+                        nats_url=nats_url,
+                        session_factory=self.SessionLocal,
+                    )
+                    set_global_event_bus(self._event_bus)
+                    logger.info(
+                        f"🔔 Distributed event bus initialized (NATS JetStream: {nats_url}, SSOT: PostgreSQL)"
+                    )
+                elif enable_distributed_events and event_url_resolved:
                     from nexus.core.event_bus import RedisEventBus, set_global_event_bus
 
                     # Reuse coordination client if same URL, otherwise create new
@@ -1532,6 +1550,14 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug(f"mkdir: Granted direct_owner permission to {ctx.user} for {path}")
             except Exception as e:
                 logger.warning(f"Failed to grant direct_owner permission for {path}: {e}")
+
+        # Issue #1331: Publish dir_create event to event bus
+        self._publish_file_event(
+            event_type="dir_create",
+            path=path,
+            zone_id=ctx.zone_id,
+            agent_id=ctx.agent_id,
+        )
 
     @rpc_expose(description="Remove directory")
     def rmdir(

@@ -966,10 +966,31 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Task Queue runner not started: {e}")
 
+    # Issue #1331: Start event bus early (NATS JetStream requires explicit start)
+    # Also store main event loop ref so sync RPC threads can schedule publishes
+    _nfs = _app_state.nexus_fs
+    _ebus = getattr(_nfs, "_event_bus", None) if _nfs else None
+    if _ebus is not None:
+        try:
+            await _ebus.start()
+            _nfs._main_event_loop = asyncio.get_running_loop()
+            logger.info("Event bus started (eager init)")
+        except Exception as e:
+            logger.warning(f"Failed to start event bus: {e}")
+
     yield
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1331: Stop event bus
+    _ebus_stop = getattr(_app_state.nexus_fs, "_event_bus", None) if _app_state.nexus_fs else None
+    if _ebus_stop is not None:
+        try:
+            await _ebus_stop.stop()
+            logger.info("Event bus stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down event bus: {e}")
 
     # Issue #574: Stop Task Queue runner
     if task_runner_task:

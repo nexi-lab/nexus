@@ -249,14 +249,11 @@ Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 nexus = "nexus.cli:main"
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.maturin]
-python-source = "src"
-module-name = "nexus._nexus_fast"
-# Build Rust extension as optional - pure Python wheel will work without it
-features = ["pyo3/extension-module"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

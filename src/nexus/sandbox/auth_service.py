@@ -26,7 +26,7 @@ from nexus.core.agent_record import AgentRecord, AgentState
 
 if TYPE_CHECKING:
     from nexus.core.agent_registry import AgentRegistry
-    from nexus.core.namespace_manager import NamespaceManager
+    from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.sandbox.events import AgentEventLog
     from nexus.sandbox.sandbox_manager import SandboxManager
 

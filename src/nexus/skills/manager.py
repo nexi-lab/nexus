@@ -15,7 +15,7 @@ from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager import ReBACManager
+    from nexus.services.permissions.rebac_manager import ReBACManager
     from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)

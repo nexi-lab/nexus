@@ -1,7 +1,7 @@
 """Namespace manager service protocol (Nexus Lego Architecture, Issue #1383).
 
 Defines the contract for per-subject namespace visibility.
-Existing implementation: ``nexus.core.namespace_manager.NamespaceManager`` (sync).
+Existing implementation: ``nexus.services.permissions.namespace_manager.NamespaceManager`` (sync).
 
 No ``mount()`` / ``unmount()`` — the existing implementation rebuilds from
 ReBAC grants, not explicit mount calls (pragmatic 5A decision).

@@ -270,8 +270,8 @@ class TestAgentReconnection:
 
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
-        from nexus.core.namespace_manager import MountEntry, NamespaceManager
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager
+        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
         rebac = EnhancedReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
         try:

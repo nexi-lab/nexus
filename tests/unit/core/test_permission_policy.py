@@ -2,7 +2,7 @@
 
 import uuid
 
-from nexus.core.permission_policy import (
+from nexus.services.permissions.permission_policy import (
     PermissionPolicy,
     PolicyMatcher,
     create_default_policies,

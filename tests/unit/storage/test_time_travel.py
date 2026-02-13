@@ -278,7 +278,7 @@ class TestTimeTravelDebug:
 
     def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 

@@ -178,7 +178,7 @@ def create_nexus_services(
     session_factory = record_store.session_factory
 
     # --- ReBAC Manager ---
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
     rebac_manager = EnhancedReBACManager(
         engine=engine,
@@ -190,7 +190,7 @@ def create_nexus_services(
     )
 
     # --- Directory Visibility Cache ---
-    from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
+    from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
 
     dir_visibility_cache = DirectoryVisibilityCache(
         tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -205,12 +205,12 @@ def create_nexus_services(
     )
 
     # --- Audit Store ---
-    from nexus.core.permissions_enhanced import AuditStore
+    from nexus.services.permissions.permissions_enhanced import AuditStore
 
     audit_store = AuditStore(engine=engine)
 
     # --- Entity Registry ---
-    from nexus.core.entity_registry import EntityRegistry
+    from nexus.services.permissions.entity_registry import EntityRegistry
 
     entity_registry = EntityRegistry(session_factory)
 
@@ -229,7 +229,7 @@ def create_nexus_services(
     )
 
     # --- Hierarchy Manager ---
-    from nexus.core.hierarchy_manager import HierarchyManager
+    from nexus.services.permissions.hierarchy_manager import HierarchyManager
 
     hierarchy_manager = HierarchyManager(
         rebac_manager=rebac_manager,
@@ -237,7 +237,7 @@ def create_nexus_services(
     )
 
     # --- Deferred Permission Buffer ---
-    from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
+    from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
 
     deferred_permission_buffer = None
     if enable_deferred_permissions:

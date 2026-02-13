@@ -99,7 +99,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
             return _orig(auth_type, auth_config_arg, **kwargs)
         factory.create_auth_provider = _patched
 
-        import nexus.core.namespace_manager as ns_mod
+        import nexus.services.permissions.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):

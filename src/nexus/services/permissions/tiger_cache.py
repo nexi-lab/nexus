@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.cache.dragonfly import DragonflyTigerCache
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 

@@ -28,7 +28,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.agents import create_agent_with_api_key, register_agent
-from nexus.core.entity_registry import EntityRegistry
+from nexus.services.permissions.entity_registry import EntityRegistry
 
 
 def main() -> None:

@@ -16,8 +16,8 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.core.entity_registry import EntityRegistry
-from nexus.core.memory_permission_enforcer import MemoryPermissionEnforcer
+from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
@@ -122,7 +122,7 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -331,7 +331,7 @@ class Memory:
                 text_for_entities = None
 
             if text_for_entities and len(text_for_entities.strip()) > 0:
-                from nexus.core.entity_extractor import EntityExtractor
+                from nexus.services.permissions.entity_extractor import EntityExtractor
 
                 extractor = EntityExtractor(use_spacy=False)
                 entities = extractor.extract(text_for_entities)

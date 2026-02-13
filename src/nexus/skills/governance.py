@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager import ReBACManager
+    from nexus.services.permissions.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 

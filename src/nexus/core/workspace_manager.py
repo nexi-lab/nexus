@@ -18,7 +18,7 @@ from nexus.storage.models import WorkspaceSnapshotModel
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.core.rebac_manager import ReBACManager
+    from nexus.services.permissions.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 

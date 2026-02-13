@@ -25,12 +25,12 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.hotspot_detector import HotspotDetector
-    from nexus.core.namespace_manager import NamespaceManager
-    from nexus.core.permission_boundary_cache import PermissionBoundaryCache
-    from nexus.core.permissions_enhanced import AuditStore
+    from nexus.services.permissions.hotspot_detector import HotspotDetector
+    from nexus.services.permissions.namespace_manager import NamespaceManager
+    from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
+    from nexus.services.permissions.permissions_enhanced import AuditStore
     from nexus.core.read_set import ReadSet
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +340,7 @@ class PermissionEnforcer:
             logger.info("[PermissionEnforcer] Using provided boundary cache")
         elif enable_boundary_cache:
             # Lazy import to avoid circular dependencies
-            from nexus.core.permission_boundary_cache import PermissionBoundaryCache
+            from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
 
             self._boundary_cache = PermissionBoundaryCache()
             logger.info("[PermissionEnforcer] Boundary cache ENABLED (50k entries, 300s TTL)")
@@ -366,7 +366,7 @@ class PermissionEnforcer:
             logger.info("[PermissionEnforcer] Using provided hotspot detector")
         elif enable_hotspot_tracking:
             # Lazy import to avoid circular dependencies
-            from nexus.core.hotspot_detector import HotspotDetector
+            from nexus.services.permissions.hotspot_detector import HotspotDetector
 
             self._hotspot_detector = HotspotDetector()
             logger.info("[PermissionEnforcer] Hotspot tracking ENABLED (5min window, 50 threshold)")
@@ -578,7 +578,7 @@ class PermissionEnforcer:
                 return self._check_rebac(path, permission, context)
 
             # Import AdminCapability here to avoid circular imports
-            from nexus.core.permissions_enhanced import AdminCapability
+            from nexus.services.permissions.permissions_enhanced import AdminCapability
 
             # P0-4: Zone boundary check (security fix for issue #819)
             # Extract zone from path (format: /zone/{zone_id}/...)
@@ -932,7 +932,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.core.permissions_enhanced import AuditLogEntry
+        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
@@ -962,7 +962,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.core.permissions_enhanced import AuditLogEntry
+        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),

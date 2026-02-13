@@ -284,7 +284,7 @@ class TestAdminBypassBehaviour:
 
     def test_admin_with_manage_zones_can_access_cross_zone(self):
         """Admin with MANAGE_ZONES capability can access any zone path."""
-        from nexus.core.permissions_enhanced import AdminCapability
+        from nexus.services.permissions.permissions_enhanced import AdminCapability
 
         enforcer = PermissionEnforcer(allow_admin_bypass=True)
         ctx = OperationContext(

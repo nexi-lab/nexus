@@ -51,6 +51,19 @@ from nexus.pay.credits import (
     TransferRequest,
     WalletNotFoundError,
 )
+from nexus.pay.protocol import (
+    CreditsPaymentProtocol,
+    PaymentProtocol,
+    ProtocolDetectionError,
+    ProtocolDetector,
+    ProtocolError,
+    ProtocolNotFoundError,
+    ProtocolRegistry,
+    ProtocolTransferRequest,
+    ProtocolTransferResult,
+    X402PaymentProtocol,
+    get_protocol_method_name,
+)
 from nexus.pay.sdk import (
     Balance,
     BudgetContext,
@@ -110,6 +123,18 @@ __all__ = [
     "micro_to_usdc",
     "validate_wallet_address",
     "validate_network",
+    # Protocol Abstraction Layer (#1357)
+    "PaymentProtocol",
+    "ProtocolRegistry",
+    "ProtocolDetector",
+    "ProtocolTransferRequest",
+    "ProtocolTransferResult",
+    "ProtocolError",
+    "ProtocolNotFoundError",
+    "ProtocolDetectionError",
+    "X402PaymentProtocol",
+    "CreditsPaymentProtocol",
+    "get_protocol_method_name",
     # Unified SDK (#1207)
     "NexusPay",
     "NexusPayError",

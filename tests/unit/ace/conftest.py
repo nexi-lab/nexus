@@ -218,7 +218,11 @@ def mock_consolidation_engine():
         "total_consolidated": 2,
         "archived_count": 2,
         "results": [
-            {"consolidated_memory_id": "c1", "source_memory_ids": ["m1", "m2"], "memories_consolidated": 2}
+            {
+                "consolidated_memory_id": "c1",
+                "source_memory_ids": ["m1", "m2"],
+                "memories_consolidated": 2,
+            }
         ],
         "cluster_statistics": [],
     }

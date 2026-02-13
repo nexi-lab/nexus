@@ -458,11 +458,11 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
     # Event Log WAL for durable event persistence (Issue #1397)
-    # Rust WAL preferred; falls back to PG if extension not available
+    # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
+    # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
     _app_state.event_log = None
     try:
-        from nexus.core.event_log_factory import create_event_log
-        from nexus.core.protocols.event_log import EventLogConfig
+        from nexus.services.event_log import EventLogConfig, create_event_log
 
         wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
         sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
@@ -477,7 +477,8 @@ async def lifespan(_app: FastAPI) -> Any:
             event_log_config,
             session_factory=getattr(_app_state, "session_factory", None),
         )
-        logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
+        if _app_state.event_log:
+            logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
 
@@ -501,9 +502,11 @@ async def lifespan(_app: FastAPI) -> Any:
                 except Exception as e:
                     logger.warning(f"Failed to start event bus: {e}")
 
-            # Note: WAL append is handled inline in _dispatch_method (Issue #1397)
-            # for <5μs durable writes without thread-per-event overhead.
-            # The event_bus handles Redis fan-out only; WAL is not wired into it.
+            # Wire event_log into EventBus for WAL-first durability (Issue #1397).
+            # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
+            if _app_state.event_log is not None:
+                event_bus_ref._event_log = _app_state.event_log
+                logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -4196,47 +4199,6 @@ def _error_response(
     return JSONResponse(content=error_dict)
 
 
-# Issue #1397: Inline WAL append — runs in FastAPI event loop, <5μs per write.
-# Avoids the thread-per-event overhead of the NexusFS _publish_file_event path.
-async def _wal_append(
-    event_type: str,
-    path: str,
-    context: Any,
-    old_path: str | None = None,
-    size: int | None = None,
-) -> None:
-    """Append a file event to the WAL inline (durable before response)."""
-    event_log = _app_state.event_log
-    if event_log is None:
-        return
-
-    try:
-        from nexus.core.event_bus import FileEvent, FileEventType
-
-        type_map = {
-            "file_write": FileEventType.FILE_WRITE,
-            "file_delete": FileEventType.FILE_DELETE,
-            "file_rename": FileEventType.FILE_RENAME,
-            "dir_create": FileEventType.DIR_CREATE,
-            "dir_delete": FileEventType.DIR_DELETE,
-        }
-
-        zone_id = getattr(context, "zone_id", None) or "default"
-        agent_id = getattr(context, "agent_id", None)
-
-        event = FileEvent(
-            type=type_map.get(event_type, event_type),
-            path=path,
-            zone_id=zone_id,
-            old_path=old_path,
-            size=size,
-            agent_id=agent_id,
-        )
-        await event_log.append(event)
-    except Exception as e:
-        logger.warning(f"WAL append failed for {event_type} {path}: {e}")
-
-
 # Issue #1115: Event firing helper for RPC handlers
 async def _fire_rpc_event(
     event_type: str,
@@ -4317,7 +4279,6 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await _handle_read_async(params, context)
     elif method == "write":
         result = await to_thread_with_timeout(_handle_write, params, context)
-        await _wal_append("file_write", params.path, context, size=result.get("bytes_written"))
         await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
         return result
     elif method == "exists":
@@ -4326,24 +4287,20 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
         result = await to_thread_with_timeout(_handle_delete, params, context)
-        await _wal_append("file_delete", params.path, context)
         await _fire_rpc_event("file_delete", params.path, context)
         return result
     elif method == "rename":
         result = await to_thread_with_timeout(_handle_rename, params, context)
-        await _wal_append("file_rename", params.new_path, context, old_path=params.old_path)
         await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
         return result
     elif method == "copy":
         return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
         result = await to_thread_with_timeout(_handle_mkdir, params, context)
-        await _wal_append("dir_create", params.path, context)
         await _fire_rpc_event("dir_create", params.path, context)
         return result
     elif method == "rmdir":
         result = await to_thread_with_timeout(_handle_rmdir, params, context)
-        await _wal_append("dir_delete", params.path, context)
         await _fire_rpc_event("dir_delete", params.path, context)
         return result
     elif method == "get_metadata":

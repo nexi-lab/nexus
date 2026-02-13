@@ -16,15 +16,15 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.deferred_permission_buffer import DeferredPermissionBuffer
-    from nexus.core.dir_visibility_cache import DirectoryVisibilityCache
-    from nexus.core.entity_registry import EntityRegistry
-    from nexus.core.hierarchy_manager import HierarchyManager
+    from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
+    from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
+    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.services.permissions.hierarchy_manager import HierarchyManager
     from nexus.core.memory_api import Memory
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import PermissionEnforcer
-    from nexus.core.permissions_enhanced import AuditStore
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.permissions_enhanced import AuditStore
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.workspace_manager import WorkspaceManager
     from nexus.core.workspace_registry import WorkspaceRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
@@ -43,7 +43,7 @@ from nexus.core.nexus_fs_events import NexusFSEventsMixin
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
-from nexus.core.nexus_fs_rebac import NexusFSReBACMixin
+from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
@@ -896,7 +896,7 @@ class NexusFS(  # type: ignore[misc]
             >>> results = nx.memory.query(memory_type="preference")
         """
         if self._memory_api is None:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
@@ -1043,7 +1043,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.entity_registry import EntityRegistry
+        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.core.memory_api import Memory
 
         # Get or create entity registry
@@ -1266,7 +1266,7 @@ class NexusFS(  # type: ignore[misc]
         # P0-4: Zone boundary security check (Issue #819)
         # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.core.permissions_enhanced import AdminCapability
+            from nexus.services.permissions.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None
@@ -3958,7 +3958,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Ensure EntityRegistry is initialized
         if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4250,7 +4250,7 @@ class NexusFS(  # type: ignore[misc]
             ...     print(f"{agent['agent_id']}: {agent['name']}")
         """
         if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4353,7 +4353,7 @@ class NexusFS(  # type: ignore[misc]
             ...         print(f"Has API key: {agent['api_key'][:10]}...")
         """
         if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4541,7 +4541,7 @@ class NexusFS(  # type: ignore[misc]
             ...     print("Agent deleted")
         """
         if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4890,7 +4890,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Initialize entity registry
         if not self._entity_registry:
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 

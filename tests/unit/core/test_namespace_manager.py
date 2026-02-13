@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
+from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
 from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
 from nexus.storage.models import Base
 
@@ -39,7 +39,7 @@ def engine():
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing."""
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,
@@ -627,7 +627,7 @@ class TestNamespaceManagerDualPath:
     @pytest.fixture(params=[True, False], ids=["rust", "python"])
     def ns_manager_dual(self, request, enhanced_rebac_manager):
         """NamespaceManager with RUST_AVAILABLE patched to True or False."""
-        with patch("nexus.core.rebac_fast.RUST_AVAILABLE", request.param):
+        with patch("nexus.services.permissions.rebac_fast.RUST_AVAILABLE", request.param):
             ns = NamespaceManager(
                 rebac_manager=enhanced_rebac_manager,
                 revision_window=100,

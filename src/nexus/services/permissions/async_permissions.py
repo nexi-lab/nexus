@@ -1,0 +1,292 @@
+"""Async Permission Enforcement for Nexus (v0.6.0+).
+
+This module provides async versions of permission enforcement operations
+to work with FastAPI and async database operations.
+
+Example:
+    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+
+    enforcer = AsyncPermissionEnforcer(async_rebac_manager)
+
+    # Check permission asynchronously
+    if await enforcer.check_permission("/path/to/file", Permission.READ, context):
+        content = await fs.read("/path/to/file")
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import TYPE_CHECKING, Any
+
+from nexus.core.permissions import OperationContext, Permission
+
+if TYPE_CHECKING:
+    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+    from nexus.services.permissions.namespace_manager import NamespaceManager
+
+logger = logging.getLogger(__name__)
+
+
+class AsyncPermissionEnforcer:
+    """Async permission enforcement using ReBAC.
+
+    Non-blocking permission checks for use with FastAPI and async operations.
+    Provides the same interface as PermissionEnforcer but with async methods.
+    """
+
+    def __init__(
+        self,
+        rebac_manager: AsyncReBACManager | None = None,
+        backends: dict[str, Any] | None = None,
+        namespace_manager: NamespaceManager | None = None,
+        agent_registry: Any = None,
+    ):
+        """Initialize async permission enforcer.
+
+        Args:
+            rebac_manager: Async ReBAC manager instance
+            backends: Backend registry for determining object types
+            namespace_manager: NamespaceManager for per-subject visibility (Issue #1239)
+            agent_registry: AgentRegistry for stale-session detection (Issue #1240)
+        """
+        self.rebac_manager = rebac_manager
+        self.backends = backends or {}
+        self.namespace_manager = namespace_manager
+        self.agent_registry = agent_registry
+
+    async def check_permission(
+        self,
+        path: str,
+        permission: Permission,
+        context: OperationContext,
+    ) -> bool:
+        """Check if operation is permitted (async).
+
+        Args:
+            path: Virtual file path
+            permission: Permission to check (Permission.READ, etc.)
+            context: Operation context with subject identity
+
+        Returns:
+            True if permitted, False otherwise
+
+        Example:
+            >>> allowed = await enforcer.check_permission(
+            ...     "/workspace/doc.txt",
+            ...     Permission.READ,
+            ...     context
+            ... )
+        """
+        # System operations bypass all checks
+        if context.is_system:
+            return True
+
+        # Admin bypass (P0-4)
+        if context.is_admin:
+            return True
+
+        # Issue #1239: Namespace visibility check (Agent OS Phase 0)
+        # Unmounted paths are invisible (404 Not Found), not denied (403 Forbidden).
+        # This runs AFTER admin/system bypass (admins see everything) and BEFORE
+        # fine-grained ReBAC check (defense in depth).
+        if self.namespace_manager is not None:
+            subject = context.get_subject()
+            if not self.namespace_manager.is_visible(subject, path, context.zone_id):
+                from nexus.core.exceptions import NexusFileNotFoundError
+
+                raise NexusFileNotFoundError(
+                    path=path,
+                    message="Path not found",  # Intentionally vague — path is invisible
+                )
+
+        # Issue #1240: Stale-session detection (Agent OS Phase 1)
+        if (
+            self.agent_registry is not None
+            and context.agent_generation is not None
+            and context.subject_type == "agent"
+        ):
+            agent_id = context.agent_id or context.subject_id
+            if agent_id:
+                current_record = self.agent_registry.get(agent_id)
+                if current_record and current_record.generation != context.agent_generation:
+                    from nexus.core.exceptions import StaleSessionError
+
+                    raise StaleSessionError(
+                        agent_id,
+                        f"Session generation {context.agent_generation} is stale "
+                        f"(current: {current_record.generation})",
+                    )
+
+        # No ReBAC manager = permissive mode
+        if not self.rebac_manager:
+            return True
+
+        # Determine object type from backend or default to "file"
+        object_type = self._get_object_type(path)
+        permission_name = self._permission_to_name(permission)
+
+        # Check ReBAC permission
+        zone_id = context.zone_id or "default"
+        subject = context.get_subject()
+
+        logger.debug(
+            f"[ASYNC-PERM] Checking: subject={subject}, permission={permission_name}, "
+            f"object=({object_type}, {path}), zone={zone_id}"
+        )
+
+        start_time = time.perf_counter()
+
+        # 1. Direct permission check
+        result = await self.rebac_manager.rebac_check(
+            subject=subject,
+            permission=permission_name,
+            object=(object_type, path),
+            zone_id=zone_id,
+        )
+
+        if result:
+            elapsed = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"[ASYNC-PERM] Direct check passed ({elapsed:.1f}ms)")
+            return True
+
+        # 2. Check parent directories for inherited permissions
+        checked_parents = []
+        current_path = path
+        while current_path and current_path != "/":
+            # Get parent path
+            parts = current_path.rstrip("/").rsplit("/", 1)
+            parent_path = parts[0] if len(parts) > 1 and parts[0] else "/"
+
+            if parent_path in checked_parents:
+                break
+
+            checked_parents.append(parent_path)
+            logger.debug(f"[ASYNC-PERM] Checking parent: {parent_path}")
+
+            parent_result = await self.rebac_manager.rebac_check(
+                subject=subject,
+                permission=permission_name,
+                object=(object_type, parent_path),
+                zone_id=zone_id,
+            )
+
+            if parent_result:
+                elapsed = (time.perf_counter() - start_time) * 1000
+                logger.debug(f"[ASYNC-PERM] Parent check passed: {parent_path} ({elapsed:.1f}ms)")
+                return True
+
+            current_path = parent_path
+
+        # 3. For agents: check if owner user has permission
+        if context.agent_id:
+            parent = await self._get_agent_owner(context.agent_id, zone_id)
+            if parent and parent[0] == "user":
+                logger.debug(f"[ASYNC-PERM] Checking agent owner: {parent}")
+                user_result = await self.rebac_manager.rebac_check(
+                    subject=("user", parent[1]),
+                    permission=permission_name,
+                    object=(object_type, path),
+                    zone_id=zone_id,
+                )
+                if user_result:
+                    elapsed = (time.perf_counter() - start_time) * 1000
+                    logger.debug(f"[ASYNC-PERM] Agent owner check passed ({elapsed:.1f}ms)")
+                    return True
+
+        elapsed = (time.perf_counter() - start_time) * 1000
+        logger.debug(f"[ASYNC-PERM] Permission denied ({elapsed:.1f}ms)")
+        return False
+
+    async def filter_paths_by_permission(
+        self,
+        paths: list[str],
+        context: OperationContext,
+    ) -> list[str]:
+        """Filter list of paths by read permission (async).
+
+        Uses bulk permission checking for efficiency.
+
+        Args:
+            paths: List of file paths to filter
+            context: Operation context
+
+        Returns:
+            List of paths the user has permission to read
+        """
+        if not paths:
+            return []
+
+        # Bypass for system/admin
+        if context.is_system or context.is_admin:
+            return paths
+
+        if not self.rebac_manager:
+            return paths
+
+        zone_id = context.zone_id or "default"
+        subject = context.get_subject()
+
+        # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.
+        # filter_visible() acquires locks once for all paths (not per-path).
+        if self.namespace_manager is not None:
+            paths = self.namespace_manager.filter_visible(subject, paths, zone_id)
+            if not paths:
+                return []
+
+        # Build bulk check requests
+        checks = []
+        for path in paths:
+            object_type = self._get_object_type(path)
+            checks.append((subject, "read", (object_type, path)))
+
+        start_time = time.perf_counter()
+
+        # Perform bulk permission check
+        results = await self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
+
+        elapsed = (time.perf_counter() - start_time) * 1000
+
+        # Filter paths based on results
+        filtered = []
+        for path, check in zip(paths, checks, strict=True):
+            if results.get(check, False):
+                filtered.append(path)
+
+        logger.info(
+            f"[ASYNC-PERM] Bulk filter: {len(paths)} paths -> {len(filtered)} allowed ({elapsed:.1f}ms)"
+        )
+
+        return filtered
+
+    async def _get_agent_owner(
+        self,
+        agent_id: str,  # noqa: ARG002
+        zone_id: str,  # noqa: ARG002
+    ) -> tuple[str, str] | None:
+        """Get the owner of an agent (async)."""
+        # Check ReBAC for agent ownership relation
+        # This is a simplified version - full implementation would query rebac_tuples
+        return None
+
+    def _get_object_type(self, path: str) -> str:
+        """Determine object type from path and backend."""
+        # Check if path matches a backend mount
+        for mount_point, backend in self.backends.items():
+            if path.startswith(mount_point):
+                return str(backend.get_object_type(path[len(mount_point) :]))
+
+        # Default to "file"
+        return "file"
+
+    def _permission_to_name(self, permission: Permission) -> str:
+        """Convert Permission flag to string name."""
+        if permission == Permission.READ:
+            return "read"
+        elif permission == Permission.WRITE:
+            return "write"
+        elif permission == Permission.EXECUTE:
+            return "execute"
+        else:
+            return "read"

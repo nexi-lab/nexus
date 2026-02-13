@@ -34,7 +34,7 @@ SYSTEM_PATH_PREFIX = "/__sys__/"
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permission_policy import PolicyMatcher
+    from nexus.services.permissions.permission_policy import PolicyMatcher
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
@@ -3805,7 +3805,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.entity_registry import EntityRegistry
+        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.core.memory_router import MemoryViewRouter
 
         # Get memory via router
@@ -3890,7 +3890,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.entity_registry import EntityRegistry
+        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.core.memory_router import MemoryViewRouter
 
         # Get memory via router

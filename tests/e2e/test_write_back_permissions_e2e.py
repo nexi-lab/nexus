@@ -127,7 +127,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         # in tests to get deterministic results without sleep(). This tests the
         # actual permission logic, not cache behavior. See: Zanzibar paper,
         # SpiceDB consistency docs, OpenFGA HIGHER_CONSISTENCY mode.
-        import nexus.core.namespace_manager as ns_mod
+        import nexus.services.permissions.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):

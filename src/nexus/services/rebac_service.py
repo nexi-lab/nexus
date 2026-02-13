@@ -26,7 +26,7 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class ReBACService:
@@ -412,7 +412,7 @@ class ReBACService:
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.core.rebac_manager_enhanced import (
+                from nexus.services.permissions.rebac_manager_enhanced import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )

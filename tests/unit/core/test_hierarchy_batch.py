@@ -12,8 +12,8 @@ Tests cover:
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.hierarchy_manager import HierarchyManager
-from nexus.core.rebac_manager import ReBACManager
+from nexus.services.permissions.hierarchy_manager import HierarchyManager
+from nexus.services.permissions.rebac_manager import ReBACManager
 from nexus.storage.models import Base
 
 

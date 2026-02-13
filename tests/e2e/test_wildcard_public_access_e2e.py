@@ -240,7 +240,7 @@ class TestWildcardDirectDB:
         """Create AsyncReBACManager for testing."""
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        from nexus.core.async_rebac_manager import AsyncReBACManager
+        from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
 
         async_engine = create_async_engine(f"sqlite+aiosqlite:///{isolated_db}")
         manager = AsyncReBACManager(async_engine, enable_l1_cache=False)
@@ -416,7 +416,7 @@ class TestWildcardPerformance:
 
         from sqlalchemy.ext.asyncio import create_async_engine
 
-        from nexus.core.async_rebac_manager import AsyncReBACManager
+        from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
 
         async_engine = create_async_engine(f"sqlite+aiosqlite:///{isolated_db}")
         manager = AsyncReBACManager(async_engine, enable_l1_cache=False)

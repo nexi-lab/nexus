@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.core.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
+from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ def engine():
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing."""
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,

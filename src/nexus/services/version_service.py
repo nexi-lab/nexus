@@ -26,9 +26,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.core.async_permissions import AsyncPermissionEnforcer
+    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
-    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
 
 

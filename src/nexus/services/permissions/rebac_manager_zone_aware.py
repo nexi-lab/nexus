@@ -8,7 +8,7 @@ CRITICAL SECURITY FIX: Enforces same-zone relationships at write time
 and filters all queries by zone_id.
 
 Usage:
-    from nexus.core.rebac_manager_zone_aware import ZoneAwareReBACManager
+    from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager
 
     manager = ZoneAwareReBACManager(engine)
 
@@ -35,7 +35,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
-from nexus.core.rebac_manager import ReBACManager
+from nexus.services.permissions.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 

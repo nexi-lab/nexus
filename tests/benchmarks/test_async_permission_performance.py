@@ -16,7 +16,7 @@ import pytest
 import pytest_asyncio
 
 from nexus.core.async_nexus_fs import AsyncNexusFS
-from nexus.core.async_permissions import AsyncPermissionEnforcer
+from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
 from nexus.core.permissions import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 

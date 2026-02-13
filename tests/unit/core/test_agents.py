@@ -12,7 +12,7 @@ from nexus.core.agents import (
     unregister_agent,
     validate_agent_ownership,
 )
-from nexus.core.entity_registry import EntityRegistry
+from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 

@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from nexus.core.rebac_cache import ReBACPermissionCache
+from nexus.services.permissions.rebac_cache import ReBACPermissionCache
 
 
 class TestReBACPermissionCache:

@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.core.entity_registry import EntityRegistry
+from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
 
@@ -534,7 +534,7 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -600,7 +600,7 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"

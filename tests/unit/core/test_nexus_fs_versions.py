@@ -15,7 +15,7 @@ class TestNexusFSVersions:
     @pytest.fixture
     def mock_fs(self):
         """Create a mock filesystem with version support."""
-        from nexus.core.permissions_enhanced import EnhancedOperationContext
+        from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
         fs = Mock(spec=NexusFSVersionsMixin)
         fs.metadata = Mock()

@@ -6,7 +6,7 @@ named entities at memory ingestion time for improved multi-hop queries.
 
 import pytest
 
-from nexus.core.entity_extractor import (
+from nexus.services.permissions.entity_extractor import (
     EntityExtractor,
     ExtractedEntity,
     extract_entities,

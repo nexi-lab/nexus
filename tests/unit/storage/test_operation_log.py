@@ -150,7 +150,7 @@ def test_rename_operation_logged(nx: NexusFS, record_store: SQLAlchemyRecordStor
 
 def test_operation_log_filtering_by_agent(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> None:
     """Test filtering operations by agent ID using context parameter."""
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
     # Use context parameter with different agent IDs
     context1 = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")

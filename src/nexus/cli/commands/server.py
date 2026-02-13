@@ -1223,7 +1223,7 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.core.entity_registry import EntityRegistry
+            from nexus.services.permissions.entity_registry import EntityRegistry
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
             engine = create_engine(db_url)
@@ -1286,7 +1286,9 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+                    from nexus.services.permissions.rebac_manager_enhanced import (
+                        EnhancedReBACManager,
+                    )
 
                     rebac = EnhancedReBACManager(engine)
                     rebac.rebac_write(

@@ -48,7 +48,7 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
     Actual (buggy): /workspace is not visible because /workspace/joe is empty
     """
     # Create directories as admin user (system has path restrictions)
-    from nexus.core.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
 
     system_ctx = EnhancedOperationContext(
         user="admin",
@@ -79,7 +79,7 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
 
     # Create Joe's context (subject_type must match the ReBAC tuple)
     # Since we created tuple with subject=("agent", "joe"), context must have subject_type="agent"
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
     joe_ctx = EnhancedOperationContext(
         user="joe",
@@ -111,7 +111,7 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     This test verifies the CURRENT working behavior (when subdirectory has files).
     """
     # Create directories and file as admin user (system has path restrictions)
-    from nexus.core.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
 
     system_ctx = EnhancedOperationContext(
         user="admin",
@@ -142,7 +142,7 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
 
     # Create Joe's context (subject_type must match the ReBAC tuple)
     # Since we created tuple with subject=("agent", "joe"), context must have subject_type="agent"
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
     joe_ctx = EnhancedOperationContext(
         user="joe",
@@ -166,12 +166,6 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     )
 
 
-@pytest.mark.xfail(
-    reason="Known bug: hierarchical directory listing does not traverse deeply "
-    "nested paths — parent directories are not surfaced when user only has "
-    "access to files 4+ levels deep.",
-    strict=False,
-)
 def test_deeply_nested_hierarchical_listing(nexus_fs):
     """Test hierarchical listing with deeply nested directories.
 
@@ -180,7 +174,7 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     - All intermediate directories should appear in their parent listings
     """
     # Create directories as admin user (system has path restrictions)
-    from nexus.core.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
 
     system_ctx = EnhancedOperationContext(
         user="admin",
@@ -214,7 +208,7 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
 
     # Create Joe's context (subject_type must match the ReBAC tuple)
     # Since we created tuple with subject=("agent", "joe"), context must have subject_type="agent"
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
     joe_ctx = EnhancedOperationContext(
         user="joe",

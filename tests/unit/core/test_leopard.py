@@ -14,8 +14,8 @@ Related: Issue #692
 import pytest
 from sqlalchemy import create_engine, text
 
-from nexus.core.leopard import LeopardCache, LeopardIndex
-from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.services.permissions.leopard import LeopardCache, LeopardIndex
+from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base
 
 

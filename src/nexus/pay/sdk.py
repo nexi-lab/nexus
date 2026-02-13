@@ -32,6 +32,16 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.credits import TransferRequest
+from nexus.pay.protocol import (
+    CreditsPaymentProtocol,
+    ProtocolDetectionError,
+    ProtocolError,
+    ProtocolNotFoundError,
+    ProtocolRegistry,
+    ProtocolTransferRequest,
+    X402PaymentProtocol,
+    get_protocol_method_name,
+)
 from nexus.pay.x402 import validate_wallet_address
 
 if TYPE_CHECKING:
@@ -86,6 +96,7 @@ class Receipt:
     memo: str | None
     timestamp: datetime | None
     tx_hash: str | None  # For x402 payments
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -208,10 +219,25 @@ class NexusPay:
         self._credits = credits_service
         self._x402: X402Client | None = x402_client if x402_enabled else None
         self._scheduler = scheduler_service
+        self._registry = self._build_registry()
 
     # =========================================================================
     # Internal helpers
     # =========================================================================
+
+    def _build_registry(self) -> ProtocolRegistry:
+        """Build protocol registry from configured services.
+
+        Registration order matters for auto-detection:
+        1. X402 (wallet addresses) — specific match
+        2. Credits (agent IDs) — catch-all
+        """
+        registry = ProtocolRegistry()
+        if self._x402 is not None:
+            registry.register(X402PaymentProtocol(client=self._x402))
+        if self._credits is not None:
+            registry.register(CreditsPaymentProtocol(service=self._credits, zone_id=self._zone_id))
+        return registry
 
     @staticmethod
     def _is_external(to: str) -> bool:
@@ -261,47 +287,48 @@ class NexusPay:
         idempotency_key: str | None = None,
         method: str = "auto",
     ) -> Receipt:
-        """Execute a payment. Auto-routes to credits or x402."""
+        """Execute a payment. Auto-routes via protocol registry."""
         dec_amount = self._to_decimal(amount)
         self._validate_positive(dec_amount)
 
-        if method == "auto":
-            method = "x402" if self._is_external(to) else "credits"
+        try:
+            protocol = self._registry.resolve(method=method, to=to)
+        except (ProtocolNotFoundError, ProtocolDetectionError):
+            # Backwards compat: map registry errors to NexusPayError
+            if self._is_external(to) and self._x402 is None:
+                raise NexusPayError("x402 not enabled") from None
+            raise NexusPayError(f"No payment protocol available for destination '{to}'") from None
 
-        if method == "x402":
-            if not self._x402:
-                raise NexusPayError("x402 not enabled")
-            x402_receipt = await self._x402.pay(to_address=to, amount=dec_amount)
-            return Receipt(
-                id=x402_receipt.tx_hash,
-                method="x402",
-                amount=dec_amount,
-                from_agent=self.agent_id,
-                to_agent=to,
-                memo=memo,
-                timestamp=x402_receipt.timestamp,
-                tx_hash=x402_receipt.tx_hash,
-            )
-        else:
-            credits = self._require_credits()
-            tx_id = await credits.transfer(
-                from_id=self.agent_id,
-                to_id=to,
-                amount=dec_amount,
-                memo=memo,
-                idempotency_key=idempotency_key,
-                zone_id=self._zone_id,
-            )
-            return Receipt(
-                id=tx_id,
-                method="credits",
-                amount=dec_amount,
-                from_agent=self.agent_id,
-                to_agent=to,
-                memo=memo,
-                timestamp=datetime.now(UTC),
-                tx_hash=None,
-            )
+        request = ProtocolTransferRequest(
+            from_agent=self.agent_id,
+            to=to,
+            amount=dec_amount,
+            memo=memo,
+            idempotency_key=idempotency_key,
+        )
+
+        try:
+            result = await protocol.transfer(request)
+        except ProtocolError as e:
+            # Backwards compat: re-raise original exception (X402Error, etc.)
+            if e.__cause__ is not None:
+                raise e.__cause__ from None
+            raise
+
+        # Map protocol enum to user-facing method name for backwards compat
+        method_name = get_protocol_method_name(result.protocol)
+
+        return Receipt(
+            id=result.tx_id,
+            method=method_name,
+            amount=result.amount,
+            from_agent=result.from_agent,
+            to_agent=result.to,
+            memo=memo,
+            timestamp=result.timestamp,
+            tx_hash=result.tx_hash,
+            metadata=result.metadata,
+        )
 
     async def transfer_batch(
         self,

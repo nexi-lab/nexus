@@ -6,8 +6,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.ace.consolidation import ConsolidationEngine
 from nexus.core.response import HandlerResponse
+from nexus.services.ace.consolidation import ConsolidationEngine
 from nexus.storage.models import Base, MemoryModel
 
 

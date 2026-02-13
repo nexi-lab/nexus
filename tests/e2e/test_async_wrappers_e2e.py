@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+
 from nexus.core.agent_registry import AgentRegistry, InvalidTransitionError
 from nexus.core.async_agent_registry import AsyncAgentRegistry
 from nexus.core.async_namespace_manager import AsyncNamespaceManager
@@ -39,7 +40,6 @@ from nexus.services.protocols.hook_engine import (
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.storage.models import Base
-
 
 # ---------------------------------------------------------------------------
 # Fixtures: real implementations, not mocks
@@ -131,7 +131,9 @@ class TestAsyncAgentRegistryE2E:
     async def test_full_lifecycle(self, async_registry: AsyncAgentRegistry) -> None:
         """Register → transition → heartbeat → list → unregister."""
         # Register
-        info = await async_registry.register("e2e-agent-1", "alice", zone_id="default", name="E2E Agent")
+        info = await async_registry.register(
+            "e2e-agent-1", "alice", zone_id="default", name="E2E Agent"
+        )
         assert isinstance(info, AgentInfo)
         assert info.agent_id == "e2e-agent-1"
         assert info.state == "UNKNOWN"
@@ -143,7 +145,9 @@ class TestAsyncAgentRegistryE2E:
         assert fetched.agent_id == "e2e-agent-1"
 
         # Transition UNKNOWN -> CONNECTED (gen 0 -> 1)
-        connected = await async_registry.transition("e2e-agent-1", "CONNECTED", expected_generation=0)
+        connected = await async_registry.transition(
+            "e2e-agent-1", "CONNECTED", expected_generation=0
+        )
         assert connected.state == "CONNECTED"
         assert connected.generation == 1
 
@@ -183,8 +187,11 @@ class TestAsyncAgentRegistryE2E:
     @pytest.mark.asyncio()
     async def test_concurrent_registrations(self, async_registry: AsyncAgentRegistry) -> None:
         """Multiple concurrent registrations via asyncio.gather."""
+
         async def register(i: int) -> AgentInfo:
-            return await async_registry.register(f"e2e-concurrent-{i}", f"user-{i}", zone_id="default")
+            return await async_registry.register(
+                f"e2e-concurrent-{i}", f"user-{i}", zone_id="default"
+            )
 
         results = await asyncio.gather(*[register(i) for i in range(10)])
         assert len(results) == 10
@@ -299,8 +306,11 @@ class TestAsyncHookEngineE2E:
         await async_hooks.register_hook(spec, veto_handler)
 
         ctx = HookContext(
-            phase="pre_delete", path="/workspace/protected.txt",
-            zone_id=None, agent_id=None, payload={},
+            phase="pre_delete",
+            path="/workspace/protected.txt",
+            zone_id=None,
+            agent_id=None,
+            payload={},
         )
         result = await async_hooks.fire("pre_delete", ctx)
         assert result.proceed is False
@@ -351,3 +361,200 @@ class TestServerWiring:
         from nexus.plugins.async_hooks import AsyncHookEngine
 
         assert AsyncHookEngine is not None
+
+
+# ---------------------------------------------------------------------------
+# 6. Server lifespan wiring simulation
+# ---------------------------------------------------------------------------
+
+
+class TestServerLifespanWiring:
+    """Simulate the FastAPI lifespan wiring path for async wrappers.
+
+    Reproduces the exact initialization logic from fastapi_server.py lifespan
+    to verify that AsyncAgentRegistry is created correctly when AgentRegistry
+    is available (as it would be in production with permissions enabled).
+    """
+
+    @pytest.mark.asyncio()
+    async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
+        """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
+        from nexus.core.agent_registry import AgentRegistry
+        from nexus.core.async_agent_registry import AsyncAgentRegistry
+        from nexus.server import fastapi_server
+
+        # Create real SQLite-backed AgentRegistry (same as server lifespan does)
+        db_path = tmp_path / f"lifespan_{uuid.uuid4().hex[:8]}.db"
+        engine = create_engine(f"sqlite:///{db_path}", echo=False)
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+        agent_registry = AgentRegistry(
+            session_factory=session_factory,
+            flush_interval=60,
+        )
+
+        # Simulate the lifespan wiring (lines 800-803 of fastapi_server.py)
+        state = fastapi_server.AppState()
+        state.agent_registry = agent_registry
+        state.async_agent_registry = AsyncAgentRegistry(state.agent_registry)
+
+        # Verify the async wrapper is functional through the wired path
+        assert isinstance(state.async_agent_registry, AgentRegistryProtocol)
+
+        info = await state.async_agent_registry.register(
+            "lifespan-agent",
+            "admin",
+            zone_id="default",
+            name="Lifespan Test",
+        )
+        assert info.agent_id == "lifespan-agent"
+        assert info.state == "UNKNOWN"
+
+        # Transition (simulates what an API endpoint would do)
+        connected = await state.async_agent_registry.transition(
+            "lifespan-agent",
+            "CONNECTED",
+            expected_generation=0,
+        )
+        assert connected.state == "CONNECTED"
+
+        # List agents in zone (simulates permission-aware listing)
+        agents = await state.async_agent_registry.list_by_zone("default")
+        assert len(agents) == 1
+        assert agents[0].agent_id == "lifespan-agent"
+
+        # Cleanup
+        await state.async_agent_registry.unregister("lifespan-agent")
+
+    @pytest.mark.asyncio()
+    async def test_all_four_wrappers_wired_together(self, tmp_path: Path) -> None:
+        """All 4 async wrappers initialized and operational simultaneously.
+
+        Simulates a server with all wrappers active (as would happen
+        when permissions are enabled and all subsystems are available).
+        """
+        from unittest.mock import MagicMock
+
+        from nexus.backends.local import LocalBackend
+        from nexus.core.agent_registry import AgentRegistry
+        from nexus.core.async_agent_registry import AsyncAgentRegistry
+        from nexus.core.async_namespace_manager import AsyncNamespaceManager
+        from nexus.core.async_router import AsyncVFSRouter
+        from nexus.core.protocols.vfs_router import VFSRouterProtocol
+        from nexus.core.router import PathRouter
+        from nexus.plugins.async_hooks import AsyncHookEngine
+        from nexus.plugins.hooks import PluginHooks
+        from nexus.services.protocols.hook_engine import HookEngineProtocol
+        from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+
+        # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
+        db_path = tmp_path / f"all4_{uuid.uuid4().hex[:8]}.db"
+        engine = create_engine(f"sqlite:///{db_path}", echo=False)
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+        sync_registry = AgentRegistry(session_factory=session_factory, flush_interval=1)
+        async_registry = AsyncAgentRegistry(sync_registry)
+
+        # 2. NamespaceManager + AsyncNamespaceManager
+        async_ns = AsyncNamespaceManager(MagicMock())
+
+        # 3. PathRouter + AsyncVFSRouter (real LocalBackend)
+        storage = tmp_path / "storage"
+        storage.mkdir()
+        sync_router = PathRouter()
+        sync_router.add_mount("/workspace", LocalBackend(root_path=str(storage)), priority=10)
+        async_router = AsyncVFSRouter(sync_router)
+
+        # 4. PluginHooks + AsyncHookEngine
+        sync_hooks = PluginHooks()
+        async_hooks = AsyncHookEngine(sync_hooks)
+
+        # All 4 satisfy their protocols
+        assert isinstance(async_registry, AgentRegistryProtocol)
+        assert isinstance(async_ns, NamespaceManagerProtocol)
+        assert isinstance(async_router, VFSRouterProtocol)
+        assert isinstance(async_hooks, HookEngineProtocol)
+
+        # Cross-wrapper interaction: register agent, route a path, fire a hook
+        agent_info = await async_registry.register("cross-agent", "admin", zone_id="z1")
+        assert agent_info.agent_id == "cross-agent"
+
+        resolved = await async_router.route("/workspace/doc.txt", zone_id="z1")
+        assert resolved.backend_path == "doc.txt"
+        assert resolved.zone_id == "z1"
+
+        hook_fired = False
+
+        async def track_hook(_ctx: HookContext) -> HookResult:
+            nonlocal hook_fired
+            hook_fired = True
+            return HookResult(proceed=True, modified_context=None, error=None)
+
+        spec = HookSpec(phase="pre_write", handler_name="cross-test")
+        await async_hooks.register_hook(spec, track_hook)
+        ctx = HookContext(
+            phase="pre_write",
+            path="/workspace/doc.txt",
+            zone_id="z1",
+            agent_id="cross-agent",
+            payload={},
+        )
+        result = await async_hooks.fire("pre_write", ctx)
+        assert result.proceed is True
+        assert hook_fired is True
+
+        # Cleanup
+        await async_registry.unregister("cross-agent")
+
+    @pytest.mark.asyncio()
+    async def test_permission_enforcer_can_use_async_registry(self, tmp_path: Path) -> None:
+        """AsyncAgentRegistry is compatible with permission enforcement flow.
+
+        When permissions are enabled, the PermissionEnforcer needs to look up
+        agent info. This test verifies the async wrapper provides correct data
+        for permission decisions.
+        """
+        from nexus.core.agent_registry import AgentRegistry
+        from nexus.core.async_agent_registry import AsyncAgentRegistry
+
+        db_path = tmp_path / f"perm_{uuid.uuid4().hex[:8]}.db"
+        engine = create_engine(f"sqlite:///{db_path}", echo=False)
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine, expire_on_commit=False)
+
+        sync_reg = AgentRegistry(session_factory=session_factory, flush_interval=1)
+        async_reg = AsyncAgentRegistry(sync_reg)
+
+        # Register agent with specific owner and zone (permission-relevant fields)
+        info = await async_reg.register(
+            "perm-agent",
+            "user:alice",
+            zone_id="zone-42",
+            name="Permission Test Agent",
+        )
+        assert info.owner_id == "user:alice"
+        assert info.zone_id == "zone-42"
+
+        # Simulate permission check: "does this agent belong to this zone?"
+        fetched = await async_reg.get("perm-agent")
+        assert fetched is not None
+        assert fetched.zone_id == "zone-42"
+        assert fetched.owner_id == "user:alice"
+        assert fetched.state == "UNKNOWN"  # Not yet connected
+
+        # Transition to CONNECTED (agent authenticates)
+        connected = await async_reg.transition("perm-agent", "CONNECTED", expected_generation=0)
+        assert connected.state == "CONNECTED"
+        assert connected.generation == 1
+
+        # List by zone (used in zone-scoped permission queries)
+        zone_agents = await async_reg.list_by_zone("zone-42")
+        assert len(zone_agents) == 1
+        assert zone_agents[0].owner_id == "user:alice"
+
+        # Different zone should be empty
+        other_zone = await async_reg.list_by_zone("zone-99")
+        assert len(other_zone) == 0
+
+        await async_reg.unregister("perm-agent")

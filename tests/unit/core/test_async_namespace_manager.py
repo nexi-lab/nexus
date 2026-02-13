@@ -11,7 +11,6 @@ from nexus.core.namespace_manager import MountEntry
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -75,7 +74,9 @@ class TestIsVisible:
         mock_inner.is_visible.return_value = True
         result = await wrapper.is_visible(("user", "alice"), "/workspace/file.txt", zone_id="z")
         mock_inner.is_visible.assert_called_once_with(
-            ("user", "alice"), "/workspace/file.txt", zone_id="z",
+            ("user", "alice"),
+            "/workspace/file.txt",
+            zone_id="z",
         )
         assert result is True
 
@@ -116,9 +117,7 @@ class TestGetMountTable:
 
 class TestInvalidate:
     @pytest.mark.asyncio()
-    async def test_delegates(
-        self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock
-    ) -> None:
+    async def test_delegates(self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock) -> None:
         mock_inner.invalidate.return_value = None
         await wrapper.invalidate(("user", "alice"))
         mock_inner.invalidate.assert_called_once_with(("user", "alice"))

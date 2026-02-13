@@ -17,7 +17,6 @@ from nexus.services.protocols.hook_engine import (
 )
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -84,7 +83,9 @@ class TestPhaseTranslation:
 class TestRegisterUnregister:
     @pytest.mark.asyncio()
     async def test_register_returns_hook_id(self, engine: AsyncHookEngine) -> None:
-        handler = AsyncMock(return_value=HookResult(proceed=True, modified_context=None, error=None))
+        handler = AsyncMock(
+            return_value=HookResult(proceed=True, modified_context=None, error=None)
+        )
         spec = HookSpec(phase="pre_write", handler_name="test_hook", priority=10)
         hook_id = await engine.register_hook(spec, handler)
         assert isinstance(hook_id, HookId)
@@ -92,7 +93,9 @@ class TestRegisterUnregister:
 
     @pytest.mark.asyncio()
     async def test_unregister_known_hook(self, engine: AsyncHookEngine) -> None:
-        handler = AsyncMock(return_value=HookResult(proceed=True, modified_context=None, error=None))
+        handler = AsyncMock(
+            return_value=HookResult(proceed=True, modified_context=None, error=None)
+        )
         spec = HookSpec(phase="pre_write", handler_name="test_hook")
         hook_id = await engine.register_hook(spec, handler)
         assert await engine.unregister_hook(hook_id) is True
@@ -103,7 +106,9 @@ class TestRegisterUnregister:
 
     @pytest.mark.asyncio()
     async def test_double_unregister(self, engine: AsyncHookEngine) -> None:
-        handler = AsyncMock(return_value=HookResult(proceed=True, modified_context=None, error=None))
+        handler = AsyncMock(
+            return_value=HookResult(proceed=True, modified_context=None, error=None)
+        )
         spec = HookSpec(phase="post_read", handler_name="h1")
         hook_id = await engine.register_hook(spec, handler)
         assert await engine.unregister_hook(hook_id) is True
@@ -119,8 +124,11 @@ class TestFire:
     @pytest.mark.asyncio()
     async def test_fire_with_no_handlers(self, engine: AsyncHookEngine) -> None:
         ctx = HookContext(
-            phase="pre_write", path="/workspace/file.txt",
-            zone_id="z1", agent_id="a1", payload={"size": 100},
+            phase="pre_write",
+            path="/workspace/file.txt",
+            zone_id="z1",
+            agent_id="a1",
+            payload={"size": 100},
         )
         result = await engine.fire("pre_write", ctx)
         assert isinstance(result, HookResult)
@@ -138,8 +146,11 @@ class TestFire:
         await engine.register_hook(spec, handler)
 
         fire_ctx = HookContext(
-            phase="pre_write", path="/workspace/f.txt",
-            zone_id="z1", agent_id=None, payload={"key": "val"},
+            phase="pre_write",
+            path="/workspace/f.txt",
+            zone_id="z1",
+            agent_id=None,
+            payload={"key": "val"},
         )
         await engine.fire("pre_write", fire_ctx)
 
@@ -156,8 +167,11 @@ class TestFire:
         await engine.register_hook(spec, veto_handler)
 
         ctx = HookContext(
-            phase="pre_delete", path="/workspace/secret",
-            zone_id=None, agent_id=None, payload={},
+            phase="pre_delete",
+            path="/workspace/secret",
+            zone_id=None,
+            agent_id=None,
+            payload={},
         )
         result = await engine.fire("pre_delete", ctx)
         assert result.proceed is False
@@ -175,8 +189,11 @@ class TestFire:
         await engine.register_hook(spec, modify_handler)
 
         ctx = HookContext(
-            phase="post_write", path="/workspace/out.txt",
-            zone_id=None, agent_id=None, payload={},
+            phase="post_write",
+            path="/workspace/out.txt",
+            zone_id=None,
+            agent_id=None,
+            payload={},
         )
         result = await engine.fire("post_write", ctx)
         assert result.proceed is True
@@ -186,8 +203,11 @@ class TestFire:
     @pytest.mark.asyncio()
     async def test_fire_unknown_phase_raises(self, engine: AsyncHookEngine) -> None:
         ctx = HookContext(
-            phase="unknown", path=None,
-            zone_id=None, agent_id=None, payload={},
+            phase="unknown",
+            path=None,
+            zone_id=None,
+            agent_id=None,
+            payload={},
         )
         with pytest.raises(ValueError, match="Unknown hook phase"):
             await engine.fire("unknown", ctx)

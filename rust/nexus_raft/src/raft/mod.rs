@@ -33,7 +33,7 @@
 //!
 //! # Key Components
 //!
-//! - [`RaftNode`]: Main entry point for Raft operations
+//! - [`ZoneConsensus`]: Main entry point for Raft operations
 //! - [`StateMachine`]: Trait for state machine implementations
 //! - [`FullStateMachine`]: Full state machine with metadata and locks
 //! - [`WitnessStateMachine`]: Minimal state machine for witness nodes
@@ -58,7 +58,7 @@ pub use state_machine::{
 };
 
 #[cfg(feature = "consensus")]
-pub use node::{NodeRole, RaftConfig, RaftMsg, RaftNode, RaftNodeDriver};
+pub use node::{NodeRole, RaftConfig, RaftMsg, ZoneConsensus, ZoneConsensusDriver};
 #[cfg(feature = "consensus")]
 pub use storage::RaftStorage;
 #[cfg(all(feature = "grpc", has_protos))]

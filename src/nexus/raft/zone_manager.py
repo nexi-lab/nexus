@@ -167,7 +167,7 @@ class ZoneManager:
     ) -> RaftMetadataStore:
         """Join an existing zone as a new Voter.
 
-        Creates a local RaftNode without bootstrapping ConfState.
+        Creates a local ZoneConsensus node without bootstrapping ConfState.
         After calling this, the leader must be notified via JoinZone RPC
         to propose ConfChange(AddNode) — the leader will auto-send a snapshot.
 

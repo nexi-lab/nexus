@@ -56,7 +56,7 @@ pub struct ReplicationEntry {
 /// Thread-safe: all methods take `&self`. Sequence counter and watermark use
 /// atomics; redb handles write transaction serialization internally.
 ///
-/// Shared between the [`RaftNode`] handle (EC writes) and the driver
+/// Shared between the [`ZoneConsensus`] handle (EC writes) and the driver
 /// (watermark updates) via `Arc<ReplicationLog>`.
 pub struct ReplicationLog {
     /// Replication log entries: seq (u64 BE) → ReplicationEntry.

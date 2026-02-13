@@ -10,7 +10,7 @@
 
 ### What Works
 - **Raft consensus core** (Rust): 100% complete
-  - `RaftNode` wrapping tikv/raft-rs `RawNode` with async propose API
+  - `ZoneConsensus` wrapping tikv/raft-rs `RawNode` with async propose API
   - `RaftStorage` backed by sled (persistent log, hard state, snapshots, compaction)
   - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
   - `WitnessStateMachineInMemory` for testing
@@ -45,7 +45,7 @@
   │ ┌──────────────┐     │  ┌──────────────┐    (Witness)   │  │
   │ │   NexusFS    │     │  │   NexusFS    │  ┌──────────┐  │  │
   │ │  + RPC Srv   │     │  │  + RPC Srv   │  │ Vote-only│  │  │
-  │ │  + RaftNode  │◄────┼──┤  + RaftNode  │──┤ RaftNode │  │  │
+  │ │  + ZoneConsensus  │◄────┼──┤  + ZoneConsensus  │──┤ ZoneConsensus │  │  │
   │ │              │  gRPC│  │              │  │          │  │  │
   │ │ StateMachine │     │  │ StateMachine │  │ (no SM)  │  │  │
   │ │  ├─ meta     │     │  │  ├─ meta     │  │          │  │  │
@@ -70,7 +70,7 @@
 Every non-witness node runs in a single process:
 1. **NexusFS** — filesystem operations, backend connectors, caching
 2. **RPC Server** — FastAPI (HTTP) + gRPC (Raft transport)
-3. **RaftNode** — consensus participant (Leader or Follower, code-wise identical)
+3. **ZoneConsensus** — consensus participant (Leader or Follower, code-wise identical)
 4. **StateMachine** — metadata + locks, persisted in sled
 5. **SQLAlchemy** — relational data (users, permissions, ReBAC)
 
@@ -242,7 +242,7 @@ NEXUS_METADATA_STORE=sqlalchemy  # Use PostgreSQL (current)
 ┌─────────────────────────────────────────────────────────┐
 │ USER SPACE                                              │
 │                                                         │
-│  RaftNode.send_message(peer_id, msg)                   │
+│  ZoneConsensus.send_message(peer_id, msg)                   │
 │  EventBus.publish(event)                               │
 │  RPC.call_remote_method(method, args)                  │
 └─────────────────────────────────────────────────────────┘
@@ -451,7 +451,7 @@ Client → NexusFS.write() → RaftMetadataStore (local mode)
 ### 5.3 Multi-Node with Raft (Distributed, Future)
 ```
 Client → NexusFS.write() → RaftMetadataStore (remote mode)
-                              → RaftNode.propose()
+                              → ZoneConsensus.propose()
                               → gRPC replicate to followers
                               → Majority ACK (2/3 or 2/2+witness)
                               → StateMachine.apply() on all nodes
@@ -858,7 +858,7 @@ hide upper directories — the namespace boundary is the zone boundary.
 - NexusFS (filesystem ops, backend connectors, caching)
 - FastAPI (HTTP API)
 - RPC Server (client-facing RPC)
-- RaftNode + sled (consensus + embedded storage)
+- ZoneConsensus + sled (consensus + embedded storage)
 - gRPC transport (inter-node Raft replication)
 - SQLAlchemy (users, permissions, ReBAC)
 

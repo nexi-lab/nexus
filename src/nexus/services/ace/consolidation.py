@@ -21,14 +21,14 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
 
+from nexus.llm.message import Message, MessageRole
+from nexus.llm.provider import LLMProvider
 from nexus.services.ace.affinity import (
     AffinityConfig,
     MemoryVector,
     cluster_by_affinity,
     get_cluster_statistics,
 )
-from nexus.llm.message import Message, MessageRole
-from nexus.llm.provider import LLMProvider
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
